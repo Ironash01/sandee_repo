@@ -1,0 +1,20 @@
+Python, W. (2021). Python. Python releases for windows, 24.
+
+Ierusalimschy, R., Figueiredo, L. H. de, & Celes, W. (2025). The evolution of Lua, continued. 
+Journal of Computer Languages, 83, 101326. https://doi.org/10.1016/j.cola.2025.101326
+
+(Ierusalimschy, et.al, 2025)
+
+Brumbaugh, Zander & Leithner, Manuel. (2023). The Lua Programming Language. 10.1007/979-8-8688-0060-3_3. 
+
+Crudu, V., & MoldStud Research Team. (2024, September 27). Are Lua developers in high demand in the job market? MoldStud. 
+https://moldstud.com/articles/p-are-lua-developers-in-high-demand-in-the-job-market
+
+Viduka, D., Kraguljac, V., & Ličina, B. (2021). A Comparative Analysis of the Benefits of Python and Java for Beginners. Quaestus, (19), 318-327.
+
+Becker, B. A., Denny, P., Finnie-Ansley, J., Luxton-Reilly, A., Prather, J., & Santos, E. A. (2023). Programming is hard—or at least it used to be: Educational opportunities and challenges of AI code generation. Proceedings of the 54th ACM Technical Symposium on Computer Science Education V. 1 (SIGCSE 2023), 500–506. Association for Computing Machinery. https://doi.org/10.1145/3545945.3569759
+
+Lin, H.-C. K., Tseng, C.-H., & Chen, N.-S. (2025). Enhancing programming education: The impact of AI-based pedagogical agents on student self-efficacy, engagement, and learning outcomes. Educational Technology & Society, 28(2), 279–294. https://www.jstor.org/stable/48827987
+
+Becker, B. A., Denny, P., Finnie-Ansley, J., Luxton-Reilly, A., Prather, J., & Santos, E. A. (2022, December 2). Programming is hard -- or at least it used to be: Educational opportunities and challenges of AI code generation. arXiv.org. https://arxiv.org/abs/2212.01020 
+
