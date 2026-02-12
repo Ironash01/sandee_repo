@@ -11,8 +11,23 @@ config_version=5
 [application]
 
 config/name="sandee"
+run/main_scene="uid://bhmlf33kaflpo"
 config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/size/resizable=false
+
+[layer_names]
+
+2d_render/layer_1="Player"
+2d_render/layer_2="Ground"
+2d_render/layer_3="ObjectsRange"
+2d_render/layer_4="Objects"
+2d_render/layer_5="Trees"
 
 [physics]
 

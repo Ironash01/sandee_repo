@@ -1,0 +1,56 @@
+[gd_scene format=3 uid="uid://bhmlf33kaflpo"]
+
+[ext_resource type="Script" uid="uid://c3m6lx6mikq64" path="res://scenes/play_button.gd" id="1_yqorp"]
+[ext_resource type="Script" uid="uid://cv28u5cvw4gkf" path="res://scenes/settings_button.gd" id="2_0ykhv"]
+
+[sub_resource type="Theme" id="Theme_ukcvp"]
+
+[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_yqorp"]
+
+[node name="Control" type="Control" unique_id=1609753441]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -3.0
+offset_top = 6.0
+offset_right = 2.0
+offset_bottom = 4.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Label" type="Label" parent="." unique_id=548772268]
+layout_mode = 0
+offset_left = 33.0
+offset_top = 20.0
+offset_right = 400.0
+offset_bottom = 89.0
+theme_override_font_sizes/font_size = 50
+text = "SANDEE ALPHA"
+
+[node name="PlayButton" type="Button" parent="." unique_id=266594196]
+layout_mode = 0
+offset_left = 37.0
+offset_top = 378.0
+offset_right = 229.0
+offset_bottom = 448.0
+theme = SubResource("Theme_ukcvp")
+theme_override_font_sizes/font_size = 20
+text = "Play"
+icon = SubResource("PlaceholderTexture2D_yqorp")
+script = ExtResource("1_yqorp")
+
+[node name="SettingsButton" type="Button" parent="." unique_id=1762270634]
+layout_mode = 0
+offset_left = 38.0
+offset_top = 482.0
+offset_right = 230.0
+offset_bottom = 552.0
+theme = SubResource("Theme_ukcvp")
+theme_override_font_sizes/font_size = 20
+text = "Settings"
+icon = SubResource("PlaceholderTexture2D_yqorp")
+script = ExtResource("2_0ykhv")
+
+[connection signal="pressed" from="PlayButton" to="PlayButton" method="_on_pressed"]
+[connection signal="pressed" from="SettingsButton" to="SettingsButton" method="_on_pressed"]
