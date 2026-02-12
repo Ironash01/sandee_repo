@@ -53,11 +53,11 @@ sources/0 = SubResource("TileSetAtlasSource_k0juu")
 [node name="World" type="Node2D" unique_id=98158199]
 script = ExtResource("1_rwgxs")
 
-[node name="Water" type="TileMapLayer" parent="." unique_id=2036142863]
+[node name="Ground" type="TileMapLayer" parent="." unique_id=822852763]
 texture_filter = 1
 tile_set = SubResource("TileSet_71j4m")
 
-[node name="Ground" type="TileMapLayer" parent="." unique_id=822852763]
+[node name="Water" type="TileMapLayer" parent="." unique_id=2036142863]
 texture_filter = 1
 tile_set = SubResource("TileSet_71j4m")
 
