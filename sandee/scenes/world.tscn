@@ -1,0 +1,80 @@
+[gd_scene format=3 uid="uid://d2kxkguromr1w"]
+
+[ext_resource type="Script" uid="uid://c8rev8jtlhmr5" path="res://scripts/world.gd" id="1_rwgxs"]
+[ext_resource type="Texture2D" uid="uid://celbgkxftkjge" path="res://sprites/basic_tiles.png" id="2_4wyf3"]
+[ext_resource type="Texture2D" uid="uid://dgmydne35f53v" path="res://sprites/tree.png" id="3_4wyf3"]
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_k0juu"]
+texture = ExtResource("2_4wyf3")
+0:0/0 = 0
+1:0/0 = 0
+1:0/0/terrain_set = 0
+1:0/0/terrain = 0
+1:0/0/terrains_peering_bit/right_side = 0
+1:0/0/terrains_peering_bit/bottom_right_corner = 0
+1:0/0/terrains_peering_bit/bottom_side = 0
+1:0/0/terrains_peering_bit/bottom_left_corner = 0
+1:0/0/terrains_peering_bit/left_side = 0
+1:0/0/terrains_peering_bit/top_left_corner = 0
+1:0/0/terrains_peering_bit/top_side = 0
+1:0/0/terrains_peering_bit/top_right_corner = 0
+0:1/0 = 0
+0:1/0/terrain_set = 0
+0:1/0/terrain = 1
+0:1/0/terrains_peering_bit/right_side = 1
+0:1/0/terrains_peering_bit/bottom_right_corner = 1
+0:1/0/terrains_peering_bit/bottom_side = 1
+0:1/0/terrains_peering_bit/bottom_left_corner = 1
+0:1/0/terrains_peering_bit/left_side = 1
+0:1/0/terrains_peering_bit/top_left_corner = 1
+0:1/0/terrains_peering_bit/top_side = 1
+0:1/0/terrains_peering_bit/top_right_corner = 1
+1:1/0 = 0
+1:1/0/terrain_set = 0
+1:1/0/terrain = 2
+1:1/0/terrains_peering_bit/right_side = 2
+1:1/0/terrains_peering_bit/bottom_right_corner = 2
+1:1/0/terrains_peering_bit/bottom_side = 2
+1:1/0/terrains_peering_bit/bottom_left_corner = 2
+1:1/0/terrains_peering_bit/left_side = 2
+1:1/0/terrains_peering_bit/top_left_corner = 2
+1:1/0/terrains_peering_bit/top_side = 2
+1:1/0/terrains_peering_bit/top_right_corner = 2
+
+[sub_resource type="TileSet" id="TileSet_71j4m"]
+terrain_set_0/mode = 0
+terrain_set_0/terrain_0/name = "Sand"
+terrain_set_0/terrain_0/color = Color(0.85490197, 0.85490197, 0, 1)
+terrain_set_0/terrain_1/name = "Grass"
+terrain_set_0/terrain_1/color = Color(0, 0.9260455, 0.22622243, 1)
+terrain_set_0/terrain_2/name = "Snow"
+terrain_set_0/terrain_2/color = Color(0.50929177, 0.80751675, 0.98160535, 1)
+sources/0 = SubResource("TileSetAtlasSource_k0juu")
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_71j4m"]
+texture = ExtResource("3_4wyf3")
+0:0/size_in_atlas = Vector2i(3, 3)
+0:0/0 = 0
+0:0/0/texture_origin = Vector2i(0, 15)
+0:0/0/physics_layer_0/polygon_0/points = PackedVector2Array(-4, 0, -5.333333, 5.333334, -12, 8, 0, 10.666668, 12, 8, 5.333334, 5.333334, 4, 0)
+
+[sub_resource type="TileSet" id="TileSet_qfnet"]
+physics_layer_0/collision_layer = 1
+sources/0 = SubResource("TileSetAtlasSource_71j4m")
+
+[node name="World" type="Node2D" unique_id=98158199]
+script = ExtResource("1_rwgxs")
+
+[node name="Ground" type="TileMapLayer" parent="." unique_id=822852763]
+texture_filter = 1
+tile_set = SubResource("TileSet_71j4m")
+
+[node name="Water" type="TileMapLayer" parent="." unique_id=2036142863]
+texture_filter = 1
+tile_set = SubResource("TileSet_71j4m")
+
+[node name="Editable" type="TileMapLayer" parent="." unique_id=1269343113]
+texture_filter = 1
+tile_set = SubResource("TileSet_qfnet")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=1411188178]
