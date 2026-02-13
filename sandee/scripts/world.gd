@@ -79,3 +79,6 @@ func _get_tile_type(humidity: float, temperature: float, altitude: float) -> Ter
 		if temperature < SNOW_THRESHOLD:
 			terrain = Terrain.Snowy
 	return terrain
+
+func _place_foliage():
+	pass
