@@ -281,7 +281,11 @@ animations = [{
 
 [node name="Player" type="CharacterBody2D" unique_id=809387947]
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 collision_mask = 15
+=======
+visibility_layer = 14
+>>>>>>> Stashed changes
 =======
 visibility_layer = 14
 >>>>>>> Stashed changes

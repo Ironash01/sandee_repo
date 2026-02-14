@@ -267,6 +267,7 @@ texture = ExtResource("1_c2xor")
 sources/2 = SubResource("TileSetAtlasSource_tmscs")
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_hvxcm"]
 texture = ExtResource("3_q04aa")
 14:0/0 = 0
@@ -881,6 +882,9 @@ y_sort_enabled = true
 =======
 [node name="Main" type="Node2D" unique_id=1467605827]
 >>>>>>> Stashed changes
+=======
+[node name="Main" type="Node2D" unique_id=1467605827]
+>>>>>>> Stashed changes
 
 [node name="Background" type="Node2D" parent="." unique_id=458700039]
 
@@ -895,6 +899,7 @@ position = Vector2(426, 484)
 scale = Vector2(2, 2)
 collision_mask = 9
 
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
 [node name="CraftingStation" type="Node2D" parent="." unique_id=1073123592]
 position = Vector2(788, 351)
@@ -922,8 +927,13 @@ tile_set = SubResource("TileSet_phjh0")
 
 [connection signal="body_entered" from="CraftingStation/Interact" to="Player" method="_on_body_entered"]
 =======
+=======
+>>>>>>> Stashed changes
 [node name="Object" parent="." unique_id=105126223 instance=ExtResource("4_c2xor")]
 light_mask = 4
 position = Vector2(688, 438)
 collision_layer = 4
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes

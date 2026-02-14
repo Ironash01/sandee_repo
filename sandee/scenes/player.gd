@@ -73,10 +73,15 @@ func play_idle_animation():
 func _on_body_entered(body: Node2D) -> void:
 	# Only react to Layer 3 (interact range)
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 	if body.collision_layer & (1 << 4):  # Layer 3 = index 2
 		interactable_in_range = body.get_parent()
 		print("In range of:", interactable_in_range.name)
 		show_interact_popup()
+=======
+	if body.get_collision_layer_value_(3):
+		print("Player entered")
+>>>>>>> Stashed changes
 =======
 	if body.get_collision_layer_value_(3):
 		print("Player entered")
