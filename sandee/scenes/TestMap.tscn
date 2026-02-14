@@ -3,7 +3,7 @@
 [ext_resource type="Texture2D" uid="uid://nyw83xluipap" path="res://TemplateSprites/PixelArtPlaceHolder/Texture/TX Tileset Grass.png" id="1_c2xor"]
 [ext_resource type="PackedScene" uid="uid://cbnw77fxjxap" path="res://scenes/player.tscn" id="1_fodck"]
 [ext_resource type="Texture2D" uid="uid://ky1flv743tqn" path="res://TemplateSprites/PixelArtPlaceHolder/Texture/TX Props.png" id="3_q04aa"]
-[ext_resource type="Texture2D" uid="uid://drukkahwdqg3q" path="res://TemplateSprites/PixelArtPlaceHolder/Texture/TX Plant.png" id="4_s2mfq"]
+[ext_resource type="PackedScene" uid="uid://41fn18125p20" path="res://scenes/CraftingStation.tscn" id="4_c2xor"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_tmscs"]
 texture = ExtResource("1_c2xor")
@@ -267,6 +267,7 @@ texture = ExtResource("1_c2xor")
 [sub_resource type="TileSet" id="TileSet_g2opk"]
 sources/2 = SubResource("TileSetAtlasSource_tmscs")
 
+<<<<<<< Updated upstream
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_hvxcm"]
 texture = ExtResource("3_q04aa")
 14:0/0 = 0
@@ -878,6 +879,9 @@ sources/0 = SubResource("TileSetAtlasSource_eqffy")
 
 [node name="Node2D" type="Node2D" unique_id=1467605827]
 y_sort_enabled = true
+=======
+[node name="Main" type="Node2D" unique_id=1467605827]
+>>>>>>> Stashed changes
 
 [node name="Background" type="Node2D" parent="." unique_id=458700039]
 
@@ -892,6 +896,7 @@ position = Vector2(426, 484)
 scale = Vector2(2, 2)
 collision_mask = 9
 
+<<<<<<< Updated upstream
 [node name="CraftingStation" type="Node2D" parent="." unique_id=1073123592]
 position = Vector2(788, 351)
 
@@ -917,3 +922,9 @@ tile_map_data = PackedByteArray("AAAMAA4AAAABAAQAAAAMAA8AAAABAAUAAAAMABAAAAABAAY
 tile_set = SubResource("TileSet_phjh0")
 
 [connection signal="body_entered" from="CraftingStation/Interact" to="Player" method="_on_body_entered"]
+=======
+[node name="Object" parent="." unique_id=105126223 instance=ExtResource("4_c2xor")]
+light_mask = 4
+position = Vector2(688, 438)
+collision_layer = 4
+>>>>>>> Stashed changes

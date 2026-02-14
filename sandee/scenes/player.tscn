@@ -4,6 +4,9 @@
 [ext_resource type="Script" uid="uid://yeqom1e0yihq" path="res://scenes/player.gd" id="1_g2els"]
 [ext_resource type="Texture2D" uid="uid://d1pbllluajri1" path="res://TemplateSprites/16x16/16x16 Walk-Sheet.png" id="3_qhqgy"]
 
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_qhqgy"]
+size = Vector2(18, 30)
+
 [sub_resource type="AtlasTexture" id="AtlasTexture_g2els"]
 atlas = ExtResource("1_3vyb7")
 region = Rect2(0, 0, 20, 20)
@@ -276,12 +279,18 @@ animations = [{
 "speed": 5.0
 }]
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_qhqgy"]
-size = Vector2(18, 30)
-
 [node name="Player" type="CharacterBody2D" unique_id=809387947]
+<<<<<<< Updated upstream
 collision_mask = 15
+=======
+visibility_layer = 14
+>>>>>>> Stashed changes
 script = ExtResource("1_g2els")
+
+[node name="PlayerCol" type="CollisionShape2D" parent="." unique_id=723780302]
+visibility_layer = 14
+position = Vector2(7, 11)
+shape = SubResource("RectangleShape2D_qhqgy")
 
 [node name="PlayerAnimation" type="AnimatedSprite2D" parent="." unique_id=482050711]
 texture_filter = 1
@@ -290,8 +299,3 @@ scale = Vector2(1.65, 1.7)
 sprite_frames = SubResource("SpriteFrames_tuyoq")
 animation = &"walk_up"
 autoplay = "idle"
-
-[node name="PlayerCol" type="CollisionShape2D" parent="." unique_id=723780302]
-visibility_layer = 14
-position = Vector2(7, 11)
-shape = SubResource("RectangleShape2D_qhqgy")
