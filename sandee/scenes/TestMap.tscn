@@ -2,7 +2,6 @@
 
 [ext_resource type="Texture2D" uid="uid://nyw83xluipap" path="res://TemplateSprites/PixelArtPlaceHolder/Texture/TX Tileset Grass.png" id="1_c2xor"]
 [ext_resource type="PackedScene" uid="uid://cbnw77fxjxap" path="res://scenes/player.tscn" id="1_fodck"]
-[ext_resource type="Texture2D" uid="uid://ky1flv743tqn" path="res://TemplateSprites/PixelArtPlaceHolder/Texture/TX Props.png" id="3_q04aa"]
 [ext_resource type="PackedScene" uid="uid://41fn18125p20" path="res://scenes/CraftingStation.tscn" id="4_c2xor"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_tmscs"]
