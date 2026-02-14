@@ -40,6 +40,8 @@ func _physics_process(delta):
 	# Interaction input
 	if Input.is_action_just_pressed("ui_accept") and interactable_in_range:
 		interactable_in_range.call("interact", self)  # call object's interact function
+		
+	
 
 
 func play_walk_animation(direction: Vector2):
@@ -68,9 +70,9 @@ func play_idle_animation():
 
 # ---------------- Interaction Signals ----------------
 
-func _on_body_entered(body):
+func _on_body_entered(body: Node2D) -> void:
 	# Only react to Layer 3 (interact range)
-	if body.collision_layer & (1 << 2):  # Layer 3 = index 2
+	if body.collision_layer & (1 << 4):  # Layer 3 = index 2
 		interactable_in_range = body.get_parent()
 		print("In range of:", interactable_in_range.name)
 		show_interact_popup()
@@ -83,7 +85,7 @@ func _on_body_exited(body):
 		hide_interact_popup()
 
 
-# ---------------- Interact Popup ----------------
+# Interact Test
 
 func show_interact_popup():
 	if interact_popup == null:
@@ -95,3 +97,7 @@ func show_interact_popup():
 func hide_interact_popup():
 	if interact_popup:
 		interact_popup.visible = false
+
+
+func _on_interact_body_entered(body: Node2D) -> void:
+	pass # Replace with function body.

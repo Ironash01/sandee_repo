@@ -335,8 +335,6 @@ texture = ExtResource("3_q04aa")
 30:4/0 = 0
 6:5/0 = 0
 7:5/0 = 0
-10:5/0 = 0
-11:5/0 = 0
 14:5/0 = 0
 15:5/0 = 0
 18:5/0 = 0
@@ -353,8 +351,6 @@ texture = ExtResource("3_q04aa")
 4:6/0 = 0
 6:6/0 = 0
 7:6/0 = 0
-10:6/0 = 0
-11:6/0 = 0
 14:6/0 = 0
 15:6/0 = 0
 16:6/0 = 0
@@ -371,8 +367,6 @@ texture = ExtResource("3_q04aa")
 4:7/0 = 0
 6:7/0 = 0
 7:7/0 = 0
-10:7/0 = 0
-11:7/0 = 0
 14:7/0 = 0
 15:7/0 = 0
 16:7/0 = 0
@@ -622,15 +616,17 @@ texture = ExtResource("3_q04aa")
 17:31/0 = 0
 18:31/0 = 0
 19:31/0 = 0
+10:5/size_in_atlas = Vector2i(2, 3)
+10:5/0 = 0
+10:5/0/texture_origin = Vector2i(0, 13)
+10:5/0/physics_layer_0/polygon_0/points = PackedVector2Array(-12, -30, 12, -30, 12, -12, -12, -12)
 
 [sub_resource type="TileSet" id="TileSet_6tgn8"]
+physics_layer_0/collision_layer = 8
 sources/0 = SubResource("TileSetAtlasSource_hvxcm")
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_l346b"]
-size = Vector2(33, 46)
-
-[sub_resource type="CircleShape2D" id="CircleShape2D_nhfgm"]
-radius = 46.389652
+[sub_resource type="CircleShape2D" id="CircleShape2D_c2xor"]
+radius = 62.0
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_eqffy"]
 texture = ExtResource("4_s2mfq")
@@ -881,6 +877,7 @@ texture = ExtResource("4_s2mfq")
 sources/0 = SubResource("TileSetAtlasSource_eqffy")
 
 [node name="Node2D" type="Node2D" unique_id=1467605827]
+y_sort_enabled = true
 
 [node name="Background" type="Node2D" parent="." unique_id=458700039]
 
@@ -890,29 +887,33 @@ tile_map_data = PackedByteArray("AAD8//3/AgAOAAIAAAD9//3/AgAEAAgAAAD9//7/AgAOAAE
 tile_set = SubResource("TileSet_g2opk")
 
 [node name="Player" parent="." unique_id=1160333111 instance=ExtResource("1_fodck")]
+y_sort_enabled = true
 position = Vector2(426, 484)
 scale = Vector2(2, 2)
+collision_mask = 9
 
 [node name="CraftingStation" type="Node2D" parent="." unique_id=1073123592]
 position = Vector2(788, 351)
 
-[node name="TileMap" type="TileMap" parent="CraftingStation" unique_id=890688873]
+[node name="TileMap" type="TileMapLayer" parent="CraftingStation" unique_id=365831071]
+y_sort_enabled = true
+texture_filter = 1
+tile_map_data = PackedByteArray("AAD+/wAAAAAKAAUAAAA=")
 tile_set = SubResource("TileSet_6tgn8")
-format = 2
-layer_0/tile_data = PackedInt32Array(-65538, 655360, 1, -2, 655360, 2, 65534, 655360, 3, -65537, 720896, 1, -1, 720896, 2, 65535, 720896, 3)
 
-[node name="PhysCol" type="CollisionShape2D" parent="CraftingStation" unique_id=178777029]
-light_mask = 9
-position = Vector2(-15.5, -7)
-shape = SubResource("RectangleShape2D_l346b")
-
-[node name="Interact" type="CollisionShape2D" parent="CraftingStation" unique_id=2004727520]
+[node name="Interact" type="Area2D" parent="CraftingStation" unique_id=193052946]
 light_mask = 5
 position = Vector2(-16, -7)
-shape = SubResource("CircleShape2D_nhfgm")
+collision_layer = 4
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="CraftingStation/Interact" unique_id=105762740]
+position = Vector2(-7, 3)
+shape = SubResource("CircleShape2D_c2xor")
 
 [node name="TreeExample" type="Node2D" parent="." unique_id=1321481590]
 
 [node name="TileMapLayer" type="TileMapLayer" parent="TreeExample" unique_id=213139787]
 tile_map_data = PackedByteArray("AAAMAA4AAAABAAQAAAAMAA8AAAABAAUAAAAMABAAAAABAAYAAAANAAwAAAACAAIAAAANAA0AAAACAAMAAAANAA4AAAACAAQAAAANAA8AAAACAAUAAAANABAAAAACAAYAAAANABEAAAACAAcAAAAOAAsAAAADAAEAAAAOAAwAAAADAAIAAAAOAA0AAAADAAMAAAAOAA4AAAADAAQAAAAOAA8AAAADAAUAAAAOABAAAAADAAYAAAAOABEAAAADAAcAAAAPAAoAAAAEAAAAAAAPAAsAAAAEAAEAAAAPAAwAAAAEAAIAAAAPAA0AAAAEAAMAAAAPAA4AAAAEAAQAAAAPAA8AAAAEAAUAAAAPABAAAAAEAAYAAAAPABEAAAAEAAcAAAAPABIAAAAEAAgAAAAPABMAAAAEAAkAAAAQAAoAAAAFAAAAAAAQAAsAAAAFAAEAAAAQAAwAAAAFAAIAAAAQAA0AAAAFAAMAAAAQAA4AAAAFAAQAAAAQAA8AAAAFAAUAAAAQABAAAAAFAAYAAAAQABEAAAAFAAcAAAAQABIAAAAFAAgAAAAQABMAAAAFAAkAAAARAAsAAAAGAAEAAAARAAwAAAAGAAIAAAARAA0AAAAGAAMAAAARAA4AAAAGAAQAAAARAA8AAAAGAAUAAAARABAAAAAGAAYAAAARABEAAAAGAAcAAAASAAwAAAAHAAIAAAASAA0AAAAHAAMAAAASAA4AAAAHAAQAAAASAA8AAAAHAAUAAAASABAAAAAHAAYAAAATAA4AAAAIAAQAAAATAA8AAAAIAAUAAAAjAAgAAAAKAAIAAAAjAAkAAAAKAAMAAAAjAAoAAAAKAAQAAAAjAAsAAAAKAAUAAAAjAAwAAAAKAAYAAAAkAAcAAAALAAEAAAAkAAgAAAALAAIAAAAkAAkAAAALAAMAAAAkAAoAAAALAAQAAAAkAAsAAAALAAUAAAAkAAwAAAALAAYAAAAkAA0AAAALAAcAAAAlAAcAAAAMAAEAAAAlAAgAAAAMAAIAAAAlAAkAAAAMAAMAAAAlAAoAAAAMAAQAAAAlAAsAAAAMAAUAAAAlAAwAAAAMAAYAAAAlAA0AAAAMAAcAAAAlAA4AAAAMAAgAAAAlAA8AAAAMAAkAAAAmAAcAAAANAAEAAAAmAAgAAAANAAIAAAAmAAkAAAANAAMAAAAmAAoAAAANAAQAAAAmAAsAAAANAAUAAAAmAAwAAAANAAYAAAAmAA0AAAANAAcAAAAmAA4AAAANAAgAAAAmAA8AAAANAAkAAAAnAAcAAAAOAAEAAAAnAAgAAAAOAAIAAAAnAAkAAAAOAAMAAAAnAAoAAAAOAAQAAAAnAAsAAAAOAAUAAAAnAAwAAAAOAAYAAAAnAA0AAAAOAAcAAAAoAAgAAAAPAAIAAAAoAAkAAAAPAAMAAAAoAAoAAAAPAAQAAAAoAAsAAAAPAAUAAAAoAAwAAAAPAAYAAAA=")
 tile_set = SubResource("TileSet_phjh0")
+
+[connection signal="body_entered" from="CraftingStation/Interact" to="Player" method="_on_body_entered"]
