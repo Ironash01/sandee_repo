@@ -60,7 +60,7 @@ func _generate_terrain():
 			
 			match _get_tile_type(humid, temp, alt):
 				Terrain.Plain:
-					ground_layer.set_cell(cell - cell_offset, 0, Vector2i(0, 1))
+					ground_layer.set_cell(cell - cell_offset, 3, Vector2i(1, 3))
 				Terrain.Desert:
 					ground_layer.set_cell(cell - cell_offset, 0, Vector2i(1, 0))
 				Terrain.Snowy:
