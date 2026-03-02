@@ -13,7 +13,7 @@ const FOLIAGE_SPACING: float = 16 # average spacing between foliage
 const REJECTION_THRESHOLD: int = 30 # samples before rejection
 
 # Exports
-@export var seed: int = 1234
+@export var random_seed: int = 1234
 @export var width: int = 1024
 @export var height: int = 1024
 
@@ -31,7 +31,7 @@ var altitude: FastNoiseLite = FastNoiseLite.new()
 @onready var editable_layer: TileMapLayer = $Editable
 
 func _ready() -> void:
-	rng.set_seed(seed)
+	rng.set_seed(random_seed)
 	
 	# Setup noise maps
 	_set_up_noise(humidity, 0.003)
@@ -56,7 +56,7 @@ func _generate_terrain():
 			var temp = temperature.get_noise_2d(x, y) * 0.5 + 0.5
 			var alt = altitude.get_noise_2d(x, y) * 0.5 + 0.5 + plains_spawn_circle * WATER_THRESHOLD
 			
-			alt = 0 if water_circle >= 1 else alt - water_circle * WATER_THRESHOLD
+			alt = 0.0 if water_circle >= 1 else alt - water_circle * WATER_THRESHOLD
 			humid += temp * plains_spawn_circle
 			temp += SNOW_THRESHOLD * plains_spawn_circle
 			humid += (SNOW_THRESHOLD - SAND_THRESHOLD) * plains_spawn_circle
@@ -71,7 +71,7 @@ func _generate_terrain():
 				_:
 					water_layer.set_cell(cell - cell_offset, 0, Vector2i.ZERO)
 
-func _set_up_noise(noise: FastNoiseLite, frequency: float, type: FastNoiseLite.FractalType = 1):
+func _set_up_noise(noise: FastNoiseLite, frequency: float, type: FastNoiseLite.FractalType = FastNoiseLite.FractalType.FRACTAL_FBM):
 	noise.fractal_type = type
 	noise.seed = rng.randi()
 	noise.frequency = frequency
@@ -90,12 +90,21 @@ func _get_tile_type(humidity: float, temperature: float, altitude: float) -> Ter
 
 func _place_foliage():
 	var points: PackedVector2Array = _generate_points()
+	var cell_offset = Vector2i(width, height) / 2 # Tilemap center
 	
 	for point in points:
 		var int_point = Vector2i(point)
-		var cell_offset = Vector2i(width, height) / 2 # Tilemap center
-		
-		editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
+		var terrain_cell = ground_layer.get_cell_tile_data(int_point - cell_offset)
+		if terrain_cell != null:
+			var terrain_type: Terrain = terrain_cell.get_custom_data("terrain_type")
+			# temporary switch/case for different trees
+			match terrain_type:
+				Terrain.Plain:
+					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
+				Terrain.Desert:
+					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
+				Terrain.Snowy:
+					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
 
 func _generate_points() -> PackedVector2Array:
 	# use poisson disc sampling to place foliage
