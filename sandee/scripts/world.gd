@@ -49,14 +49,17 @@ func _generate_terrain():
 	for x in width:
 		for y in height:
 			var cell = Vector2i(x, y)
-			var distance_from_spawn = clampf(1 - (cell.distance_to(cell_offset) / FORCED_PLAINS_RADIUS), 0, 1)
+			var distance_from_spawn = cell.distance_to(cell_offset)
+			var plains_spawn_circle = clampf(1 - distance_from_spawn / FORCED_PLAINS_RADIUS, 0, 1)
+			var water_circle = smoothstep(width / 2 - 50, width / 2, distance_from_spawn)
 			var humid = humidity.get_noise_2d(x, y) * 0.5 + 0.5
 			var temp = temperature.get_noise_2d(x, y) * 0.5 + 0.5
-			var alt = altitude.get_noise_2d(x, y) * 0.5 + 0.5 + distance_from_spawn * WATER_THRESHOLD
+			var alt = altitude.get_noise_2d(x, y) * 0.5 + 0.5 + plains_spawn_circle * WATER_THRESHOLD
 			
-			humid += temp * distance_from_spawn
-			temp += SNOW_THRESHOLD * distance_from_spawn
-			humid += (SNOW_THRESHOLD - SAND_THRESHOLD) * distance_from_spawn
+			alt = 0 if water_circle >= 1 else alt - water_circle * WATER_THRESHOLD
+			humid += temp * plains_spawn_circle
+			temp += SNOW_THRESHOLD * plains_spawn_circle
+			humid += (SNOW_THRESHOLD - SAND_THRESHOLD) * plains_spawn_circle
 			
 			match _get_tile_type(humid, temp, alt):
 				Terrain.Plain:
