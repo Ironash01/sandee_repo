@@ -24,6 +24,7 @@ tracks/0/keys = {
 
 [sub_resource type="Animation" id="Animation_m1xck"]
 resource_name = "idle_down"
+loop_mode = 1
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
@@ -246,7 +247,7 @@ parameters/Idle/blend_position = Vector2(-0.9923445, 0.01792121)
 parameters/Walk/blend_position = Vector2(-0.002870798, 0.006626487)
 
 [node name="Camera2D" type="Camera2D" parent="Player/PlayerBody" unique_id=624578227]
-zoom = Vector2(3, 3)
+zoom = Vector2(2, 2)
 
 [node name="InteractionShape" type="Area2D" parent="Player/PlayerBody" unique_id=27973992]
 collision_layer = 2

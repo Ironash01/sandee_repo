@@ -8,7 +8,7 @@ length = 0.001
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:frame")
+tracks/0/path = NodePath("CanvasLayer/Sprite2D:frame")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -26,7 +26,7 @@ step = 0.25
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:frame")
+tracks/0/path = NodePath("CanvasLayer/Sprite2D:frame")
 tracks/0/interp = 0
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -94,19 +94,21 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1473377123]
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1714550615]
+
+[node name="Sprite2D" type="Sprite2D" parent="CanvasLayer" unique_id=1473377123]
 texture_filter = 1
 position = Vector2(716.4999, 359.24997)
 scale = Vector2(11.179687, 11.179687)
 texture = ExtResource("1_0ryji")
 hframes = 8
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=1593685014]
+[node name="AnimationPlayer" type="AnimationPlayer" parent="CanvasLayer" unique_id=1593685014]
+root_node = NodePath("../..")
 libraries/ = SubResource("AnimationLibrary_anxor")
 autoplay = &"bg_anim"
 
-[node name="Label" type="Label" parent="." unique_id=36781808]
-layout_mode = 0
+[node name="Label" type="Label" parent="CanvasLayer" unique_id=36781808]
 offset_left = 54.0
 offset_top = 43.0
 offset_right = 594.0
@@ -114,13 +116,12 @@ offset_bottom = 143.0
 theme_override_font_sizes/font_size = 100
 text = "SandEE Alpha"
 
-[node name="UITileMap" type="TileMapLayer" parent="." unique_id=2043184631]
+[node name="UITileMap" type="TileMapLayer" parent="CanvasLayer" unique_id=2043184631]
 texture_filter = 1
 tile_map_data = PackedByteArray("AAAEABcAAAAEAAUAAAAGABcAAAAFAAUAAAAIABcAAAAFAAUAAAAKABcAAAAFAAUAAAAMABcAAAAFAAUAAAAOABcAAAAFAAUAAAAQABcAAAAFAAUAAAASABcAAAAFAAUAAAAUABcAAAAFAAUAAAAWABcAAAAGAAUAAAAWABkAAAAGAAYAAAAWABsAAAAGAAYAAAAWAB0AAAAGAAcAAAAUAB0AAAAFAAcAAAASAB0AAAAFAAcAAAAQAB0AAAAFAAcAAAAOAB0AAAAFAAcAAAAMAB0AAAAFAAcAAAAKAB0AAAAFAAcAAAAIAB0AAAAFAAcAAAAGAB0AAAAFAAcAAAAEAB0AAAAEAAcAAAAEABsAAAAEAAYAAAAEABkAAAAEAAYAAAAGABkAAAAFAAYAAAAIABkAAAAFAAYAAAAKABkAAAAFAAYAAAAMABkAAAAFAAYAAAAOABkAAAAFAAYAAAAQABkAAAAFAAYAAAASABkAAAAFAAYAAAAUABkAAAAFAAYAAAAUABsAAAAFAAYAAAASABsAAAAFAAYAAAAQABsAAAAFAAYAAAAOABsAAAAFAAYAAAAMABsAAAAFAAYAAAAKABsAAAAFAAYAAAAIABsAAAAFAAYAAAAGABsAAAAFAAYAAAAEACAAAAAEAAUAAAAEACIAAAAEAAYAAAAEACQAAAAEAAYAAAAEACYAAAAEAAcAAAAGACAAAAAFAAUAAAAGACIAAAAFAAYAAAAGACQAAAAFAAYAAAAGACYAAAAFAAcAAAAIACAAAAAFAAUAAAAIACIAAAAFAAYAAAAIACQAAAAFAAYAAAAIACYAAAAFAAcAAAAKACAAAAAFAAUAAAAKACIAAAAFAAYAAAAKACQAAAAFAAYAAAAKACYAAAAFAAcAAAAMACAAAAAFAAUAAAAMACIAAAAFAAYAAAAMACQAAAAFAAYAAAAMACYAAAAFAAcAAAAOACAAAAAFAAUAAAAOACIAAAAFAAYAAAAOACQAAAAFAAYAAAAOACYAAAAFAAcAAAAQACAAAAAFAAUAAAAQACIAAAAFAAYAAAAQACQAAAAFAAYAAAAQACYAAAAFAAcAAAASACAAAAAFAAUAAAASACIAAAAFAAYAAAASACQAAAAFAAYAAAASACYAAAAFAAcAAAAUACAAAAAFAAUAAAAUACIAAAAFAAYAAAAUACQAAAAFAAYAAAAUACYAAAAFAAcAAAAWACAAAAAGAAUAAAAWACIAAAAGAAYAAAAWACQAAAAGAAYAAAAWACYAAAAGAAcAAAA=")
 tile_set = SubResource("TileSet_anxor")
 
-[node name="ButtonPlay" type="Button" parent="." unique_id=1429807221]
-layout_mode = 0
+[node name="ButtonPlay" type="Button" parent="CanvasLayer" unique_id=1429807221]
 offset_left = 66.0
 offset_top = 366.0
 offset_right = 367.0
@@ -129,8 +130,7 @@ theme_override_font_sizes/font_size = 70
 theme_override_styles/normal = SubResource("StyleBoxTexture_k6sc5")
 text = "PLAY"
 
-[node name="ButtonSettings" type="Button" parent="." unique_id=1705321379]
-layout_mode = 0
+[node name="ButtonSettings" type="Button" parent="CanvasLayer" unique_id=1705321379]
 offset_left = 68.0
 offset_top = 509.0
 offset_right = 369.0

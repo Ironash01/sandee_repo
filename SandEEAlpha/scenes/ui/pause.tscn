@@ -1,0 +1,34 @@
+[gd_scene format=3 uid="uid://cokhlsvu5ddv"]
+
+[ext_resource type="Texture2D" uid="uid://ha3i74xw7xcm" path="res://sprites/ui/SandEE_UIAlpha.png" id="1_xld5c"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_k23cl"]
+atlas = ExtResource("1_xld5c")
+region = Rect2(31.958, 192.185, 32, 31.548)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_qgos8"]
+atlas = ExtResource("1_xld5c")
+region = Rect2(64, 192, 32, 32)
+
+[node name="Control" type="Control" unique_id=358029678]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TextureButton" type="TextureButton" parent="." unique_id=2019242511]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = -0.002
+anchor_right = 0.025
+anchor_bottom = 0.043
+offset_left = 2.5600002
+offset_right = 16.0
+offset_bottom = 17.039999
+tooltip_text = "Pause
+"
+texture_normal = SubResource("AtlasTexture_k23cl")
+texture_pressed = SubResource("AtlasTexture_qgos8")
+stretch_mode = 1
