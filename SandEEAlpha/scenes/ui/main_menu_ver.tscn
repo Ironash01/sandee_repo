@@ -1,6 +1,7 @@
 [gd_scene format=4 uid="uid://dtoob047okjsh"]
 
 [ext_resource type="Texture2D" uid="uid://dbp2fnlgrjlkm" path="res://sprites/mainmenu/sandee_alpha_mainmenu.png" id="1_0ryji"]
+[ext_resource type="Script" uid="uid://bhej2o7t4bbbp" path="res://scripts/main_menu_ver.gd" id="1_3ujtn"]
 [ext_resource type="Texture2D" uid="uid://ha3i74xw7xcm" path="res://sprites/ui/SandEE_UIAlpha.png" id="2_k6sc5"]
 
 [sub_resource type="Animation" id="Animation_k6sc5"]
@@ -88,11 +89,15 @@ sources/0 = SubResource("TileSetAtlasSource_3ujtn")
 
 [node name="Control" type="Control" unique_id=642449824]
 layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
+anchor_right = 1.121
 anchor_bottom = 1.0
+offset_left = 640.0
+offset_top = 360.0
+offset_right = -794.8801
+offset_bottom = -360.0
 grow_horizontal = 2
 grow_vertical = 2
+script = ExtResource("1_3ujtn")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1714550615]
 
@@ -138,3 +143,5 @@ offset_bottom = 626.0
 theme_override_font_sizes/font_size = 70
 theme_override_styles/normal = SubResource("StyleBoxTexture_3ujtn")
 text = "Settings"
+
+[connection signal="pressed" from="CanvasLayer/ButtonPlay" to="." method="_on_button_play_pressed"]

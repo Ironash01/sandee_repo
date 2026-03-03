@@ -15,6 +15,10 @@ run/main_scene="uid://dtoob047okjsh"
 config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon.svg"
 
+[autoload]
+
+InventoryManager="*uid://diy74q4uojkhl"
+
 [display]
 
 window/size/viewport_width=1280
@@ -47,7 +51,8 @@ gameplay_left={
 }
 gameplay_down={
 "deadzone": 0.2,
-"events": []
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":83,"key_label":0,"unicode":115,"location":0,"echo":false,"script":null)
+]
 }
 
 [physics]
