@@ -5,6 +5,7 @@
 [resource]
 script = ExtResource("1_6qdj7")
 single_line_comment = "#"
+multiline_comment_enabled = true
 multiline_comment_start = "'''"
 multiline_comment_end = "'''"
 keywords = PackedStringArray("as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "pass", "raise", "return", "try", "while", "with", "yield")
