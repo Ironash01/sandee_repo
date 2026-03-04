@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="LanguageSpecification" format=3 uid="uid://dwisajvglb4eu"]
+
+[ext_resource type="Script" uid="uid://dv0owljpv7t7j" path="res://scripts/language_spec.gd" id="1_6qdj7"]
+
+[resource]
+script = ExtResource("1_6qdj7")
+metadata/_custom_type_script = "uid://dv0owljpv7t7j"

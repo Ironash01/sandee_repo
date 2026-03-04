@@ -1,0 +1,39 @@
+[gd_scene format=3 uid="uid://ljsj613w8cix"]
+
+[ext_resource type="Script" uid="uid://b74mk33v67nn0" path="res://scripts/code_editor.gd" id="1_f8gbe"]
+[ext_resource type="Script" uid="uid://dmwoqur62xjkx" path="res://scripts/code_edit.gd" id="1_ni12f"]
+[ext_resource type="FontFile" uid="uid://mjfcgc0evs1g" path="res://fonts/monogram-extended.ttf" id="2_f8gbe"]
+
+[node name="Control" type="Control" unique_id=794292869]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_f8gbe")
+
+[node name="CodeEdit" type="CodeEdit" parent="." unique_id=115823503]
+custom_minimum_size = Vector2(100, 100)
+layout_mode = 1
+anchors_preset = -1
+anchor_right = 0.382
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 16.0
+offset_bottom = -16.0
+grow_vertical = 2
+theme_override_fonts/font = ExtResource("2_f8gbe")
+line_folding = true
+gutters_draw_line_numbers = true
+delimiter_strings = Array[String]([])
+code_completion_enabled = true
+indent_use_spaces = true
+indent_automatic = true
+indent_automatic_prefixes = Array[String]([])
+auto_brace_completion_enabled = true
+auto_brace_completion_pairs = {}
+script = ExtResource("1_ni12f")
+
+[connection signal="update_language_spec" from="." to="CodeEdit" method="load_language_spec"]
+[connection signal="text_changed" from="CodeEdit" to="CodeEdit" method="code_completion_requested"]

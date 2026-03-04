@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="LanguageSpecification" format=3 uid="uid://df7rqt8d0p5if"]
+
+[ext_resource type="Script" uid="uid://dv0owljpv7t7j" path="res://scripts/language_spec.gd" id="1_gvadt"]
+
+[resource]
+script = ExtResource("1_gvadt")
+single_line_comment = "--"
+keywords = PackedStringArray("break", "do", "else", "elseif", "end", "for", "function", "if", "in", "local", "repeat", "return", "then", "until", "while")
+constants = PackedStringArray("true", "false", "nil")
+string_delimiters = PackedStringArray("\'", "\"")
+operators = PackedStringArray("and", "not", "or")
+auto_braces = Dictionary[String, String]({
+"(": ")",
+"[": "]",
+"{": "}"
+})
+metadata/_custom_type_script = "uid://dv0owljpv7t7j"
