@@ -1,14 +1,10 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+use godot::prelude::*;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+struct InterpreterExtension;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+#[gdextension]
+unsafe impl ExtensionLibrary for InterpreterExtension {
+    fn on_stage_init(stage: InitStage) {
+        godot_print!("[Rust] Loaded extension at stage: {:?}", stage);
     }
 }

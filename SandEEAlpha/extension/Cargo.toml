@@ -1,5 +1,5 @@
 [package]
-name = "backend"
+name = "interpreter"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,4 +7,6 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
+anyhow = "1.0.102"
 godot = "0.4.5"
+mlua = { version = "0.11.6", features = ["lua54", "send", "error-send", "anyhow"] }
