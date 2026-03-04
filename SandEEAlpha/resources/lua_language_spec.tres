@@ -9,6 +9,7 @@ keywords = PackedStringArray("break", "do", "else", "elseif", "end", "for", "fun
 constants = PackedStringArray("true", "false", "nil")
 string_delimiters = PackedStringArray("\'", "\"")
 operators = PackedStringArray("and", "not", "or")
+auto_indents = PackedStringArray("{", "[", "(")
 auto_braces = Dictionary[String, String]({
 "(": ")",
 "[": "]",
