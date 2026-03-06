@@ -5,6 +5,8 @@ class_name LanguageSpecification
 @export_color_no_alpha var keyword_color: Color = Color("#cba6f7")
 @export_color_no_alpha var constant_color: Color = Color("#fab387")
 @export_color_no_alpha var function_color: Color = Color("#89b4fa")
+@export_color_no_alpha var builtin_color: Color = Color("#f38ba8")
+@export_color_no_alpha var member_variable_color: Color = Color("#89b4fa")
 @export_color_no_alpha var operator_color: Color = Color("#89dceb")
 @export_color_no_alpha var number_color: Color = Color("#fab387")
 @export_color_no_alpha var string_color: Color = Color("#a6e3a1")
@@ -22,6 +24,14 @@ class_name LanguageSpecification
 
 @export_group("Constants")
 @export var constants: PackedStringArray
+@export var membered_constants: PackedStringArray
+
+@export_group("Functions")
+@export var builtin_functions: PackedStringArray
+@export var membered_builtin_functions: PackedStringArray
+
+@export_group("Builtins")
+@export var builtins: PackedStringArray
 
 @export_group("Strings")
 @export var string_delimiters: PackedStringArray

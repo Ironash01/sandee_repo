@@ -38,4 +38,4 @@ auto_brace_completion_pairs = {}
 script = ExtResource("1_ni12f")
 
 [connection signal="update_language_spec" from="." to="CodeEdit" method="load_language_spec"]
-[connection signal="text_changed" from="CodeEdit" to="CodeEdit" method="code_completion_requested"]
+[connection signal="text_changed" from="CodeEdit" to="CodeEdit" method="code_completion_request"]
