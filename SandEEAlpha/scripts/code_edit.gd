@@ -5,9 +5,11 @@ var syntax_highlighting: CodeHighlighter = CodeHighlighter.new()
 
 func _get_last_token() -> String:
 	var i: int = 0
-	while not text.right(i).begins_with(' ') and i < text.length():
+	var last_token: String = ""
+	while last_token.lstrip("\n ").length() == last_token.length() and i <= text.length():
+		last_token = text.right(i)
 		i += 1
-	return text.right(i).lstrip(' ')
+	return last_token.lstrip("\n ")
 
 func code_completion_request() -> void:
 	var last_token: String = _get_last_token()
@@ -29,7 +31,8 @@ func code_completion_request() -> void:
 				add_code_completion_option(KIND_FUNCTION, function, function, language_spec.function_color)
 		else:
 			var parent: String = last_token.get_basename()
-			print(parent)
+			if Array(language_spec.string_delimiters).any(func (x: String): return parent.contains(x)):
+				parent = "string"
 			for constant: String in language_spec.membered_constants:
 				if constant.begins_with(parent):
 					add_code_completion_option(KIND_CONSTANT, constant.get_extension(), constant.get_extension(), language_spec.constant_color)
