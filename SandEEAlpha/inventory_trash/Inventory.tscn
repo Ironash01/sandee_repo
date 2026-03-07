@@ -1,11 +1,11 @@
 [gd_scene format=3 uid="uid://csrf8a1ky81kd"]
 
-[ext_resource type="Script" uid="uid://btsefbljjr02m" path="res://scripts/inventory.gd" id="1_aa520"]
-[ext_resource type="PackedScene" uid="uid://dc0bf2lywxb84" path="res://scenes/ui/inventory_slots.tscn" id="2_0s510"]
-[ext_resource type="Texture2D" uid="uid://ha3i74xw7xcm" path="res://sprites/ui/SandEE_UIAlpha.png" id="3_0j8vr"]
+[ext_resource type="Script" uid="uid://btsefbljjr02m" path="res://inventory_trash/inventory.gd" id="1_cmkyu"]
+[ext_resource type="PackedScene" uid="uid://dc0bf2lywxb84" path="res://inventory_trash/inventory_slots.tscn" id="2_ctbjj"]
+[ext_resource type="Texture2D" uid="uid://ha3i74xw7xcm" path="res://sprites/ui/SandEE_UIAlpha.png" id="3_iod0x"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_0j8vr"]
-atlas = ExtResource("3_0j8vr")
+atlas = ExtResource("3_iod0x")
 region = Rect2(128, 65, 96, 96)
 
 [node name="Inventory" type="Control" unique_id=1565021180]
@@ -17,8 +17,8 @@ anchor_right = 0.5
 anchor_bottom = 0.5
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("1_aa520")
-slot_scene = ExtResource("2_0s510")
+script = ExtResource("1_cmkyu")
+slot_scene = ExtResource("2_ctbjj")
 
 [node name="GridContainer" type="GridContainer" parent="." unique_id=649070982]
 z_index = 1
