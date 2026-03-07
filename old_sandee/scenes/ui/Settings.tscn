@@ -1,0 +1,18 @@
+[gd_scene format=3 uid="uid://dg0qv5wc8dney"]
+
+[node name="Control" type="Control" unique_id=2006083825]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Label" type="Label" parent="." unique_id=1443844529]
+layout_mode = 0
+offset_left = 66.0
+offset_top = 321.0
+offset_right = 1278.0
+offset_bottom = 458.0
+theme_override_font_sizes/font_size = 100
+text = "STILL ON DEVELOPMENT!"

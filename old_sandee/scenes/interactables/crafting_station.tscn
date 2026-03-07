@@ -1,0 +1,83 @@
+[gd_scene format=3 uid="uid://b2x0d16n8afba"]
+
+[ext_resource type="Texture2D" uid="uid://bix6tswnsh1p0" path="res://sprites/SandEE_Crafting.png" id="1_yri38"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_dn6kr"]
+radius = 52.0
+
+[sub_resource type="Animation" id="Animation_gil4m"]
+length = 0.001
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Sprite2D:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 1,
+"values": [0]
+}
+
+[sub_resource type="Animation" id="Animation_dn6kr"]
+resource_name = "crafting_anim"
+loop_mode = 1
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Sprite2D:frame")
+tracks/0/interp = 0
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 0.2, 0.4, 0.6333333, 0.8666667),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1),
+"update": 1,
+"values": [0, 1, 2, 3, 4]
+}
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_n7x5t"]
+_data = {
+&"RESET": SubResource("Animation_gil4m"),
+&"crafting_anim": SubResource("Animation_dn6kr")
+}
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_n7x5t"]
+size = Vector2(30, 26.125)
+
+[node name="CraftingStation" type="Area2D" unique_id=266875770]
+visibility_layer = 5
+y_sort_enabled = true
+collision_layer = 2
+collision_mask = 2
+
+[node name="InteractionCol" type="CollisionShape2D" parent="." unique_id=2082457758]
+light_mask = 4
+visibility_layer = 4
+y_sort_enabled = true
+shape = SubResource("CircleShape2D_dn6kr")
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1351417721]
+z_index = 1
+y_sort_enabled = true
+texture_filter = 1
+texture = ExtResource("1_yri38")
+hframes = 5
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=294836656]
+libraries/ = SubResource("AnimationLibrary_n7x5t")
+autoplay = &"crafting_anim"
+
+[node name="StaticBod" type="StaticBody2D" parent="." unique_id=498067590]
+z_index = 1
+y_sort_enabled = true
+collision_layer = 4
+collision_mask = 7
+
+[node name="NormalCol" type="CollisionShape2D" parent="StaticBod" unique_id=2025982345]
+z_index = 1
+y_sort_enabled = true
+position = Vector2(0, -2.9375)
+shape = SubResource("RectangleShape2D_n7x5t")
+
+[connection signal="area_entered" from="." to="." method="_on_area_entered"]

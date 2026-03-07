@@ -1,0 +1,29 @@
+[gd_scene format=3 uid="uid://bixjinhfhauab"]
+
+[ext_resource type="PackedScene" uid="uid://cnc7lnsw45l6i" path="res://scenes/ui/Hotbar.tscn" id="1_bj3gq"]
+[ext_resource type="PackedScene" uid="uid://cokhlsvu5ddv" path="res://scenes/ui/pause.tscn" id="2_kafmv"]
+[ext_resource type="PackedScene" uid="uid://ch5ppikl27a2n" path="res://scenes/world_gen.tscn" id="3_kafmv"]
+[ext_resource type="PackedScene" uid="uid://b2luk2qj6moim" path="res://scenes/player/player.tscn" id="4_2glxl"]
+[ext_resource type="PackedScene" uid="uid://chae2m53coo2i" path="res://scenes/ui/InventoryItem.tscn" id="5_2glxl"]
+[ext_resource type="Texture2D" uid="uid://bg7iv6t8kx5jj" path="res://sprites/items/SandEE_TemplateSword.png" id="6_hdajf"]
+
+[node name="Node2D" type="Node2D" unique_id=215356930]
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=457529082]
+
+[node name="Pause" parent="CanvasLayer" unique_id=358029678 instance=ExtResource("2_kafmv")]
+z_index = 30
+
+[node name="Control" parent="CanvasLayer" unique_id=1912151607 instance=ExtResource("1_bj3gq")]
+
+[node name="World" parent="." unique_id=98158199 node_paths=PackedStringArray("player") instance=ExtResource("3_kafmv")]
+player = NodePath("../Player")
+
+[node name="Player" parent="." unique_id=382532469 instance=ExtResource("4_2glxl")]
+texture_filter = 1
+
+[node name="InventoryItem" parent="." unique_id=541138292 instance=ExtResource("5_2glxl")]
+position = Vector2(132, 1)
+item_type = "DebugItem"
+item_name = "Template Sword"
+item_texture = ExtResource("6_hdajf")
