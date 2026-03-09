@@ -1,3 +1,4 @@
+mod runner;
 use godot::prelude::*;
 
 struct InterpreterExtension;
