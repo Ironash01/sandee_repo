@@ -63,7 +63,7 @@ func load_language_spec(_language_spec: LanguageSpecification) -> void:
 	for str_delimiter: String in language_spec.string_delimiters:
 		add_string_delimiter(str_delimiter, str_delimiter, true)
 		add_auto_brace_completion_pair(str_delimiter, str_delimiter)
-		syntax_highlighting.add_color_region(str_delimiter, str_delimiter, language_spec.string_color, true)
+		syntax_highlighting.add_color_region(str_delimiter, str_delimiter, language_spec.string_color)
 
 	# keywords
 	for keyword: String in language_spec.keywords:

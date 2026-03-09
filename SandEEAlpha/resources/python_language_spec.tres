@@ -5,16 +5,13 @@
 [resource]
 script = ExtResource("1_6qdj7")
 single_line_comment = "#"
-multiline_comment_enabled = true
-multiline_comment_start = "'''"
-multiline_comment_end = "'''"
 keywords = PackedStringArray("as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "pass", "raise", "return", "try", "while", "with", "yield")
 constants = PackedStringArray("False", "None", "True")
 membered_constants = PackedStringArray("math.pi", "math.e", "math.tau", "math.inf", "math.nan")
 builtin_functions = PackedStringArray("abs", "aiter", "any", "anext", "ascii", "bin", "bool", "breakpoint", "bytearray", "bytes", "callable", "chr", "classmethod", "compile", "complex", "delattr", "dict", "dir", "divmod", "enumerate", "eval", "exec", "filter", "float", "format", "frozenset", "getattr", "globals", "hasattr", "hash", "help", "hex", "id", "input", "int", "issubclass", "iter", "len", "list", "locals", "map", "max", "memoryview", "min", "next", "object", "oct", "open", "ord", "pow", "print", "property", "range", "repr", "reversed", "round", "set", "setattr", "slice", "sorted", "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip")
 membered_builtin_functions = PackedStringArray("string.capitalize", "string.casefold", "string.center", "string.count", "string.encode", "string.endswith", "string.expandtabs", "string.find", "string.format", "string.format_map", "string.index", "string.isalnum", "string.isalpha", "string.isascii", "string.isdecimal", "string.isdigit", "string.isidentifier", "string.islower", "string.isnumeric", "string.isprintable", "string.isspace", "string.istitle", "string.isupper", "string.join", "string.ljust", "string.lower", "string.lstrip", "string.maketrans", "string.partition", "string.removeprefix", "string.removesuffix", "string.replace", "string.rfind", "string.rindex", "string.rpartition", "string.rsplit", "string.rstrip", "string.split", "string.splitlines", "string.startswith", "string.strip", "string.swapcase", "string.title", "string.translate", "string.upper", "string.zfill", "math.ceil", "math.comb", "math.copysign", "math.fabs", "math.floor", "math.fmod", "math.frexp", "math.fsum", "math.gcd", "math.isclose", "math.isfinite", "math.isinf", "math.isnan", "math.isqrt", "math.lcm", "math.ldexp", "math.modf", "math.nextafter", "math.perm", "math.prod", "math.remainder", "math.trunc", "math.ulp", "math.exp", "math.expm1", "math.log", "math.log1p", "math.log2", "math.log10", "math.pow", "math.sqrt", "math.acos", "math.asin", "math.atan", "math.atan2", "math.cos", "math.dist", "math.hypot", "math.sin", "math.tan", "math.degrees", "math.radians", "ath.acosh", "math.asinh", "math.atanh", "math.cosh", "math.sinh", "math.tanh", "math.erf", "math.erfc", "math.gamma", "math.lgamma")
 builtins = PackedStringArray("math", "string", "re", "random")
-string_delimiters = PackedStringArray("\'", "\"")
+string_delimiters = PackedStringArray("\"", "\'", "\'\'\'")
 operators = PackedStringArray("and", "not", "or")
 auto_indents = PackedStringArray(":", "{", "[", "(")
 auto_braces = Dictionary[String, String]({
