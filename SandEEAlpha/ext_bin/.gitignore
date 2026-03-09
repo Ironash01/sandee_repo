@@ -1,0 +1,7 @@
+*
+!.gitignore
+!release
+!release/libinterpreter.so
+
+!x86_64-pc-windows-gnu
+!x86_64-pc-windows-gnu/release/interpreter.dll
