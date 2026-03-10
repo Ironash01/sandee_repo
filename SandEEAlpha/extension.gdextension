@@ -8,3 +8,6 @@ linux.debug.x86_64 =     "res://ext_bin/debug/libinterpreter.so"
 linux.release.x86_64 =   "res://ext_bin/release/libinterpreter.so"
 windows.debug.x86_64 = "res://ext_bin/x86_64-pc-windows-gnu/release/interpreter.dll"
 windows.release.x86_64 = "res://ext_bin/x86_64-pc-windows-gnu/release/interpreter.dll"
+
+[icons]
+LuaRunner = "res://extension/lua.svg"

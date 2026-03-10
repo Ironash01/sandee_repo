@@ -1,5 +1,6 @@
 mod runner;
 use godot::prelude::*;
+use runner::prelude::*;
 
 struct InterpreterExtension;
 
