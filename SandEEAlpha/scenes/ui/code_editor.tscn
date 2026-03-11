@@ -4,7 +4,7 @@
 [ext_resource type="Script" uid="uid://dmwoqur62xjkx" path="res://scripts/code_edit.gd" id="1_ni12f"]
 [ext_resource type="FontFile" uid="uid://mjfcgc0evs1g" path="res://fonts/monogram-extended.ttf" id="2_f8gbe"]
 
-[node name="Control" type="Control" unique_id=794292869]
+[node name="CodeEditor" type="Control" unique_id=794292869]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0

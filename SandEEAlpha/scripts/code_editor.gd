@@ -5,6 +5,7 @@ enum Language { Lua, Python }
 
 const LUA_LANGUAGE_SPEC = preload("uid://df7rqt8d0p5if")
 const PYTHON_LANGUAGE_SPEC = preload("uid://dwisajvglb4eu")
+@onready var code_edit: CodeEdit = $CodeEdit
 
 signal update_language_spec(language_spec: LanguageSpecification)
 
@@ -15,3 +16,6 @@ func _ready() -> void:
 			update_language_spec.emit(LUA_LANGUAGE_SPEC)
 		Language.Python:
 			update_language_spec.emit(PYTHON_LANGUAGE_SPEC)
+
+func get_code() -> String:
+	return code_edit.text

@@ -1,0 +1,39 @@
+[gd_scene format=3 uid="uid://cax7mgjq7ctb7"]
+
+[ext_resource type="PackedScene" uid="uid://ljsj613w8cix" path="res://scenes/ui/code_editor.tscn" id="1_3c1be"]
+[ext_resource type="Script" uid="uid://ols2aeexww5s" path="res://scripts/test/test_agent.gd" id="1_edwpa"]
+
+[node name="Node2D" type="Node2D" unique_id=1202137654]
+script = ExtResource("1_edwpa")
+
+[node name="LuaRunner" type="LuaRunner" parent="." unique_id=1800438668]
+
+[node name="Control" type="Control" parent="." unique_id=495409997]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 1280.0
+offset_bottom = 720.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CodeEditor" parent="Control" unique_id=794292869 instance=ExtResource("1_3c1be")]
+layout_mode = 1
+anchors_preset = -1
+anchor_bottom = 0.8
+grow_vertical = 1
+
+[node name="Button" type="Button" parent="Control" unique_id=406829749]
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 0.8
+anchor_right = 0.382
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_bottom = -16.0
+grow_vertical = 0
+theme_override_font_sizes/font_size = 24
+text = "Run "
+
+[connection signal="pressed" from="Control/Button" to="." method="_on_button_pressed"]

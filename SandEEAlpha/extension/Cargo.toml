@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 anyhow = "1.0.102"
 godot = "0.4.5"
 mlua = { version = "0.11.6", features = ["lua51", "send", "error-send", "anyhow", "vendored"] }
+strum = { version = "0.28.0", features = ["derive"] }
