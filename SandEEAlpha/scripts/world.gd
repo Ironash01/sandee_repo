@@ -1,5 +1,9 @@
 extends Node2D
 
+# experimental tiling variables
+const TILE_SIZE = 32
+@export var object: PackedScene
+
 enum Terrain { Water, Plain, Desert, Snowy }
 @export var player : CharacterBody2D
 
@@ -199,3 +203,25 @@ func _point_to_cell_index(point: Vector2, cell_size: float, grid_width: int, gri
 	
 func spawn_player():
 	player.position = Vector2(spawn_center)
+	
+# Glenn 03122026
+
+
+func _input(event):
+		if event.is_action_pressed("mouse_left"):
+			place_block()
+
+func place_block():
+	# get mouse relative to this Node2D
+	var mouse_pos = get_local_mouse_position()
+	
+	# calculate grid
+	var grid_x = floor(mouse_pos.x / TILE_SIZE)
+	var grid_y = floor(mouse_pos.y / TILE_SIZE)
+	var world_pos = Vector2(grid_x, grid_y) * TILE_SIZE + Vector2(TILE_SIZE/2, TILE_SIZE/2)
+	
+	# instantiate object
+	var obj = object.instantiate()
+	obj.position = world_pos
+	add_child(obj)
+	

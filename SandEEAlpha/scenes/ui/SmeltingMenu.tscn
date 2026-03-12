@@ -1,0 +1,29 @@
+[gd_scene format=3 uid="uid://bajfubs7vs868"]
+
+[ext_resource type="Texture2D" uid="uid://ha3i74xw7xcm" path="res://sprites/ui/SandEE_UIAlpha.png" id="1_cbf12"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_fyaq0"]
+atlas = ExtResource("1_cbf12")
+region = Rect2(129, 161, 93, 95)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_kfr77"]
+atlas = ExtResource("1_cbf12")
+region = Rect2(32, 96, 32, 32)
+
+[node name="SmeltingMenu" type="Control" unique_id=731547156]
+layout_mode = 3
+anchors_preset = 0
+
+[node name="bg" type="TextureRect" parent="." unique_id=2006895239]
+layout_mode = 0
+offset_right = 93.0
+offset_bottom = 95.0
+texture = SubResource("AtlasTexture_fyaq0")
+
+[node name="slot_example" type="TextureRect" parent="." unique_id=31322515]
+z_index = 1
+layout_mode = 0
+offset_top = 2.0
+offset_right = 40.0
+offset_bottom = 42.0
+texture = SubResource("AtlasTexture_kfr77")

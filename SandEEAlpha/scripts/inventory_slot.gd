@@ -47,4 +47,8 @@ func set_item(new_item):
 		item_effect.text = str("+ ", item["effect"])
 	else:
 		item_effect.text = ""
-		
+
+
+
+func _on_drop_button_pressed() -> void:
+	pass # Replace with function body.
