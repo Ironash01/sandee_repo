@@ -23,12 +23,7 @@ func furnace():
 
 func _on_area_2d_body_entered(body: CharacterBody2D) -> void:
 	print("col")
-	if obj_type == "furnace":
-		if body.name == "Player":
-			sm_instance.visible = true
+
 
 func _on_area_2d_body_exited(body: CharacterBody2D) -> void:
 	print("col")
-	if sm_instance.visible == true:
-		sm_instance.visible = false
-		

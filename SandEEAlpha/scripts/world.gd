@@ -211,17 +211,21 @@ func _input(event):
 		if event.is_action_pressed("mouse_left"):
 			place_block()
 
+# first ver of place_block
 func place_block():
 	# get mouse relative to this Node2D
 	var mouse_pos = get_local_mouse_position()
-	
+	var cell = editable_layer.local_to_map(mouse_pos) #temp code to snap place book into tilemap
 	# calculate grid
 	var grid_x = floor(mouse_pos.x / TILE_SIZE)
 	var grid_y = floor(mouse_pos.y / TILE_SIZE)
-	var world_pos = Vector2(grid_x, grid_y) * TILE_SIZE + Vector2(TILE_SIZE/2, TILE_SIZE/2)
+	#var world_pos = Vector2(grid_x, grid_y) * TILE_SIZE + Vector2(TILE_SIZE/2, TILE_SIZE/2)
+	var world_pos = editable_layer.map_to_local(cell)
 	
 	# instantiate object
 	var obj = object.instantiate()
 	obj.position = world_pos
 	add_child(obj)
+	
+
 	

@@ -246,6 +246,7 @@ shape = SubResource("RectangleShape2D_dovo2")
 shape = SubResource("CircleShape2D_0owmy")
 
 [node name="InventoryUI" type="CanvasLayer" parent="." unique_id=866163215]
+visible = false
 
 [node name="ColorRect" type="ColorRect" parent="InventoryUI" unique_id=1494728434]
 anchors_preset = 8
@@ -289,3 +290,5 @@ grow_horizontal = 2
 theme_override_font_sizes/font_size = 50
 text = "Inventory
 "
+
+[node name="SmeltingMenu" type="CanvasLayer" parent="." unique_id=1791033080]

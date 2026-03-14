@@ -13,7 +13,7 @@ extends Control
 var item = null
 
 
-func _read():
+func _ready():
 	pass
 
 func _process(delta):
