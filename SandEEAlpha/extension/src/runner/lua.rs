@@ -1,275 +1,107 @@
-use crate::{from_usize_enum, utils::print_as_godot_error};
+use std::str::FromStr;
+
 use anyhow::Result;
 use godot::prelude::*;
-use mlua::{FromLua, IntoLua, Lua, MetaMethod, Table, UserData, Value};
-use std::{
-    ops::Add,
-    sync::mpsc::{Receiver, Sender, TryRecvError, channel},
-    thread::{self, JoinHandle},
-};
-use strum::AsRefStr;
+use mlua::{IntoLua, Lua, Table, Value};
+use strum::{AsRefStr, EnumString};
 
-from_usize_enum! {
-    pub enum LuaSignal {
-        Unknown = 0,
-        Print,
-        Move,
-    }
+#[derive(AsRefStr, EnumString)]
+pub enum LuaSignal {
+    Generic,
+    Print,
 }
 
-pub enum LuaRequest {
-    RunLuaCode(String),
-}
-
-#[derive(AsRefStr)]
-pub enum LuaResponse {
-    #[strum(serialize = "codeRan")]
-    CodeResult(Result<Table>),
-}
-
-#[derive(Clone, Copy)]
-struct Vector2 {
-    x: i32,
-    y: i32,
-}
-
-impl Add for Vector2 {
-    type Output = Self;
-
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-        }
-    }
-}
-
-impl FromLua for Vector2 {
-    fn from_lua(value: Value, _: &Lua) -> mlua::Result<Self> {
-        match value {
-            Value::UserData(ud) => Ok(*ud.borrow()?),
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl UserData for Vector2 {
-    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("magnitude", |_, vec, ()| {
-            Ok(((vec.x * vec.x + vec.y * vec.y) as f32).sqrt())
-        });
-
-        methods.add_meta_function(MetaMethod::Add, |_, (this, other): (Vector2, Vector2)| {
-            Ok(this + other)
-        });
-    }
-}
-
-pub enum LuaEvent {
-    Request(LuaRequest),
-    Response(LuaResponse),
-}
-
-pub struct LuaTask {
-    lua: Lua,
-    lua_sender: LuaSender,
-    node_sender: LuaSender,
-}
-
-pub type LuaSender = Sender<LuaEvent>;
-
-impl LuaTask {
-    pub fn launch_thread(node_sender: LuaSender) -> (JoinHandle<()>, LuaSender) {
-        let (lua_sender, lua_receiver) = channel();
-
-        let scoped_lua_sender = lua_sender.clone();
-        let task = thread::spawn(move || {
-            let mut lua = Self::new(scoped_lua_sender, node_sender);
-
-            loop {
-                let next = match lua_receiver.try_recv() {
-                    Err(_) => continue,
-                    Ok(e) => e,
-                };
-
-                match next {
-                    LuaEvent::Request(req) => lua.handle_request(req),
-                    LuaEvent::Response(res) => lua.handle_response(res),
-                }
-            }
-        });
-
-        return (task, lua_sender);
-    }
-
-    fn new(lua_sender: LuaSender, node_sender: LuaSender) -> Self {
-        let mut s = Self {
-            lua: Lua::new(),
-            lua_sender,
-            node_sender,
-        };
-        s.setup_lua_state().expect("fuck u");
-        s
-    }
-
-    fn setup_lua_state(&mut self) -> Result<()> {
-        let globals = self.lua.globals();
-        let signals = self.lua.create_table()?;
-        globals.set("signals", signals)?;
-
-        let print = self.lua.create_function(|l, string: String| {
-            let signals: Table = l.globals().get("signals")?;
-            let print_signal = l.create_table()?;
-            print_signal.set(LuaSignal::Print as usize, string)?;
-            signals.push(print_signal)?;
-            Ok(())
-        })?;
-        globals.set("print", print)?;
-
-        let lua_move = self.lua.create_function(|l, point: Vector2| {
-            let signals: Table = l.globals().get("signals")?;
-            let print_signal = l.create_table()?;
-            print_signal.set(LuaSignal::Move as usize, point)?;
-            signals.push(print_signal)?;
-            Ok(())
-        })?;
-        globals.set("move", lua_move)?;
-
-        Ok(())
-    }
-
-    pub fn handle_request(&mut self, request: LuaRequest) {
-        match request {
-            LuaRequest::RunLuaCode(code) => {
-                self.handle_response(LuaResponse::CodeResult(match self.lua.load(code).exec() {
-                    Ok(_) => Ok(self.lua.globals()),
-                    Err(e) => Err(e.into()),
-                }));
-            }
-        }
-    }
-    pub fn handle_response(&mut self, response: LuaResponse) {
-        match response {
-            LuaResponse::CodeResult(_) => self
-                .node_sender
-                .send(LuaEvent::Response(response))
-                .expect("fuck u"),
-        }
-    }
+fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<Table> {
+    let signal = state.create_table()?;
+    signal.set("type", signal_type.as_ref())?;
+    signal.set("arg", arg)?;
+    Ok(signal)
 }
 
 #[derive(GodotClass)]
 #[class(base=Node)]
-pub struct LuaRunner {
-    lua_task: JoinHandle<()>,
-    lua_sender: LuaSender,
-    node_receiver: Receiver<LuaEvent>,
+struct LuaState {
+    lua: Lua,
     base: Base<Node>,
 }
 
 #[godot_api]
-impl INode for LuaRunner {
+impl INode for LuaState {
     fn init(base: Base<Node>) -> Self {
-        let (node_sender, node_receiver) = channel();
-
-        let (lua_task, lua_sender) = LuaTask::launch_thread(node_sender.clone());
-
-        Self {
-            lua_task,
-            lua_sender,
-            node_receiver,
+        let mut res = Self {
+            lua: Lua::new(),
             base,
-        }
-    }
-
-    fn ready(&mut self) {
-        match self.send_lua_request(LuaRequest::RunLuaCode(String::from(
-            "print(\"[LuaRunner] Test Print\")",
-        ))) {
-            Err(err) => godot_error!("{:?}", err),
-            Ok(_) => (),
-        }
-        godot_print!("[LuaRunner] Ready");
+        };
+        res.prepare_lua_state()
+            .expect("Preparing Lua state failed.");
+        res
     }
 
     fn process(&mut self, _: f64) {
-        let event = match self.node_receiver.try_recv() {
-            Err(e) => {
-                match e {
-                    TryRecvError::Disconnected => {
-                        godot_warn!("[LuaRunner] Sender is disconnected.")
-                    }
-                    _ => (),
+        let signals: Table = self
+            .lua
+            .globals()
+            .get("signals")
+            .expect("Failed to get signals");
+
+        for signal in signals.sequence_values::<Table>() {
+            let signal = signal.expect("Failed to load signal");
+            let signal_type: String = signal.get("type").expect("Failed to get signal type");
+            match LuaSignal::from_str(signal_type.as_str()).expect("Failed to convert signal type")
+            {
+                LuaSignal::Print => {
+                    let print_string: String =
+                        signal.get("arg").expect("Failed to get signal argument");
+                    self.signals().print().emit(print_string);
                 }
-                return;
+                _ => (),
             }
-            Ok(event) => event,
-        };
-
-        let response = match event {
-            LuaEvent::Response(res) => res,
-            _ => return,
-        };
-
-        self.signals()
-            .on_receive_lua_response()
-            .emit(response.as_ref());
-
-        match response {
-            LuaResponse::CodeResult(globals) => match globals {
-                Ok(g) => self.interpret_signals(g),
-                Err(e) => godot_error!("{:?}", e),
-            },
         }
+        signals.clear().expect("Failed to clear signals");
     }
 }
 
 #[godot_api]
-impl LuaRunner {
+impl LuaState {
+    // Godot Signals
     #[signal]
-    pub fn on_receive_lua_response(response_type: GString);
-
+    fn code_executed();
     #[signal]
-    pub fn on_move_signal(x: i32, y: i32);
-
+    fn code_failed(error: String);
+    #[signal]
+    fn print(string: String);
+    // Godot Functions
     #[func]
-    fn run_lua_code(&self, code: GString) {
-        print_as_godot_error(self.send_lua_request(LuaRequest::RunLuaCode(code.to_string())));
+    fn run_code(&mut self, code: String) {
+        if let Err(e) = self._run_code(code) {
+            self.signals().code_failed().emit(e.to_string());
+        } else {
+            self.signals().code_executed().emit();
+        }
     }
 
-    pub fn send_lua_request(&self, req: LuaRequest) -> Result<()> {
-        self.lua_sender.send(LuaEvent::Request(req))?;
+    fn _run_code(&mut self, code: String) -> Result<()> {
+        self.lua.load(&code).exec()?;
         Ok(())
     }
 
-    fn interpret_signals(&mut self, globals: Table) {
-        let signals: Table =
-            print_as_godot_error(globals.get("signals").map_err(|e| e.into())).unwrap();
+    // Internals
+    fn prepare_lua_state(&mut self) -> Result<()> {
+        let globals = self.lua.globals();
+        let signals = self.lua.create_table()?;
+        globals.set("signals", signals)?;
 
-        print_as_godot_error(
-            signals
-                .for_each(|_: Value, signal: Table| {
-                    signal.for_each(|signal_type: usize, content: Value| {
-                        match signal_type.into() {
-                            LuaSignal::Print => {
-                                godot_print!("{}", content.to_string()?);
-                                Ok(())
-                            }
-                            LuaSignal::Move => {
-                                let vec = content.as_table().unwrap();
-                                self.signals()
-                                    .on_move_signal()
-                                    .emit(vec.get::<i32>("x")?, vec.get::<i32>("y")?);
-                                Ok(())
-                            }
-                            _ => Ok(()),
-                        }
-                    })?;
-                    Ok(())
-                })
-                .map_err(|e| e.into()),
-        );
-        print_as_godot_error(signals.clear().map_err(|e| e.into()));
+        let print = self.lua.create_function(|state, string: String| {
+            let signals: Table = state.globals().get("signals")?;
+            signals.push(build_lua_signal(
+                state,
+                LuaSignal::Print,
+                string.into_lua(state)?,
+            )?)?;
+            Ok(())
+        })?;
+        globals.set("print", print)?;
+
+        Ok(())
     }
 }
