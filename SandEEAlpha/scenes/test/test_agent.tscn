@@ -16,12 +16,6 @@ offset_bottom = 720.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="CodeEditor" parent="Control" unique_id=794292869 instance=ExtResource("1_3c1be")]
-layout_mode = 1
-anchors_preset = -1
-anchor_bottom = 0.8
-grow_vertical = 1
-
 [node name="Button" type="Button" parent="Control" unique_id=406829749]
 layout_mode = 1
 anchors_preset = -1
@@ -33,5 +27,11 @@ offset_bottom = -16.0
 grow_vertical = 0
 theme_override_font_sizes/font_size = 24
 text = "Run "
+
+[node name="CodeEditor" parent="Control" unique_id=794292869 instance=ExtResource("1_3c1be")]
+layout_mode = 1
+anchors_preset = -1
+anchor_bottom = 0.8
+grow_vertical = 1
 
 [connection signal="pressed" from="Control/Button" to="." method="_on_button_pressed"]

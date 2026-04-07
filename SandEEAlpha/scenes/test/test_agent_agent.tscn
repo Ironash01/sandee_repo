@@ -1,5 +1,16 @@
 [gd_scene format=3 uid="uid://bvpfyk0rj6ag8"]
 
+[ext_resource type="Script" uid="uid://bfc0havgh0i62" path="res://scripts/test/test_agent_agent.gd" id="1_7x3tr"]
+[ext_resource type="Texture2D" uid="uid://d1qch0wau2sv7" path="res://icon.svg" id="2_c6eb4"]
+
 [node name="TestAgentAgent" type="Node2D" unique_id=134777886]
+script = ExtResource("1_7x3tr")
 
 [node name="LuaState" type="LuaState" parent="." unique_id=2067573691]
+
+[node name="Icon" type="Sprite2D" parent="." unique_id=190525820]
+texture = ExtResource("2_c6eb4")
+
+[connection signal="code_failed" from="LuaState" to="." method="_on_lua_state_code_failed"]
+[connection signal="signal_move" from="LuaState" to="." method="_on_lua_state_signal_move"]
+[connection signal="signal_print" from="LuaState" to="." method="_on_lua_state_signal_print"]

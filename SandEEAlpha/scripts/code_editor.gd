@@ -1,4 +1,6 @@
 extends Control
+class_name CodeEditor
+
 enum Language { Lua, Python }
 
 @export var language: Language
