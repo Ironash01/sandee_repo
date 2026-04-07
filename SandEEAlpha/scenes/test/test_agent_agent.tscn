@@ -1,0 +1,5 @@
+[gd_scene format=3 uid="uid://bvpfyk0rj6ag8"]
+
+[node name="TestAgentAgent" type="Node2D" unique_id=134777886]
+
+[node name="LuaState" type="LuaState" parent="." unique_id=2067573691]

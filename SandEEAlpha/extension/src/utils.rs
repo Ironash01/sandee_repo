@@ -24,12 +24,13 @@ macro_rules! from_usize_enum {
 }
 
 pub fn print_as_godot_error<T>(result: Result<T>) -> Option<T> {
-    let mut res = None;
     match result {
-        Ok(r) => res = Some(r),
-        Err(e) => godot_error!("{:?}", e),
+        Ok(r) => Some(r),
+        Err(e) => {
+            godot_error!("{:?}", e);
+            None
+        }
     }
-    res
 }
 
 #[cfg(test)]

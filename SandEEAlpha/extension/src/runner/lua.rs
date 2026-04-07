@@ -1,14 +1,18 @@
-use std::str::FromStr;
+use std::{ops::Deref, str::FromStr, vec};
 
 use anyhow::Result;
 use godot::prelude::*;
 use mlua::{IntoLua, Lua, Table, Value};
 use strum::{AsRefStr, EnumString};
 
+use crate::runner::vector::LuaVector;
+
+// signal enum for Lua and Godot
 #[derive(AsRefStr, EnumString)]
 pub enum LuaSignal {
     Generic,
     Print,
+    Move,
 }
 
 fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<Table> {
@@ -18,9 +22,12 @@ fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<T
     Ok(signal)
 }
 
+// Lua State node for automatica
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct LuaState {
+    #[var]
+    code: GString,
     lua: Lua,
     base: Base<Node>,
 }
@@ -29,6 +36,7 @@ struct LuaState {
 impl INode for LuaState {
     fn init(base: Base<Node>) -> Self {
         let mut res = Self {
+            code: GString::new(),
             lua: Lua::new(),
             base,
         };
@@ -52,7 +60,14 @@ impl INode for LuaState {
                 LuaSignal::Print => {
                     let print_string: String =
                         signal.get("arg").expect("Failed to get signal argument");
-                    self.signals().print().emit(print_string);
+                    self.signals().signal_print().emit(print_string);
+                }
+                LuaSignal::Move => {
+                    let vector: LuaVector =
+                        signal.get("arg").expect("Failed to get signal argument");
+                    self.signals()
+                        .signal_move()
+                        .emit(Vector2::new(vector.x, vector.y));
                 }
                 _ => (),
             }
@@ -69,28 +84,31 @@ impl LuaState {
     #[signal]
     fn code_failed(error: String);
     #[signal]
-    fn print(string: String);
+    fn signal_print(string: String);
+    #[signal]
+    fn signal_move(vector: Vector2);
     // Godot Functions
     #[func]
-    fn run_code(&mut self, code: String) {
-        if let Err(e) = self._run_code(code) {
+    fn run_code(&mut self) {
+        if let Err(e) = self._run_code(self.code.to_string().as_ref()) {
             self.signals().code_failed().emit(e.to_string());
         } else {
             self.signals().code_executed().emit();
         }
     }
 
-    fn _run_code(&mut self, code: String) -> Result<()> {
-        self.lua.load(&code).exec()?;
+    fn _run_code(&mut self, code: &str) -> Result<()> {
+        self.lua.load(code).exec()?;
         Ok(())
     }
 
     // Internals
-    fn prepare_lua_state(&mut self) -> Result<()> {
+    pub fn prepare_lua_state(&mut self) -> Result<()> {
         let globals = self.lua.globals();
         let signals = self.lua.create_table()?;
         globals.set("signals", signals)?;
 
+        // signals as functions
         let print = self.lua.create_function(|state, string: String| {
             let signals: Table = state.globals().get("signals")?;
             signals.push(build_lua_signal(
@@ -101,6 +119,38 @@ impl LuaState {
             Ok(())
         })?;
         globals.set("print", print)?;
+
+        let move_func = self.lua.create_function(|state, (x, y): (Value, Value)| {
+            let signals: Table = state.globals().get("signals")?;
+            match (x, y) {
+                (Value::Number(x), Value::Number(y)) => signals.push(build_lua_signal(
+                    state,
+                    LuaSignal::Move,
+                    LuaVector::new(x as f32, y as f32).into_lua(state)?,
+                )?),
+                (Value::UserData(vector), Value::Nil) => {
+                    let vector = vector.borrow::<LuaVector>();
+                    vector.map(|v| {
+                        signals.push(build_lua_signal(
+                            state,
+                            LuaSignal::Move,
+                            v.deref().into_lua(state)?,
+                        )?)
+                    })?
+                }
+                (_, _) => Err(mlua::Error::RuntimeError(String::from(
+                    "arguments not supported.",
+                ))),
+            }?;
+            Ok(())
+        })?;
+        globals.set("move", move_func)?;
+
+        // utility
+        let create_vector = self
+            .lua
+            .create_function(|_, (x, y)| Ok(LuaVector::new(x, y)))?;
+        globals.set("create_vector", create_vector)?;
 
         Ok(())
     }

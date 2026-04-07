@@ -10,4 +10,4 @@ windows.debug.x86_64 = "res://ext_bin/x86_64-pc-windows-gnu/release/interpreter.
 windows.release.x86_64 = "res://ext_bin/x86_64-pc-windows-gnu/release/interpreter.dll"
 
 [icons]
-LuaRunner = "res://extension/lua.svg"
+LuaState = "res://extension/lua.svg"

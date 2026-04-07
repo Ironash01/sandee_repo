@@ -6,8 +6,6 @@
 [node name="Node2D" type="Node2D" unique_id=1202137654]
 script = ExtResource("1_edwpa")
 
-[node name="LuaRunner" type="LuaRunner" parent="." unique_id=1800438668]
-
 [node name="Control" type="Control" parent="." unique_id=495409997]
 layout_mode = 3
 anchors_preset = 15
