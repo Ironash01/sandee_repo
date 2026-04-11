@@ -107,7 +107,7 @@ impl LuaState {
         let signals = self.lua.create_table()?;
         globals.set("signals", signals)?;
         // vector singleton
-        globals.set("Vector", LuaVector::new(0., 0.))?;
+        globals.set("vector", LuaVector::new(0., 0.))?;
 
         // signals as functions
         let print = self.lua.create_function(|state, string: String| {
