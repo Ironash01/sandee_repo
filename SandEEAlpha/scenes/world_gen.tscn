@@ -919,6 +919,8 @@ sources/2 = SubResource("TileSetAtlasSource_jhx03")
 [node name="World" type="Node2D" unique_id=98158199]
 script = ExtResource("1_rwgxs")
 object = ExtResource("2_pr0gy")
+width = 512
+height = 512
 
 [node name="Ground" type="TileMapLayer" parent="." unique_id=822852763]
 texture_filter = 1

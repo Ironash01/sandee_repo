@@ -8,6 +8,7 @@ radius = 26.0
 [node name="InventoryItem" type="Node2D" unique_id=541138292 groups=["Items", "items"]]
 texture_filter = 1
 script = ExtResource("1_5efel")
+place_scene_path = "obe"
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=434884349]
 

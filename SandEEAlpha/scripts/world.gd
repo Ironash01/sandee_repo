@@ -39,8 +39,10 @@ var altitude:    FastNoiseLite = FastNoiseLite.new()
 @onready var editable_layer: TileMapLayer = $Editable
 
 # ── Block placement ──────────────────────────────────────────────
-# Ghost highlight node — shows where the block will be placed
-var ghost: ColorRect = null
+# Ghost highlight — shows a transparent preview of the block before placement
+var ghost: Node2D = null
+var ghost_sprite: Sprite2D = null
+var ghost_last_type: String = ""  # tracks when item changes so we can rebuild sprite
 
 # Valid item_type values that are allowed to be placed
 const PLACEABLE_TYPES = ["block", "door"]
@@ -58,16 +60,14 @@ func _ready() -> void:
 	Global.Inventory_updated.connect(_on_hotbar_changed)
 
 func _setup_ghost():
-	ghost = ColorRect.new()
-	ghost.size = Vector2(TILE_SIZE, TILE_SIZE)
-	ghost.color = Color(0.2, 1.0, 0.2, 0.35)   # default: green tint
+	# Ghost lives in world space (child of World node) so coordinates match editable_layer
+	ghost = Node2D.new()
 	ghost.visible = false
-	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Add to a CanvasLayer so it always draws on top
-	var cl = CanvasLayer.new()
-	cl.layer = 10
-	add_child(cl)
-	cl.add_child(ghost)
+	ghost.z_index = 10
+	add_child(ghost)
+	ghost_sprite = Sprite2D.new()
+	ghost_sprite.modulate = Color(1, 1, 1, 0.5)
+	ghost.add_child(ghost_sprite)
 
 # ── Input ────────────────────────────────────────────────────────
 func _input(event):
@@ -90,23 +90,52 @@ func _update_ghost():
 		ghost.visible = false
 		return
 
-	ghost.visible = true
-	# Snap mouse position to the 32×32 grid in screen space
-	var mouse_screen = get_viewport().get_mouse_position()
-	var snapped = Vector2(
-		floor(mouse_screen.x / TILE_SIZE) * TILE_SIZE,
-		floor(mouse_screen.y / TILE_SIZE) * TILE_SIZE
-	)
-	ghost.position = snapped
+	# Rebuild sprite if the selected item changed
+	var item_key = item.get("type", "") + item.get("name", "")
+	if item_key != ghost_last_type:
+		ghost_last_type = item_key
+		_rebuild_ghost_sprite(item)
 
-	# Check if cell is already occupied → red; free → green
+	ghost.visible = true
+
+	# Snap to tile grid in world space
 	var mouse_world = get_local_mouse_position()
 	var cell        = editable_layer.local_to_map(mouse_world)
-	var occupied    = editable_layer.get_cell_source_id(cell) != -1
+	var world_pos   = editable_layer.map_to_local(cell)
+	ghost.global_position = editable_layer.to_global(world_pos)
+
+	# Tint: red if occupied, white-transparent if free
+	var occupied = editable_layer.get_cell_source_id(cell) != -1
 	if occupied:
-		ghost.color = Color(1.0, 0.2, 0.2, 0.35)  # red — blocked
+		ghost_sprite.modulate = Color(1.0, 0.3, 0.3, 0.5)
 	else:
-		ghost.color = Color(0.2, 1.0, 0.2, 0.35)  # green — free
+		ghost_sprite.modulate = Color(1.0, 1.0, 1.0, 0.5)
+
+func _rebuild_ghost_sprite(item):
+	var place_path = item.get("place_scene_path", "")
+	if place_path == "" or not ResourceLoader.exists(place_path):
+		ghost_sprite.texture = item.get("texture", null)
+		ghost_sprite.hframes = 1
+		ghost_sprite.vframes = 1
+		ghost_sprite.frame   = 0
+		ghost_sprite.position = Vector2.ZERO
+		return
+	var packed = load(place_path)
+	if packed == null:
+		return
+	# Instantiate temporarily to read sprite properties then discard
+	var temp = packed.instantiate()
+	var src  = temp.get_node_or_null("Sprite2D")
+	if src:
+		ghost_sprite.texture  = src.texture
+		ghost_sprite.hframes  = src.hframes
+		ghost_sprite.vframes  = src.vframes
+		ghost_sprite.frame    = src.frame
+		# Match the same y-offset used in place_block so ghost aligns exactly
+		var frame_height = src.texture.get_height() / max(src.vframes, 1)
+		var y_offset = (TILE_SIZE / 2.0) - (frame_height / 2.0)
+		ghost_sprite.position = Vector2(0, y_offset)
+	temp.queue_free()
 
 func _on_hotbar_changed(_idx = 0):
 	_update_ghost()
@@ -131,10 +160,10 @@ func place_block():
 	# Snap world position to tile center
 	var world_pos = editable_layer.map_to_local(cell)
 
-	# Instantiate from the item's own scene_path
-	var scene_path = item.get("scene_path", "")
+	# Instantiate from the item's place_scene_path (the world object scene)
+	var scene_path = item.get("place_scene_path", "")
 	if scene_path == "" or not ResourceLoader.exists(scene_path):
-		print("No valid scene_path on item — cannot place.")
+		print("No place_scene_path set on item — cannot place.")
 		return
 
 	var obj_scene = load(scene_path)
@@ -145,7 +174,18 @@ func place_block():
 	var obj = obj_scene.instantiate()
 	# Add to editable_layer so coordinates match the tilemap space
 	editable_layer.add_child(obj)
+	# map_to_local returns the tile CENTER in Godot TileMapLayer.
+	# Sprite2D is also center-anchored, so global_position = tile center = perfect alignment.
+	# We just need to strip out the hand-placed offset on the Sprite2D child (the +8 y shift).
 	obj.global_position = editable_layer.to_global(world_pos)
+	# Correct the sprite child offset so it sits flush on the grid cell.
+	# Sprite2D is center-anchored. For sprites taller than TILE_SIZE,
+	# shift up so the bottom of the sprite aligns with the bottom of the tile.
+	var sprite = obj.get_node_or_null("Sprite2D")
+	if sprite:
+		var frame_height = sprite.texture.get_height() / max(sprite.vframes, 1)
+		var y_offset = (TILE_SIZE / 2.0) - (frame_height / 2.0)
+		sprite.position = Vector2(0, y_offset)
 
 	# Consume 1 from inventory
 	Global.remove_item(item["type"], item["effect"])

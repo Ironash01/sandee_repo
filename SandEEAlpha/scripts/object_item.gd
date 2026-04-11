@@ -8,22 +8,20 @@ extends Node2D
 var sm_instance
 
 func _ready() -> void:
-	sm_instance = smelting_ui.instantiate()
-	add_child(sm_instance)
-	sm_instance.visible = false
-	col_interact_shape.disabled = true # disable instance of area2d to save resources.
+	col_interact_shape.disabled = true
+	# Only instantiate smelting UI if it's actually assigned
+	if smelting_ui != null:
+		sm_instance = smelting_ui.instantiate()
+		add_child(sm_instance)
+		sm_instance.visible = false
 	if obj_type == "furnace":
 		furnace()
-	pass
 
 func furnace():
-	col_interact_shape.disabled = false # enable back the collision
-	
-	
+	col_interact_shape.disabled = false
 
 func _on_area_2d_body_entered(body: CharacterBody2D) -> void:
 	print("col")
-
 
 func _on_area_2d_body_exited(body: CharacterBody2D) -> void:
 	print("col")

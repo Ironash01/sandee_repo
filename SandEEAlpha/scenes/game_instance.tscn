@@ -47,11 +47,13 @@ position = Vector2(132, 1)
 item_type = "DebugItem"
 item_name = "Template Sword"
 item_texture = ExtResource("6_hdajf")
+place_scene_path = ""
 
 [node name="testblock" parent="." unique_id=1165210587 instance=ExtResource("5_2glxl")]
 position = Vector2(201, 0)
 item_type = "block"
 item_name = "Furnace"
 item_texture = SubResource("AtlasTexture_mo7cb")
+place_scene_path = "res://scenes/objects/ObjectItem.tscn"
 
 [connection signal="pressed" from="CanvasLayer/Paused" to="." method="_on_paused_pressed"]
