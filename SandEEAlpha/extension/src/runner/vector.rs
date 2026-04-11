@@ -68,6 +68,7 @@ impl UserData for LuaVector {
         methods.add_meta_function(
             MetaMethod::Add,
             |_, (this, other): (Self, Value)| match other {
+                Value::Integer(o) => Ok(Self::new(this.x + o as f32, this.y + o as f32)),
                 Value::Number(o) => Ok(Self::new(this.x + o as f32, this.y + o as f32)),
                 Value::UserData(o) => {
                     let o: Self = *o.borrow()?;
@@ -82,6 +83,7 @@ impl UserData for LuaVector {
         methods.add_meta_function(
             MetaMethod::Sub,
             |_, (this, other): (Self, Value)| match other {
+                Value::Integer(o) => Ok(Self::new(this.x - o as f32, this.y - o as f32)),
                 Value::Number(o) => Ok(Self::new(this.x - o as f32, this.y - o as f32)),
                 Value::UserData(o) => {
                     let o: Self = *o.borrow()?;
