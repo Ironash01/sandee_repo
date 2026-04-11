@@ -45,7 +45,7 @@ impl INode for LuaState {
         res
     }
 
-    fn process(&mut self, _: f64) {
+    fn physics_process(&mut self, _: f64) {
         let signals: Table = self
             .lua
             .globals()
@@ -72,7 +72,6 @@ impl INode for LuaState {
                 _ => (),
             }
         }
-        signals.clear().expect("Failed to clear signals");
     }
 }
 

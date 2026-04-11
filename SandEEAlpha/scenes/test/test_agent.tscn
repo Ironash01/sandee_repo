@@ -16,6 +16,18 @@ offset_bottom = 720.0
 grow_horizontal = 2
 grow_vertical = 2
 
+[node name="StatsLabel" type="Label" parent="Control" unique_id=1938580917]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_top = 16.0
+offset_right = -16.0
+grow_horizontal = 0
+theme_override_font_sizes/font_size = 24
+text = "this is where i go"
+horizontal_alignment = 2
+
 [node name="Button" type="Button" parent="Control" unique_id=406829749]
 layout_mode = 1
 anchors_preset = -1
