@@ -52,8 +52,8 @@ impl INode for LuaState {
             .get("signals")
             .expect("Failed to get signals");
 
-        for signal in signals.sequence_values::<Table>() {
-            let signal = signal.expect("Failed to load signal");
+        while !signals.is_empty() {
+            let signal: Table = signals.pop().expect("Failed to load signal");
             let signal_type: String = signal.get("type").expect("Failed to get signal type");
             match LuaSignal::from_str(signal_type.as_str()).expect("Failed to convert signal type")
             {
@@ -106,50 +106,39 @@ impl LuaState {
         let globals = self.lua.globals();
         let signals = self.lua.create_table()?;
         globals.set("signals", signals)?;
+        // vector singleton
+        globals.set("Vector", LuaVector::new(0., 0.))?;
 
         // signals as functions
         let print = self.lua.create_function(|state, string: String| {
             let signals: Table = state.globals().get("signals")?;
-            signals.push(build_lua_signal(
-                state,
-                LuaSignal::Print,
-                string.into_lua(state)?,
-            )?)?;
+            signals.raw_insert(
+                1,
+                build_lua_signal(state, LuaSignal::Print, string.into_lua(state)?)?,
+            )?;
             Ok(())
         })?;
         globals.set("print", print)?;
 
         let move_func = self.lua.create_function(|state, (x, y): (Value, Value)| {
             let signals: Table = state.globals().get("signals")?;
-            match (x, y) {
-                (Value::Number(x), Value::Number(y)) => signals.push(build_lua_signal(
-                    state,
-                    LuaSignal::Move,
-                    LuaVector::new(x as f32, y as f32).into_lua(state)?,
-                )?),
+            let vector = match (x, y) {
+                (Value::Integer(x), Value::Integer(y)) => Ok(LuaVector::new(x as f32, y as f32)),
+                (Value::Number(x), Value::Number(y)) => Ok(LuaVector::new(x as f32, y as f32)),
                 (Value::UserData(vector), Value::Nil) => {
-                    let vector = vector.borrow::<LuaVector>();
-                    vector.map(|v| {
-                        signals.push(build_lua_signal(
-                            state,
-                            LuaSignal::Move,
-                            v.deref().into_lua(state)?,
-                        )?)
-                    })?
+                    vector.borrow::<LuaVector>().map(|data| *data)
                 }
                 (_, _) => Err(mlua::Error::RuntimeError(String::from(
                     "arguments not supported.",
                 ))),
             }?;
+            signals.raw_insert(
+                1,
+                build_lua_signal(state, LuaSignal::Move, vector.into_lua(state)?)?,
+            )?;
             Ok(())
         })?;
         globals.set("move", move_func)?;
-
-        // utility
-        let create_vector = self
-            .lua
-            .create_function(|_, (x, y)| Ok(LuaVector::new(x, y)))?;
-        globals.set("create_vector", create_vector)?;
 
         Ok(())
     }
