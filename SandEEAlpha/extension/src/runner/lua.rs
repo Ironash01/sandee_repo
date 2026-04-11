@@ -1,4 +1,4 @@
-use std::{ops::Deref, str::FromStr, vec};
+use std::{str::FromStr, vec};
 
 use anyhow::Result;
 use godot::prelude::*;

@@ -1,5 +1,3 @@
-use std::ops;
-
 use mlua::{FromLua, Lua, MetaMethod, UserData, UserDataFields, UserDataMethods, Value};
 
 #[derive(Clone, Copy)]
