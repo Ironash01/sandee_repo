@@ -4,6 +4,10 @@
 [ext_resource type="Script" uid="uid://cxn5e8xfblcxs" path="res://scripts/object_item.gd" id="1_emi2p"]
 [ext_resource type="PackedScene" uid="uid://bajfubs7vs868" path="res://scenes/ui/SmeltingMenu.tscn" id="2_5ngew"]
 
+[sub_resource type="AtlasTexture" id="AtlasTexture_5ngew"]
+atlas = ExtResource("1_6chf5")
+region = Rect2(0, 16, 32, 32)
+
 [sub_resource type="Animation" id="Animation_emi2p"]
 length = 0.001
 tracks/0/type = "value"
@@ -52,6 +56,7 @@ radius = 34.0147
 script = ExtResource("1_emi2p")
 obj_name = "Furnace"
 obj_type = "furnace"
+item_texture = SubResource("AtlasTexture_5ngew")
 smelting_ui = ExtResource("2_5ngew")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=556744422]

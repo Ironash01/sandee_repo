@@ -5,70 +5,169 @@ const TILE_SIZE = 32
 @export var object: PackedScene
 
 enum Terrain { Water, Plain, Desert, Snowy }
-@export var player : CharacterBody2D
+@export var player: CharacterBody2D
 
-#spawn center
+# spawn center
+var spawn_center: Vector2
 
-var spawn_center : Vector2
 # For Terrain Gen
 const WATER_THRESHOLD: float = 0.33
-const SNOW_THRESHOLD: float = 0.38
-const SAND_THRESHOLD: float = 0.2
-const FORCED_PLAINS_RADIUS: float = 128 # range of forced plains area
+const SNOW_THRESHOLD: float  = 0.38
+const SAND_THRESHOLD: float  = 0.2
+const FORCED_PLAINS_RADIUS: float = 128
 
 # For Foliage Gen
-const FOLIAGE_SPACING: float = 16 # average spacing between foliage
-const REJECTION_THRESHOLD: int = 30 # samples before rejection
+const FOLIAGE_SPACING: float   = 16
+const REJECTION_THRESHOLD: int = 30
 
 # Exports
 @export var random_seed: int = 1234
-@export var width: int = 1024
+@export var width:  int = 1024
 @export var height: int = 1024
 
-# Initialize RNG
+# RNG
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
-# Initialize noise maps for Terrain Gen
-var humidity: FastNoiseLite = FastNoiseLite.new()
+# Noise maps
+var humidity:    FastNoiseLite = FastNoiseLite.new()
 var temperature: FastNoiseLite = FastNoiseLite.new()
-var altitude: FastNoiseLite = FastNoiseLite.new()
+var altitude:    FastNoiseLite = FastNoiseLite.new()
 
-# Load tilemaps
-@onready var water_layer: TileMapLayer = $Water
-@onready var ground_layer: TileMapLayer = $Ground
+# Tilemaps
+@onready var water_layer:    TileMapLayer = $Water
+@onready var ground_layer:   TileMapLayer = $Ground
 @onready var editable_layer: TileMapLayer = $Editable
+
+# ── Block placement ──────────────────────────────────────────────
+# Ghost highlight node — shows where the block will be placed
+var ghost: ColorRect = null
+
+# Valid item_type values that are allowed to be placed
+const PLACEABLE_TYPES = ["block", "door"]
 
 func _ready() -> void:
 	rng.set_seed(random_seed)
-	
-	# Setup noise maps
-	_set_up_noise(humidity, 0.003)
+	_set_up_noise(humidity,    0.003)
 	_set_up_noise(temperature, 0.002)
-	_set_up_noise(altitude, 0.005)
-	
+	_set_up_noise(altitude,    0.005)
 	_generate_terrain()
 	_place_foliage()
+	_setup_ghost()
+	# Listen for hotbar changes so ghost updates immediately on item switch
+	Global.hotbar_selection_changed.connect(_on_hotbar_changed)
+	Global.Inventory_updated.connect(_on_hotbar_changed)
 
-### Step 1: Terrain Generation
+func _setup_ghost():
+	ghost = ColorRect.new()
+	ghost.size = Vector2(TILE_SIZE, TILE_SIZE)
+	ghost.color = Color(0.2, 1.0, 0.2, 0.35)   # default: green tint
+	ghost.visible = false
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Add to a CanvasLayer so it always draws on top
+	var cl = CanvasLayer.new()
+	cl.layer = 10
+	add_child(cl)
+	cl.add_child(ghost)
+
+# ── Input ────────────────────────────────────────────────────────
+func _input(event):
+	if event.is_action_pressed("mouse_left"):
+		place_block()
+
+func _process(_delta):
+	_update_ghost()
+
+# ── Ghost highlight ──────────────────────────────────────────────
+func _is_placeable_item(item) -> bool:
+	if item == null:
+		return false
+	var t = item.get("type", "").to_lower()
+	return t in PLACEABLE_TYPES
+
+func _update_ghost():
+	var item = Global.get_hotbar_item()
+	if not _is_placeable_item(item):
+		ghost.visible = false
+		return
+
+	ghost.visible = true
+	# Snap mouse position to the 32×32 grid in screen space
+	var mouse_screen = get_viewport().get_mouse_position()
+	var snapped = Vector2(
+		floor(mouse_screen.x / TILE_SIZE) * TILE_SIZE,
+		floor(mouse_screen.y / TILE_SIZE) * TILE_SIZE
+	)
+	ghost.position = snapped
+
+	# Check if cell is already occupied → red; free → green
+	var mouse_world = get_local_mouse_position()
+	var cell        = editable_layer.local_to_map(mouse_world)
+	var occupied    = editable_layer.get_cell_source_id(cell) != -1
+	if occupied:
+		ghost.color = Color(1.0, 0.2, 0.2, 0.35)  # red — blocked
+	else:
+		ghost.color = Color(0.2, 1.0, 0.2, 0.35)  # green — free
+
+func _on_hotbar_changed(_idx = 0):
+	_update_ghost()
+
+# ── Block placement ──────────────────────────────────────────────
+func place_block():
+	var item = Global.get_hotbar_item()
+
+	# Only allow blocks and doors
+	if not _is_placeable_item(item):
+		print("Cannot place '%s' — not a block or door." % item.get("type", "none") if item else "No item selected.")
+		return
+
+	var mouse_pos = get_local_mouse_position()
+	var cell      = editable_layer.local_to_map(mouse_pos)
+
+	# Don't place on an already occupied cell
+	if editable_layer.get_cell_source_id(cell) != -1:
+		print("Cell already occupied.")
+		return
+
+	# Snap world position to tile center
+	var world_pos = editable_layer.map_to_local(cell)
+
+	# Instantiate from the item's own scene_path
+	var scene_path = item.get("scene_path", "")
+	if scene_path == "" or not ResourceLoader.exists(scene_path):
+		print("No valid scene_path on item — cannot place.")
+		return
+
+	var obj_scene = load(scene_path)
+	if obj_scene == null:
+		print("Failed to load scene: ", scene_path)
+		return
+
+	var obj = obj_scene.instantiate()
+	# Add to editable_layer so coordinates match the tilemap space
+	editable_layer.add_child(obj)
+	obj.global_position = editable_layer.to_global(world_pos)
+
+	# Consume 1 from inventory
+	Global.remove_item(item["type"], item["effect"])
+
+# ── Terrain Generation ───────────────────────────────────────────
 func _generate_terrain():
-	var cell_offset = Vector2i(width, height) / 2 # Tilemap center
-	
-	# Iterate through all cells
+	var cell_offset = Vector2i(width, height) / 2
 	for x in width:
 		for y in height:
 			var cell = Vector2i(x, y)
-			var distance_from_spawn = cell.distance_to(cell_offset)
-			var plains_spawn_circle = clampf(1 - distance_from_spawn / FORCED_PLAINS_RADIUS, 0, 1)
-			var water_circle = smoothstep(width / 2 - 50, width / 2, distance_from_spawn)
-			var humid = humidity.get_noise_2d(x, y) * 0.5 + 0.5
-			var temp = temperature.get_noise_2d(x, y) * 0.5 + 0.5
-			var alt = altitude.get_noise_2d(x, y) * 0.5 + 0.5 + plains_spawn_circle * WATER_THRESHOLD
-			
-			alt = 0.0 if water_circle >= 1 else alt - water_circle * WATER_THRESHOLD
-			humid += temp * plains_spawn_circle
-			temp += SNOW_THRESHOLD * plains_spawn_circle
+			var distance_from_spawn  = cell.distance_to(cell_offset)
+			var plains_spawn_circle  = clampf(1 - distance_from_spawn / FORCED_PLAINS_RADIUS, 0, 1)
+			var water_circle         = smoothstep(width / 2 - 50, width / 2, distance_from_spawn)
+			var humid = humidity.get_noise_2d(x, y)    * 0.5 + 0.5
+			var temp  = temperature.get_noise_2d(x, y) * 0.5 + 0.5
+			var alt   = altitude.get_noise_2d(x, y)    * 0.5 + 0.5 + plains_spawn_circle * WATER_THRESHOLD
+
+			alt   = 0.0 if water_circle >= 1 else alt - water_circle * WATER_THRESHOLD
+			humid += temp  * plains_spawn_circle
+			temp  += SNOW_THRESHOLD * plains_spawn_circle
 			humid += (SNOW_THRESHOLD - SAND_THRESHOLD) * plains_spawn_circle
-			
+
 			match _get_tile_type(humid, temp, alt):
 				Terrain.Plain:
 					ground_layer.set_cell(cell - cell_offset, 0, Vector2i(0, 0))
@@ -77,35 +176,32 @@ func _generate_terrain():
 				Terrain.Snowy:
 					ground_layer.set_cell(cell - cell_offset, 0, Vector2i(1, 1))
 				_:
-					water_layer.set_cell(cell - cell_offset, 0, Vector2i(0,1))
+					water_layer.set_cell(cell - cell_offset, 0, Vector2i(0, 1))
 
 func _set_up_noise(noise: FastNoiseLite, frequency: float, type: FastNoiseLite.FractalType = FastNoiseLite.FractalType.FRACTAL_FBM):
 	noise.fractal_type = type
-	noise.seed = rng.randi()
-	noise.frequency = frequency
+	noise.seed        = rng.randi()
+	noise.frequency   = frequency
 
-func _get_tile_type(humidity: float, temperature: float, altitude: float) -> Terrain:	
-	var terrain: Terrain = Terrain.Plain
-	if altitude < WATER_THRESHOLD:
-		terrain = Terrain.Water
-	else:
-		var temperament = temperature - humidity
-		if temperament > SAND_THRESHOLD:
-			terrain = Terrain.Desert
-		if temperature < SNOW_THRESHOLD:
-			terrain = Terrain.Snowy
-	return terrain
+func _get_tile_type(hum: float, temp: float, alt: float) -> Terrain:
+	if alt < WATER_THRESHOLD:
+		return Terrain.Water
+	var temperament = temp - hum
+	if temperament > SAND_THRESHOLD:
+		return Terrain.Desert
+	if temp < SNOW_THRESHOLD:
+		return Terrain.Snowy
+	return Terrain.Plain
 
+# ── Foliage ──────────────────────────────────────────────────────
 func _place_foliage():
-	var points: PackedVector2Array = _generate_points()
-	var cell_offset = Vector2i(width, height) / 2 # Tilemap center
-	
+	var points      = _generate_points()
+	var cell_offset = Vector2i(width, height) / 2
 	for point in points:
-		var int_point = Vector2i(point)
+		var int_point    = Vector2i(point)
 		var terrain_cell = ground_layer.get_cell_tile_data(int_point - cell_offset)
 		if terrain_cell != null:
 			var terrain_type: Terrain = terrain_cell.get_custom_data("terrain_type")
-			# temporary switch/case for different trees
 			match terrain_type:
 				Terrain.Plain:
 					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
@@ -115,117 +211,71 @@ func _place_foliage():
 					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
 
 func _generate_points() -> PackedVector2Array:
-	# use poisson disc sampling to place foliage
-	# based on https://www.cs.ubc.ca/~rbridson/docs/bridson-siggraph07-poissondisk.pdf
-	var cell_size: float = FOLIAGE_SPACING / sqrt(2)
-	
-	# Spatial grid for quick distance checks
-	var grid_width: int = ceili(width / cell_size)
-	var grid_height: int = ceili(height / cell_size)
+	var cell_size   = FOLIAGE_SPACING / sqrt(2)
+	var grid_width  = ceili(width  / cell_size)
+	var grid_height = ceili(height / cell_size)
 	print("grid_width: ", grid_width, " grid_height: ", grid_height)
+
 	var grid: PackedInt32Array = PackedInt32Array()
 	grid.resize(grid_width * grid_height)
 	grid.fill(-1)
-	
-	# Points generated
-	var points: PackedVector2Array = PackedVector2Array()
-	var spawn_points: PackedInt32Array = PackedInt32Array() # points to generate new points from
-	
-	# Initial point
-	var initial_point: Vector2 = Vector2(rng.randf_range(0, width), rng.randf_range(0, height))
+
+	var points:       PackedVector2Array = PackedVector2Array()
+	var spawn_points: PackedInt32Array   = PackedInt32Array()
+
+	var initial_point = Vector2(rng.randf_range(0, width), rng.randf_range(0, height))
 	points.append(initial_point)
 	spawn_points.append(0)
 	grid[_point_to_cell_index(initial_point, cell_size, grid_width, grid_height)] = 0
-		
-	while not spawn_points.is_empty(): # while there's still points to generate from
-		# pick random point from spawn points
-		var spawn_point_index: int = rng.randi_range(0, spawn_points.size() - 1)
-		spawn_center = points[spawn_points[spawn_point_index]]
-		var point_accepted: bool = false
-		
-		# until rejection
+
+	while not spawn_points.is_empty():
+		var spawn_point_index = rng.randi_range(0, spawn_points.size() - 1)
+		spawn_center          = points[spawn_points[spawn_point_index]]
+		var point_accepted    = false
+
 		for i in REJECTION_THRESHOLD:
-			# generate random point r ~ 2r away from spawn point
-			var r: float = rng.randf_range(FOLIAGE_SPACING, FOLIAGE_SPACING * 2)
-			var a: float = rng.randf() * TAU
-			var new_point: Vector2 = spawn_center + Vector2.from_angle(a) * r
-			
+			var r         = rng.randf_range(FOLIAGE_SPACING, FOLIAGE_SPACING * 2)
+			var a         = rng.randf() * TAU
+			var new_point = spawn_center + Vector2.from_angle(a) * r
 			if _is_valid_point(new_point, cell_size, grid_width, grid_height, points, grid):
-				# add point in if valid and also add as spawn point
 				spawn_points.append(points.size())
 				grid[_point_to_cell_index(new_point, cell_size, grid_width, grid_height)] = points.size()
 				points.append(new_point)
 				point_accepted = true
 				break
-		
-		# remove spawn point if nothing was accepted
+
 		if not point_accepted:
 			spawn_points.remove_at(spawn_point_index)
-				
+
 	return points
 
 func _is_valid_point(point: Vector2, cell_size: float, grid_width: int, grid_height: int, points: PackedVector2Array, grid: PackedInt32Array) -> bool:
-	if point.x >= 0 and point.x < width and point.y >= 0 and point.y < height: # check if inside
-		# check if in water
+	if point.x >= 0 and point.x < width and point.y >= 0 and point.y < height:
 		var cell_offset = Vector2i(width, height) / 2
 		if ground_layer.get_cell_source_id(Vector2i(point) - cell_offset) == -1:
 			return false
-		
-		# convert to cell coords to get search space
-		var cell_x: int = floori(point.x / cell_size)
-		var cell_y: int = floori(point.y / cell_size)
-		
-		var search_start_x: int = maxi(0, cell_x - 2)
-		var search_end_x: int = mini(cell_x + 2, grid_width - 1)
-		var search_start_y: int = maxi(0, cell_y - 2)
-		var search_end_y: int = mini(cell_y + 2, grid_height - 1)
-		
-		# discard if points are too close
+		var cell_x = floori(point.x / cell_size)
+		var cell_y = floori(point.y / cell_size)
+		var search_start_x = maxi(0, cell_x - 2)
+		var search_end_x   = mini(cell_x + 2, grid_width - 1)
+		var search_start_y = maxi(0, cell_y - 2)
+		var search_end_y   = mini(cell_y + 2, grid_height - 1)
 		for x in range(search_start_x, search_end_x + 1):
 			for y in range(search_start_y, search_end_y + 1):
-				var point_index: int = grid[x + y * grid_width]
+				var point_index = grid[x + y * grid_width]
 				if point_index != -1:
-					var dist: float = point.distance_squared_to(points[point_index])
+					var dist = point.distance_squared_to(points[point_index])
 					if dist < FOLIAGE_SPACING * FOLIAGE_SPACING:
 						return false
-		
 		return true
-	else: # not inside. not valid
-		return false
+	return false
 
 func _point_to_cell_index(point: Vector2, cell_size: float, grid_width: int, grid_height: int) -> int:
-	# Returns the corresponding index for the point
-	var x: int = floori(point.x / cell_size)
-	var y: int = floori(point.y / cell_size)
-	assert(x < grid_width, "Out of bounds: x")
+	var x = floori(point.x / cell_size)
+	var y = floori(point.y / cell_size)
+	assert(x < grid_width,  "Out of bounds: x")
 	assert(y < grid_height, "Out of bounds. y = %.3f. grid_y = %f. cell_size = %f" % [point.y, point.y / cell_size, cell_size])
 	return x + y * grid_width
-	
+
 func spawn_player():
 	player.position = Vector2(spawn_center)
-	
-# Glenn 03122026
-
-
-func _input(event):
-		if event.is_action_pressed("mouse_left"):
-			place_block()
-
-# first ver of place_block
-func place_block():
-	# get mouse relative to this Node2D
-	var mouse_pos = get_local_mouse_position()
-	var cell = editable_layer.local_to_map(mouse_pos) #temp code to snap place book into tilemap
-	# calculate grid
-	var grid_x = floor(mouse_pos.x / TILE_SIZE)
-	var grid_y = floor(mouse_pos.y / TILE_SIZE)
-	#var world_pos = Vector2(grid_x, grid_y) * TILE_SIZE + Vector2(TILE_SIZE/2, TILE_SIZE/2)
-	var world_pos = editable_layer.map_to_local(cell)
-	
-	# instantiate object
-	var obj = object.instantiate()
-	obj.position = world_pos
-	add_child(obj)
-	
-
-	

@@ -210,7 +210,7 @@ radius = 40.4475
 process_mode = 3
 script = ExtResource("1_dovo2")
 
-[node name="Camera2D" type="Camera2D" parent="." unique_id=2027758664]
+[node name="mainCam" type="Camera2D" parent="." unique_id=2027758664]
 z_index = 5
 zoom = Vector2(2, 2)
 

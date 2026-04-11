@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://cnc7lnsw45l6i"]
 
 [ext_resource type="Texture2D" uid="uid://ha3i74xw7xcm" path="res://sprites/ui/SandEE_UIAlpha.png" id="1_6inpu"]
+[ext_resource type="Script" uid="uid://coayjws5k36uq" path="res://scripts/hotbar.gd" id="1_mhob5"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_6inpu"]
 atlas = ExtResource("1_6inpu")
@@ -16,10 +17,12 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 0
 size_flags_horizontal = 4
+script = ExtResource("1_mhob5")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=243382948]
 
 [node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer" unique_id=1992259755]
+custom_minimum_size = Vector2(32, 32)
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -28,7 +31,6 @@ anchor_bottom = 1.0
 offset_left = -178.0
 offset_top = -48.0
 offset_right = 178.0
-offset_bottom = -16.0
 grow_horizontal = 2
 grow_vertical = 0
 pivot_offset = Vector2(0, 50)
@@ -38,49 +40,59 @@ metadata/_edit_group_ = true
 [node name="Hotbar1" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=2045610060]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar2" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=966156149]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar3" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=1140516026]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar4" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=866344629]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar5" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=878522344]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbat6" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=382946803]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar7" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=1876493708]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar8" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=603591131]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar9" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=1426890483]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4
 
 [node name="Hotbar10" type="TextureRect" parent="CanvasLayer/HBoxContainer" unique_id=1167583963]
 layout_mode = 2
 texture = SubResource("AtlasTexture_6inpu")
+expand_mode = 3
 stretch_mode = 4

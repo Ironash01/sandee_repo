@@ -1,29 +1,57 @@
 [gd_scene format=3 uid="uid://bixjinhfhauab"]
 
 [ext_resource type="PackedScene" uid="uid://cnc7lnsw45l6i" path="res://scenes/ui/Hotbar.tscn" id="1_bj3gq"]
-[ext_resource type="PackedScene" uid="uid://cokhlsvu5ddv" path="res://scenes/ui/pause.tscn" id="2_kafmv"]
+[ext_resource type="Script" uid="uid://b6jexka4lcep2" path="res://scenes/game_instance.gd" id="1_egp1g"]
+[ext_resource type="PackedScene" uid="uid://inaqvpvpu4hq" path="res://scenes/ui/Settings.tscn" id="3_0cmsc"]
 [ext_resource type="PackedScene" uid="uid://ch5ppikl27a2n" path="res://scenes/world_gen.tscn" id="3_kafmv"]
 [ext_resource type="PackedScene" uid="uid://b2luk2qj6moim" path="res://scenes/player/player.tscn" id="4_2glxl"]
 [ext_resource type="PackedScene" uid="uid://chae2m53coo2i" path="res://scenes/ui/InventoryItem.tscn" id="5_2glxl"]
 [ext_resource type="Texture2D" uid="uid://bg7iv6t8kx5jj" path="res://sprites/items/SandEE_TemplateSword.png" id="6_hdajf"]
+[ext_resource type="Texture2D" uid="uid://qf2w1p7jh1hq" path="res://sprites/items/SandEE_FurnaceV2.png" id="8_0cmsc"]
 
-[node name="Node2D" type="Node2D" unique_id=215356930]
+[sub_resource type="AtlasTexture" id="AtlasTexture_mo7cb"]
+atlas = ExtResource("8_0cmsc")
+region = Rect2(0, 16, 32, 32)
+
+[node name="Game" type="Node2D" unique_id=215356930]
+script = ExtResource("1_egp1g")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=457529082]
 
-[node name="Pause" parent="CanvasLayer" unique_id=358029678 instance=ExtResource("2_kafmv")]
-z_index = 30
+[node name="Settings" parent="CanvasLayer" unique_id=728603993 instance=ExtResource("3_0cmsc")]
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+grow_horizontal = 2
+grow_vertical = 2
 
 [node name="Control" parent="CanvasLayer" unique_id=1912151607 instance=ExtResource("1_bj3gq")]
 
-[node name="World" parent="." unique_id=98158199 node_paths=PackedStringArray("player") instance=ExtResource("3_kafmv")]
-player = NodePath("../Player")
+[node name="Paused" type="Button" parent="CanvasLayer" unique_id=2100391308]
+offset_right = 59.0
+offset_bottom = 34.0
+text = "Pause"
+
+[node name="World" parent="." unique_id=98158199 instance=ExtResource("3_kafmv")]
+object = null
 
 [node name="Player" parent="." unique_id=382532469 instance=ExtResource("4_2glxl")]
 texture_filter = 1
 
-[node name="InventoryItem" parent="." unique_id=541138292 instance=ExtResource("5_2glxl")]
+[node name="sword" parent="." unique_id=541138292 instance=ExtResource("5_2glxl")]
+z_index = 5
 position = Vector2(132, 1)
 item_type = "DebugItem"
 item_name = "Template Sword"
 item_texture = ExtResource("6_hdajf")
+
+[node name="testblock" parent="." unique_id=1165210587 instance=ExtResource("5_2glxl")]
+position = Vector2(201, 0)
+item_type = "block"
+item_name = "Furnace"
+item_texture = SubResource("AtlasTexture_mo7cb")
+
+[connection signal="pressed" from="CanvasLayer/Paused" to="." method="_on_paused_pressed"]

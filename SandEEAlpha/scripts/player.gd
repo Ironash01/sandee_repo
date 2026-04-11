@@ -10,8 +10,7 @@ var input_direction : Vector2 = Vector2.ZERO
 
 func _ready() -> void:
 	player_animation_tree.active = true
-	$Camera2D.make_current()
-	
+	$mainCam.make_current()
 	# changes for inventory
 	Global.set_player_reference(self)
 func get_input():
@@ -45,3 +44,10 @@ func _input(event):
 	if event.is_action_pressed("inventory"):
 		inventory_ui.visible =! inventory_ui.visible # check visiblity of inventory ui to prevent mismatch in pause.
 		get_tree().paused = !get_tree().paused
+		
+func apply_item_effect(item):
+	match item["effect"]:
+		"Sword":
+			print("You touched my sword")
+		_:
+			print("No effect uWu")
