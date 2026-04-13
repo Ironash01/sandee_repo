@@ -1,72 +1,119 @@
 extends Node
 
-# array to hold inventory items
-var Inventory = []
-var hotbar_selected: int = 0  # tracks which hotbar slot is active (0-8)
+# ── Inventory constants ───────────────────────────────────────────
+const MAX_STACK:      int = 32
+const HOTBAR_SIZE:    int = 9
+const INVENTORY_SIZE: int = 20
 
-var player_node: Node = null
-@onready var inventory_slot_scene = preload("res://scenes/ui/InventorySlot.tscn")
+# ── Storage — each slot is {"quantity": int, "data": ItemData} ────
+var Hotbar:    Array = []
+var Inventory: Array = []
+
+var hotbar_selected: int = 0
+
+signal Hotbar_updated
 signal Inventory_updated
-signal hotbar_selection_changed(index)
+signal hotbar_selection_changed(index: int)
 
-func _ready():
-	Inventory.resize(20)
+# ── Settings ──────────────────────────────────────────────────────
+var master_volume:      float = 1.0
+var music_volume:       float = 1.0
+var sfx_volume:         float = 1.0
+var camera_zoom:        float = 1.0
+var pause_on_inventory: bool  = true
+var inventory_open:     bool  = false
 
-func add_item(item):
-	# First pass: try to stack with existing item of same type+effect
+signal camera_zoom_changed(zoom: float)
+signal inventory_toggled(is_open: bool)
+
+# ── Player ref ────────────────────────────────────────────────────
+var player_node: Node = null
+
+@onready var inventory_slot_scene: PackedScene = preload("res://scenes/ui/InventorySlot.tscn")
+
+func _ready() -> void:
+	Hotbar.resize(HOTBAR_SIZE)
+	Inventory.resize(INVENTORY_SIZE)
+
+# ── Add item ──────────────────────────────────────────────────────
+func add_item(item: Dictionary) -> bool:
+	var data: ItemData = item["data"] as ItemData
+	# 1. Stack in hotbar
+	for i in range(Hotbar.size()):
+		if Hotbar[i] != null \
+				and Hotbar[i]["data"] == data \
+				and Hotbar[i]["quantity"] < MAX_STACK:
+			Hotbar[i]["quantity"] = min(Hotbar[i]["quantity"] + item["quantity"], MAX_STACK)
+			Hotbar_updated.emit()
+			return true
+	# 2. Stack in inventory
 	for i in range(Inventory.size()):
-		if Inventory[i] != null and Inventory[i]["type"] == item["type"] and Inventory[i]["effect"] == item["effect"]:
-			Inventory[i]["quantity"] += item["quantity"]
+		if Inventory[i] != null \
+				and Inventory[i]["data"] == data \
+				and Inventory[i]["quantity"] < MAX_STACK:
+			Inventory[i]["quantity"] = min(Inventory[i]["quantity"] + item["quantity"], MAX_STACK)
 			Inventory_updated.emit()
 			return true
-	# Second pass: find first empty slot
+	# 3. Empty hotbar slot
+	for i in range(Hotbar.size()):
+		if Hotbar[i] == null:
+			Hotbar[i] = item
+			Hotbar_updated.emit()
+			return true
+	# 4. Empty inventory slot
 	for i in range(Inventory.size()):
 		if Inventory[i] == null:
 			Inventory[i] = item
 			Inventory_updated.emit()
 			return true
-	return false  # inventory full
+	return false
 
-func remove_item(item_type, item_effect):
+# ── Remove one from an item slot by ItemData reference ────────────
+func remove_item(data: ItemData) -> void:
+	for i in range(Hotbar.size()):
+		if Hotbar[i] != null and Hotbar[i]["data"] == data:
+			Hotbar[i]["quantity"] -= 1
+			if Hotbar[i]["quantity"] <= 0:
+				Hotbar[i] = null
+			Hotbar_updated.emit()
+			return
 	for i in range(Inventory.size()):
-		if Inventory[i] != null and Inventory[i]["type"] == item_type and Inventory[i]["effect"] == item_effect:
+		if Inventory[i] != null and Inventory[i]["data"] == data:
 			Inventory[i]["quantity"] -= 1
 			if Inventory[i]["quantity"] <= 0:
 				Inventory[i] = null
 			Inventory_updated.emit()
 			return
 
+# ── Hotbar helpers ────────────────────────────────────────────────
 func get_hotbar_item() -> Variant:
-	# Returns the currently selected hotbar item (slots 0-8)
-	if hotbar_selected < Inventory.size():
-		return Inventory[hotbar_selected]
+	if hotbar_selected < Hotbar.size():
+		return Hotbar[hotbar_selected]
 	return null
 
-func set_hotbar_selection(index: int):
-	hotbar_selected = clamp(index, 0, 8)
+func set_hotbar_selection(index: int) -> void:
+	hotbar_selected = clamp(index, 0, HOTBAR_SIZE - 1)
 	hotbar_selection_changed.emit(hotbar_selected)
 
-func increase_inventory_size():
-	Inventory_updated.emit()
-
-func set_player_reference(player):
+# ── Player ────────────────────────────────────────────────────────
+func set_player_reference(player: Node) -> void:
 	player_node = player
 
-func adjust_drop_pos(pos):
-	var rad = 100
-	var near_item = get_tree().get_nodes_in_group("items")
-	for item in near_item:
-		if item.global_position.distance_to(pos) < rad:
-			var random_offset = Vector2(randf_range(-rad, rad), randf_range(-rad, rad))
-			pos += random_offset
+# ── Drop item into world ──────────────────────────────────────────
+func adjust_drop_pos(pos: Vector2) -> Vector2:
+	var rad := 100.0
+	for item in get_tree().get_nodes_in_group("items"):
+		if (item as Node2D).global_position.distance_to(pos) < rad:
+			pos += Vector2(randf_range(-rad, rad), randf_range(-rad, rad))
 			break
 	return pos
 
-func drop_item(item_data, drop_position):
-	var item_scene = load(item_data["scene_path"])
-	var item_instance = item_scene.instantiate()
-	item_instance.set_item_data(item_data)
+func drop_item(inv_item: Dictionary, drop_position: Vector2) -> void:
+	var item_scene: PackedScene = load("res://scenes/ui/InventoryItem.tscn") as PackedScene
+	if item_scene == null:
+		return
+	var inst: Node = item_scene.instantiate()
+	inst.call("set_item_data", inv_item["data"] as ItemData)
 	drop_position = adjust_drop_pos(drop_position)
-	item_instance.global_position = drop_position
-	get_tree().current_scene.add_child(item_instance)
-	item_instance.global_transform.origin = drop_position
+	(inst as Node2D).global_position = drop_position
+	get_tree().current_scene.add_child(inst)

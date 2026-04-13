@@ -20,6 +20,7 @@ size_flags_horizontal = 4
 script = ExtResource("1_mhob5")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=243382948]
+layer = 10
 
 [node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer" unique_id=1992259755]
 custom_minimum_size = Vector2(32, 32)

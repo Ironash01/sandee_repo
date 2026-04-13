@@ -1,85 +1,123 @@
 extends Control
 
-# Reference to each hotbar slot (we'll grab them by index)
 var slots: Array = []
 var selected_index: int = 0
 
-# Highlight color for selected slot
-const SELECTED_COLOR = Color(1.0, 1.0, 0.3, 1.0)   # yellow tint
-const NORMAL_COLOR   = Color(1.0, 1.0, 1.0, 1.0)   # no tint
+const C_SLOT_BG  := Color(0.11, 0.15, 0.26, 1.00)
+const C_SLOT_SEL := Color(0.25, 0.40, 0.75, 1.00)
 
-func _ready():
-	# Grab all TextureRect slots in order from HBoxContainer
-	var hbox = $CanvasLayer/HBoxContainer
+const SLOT_SIZE    := 40
+const SLOT_SCRIPT  := preload("res://scripts/hotbar_slot.gd")
+
+func _ready() -> void:
+	var hbox: HBoxContainer = $CanvasLayer/HBoxContainer as HBoxContainer
+	hbox.add_theme_constant_override("separation", 4)
+
+	var slot_idx: int = 0
 	for child in hbox.get_children():
-		if child is TextureRect:
-			slots.append(child)
-			# Add an item icon (Sprite2D) and quantity label inside each slot
-			var icon = Sprite2D.new()
-			icon.name = "ItemIcon"
-			icon.position = Vector2(16, 16)  # center of 32x32 slot
-			icon.visible = false
-			child.add_child(icon)
+		if not (child is TextureRect):
+			continue
 
-			var label = Label.new()
-			label.name = "Quantity"
-			label.add_theme_font_size_override("font_size", 10)
-			label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-			label.offset_left = -14
-			label.offset_top = -14
-			label.visible = false
-			child.add_child(label)
+		# Attach hotbar_slot.gd so the TextureRect can handle drops
+		child.set_script(SLOT_SCRIPT)
+		child.set("slot_index", slot_idx)
+		slot_idx += 1
 
-	# Connect to inventory updates
-	Global.Inventory_updated.connect(_refresh_hotbar)
+		slots.append(child)
+		_style_slot(child as TextureRect)
+
+		# TextureRect icon — auto-scales and centres
+		var icon := TextureRect.new()
+		icon.name         = "ItemIcon"
+		icon.expand_mode  = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+		icon.offset_left   =  4
+		icon.offset_top    =  4
+		icon.offset_right  = -4
+		icon.offset_bottom = -4
+		icon.mouse_filter  = Control.MOUSE_FILTER_IGNORE
+		icon.visible       = false
+		child.add_child(icon)
+
+		var label := Label.new()
+		label.name = "Quantity"
+		label.add_theme_font_size_override("font_size", 10)
+		label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+		label.offset_left  = -14
+		label.offset_top   = -14
+		label.visible      = false
+		child.add_child(label)
+
+	Global.Hotbar_updated.connect(_refresh_hotbar)
 	Global.hotbar_selection_changed.connect(_on_selection_changed)
+	Global.inventory_toggled.connect(_on_inventory_toggled)
 
 	_refresh_hotbar()
 	_highlight_slot(0)
 
-func _input(event):
-	# Number keys 1-9
+func _style_slot(slot: TextureRect) -> void:
+	slot.texture               = null
+	slot.custom_minimum_size   = Vector2(SLOT_SIZE, SLOT_SIZE)
+	slot.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	slot.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+	slot.expand_mode           = TextureRect.EXPAND_IGNORE_SIZE
+
+	var bg := ColorRect.new()
+	bg.name         = "SlotBG"
+	bg.color        = C_SLOT_BG
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	slot.add_child(bg)
+	slot.move_child(bg, 0)
+
+func _on_inventory_toggled(_is_open: bool) -> void:
+	pass  # hotbar stays fully visible when inventory is open
+
+func _input(event: InputEvent) -> void:
 	for i in range(9):
 		if event.is_action_pressed("hotbar_%d" % (i + 1)):
 			Global.set_hotbar_selection(i)
 			return
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			Global.set_hotbar_selection((selected_index - 1 + 9) % 9)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			Global.set_hotbar_selection((selected_index + 1) % 9)
 
-	# Scroll wheel
-	if event is InputEventMouseButton:
-		if event.pressed:
-			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-				Global.set_hotbar_selection((selected_index - 1 + 9) % 9)
-			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				Global.set_hotbar_selection((selected_index + 1) % 9)
-
-func _on_selection_changed(index: int):
+func _on_selection_changed(index: int) -> void:
 	_highlight_slot(index)
 
-func _highlight_slot(index: int):
-	# Remove highlight from old slot
+func _highlight_slot(index: int) -> void:
 	if selected_index < slots.size():
-		slots[selected_index].modulate = NORMAL_COLOR
-	selected_index = index
-	# Apply highlight to new slot
-	if selected_index < slots.size():
-		slots[selected_index].modulate = SELECTED_COLOR
+		var prev_bg: ColorRect = \
+			(slots[selected_index] as TextureRect).get_node_or_null("SlotBG") as ColorRect
+		if prev_bg != null:
+			prev_bg.color = C_SLOT_BG
 
-func _refresh_hotbar():
-	# Sync first 9 inventory slots into hotbar display
-	for i in range(min(slots.size(), 9)):
-		var slot = slots[i]
-		var icon  = slot.get_node_or_null("ItemIcon")
-		var label = slot.get_node_or_null("Quantity")
+	selected_index = index
+
+	if selected_index < slots.size():
+		var bg: ColorRect = \
+			(slots[selected_index] as TextureRect).get_node_or_null("SlotBG") as ColorRect
+		if bg != null:
+			bg.color = C_SLOT_SEL
+
+func _refresh_hotbar() -> void:
+	for i in range(min(slots.size(), Global.HOTBAR_SIZE)):
+		var slot:  TextureRect = slots[i] as TextureRect
+		var icon:  TextureRect = slot.get_node_or_null("ItemIcon") as TextureRect
+		var label: Label       = slot.get_node_or_null("Quantity") as Label
 		if icon == null or label == null:
 			continue
-
-		var item = Global.Inventory[i]
+		var item: Variant = Global.Hotbar[i]
 		if item != null:
-			icon.texture = item["texture"]
-			icon.visible = true
-			label.text = str(item["quantity"])
-			label.visible = item["quantity"] > 1
+			var data: ItemData = (item as Dictionary)["data"] as ItemData
+			icon.texture  = data.icon
+			icon.visible  = true
+			label.text    = str((item as Dictionary)["quantity"])
+			label.visible = (item as Dictionary)["quantity"] > 1
 		else:
-			icon.texture = null
-			icon.visible = false
+			icon.texture  = null
+			icon.visible  = false
 			label.visible = false

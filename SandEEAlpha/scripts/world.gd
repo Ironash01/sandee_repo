@@ -2,7 +2,8 @@ extends Node2D
 
 # experimental tiling variables
 const TILE_SIZE = 32
-@export var object: PackedScene
+# Tree scene (loaded once, reused for all placements)
+const TREE_SCENE: PackedScene = preload("res://scenes/objects/Tree.tscn")
 
 enum Terrain { Water, Plain, Desert, Snowy }
 @export var player: CharacterBody2D
@@ -57,7 +58,7 @@ func _ready() -> void:
 	_setup_ghost()
 	# Listen for hotbar changes so ghost updates immediately on item switch
 	Global.hotbar_selection_changed.connect(_on_hotbar_changed)
-	Global.Inventory_updated.connect(_on_hotbar_changed)
+	Global.Hotbar_updated.connect(_on_hotbar_changed)
 
 func _setup_ghost():
 	# Ghost lives in world space (child of World node) so coordinates match editable_layer
@@ -79,10 +80,9 @@ func _process(_delta):
 
 # ── Ghost highlight ──────────────────────────────────────────────
 func _is_placeable_item(item) -> bool:
-	if item == null:
+	if item == null or not (item is Dictionary) or not item.has("data"):
 		return false
-	var t = item.get("type", "").to_lower()
-	return t in PLACEABLE_TYPES
+	return (item["data"] as ItemData).is_placeable
 
 func _update_ghost():
 	var item = Global.get_hotbar_item()
@@ -91,7 +91,7 @@ func _update_ghost():
 		return
 
 	# Rebuild sprite if the selected item changed
-	var item_key = item.get("type", "") + item.get("name", "")
+	var item_key: String = (item["data"] as ItemData).item_name
 	if item_key != ghost_last_type:
 		ghost_last_type = item_key
 		_rebuild_ghost_sprite(item)
@@ -111,31 +111,14 @@ func _update_ghost():
 	else:
 		ghost_sprite.modulate = Color(1.0, 1.0, 1.0, 0.5)
 
-func _rebuild_ghost_sprite(item):
-	var place_path = item.get("place_scene_path", "")
-	if place_path == "" or not ResourceLoader.exists(place_path):
-		ghost_sprite.texture = item.get("texture", null)
-		ghost_sprite.hframes = 1
-		ghost_sprite.vframes = 1
-		ghost_sprite.frame   = 0
-		ghost_sprite.position = Vector2.ZERO
-		return
-	var packed = load(place_path)
-	if packed == null:
-		return
-	# Instantiate temporarily to read sprite properties then discard
-	var temp = packed.instantiate()
-	var src  = temp.get_node_or_null("Sprite2D")
-	if src:
-		ghost_sprite.texture  = src.texture
-		ghost_sprite.hframes  = src.hframes
-		ghost_sprite.vframes  = src.vframes
-		ghost_sprite.frame    = src.frame
-		# Match the same y-offset used in place_block so ghost aligns exactly
-		var frame_height = src.texture.get_height() / max(src.vframes, 1)
-		var y_offset = (TILE_SIZE / 2.0) - (frame_height / 2.0)
-		ghost_sprite.position = Vector2(0, y_offset)
-	temp.queue_free()
+func _rebuild_ghost_sprite(item: Dictionary) -> void:
+	var data: ItemData = item["data"] as ItemData
+	var tex: Texture2D = data.placeable_sprite if data.placeable_sprite != null else data.icon
+	ghost_sprite.texture  = tex
+	ghost_sprite.hframes  = 1
+	ghost_sprite.vframes  = 1
+	ghost_sprite.frame    = 0
+	ghost_sprite.position = Vector2.ZERO
 
 func _on_hotbar_changed(_idx = 0):
 	_update_ghost()
@@ -160,8 +143,7 @@ func place_block():
 	# Snap world position to tile center
 	var world_pos = editable_layer.map_to_local(cell)
 
-	# Instantiate from the item's place_scene_path (the world object scene)
-	var scene_path = item.get("place_scene_path", "")
+	var scene_path: String = (item["data"] as ItemData).place_scene_path
 	if scene_path == "" or not ResourceLoader.exists(scene_path):
 		print("No place_scene_path set on item — cannot place.")
 		return
@@ -172,6 +154,9 @@ func place_block():
 		return
 
 	var obj = obj_scene.instantiate()
+	# Pass ItemData so generic PlaceableBlock can set its sprite
+	if obj.has_method("setup"):
+		obj.call("setup", item["data"] as ItemData)
 	# Add to editable_layer so coordinates match the tilemap space
 	editable_layer.add_child(obj)
 	# map_to_local returns the tile CENTER in Godot TileMapLayer.
@@ -187,8 +172,15 @@ func place_block():
 		var y_offset = (TILE_SIZE / 2.0) - (frame_height / 2.0)
 		sprite.position = Vector2(0, y_offset)
 
+	# Play placement animation if configured
+	var _data: ItemData = item["data"] as ItemData
+	if _data.has_place_animation and _data.place_animation_name != "":
+		var anim_player: AnimationPlayer = obj.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		if anim_player != null:
+			anim_player.play(_data.place_animation_name)
+
 	# Consume 1 from inventory
-	Global.remove_item(item["type"], item["effect"])
+	Global.remove_item(item["data"] as ItemData)
 
 # ── Terrain Generation ───────────────────────────────────────────
 func _generate_terrain():
@@ -234,21 +226,30 @@ func _get_tile_type(hum: float, temp: float, alt: float) -> Terrain:
 	return Terrain.Plain
 
 # ── Foliage ──────────────────────────────────────────────────────
-func _place_foliage():
-	var points      = _generate_points()
-	var cell_offset = Vector2i(width, height) / 2
+func _place_foliage() -> void:
+	var points:      PackedVector2Array = _generate_points()
+	var cell_offset: Vector2i           = Vector2i(width, height) / 2
 	for point in points:
-		var int_point    = Vector2i(point)
-		var terrain_cell = ground_layer.get_cell_tile_data(int_point - cell_offset)
-		if terrain_cell != null:
-			var terrain_type: Terrain = terrain_cell.get_custom_data("terrain_type")
-			match terrain_type:
-				Terrain.Plain:
-					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
-				Terrain.Desert:
-					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
-				Terrain.Snowy:
-					editable_layer.set_cell(int_point - cell_offset, 0, Vector2i.ZERO)
+		var int_point:  Vector2i = Vector2i(point)
+		var tile_coord: Vector2i = int_point - cell_offset
+		# Derive terrain from the atlas coord set in _generate_terrain()
+		# (0,0)=Plain  (1,0)=Desert  (1,1)=Snowy  water tiles return source_id -1
+		var src_id: int = ground_layer.get_cell_source_id(tile_coord)
+		if src_id == -1:
+			continue  # water — skip
+		var atlas_coord: Vector2i = ground_layer.get_cell_atlas_coords(tile_coord)
+		var tree_type_val: int = 0  # default Plain
+		if atlas_coord == Vector2i(1, 0):
+			tree_type_val = 1  # Desert
+		elif atlas_coord == Vector2i(1, 1):
+			tree_type_val = 2  # Snowy
+		# Spawn tree at the tile world position
+		var local_pos: Vector2 = ground_layer.map_to_local(tile_coord)
+		var world_pos: Vector2 = ground_layer.to_global(local_pos)
+		var tree: Node2D       = TREE_SCENE.instantiate() as Node2D
+		tree.set("tree_type", tree_type_val)
+		tree.global_position   = world_pos
+		add_child(tree)
 
 func _generate_points() -> PackedVector2Array:
 	var cell_size   = FOLIAGE_SPACING / sqrt(2)

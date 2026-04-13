@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://6bk4sjwa0vjn"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_script"]
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_w3n26"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_wood"]
+atlas = ExtResource("1_w3n26")
+region = Rect2(0, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_4004f"]
+atlas = ExtResource("1_w3n26")
+region = Rect2(0, 0, 32, 32)
+
+[resource]
+script = ExtResource("1_script")
+item_name = "Wood"
+description = "Basic crafting material"
+icon = SubResource("AtlasTexture_wood")
+is_placeable = true
+placeable_sprite = SubResource("AtlasTexture_4004f")
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"

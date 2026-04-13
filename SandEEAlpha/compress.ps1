@@ -1,0 +1,1 @@
+Compress-Archive -Path ".\*" -DestinationPath "..\sandee_alpha.zip"

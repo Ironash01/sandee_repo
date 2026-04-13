@@ -1,0 +1,56 @@
+[gd_scene format=3 uid="uid://cgtq2rdkflrs7"]
+
+[ext_resource type="PackedScene" uid="uid://cnc7lnsw45l6i" path="res://scenes/ui/Hotbar.tscn" id="1_bj3gq"]
+[ext_resource type="Script" uid="uid://b6jexka4lcep2" path="res://scenes/game_instance.gd" id="1_egp1g"]
+[ext_resource type="PackedScene" uid="uid://dpm4y6ku09hlf" path="res://scenes/ui/PauseMenu.tscn" id="2_pause"]
+[ext_resource type="PackedScene" uid="uid://ch5ppikl27a2n" path="res://scenes/world_gen.tscn" id="3_kafmv"]
+[ext_resource type="PackedScene" uid="uid://b2luk2qj6moim" path="res://scenes/player/player.tscn" id="4_2glxl"]
+[ext_resource type="PackedScene" uid="uid://chae2m53coo2i" path="res://scenes/ui/InventoryItem.tscn" id="5_2glxl"]
+[ext_resource type="Texture2D" uid="uid://bg7iv6t8kx5jj" path="res://sprites/items/SandEE_TemplateSword.png" id="6_hdajf"]
+[ext_resource type="Texture2D" uid="uid://qf2w1p7jh1hq" path="res://sprites/items/SandEE_FurnaceV2.png" id="8_0cmsc"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_mo7cb"]
+atlas = ExtResource("8_0cmsc")
+region = Rect2(0, 16, 32, 32)
+
+[node name="Game" type="Node2D" unique_id=215356930]
+script = ExtResource("1_egp1g")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=457529082]
+layer = 10
+process_mode = 3
+
+[node name="PauseMenu" parent="CanvasLayer" unique_id=728603994 instance=ExtResource("2_pause")]
+
+[node name="PauseButton" type="Button" parent="CanvasLayer" unique_id=2100391308]
+offset_left = 8.0
+offset_top = 8.0
+offset_right = 68.0
+offset_bottom = 34.0
+text = "| | Pause"
+
+[node name="Control" parent="CanvasLayer" unique_id=1912151607 instance=ExtResource("1_bj3gq")]
+
+[node name="World" parent="." unique_id=98158199 instance=ExtResource("3_kafmv")]
+object = null
+
+[node name="Player" parent="." unique_id=382532469 instance=ExtResource("4_2glxl")]
+process_mode = 3
+texture_filter = 1
+
+[node name="sword" parent="." unique_id=541138292 instance=ExtResource("5_2glxl")]
+z_index = 5
+position = Vector2(132, 1)
+item_type = "DebugItem"
+item_name = "Template Sword"
+item_texture = ExtResource("6_hdajf")
+place_scene_path = ""
+
+[node name="testblock" parent="." unique_id=1165210587 instance=ExtResource("5_2glxl")]
+position = Vector2(201, 0)
+item_type = "block"
+item_name = "Furnace"
+item_texture = SubResource("AtlasTexture_mo7cb")
+place_scene_path = "res://scenes/objects/ObjectItem.tscn"
+
+
