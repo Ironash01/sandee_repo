@@ -2,7 +2,7 @@ use std::{str::FromStr, vec};
 
 use anyhow::Result;
 use godot::prelude::*;
-use mlua::{IntoLua, Lua, Table, Value};
+use mlua::{IntoLua, Lua, Table, Value, Variadic};
 use strum::{AsRefStr, EnumString};
 
 use crate::runner::vector::LuaVector;
@@ -110,11 +110,16 @@ impl LuaState {
         globals.set("vector", LuaVector::new(0., 0.))?;
 
         // signals as functions
-        let print = self.lua.create_function(|state, string: String| {
+        let print = self.lua.create_function(|state, args: Variadic<Value>| {
             let signals: Table = state.globals().get("signals")?;
+            let print_string: Vec<String> = args
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Result<_, _>>()?;
+            let print_string = print_string.join("\t");
             signals.raw_insert(
                 1,
-                build_lua_signal(state, LuaSignal::Print, string.into_lua(state)?)?,
+                build_lua_signal(state, LuaSignal::Print, print_string.into_lua(state)?)?,
             )?;
             Ok(())
         })?;
