@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://b8pqqosrxqkwa"]
+
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_ooqt8"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_vvkro"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_fmsa7"]
+atlas = ExtResource("1_ooqt8")
+region = Rect2(0, 64, 32, 32)
+
+[resource]
+script = ExtResource("1_vvkro")
+item_name = "Stick"
+description = "Used as a material."
+icon = SubResource("AtlasTexture_fmsa7")
+is_craftable = true
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

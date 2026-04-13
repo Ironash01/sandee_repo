@@ -1,6 +1,6 @@
 extends Control
 
-# ── Colors (dark navy theme, Terraria-inspired) ───────────────────
+# ── Colors ────────────────────────────────────────────────────────
 const C_OVERLAY  := Color(0.00, 0.00, 0.00, 0.50)
 const C_PANEL    := Color(0.08, 0.10, 0.20, 0.97)
 const C_BORDER   := Color(0.22, 0.32, 0.58, 1.00)
@@ -9,268 +9,538 @@ const C_DIVIDER  := Color(0.20, 0.28, 0.50, 1.00)
 const C_TIP_BG   := Color(0.11, 0.15, 0.28, 1.00)
 const C_MUTED    := Color(0.55, 0.65, 0.85, 1.00)
 const C_EFFECT   := Color(0.55, 0.90, 0.60, 1.00)
+const C_TAB_ACT  := Color(0.08, 0.10, 0.20, 0.97)
+const C_TAB_IDLE := Color(0.04, 0.06, 0.12, 0.97)
+const C_CAN_CRAFT := Color(0.15, 0.45, 0.20, 1.00)
+const C_NO_MAT   := Color(0.30, 0.20, 0.20, 1.00)
+const C_NO_STA   := Color(0.35, 0.28, 0.10, 1.00)
+const C_SEL      := Color(0.25, 0.40, 0.75, 1.00)
 
 const COLS       := 5
 const SLOT_SCENE := preload("res://scenes/ui/InventorySlot.tscn")
 
-# ── Node refs ─────────────────────────────────────────────────────
-var _slots:      Array   = []
-var _tip_root:   Control = null
-var _tip_name:   Label
-var _tip_type:   Label
-var _tip_effect: Label
-var _tip_qty:    Label
+const CRAFT_CATEGORIES := ["Materials", "Blocks", "Weapons", "Others"]
+const RECIPE_PATHS: Array = [
+	"res://resources/recipes/crafting_station_recipe.tres",
+	"res://resources/recipes/stick_recipe.tres"
+	
+]
 
-var _active_idx:     int     = -1
-var _crafting_menu: Control = null
+# ── Inventory refs ────────────────────────────────────────────────
+var _slots:         Array   = []
+var _tip_root:      Control = null
+var _tip_name:      Label
+var _tip_type:      Label
+var _tip_effect:    Label
+var _tip_qty:       Label
+var _active_idx:    int     = -1
+
+# ── Tab panels ────────────────────────────────────────────────────
+var _inv_panel:    Control
+var _craft_panel:  Control
+var _tab_inv_btn:  Button
+var _tab_craft_btn: Button
+
+# ── Crafting refs ─────────────────────────────────────────────────
+var _recipes:       Array = []
+var _filtered:      Array = []
+var _active_cat:    String = "Materials"
+var _selected_idx:  int   = -1
+var _craft_list:    VBoxContainer
+var _craft_detail:  Control
+var _craft_name:    Label
+var _craft_ing1:    Label
+var _craft_ing2:    Label
+var _craft_result:  Label
+var _craft_warn:    Label
+var _craft_btn:     Button
+var _craft_cat_btns: Dictionary = {}
+var _craft_row_btns: Array = []
 
 # ── Lifecycle ─────────────────────────────────────────────────────
-var _center: CenterContainer
-
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	_build()
-	Global.Inventory_updated.connect(_refresh)
+	_load_recipes()
+	_rebuild()
+	Global.Inventory_updated.connect(_refresh_inv)
+	Global.Hotbar_updated.connect(_refresh_crafting)
 	Global.ui_scale_changed.connect(_on_ui_scale)
-	_refresh()
 
-func _on_ui_scale(s: float) -> void:
-	if _center != null:
-		_center.scale = Vector2(s, s)
-	# Preload crafting menu into same CanvasLayer
-	var cm_scene: PackedScene = load("res://scenes/ui/CraftingMenu.tscn") as PackedScene
-	_crafting_menu = cm_scene.instantiate() as Control
-	get_parent().add_child(_crafting_menu)
+func _on_ui_scale(_s: float) -> void:
+	_rebuild()
 
-# ── UI construction ───────────────────────────────────────────────
+func _load_recipes() -> void:
+	_recipes.clear()
+	for path in RECIPE_PATHS:
+		var res: Resource = load(path) as Resource
+		if res == null or not (res is CraftingRecipe):
+			continue
+		var r: CraftingRecipe = res as CraftingRecipe
+		if r.result_item != null and r.result_item.is_craftable:
+			_recipes.append(r)
+
+# ── Build ─────────────────────────────────────────────────────────
+func _rebuild() -> void:
+	_slots = []; _tip_root = null; _craft_list = null; _craft_detail = null
+	_craft_cat_btns.clear(); _craft_row_btns.clear()
+	_tip_name = null; _tip_type = null; _tip_effect = null; _tip_qty = null
+	_active_idx = -1; _selected_idx = -1
+	for child in get_children():
+		child.queue_free()
+	await get_tree().process_frame
+	_build()
+	_refresh_inv()
+	_switch_tab("inventory")
+
 func _build() -> void:
-	# Dark screen overlay
+	var s: float = Global.ui_scale
+
 	var overlay := ColorRect.new()
-	overlay.color        = C_OVERLAY
+	overlay.color = C_OVERLAY
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
 
-	# Center container — centers the panel on screen
-	_center = CenterContainer.new()
-	_center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_center)
-	var center: CenterContainer = _center
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(center)
 
-	# Main panel
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 0)
+	center.add_child(outer)
+
+	# ── Tab row ───────────────────────────────────────────────────
+	var tab_row := HBoxContainer.new()
+	tab_row.add_theme_constant_override("separation", 2)
+	outer.add_child(tab_row)
+
+	_tab_inv_btn   = _make_tab("INVENTORY", true,  s, func(): _switch_tab("inventory"))
+	_tab_craft_btn = _make_tab("✦ CRAFT",  false, s, func(): _switch_tab("craft"))
+	tab_row.add_child(_tab_inv_btn)
+	tab_row.add_child(_tab_craft_btn)
+
+	var ts := Control.new()
+	ts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tab_row.add_child(ts)
+
+	var close := Button.new()
+	close.text = "✕"; close.flat = true
+	close.add_theme_font_size_override("font_size", i(13, s))
+	close.add_theme_color_override("font_color", C_MUTED)
+	close.custom_minimum_size = Vector2(i(28,s), i(28,s))
+	close.pressed.connect(_close)
+	tab_row.add_child(close)
+
+	# ── Shared panel ──────────────────────────────────────────────
 	var panel := PanelContainer.new()
 	var ps    := StyleBoxFlat.new()
-	ps.bg_color     = C_PANEL
-	ps.border_color = C_BORDER
+	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(1)
-	ps.set_corner_radius_all(6)
-	ps.content_margin_left   = 18
-	ps.content_margin_right  = 18
-	ps.content_margin_top    = 14
-	ps.content_margin_bottom = 18
+	ps.corner_radius_top_left = 0
+	ps.corner_radius_top_right  = i(6, s)
+	ps.corner_radius_bottom_left  = i(6, s)
+	ps.corner_radius_bottom_right = i(6, s)
+	ps.content_margin_left = i(18,s); ps.content_margin_right  = i(18,s)
+	ps.content_margin_top  = i(14,s); ps.content_margin_bottom = i(18,s)
 	panel.add_theme_stylebox_override("panel", ps)
-	center.add_child(panel)
+	outer.add_child(panel)
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 10)
-	panel.add_child(vbox)
+	var stack := Control.new()
+	stack.custom_minimum_size = Vector2(i(380,s), i(300,s))
+	panel.add_child(stack)
 
-	# ── Header ────────────────────────────────────────────────────
-	var header := HBoxContainer.new()
-	vbox.add_child(header)
+	# ── Inventory tab content ─────────────────────────────────────
+	_inv_panel = _build_inv_content(s)
+	_inv_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	stack.add_child(_inv_panel)
 
-	var title := Label.new()
-	title.text = "INVENTORY"
-	title.add_theme_font_size_override("font_size", 16)
-	title.add_theme_color_override("font_color", C_TITLE)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(title)
+	# ── Crafting tab content ──────────────────────────────────────
+	_craft_panel = _build_craft_content(s)
+	_craft_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	stack.add_child(_craft_panel)
 
-	var craft_btn := Button.new()
-	craft_btn.text = "✦ CRAFT"
-	craft_btn.add_theme_font_size_override("font_size", 12)
-	var cps := StyleBoxFlat.new()
-	cps.bg_color     = Color(0.12, 0.28, 0.48, 1.0)
-	cps.border_color = C_BORDER
-	cps.set_border_width_all(1)
-	cps.set_corner_radius_all(3)
-	cps.content_margin_left   = 10
-	cps.content_margin_right  = 10
-	cps.content_margin_top    = 3
-	cps.content_margin_bottom = 3
-	craft_btn.add_theme_stylebox_override("normal", cps)
-	craft_btn.add_theme_color_override("font_color", C_TITLE)
-	craft_btn.pressed.connect(_open_crafting)
-	header.add_child(craft_btn)
+func _make_tab(label: String, active: bool, s: float, cb: Callable) -> Button:
+	var btn := Button.new()
+	btn.text = label
+	btn.add_theme_font_size_override("font_size", i(12, s))
+	btn.custom_minimum_size = Vector2(i(100, s), i(28, s))
+	var ps := StyleBoxFlat.new()
+	ps.bg_color     = C_TAB_ACT if active else C_TAB_IDLE
+	ps.border_color = C_BORDER if active else Color(C_BORDER, 0.4)
+	ps.border_width_top = 1; ps.border_width_left = 1; ps.border_width_right = 1
+	ps.border_width_bottom = 0
+	ps.corner_radius_top_left  = i(4, s); ps.corner_radius_top_right = i(4, s)
+	ps.content_margin_left = i(10,s); ps.content_margin_right  = i(10,s)
+	ps.content_margin_top  = i(4, s); ps.content_margin_bottom = i(4, s)
+	btn.add_theme_stylebox_override("normal",  ps)
+	btn.add_theme_stylebox_override("hover",   ps)
+	btn.add_theme_stylebox_override("pressed", ps)
+	btn.add_theme_color_override("font_color", C_TITLE if active else C_MUTED)
+	btn.pressed.connect(cb)
+	return btn
 
-	var close_btn := Button.new()
-	close_btn.text = "✕"
-	close_btn.flat = true
-	close_btn.add_theme_color_override("font_color", C_MUTED)
-	close_btn.pressed.connect(_close)
-	header.add_child(close_btn)
+func _switch_tab(which: String) -> void:
+	if _inv_panel == null or _craft_panel == null:
+		return
+	var inv_active := which == "inventory"
+	_inv_panel.visible   = inv_active
+	_craft_panel.visible = not inv_active
+	_style_tab_btn(_tab_inv_btn,   inv_active)
+	_style_tab_btn(_tab_craft_btn, not inv_active)
+	if not inv_active:
+		_active_cat   = "Materials"
+		_selected_idx = -1
+		_craft_filter_refresh()
 
-	# Divider
-	var div := ColorRect.new()
-	div.color                = C_DIVIDER
-	div.custom_minimum_size  = Vector2(0, 1)
-	vbox.add_child(div)
+func _style_tab_btn(btn: Button, active: bool) -> void:
+	if btn == null: return
+	var s: float = Global.ui_scale
+	var ps := StyleBoxFlat.new()
+	ps.bg_color     = C_TAB_ACT if active else C_TAB_IDLE
+	ps.border_color = C_BORDER if active else Color(C_BORDER, 0.4)
+	ps.border_width_top = 1; ps.border_width_left = 1; ps.border_width_right = 1
+	ps.border_width_bottom = 0
+	ps.corner_radius_top_left  = i(4, s); ps.corner_radius_top_right = i(4, s)
+	ps.content_margin_left = i(10,s); ps.content_margin_right  = i(10,s)
+	ps.content_margin_top  = i(4, s); ps.content_margin_bottom = i(4, s)
+	btn.add_theme_stylebox_override("normal",  ps)
+	btn.add_theme_stylebox_override("hover",   ps)
+	btn.add_theme_stylebox_override("pressed", ps)
+	btn.add_theme_color_override("font_color", C_TITLE if active else C_MUTED)
 
-	# ── Body: grid + tooltip side by side ────────────────────────
+# ── Inventory content ─────────────────────────────────────────────
+func _build_inv_content(s: float) -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", i(10, s))
+
 	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", 14)
-	vbox.add_child(body)
+	body.add_theme_constant_override("separation", i(14, s))
+	root.add_child(body)
 
-	# Grid of 20 slots (5 × 4)
 	var grid := GridContainer.new()
 	grid.columns = COLS
-	grid.add_theme_constant_override("h_separation", 5)
-	grid.add_theme_constant_override("v_separation", 5)
+	grid.add_theme_constant_override("h_separation", i(5, s))
+	grid.add_theme_constant_override("v_separation",  i(5, s))
 	body.add_child(grid)
 
-	for i in range(Global.INVENTORY_SIZE):
+	for idx in range(Global.INVENTORY_SIZE):
 		var slot = SLOT_SCENE.instantiate()
-		slot.slot_index = i
+		slot.slot_index = idx
 		slot.slot_clicked.connect(_on_slot_clicked)
 		grid.add_child(slot)
 		_slots.append(slot)
 
-	# Tooltip panel (right column)
-	_tip_root = _build_tooltip()
+	_tip_root = _build_tooltip(s)
 	body.add_child(_tip_root)
 	_tip_root.visible = false
 
-func _build_tooltip() -> Control:
+	return root
+
+func _build_tooltip(s: float) -> Control:
 	var root := Control.new()
-	root.custom_minimum_size   = Vector2(160, 200)
+	root.custom_minimum_size   = Vector2(i(160,s), i(200,s))
 	root.size_flags_horizontal = Control.SIZE_SHRINK_END
 	root.size_flags_vertical   = Control.SIZE_SHRINK_BEGIN
 
 	var panel := PanelContainer.new()
-	var ps    := StyleBoxFlat.new()
-	ps.bg_color     = C_TIP_BG
-	ps.border_color = C_BORDER
-	ps.set_border_width_all(1)
-	ps.set_corner_radius_all(4)
-	ps.content_margin_left   = 12
-	ps.content_margin_right  = 12
-	ps.content_margin_top    = 12
-	ps.content_margin_bottom = 12
+	var ps    := _sb(C_TIP_BG, C_BORDER, 4, i(12,s), i(12,s), i(12,s), i(12,s))
 	panel.add_theme_stylebox_override("panel", ps)
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 5)
+	vbox.add_theme_constant_override("separation", i(5, s))
 	panel.add_child(vbox)
 
-	_tip_name = Label.new()
-	_tip_name.add_theme_font_size_override("font_size", 14)
-	_tip_name.add_theme_color_override("font_color", C_TITLE)
+	_tip_name = _lbl("", i(14,s), C_TITLE)
 	_tip_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_tip_name)
+	_tip_qty    = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_qty)
+	_tip_type   = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_type)
+	_tip_effect = _lbl("", i(11,s), C_EFFECT); vbox.add_child(_tip_effect)
+	var sp := Control.new(); sp.custom_minimum_size = Vector2(0, i(8,s)); vbox.add_child(sp)
+	_div(vbox)
+	var sp2 := Control.new(); sp2.custom_minimum_size = Vector2(0, i(6,s)); vbox.add_child(sp2)
+	var drop := Button.new()
+	drop.text = "DROP"
+	drop.add_theme_font_size_override("font_size", i(12, s))
+	var ds := _sb(Color(0.55,0.15,0.15,1), Color(0.80,0.25,0.25,1), 3, i(8,s), i(8,s), i(6,s), i(6,s))
+	drop.add_theme_stylebox_override("normal", ds)
+	drop.add_theme_color_override("font_color", Color(1.0, 0.85, 0.85, 1.0))
+	drop.pressed.connect(_on_drop_pressed)
+	vbox.add_child(drop)
+	return root
 
-	_tip_qty = Label.new()
-	_tip_qty.add_theme_font_size_override("font_size", 11)
-	_tip_qty.add_theme_color_override("font_color", C_MUTED)
-	vbox.add_child(_tip_qty)
+# ── Crafting content ──────────────────────────────────────────────
+func _build_craft_content(s: float) -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", i(8, s))
 
-	_tip_type = Label.new()
-	_tip_type.add_theme_font_size_override("font_size", 11)
-	_tip_type.add_theme_color_override("font_color", C_MUTED)
-	vbox.add_child(_tip_type)
+	# Category tabs
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", i(4, s))
+	root.add_child(tabs)
+	_craft_cat_btns.clear()
+	for cat in CRAFT_CATEGORIES:
+		var btn := Button.new()
+		btn.text = cat
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.add_theme_font_size_override("font_size", i(11, s))
+		btn.custom_minimum_size = Vector2(0, i(26, s))
+		var c: String = cat as String
+		btn.pressed.connect(func() -> void: _craft_on_cat(c))
+		tabs.add_child(btn)
+		_craft_cat_btns[cat] = btn
 
-	_tip_effect = Label.new()
-	_tip_effect.add_theme_font_size_override("font_size", 11)
-	_tip_effect.add_theme_color_override("font_color", C_EFFECT)
-	vbox.add_child(_tip_effect)
+	_div(root)
 
-	# Spacer
-	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(0, 8)
-	vbox.add_child(spacer)
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", i(10, s))
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(body)
 
-	# Divider
-	var div := ColorRect.new()
-	div.color               = C_DIVIDER
-	div.custom_minimum_size = Vector2(0, 1)
-	vbox.add_child(div)
+	# Recipe list
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size    = Vector2(i(180, s), 0)
+	scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body.add_child(scroll)
 
-	var sp2 := Control.new()
-	sp2.custom_minimum_size = Vector2(0, 6)
-	vbox.add_child(sp2)
+	_craft_list = VBoxContainer.new()
+	_craft_list.add_theme_constant_override("separation", i(3, s))
+	_craft_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_craft_list)
 
-	# Drop button
-	var drop_btn := Button.new()
-	drop_btn.text = "DROP"
-	var ds := StyleBoxFlat.new()
-	ds.bg_color     = Color(0.55, 0.15, 0.15, 1.0)
-	ds.border_color = Color(0.80, 0.25, 0.25, 1.0)
-	ds.set_border_width_all(1)
-	ds.set_corner_radius_all(3)
-	ds.content_margin_top    = 6
-	ds.content_margin_bottom = 6
-	drop_btn.add_theme_stylebox_override("normal", ds)
-	drop_btn.add_theme_color_override("font_color", Color(1.0, 0.85, 0.85, 1.0))
-	drop_btn.pressed.connect(_on_drop_pressed)
-	vbox.add_child(drop_btn)
+	# Detail panel
+	_craft_detail = _build_craft_detail(s)
+	_craft_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_craft_detail.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	body.add_child(_craft_detail)
+	_craft_detail.visible = false
 
 	return root
 
-# ── Refresh slots from Global.Inventory ──────────────────────────
-func _refresh() -> void:
-	for i in range(_slots.size()):
-		var item = Global.Inventory[i] if i < Global.Inventory.size() else null
-		if item != null:
-			_slots[i].set_item(item)
-		else:
-			_slots[i].set_empty()
-	# If active slot was cleared, hide tooltip
+func _build_craft_detail(s: float) -> Control:
+	var root := PanelContainer.new()
+	var ps   := _sb(C_TIP_BG, C_BORDER, 4, i(12,s), i(12,s), i(12,s), i(12,s))
+	root.add_theme_stylebox_override("panel", ps)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", i(6, s))
+	root.add_child(vbox)
+
+	_craft_name   = _lbl("", i(14,s), C_TITLE); vbox.add_child(_craft_name)
+	_div(vbox)
+	vbox.add_child(_lbl("INGREDIENTS", i(10,s), C_MUTED))
+	_craft_ing1   = _lbl("", i(12,s), C_TITLE); vbox.add_child(_craft_ing1)
+	_craft_ing2   = _lbl("", i(12,s), C_TITLE); vbox.add_child(_craft_ing2)
+	_div(vbox)
+	vbox.add_child(_lbl("RESULT", i(10,s), C_MUTED))
+	_craft_result = _lbl("", i(12,s), C_EFFECT); vbox.add_child(_craft_result)
+	_craft_warn   = _lbl("⚠ Needs Station", i(10,s), Color(1.0, 0.75, 0.2, 1.0))
+	_craft_warn.visible = false; vbox.add_child(_craft_warn)
+
+	var sp := Control.new(); sp.size_flags_vertical = Control.SIZE_EXPAND_FILL; vbox.add_child(sp)
+
+	_craft_btn = Button.new()
+	_craft_btn.text = "CRAFT"
+	_craft_btn.custom_minimum_size = Vector2(0, i(36, s))
+	_craft_btn.add_theme_font_size_override("font_size", i(12, s))
+	_craft_btn.pressed.connect(_on_craft)
+	vbox.add_child(_craft_btn)
+
+	return root
+
+# ── Crafting logic ────────────────────────────────────────────────
+func _craft_on_cat(cat: String) -> void:
+	_active_cat = cat; _selected_idx = -1
+	if _craft_detail != null: _craft_detail.visible = false
+	_craft_highlight_tabs()
+	_craft_filter_refresh()
+
+func _craft_highlight_tabs() -> void:
+	for c in _craft_cat_btns:
+		var btn: Button = _craft_cat_btns[c] as Button
+		var act: bool   = c == _active_cat
+		var ps := _sb(C_SEL if act else C_TIP_BG, C_BORDER, 3, 8, 8, 4, 4)
+		btn.add_theme_stylebox_override("normal",  ps)
+		btn.add_theme_stylebox_override("hover",   ps)
+		btn.add_theme_stylebox_override("pressed", ps)
+		btn.add_theme_color_override("font_color", C_TITLE if act else C_MUTED)
+
+func _craft_filter_refresh() -> void:
+	_filtered = []; _craft_row_btns = []
+	for r in _recipes:
+		if (r as CraftingRecipe).category == _active_cat:
+			_filtered.append(r)
+	if _craft_list == null: return
+	for child in _craft_list.get_children():
+		child.queue_free()
+	if _filtered.is_empty():
+		_craft_list.add_child(_lbl("No recipes.", 11, C_MUTED)); return
+	var s: float = Global.ui_scale
+	for idx in range(_filtered.size()):
+		var r: CraftingRecipe = _filtered[idx] as CraftingRecipe
+		var btn := Button.new()
+		btn.text = r.result_item.item_name
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.add_theme_font_size_override("font_size", i(12, s))
+		var i2 := idx
+		btn.pressed.connect(func() -> void: _craft_select(i2))
+		_craft_list.add_child(btn)
+		_craft_row_btns.append(btn)
+	_refresh_crafting()
+	_craft_highlight_tabs()
+
+func _count_item(data: ItemData) -> int:
+	var n: int = 0
+	for slot in Global.Hotbar:
+		if slot != null and (slot as Dictionary)["data"] == data:
+			n += (slot as Dictionary)["quantity"]
+	for slot in Global.Inventory:
+		if slot != null and (slot as Dictionary)["data"] == data:
+			n += (slot as Dictionary)["quantity"]
+	return n
+
+enum CraftState { CAN, NO_MATS, NO_STATION }
+
+func _craft_state(r: CraftingRecipe) -> CraftState:
+	var ok: bool = _count_item(r.ingredient_1) >= r.ingredient_1_quantity
+	if r.ingredient_2 != null:
+		ok = ok and _count_item(r.ingredient_2) >= r.ingredient_2_quantity
+	if not ok: return CraftState.NO_MATS
+	if r.requires_station and not Global.player_near_station:
+		return CraftState.NO_STATION
+	return CraftState.CAN
+
+func _refresh_crafting() -> void:
+	for idx in range(_craft_row_btns.size()):
+		if idx >= _filtered.size(): break
+		var r: CraftingRecipe = _filtered[idx] as CraftingRecipe
+		var state: CraftState = _craft_state(r)
+		var btn: Button       = _craft_row_btns[idx] as Button
+		var bg: Color; var fc: Color; var mod: float
+		match state:
+			CraftState.CAN:        bg = C_TIP_BG; fc = C_TITLE; mod = 1.0
+			CraftState.NO_MATS:    bg = C_TIP_BG; fc = C_MUTED; mod = 0.55
+			CraftState.NO_STATION: bg = Color(0.14,0.12,0.06,1); fc = Color(1,0.75,0.2,1); mod = 0.8
+		var ps := _sb(bg, C_BORDER, 3, 8, 8, 5, 5)
+		btn.add_theme_stylebox_override("normal",  ps)
+		btn.add_theme_stylebox_override("hover",   ps)
+		btn.add_theme_stylebox_override("pressed", ps)
+		btn.add_theme_color_override("font_color", fc)
+		btn.modulate = Color(mod, mod, mod, 1.0)
+	if _selected_idx >= 0 and _selected_idx < _filtered.size():
+		_update_craft_btn(_filtered[_selected_idx] as CraftingRecipe)
+
+func _craft_select(idx: int) -> void:
+	_selected_idx = idx
+	var r: CraftingRecipe = _filtered[idx] as CraftingRecipe
+	_craft_name.text  = r.result_item.item_name
+	_craft_ing1.text  = "• %s ×%d" % [r.ingredient_1.item_name, r.ingredient_1_quantity]
+	if r.ingredient_2 != null:
+		_craft_ing2.text    = "• %s ×%d" % [r.ingredient_2.item_name, r.ingredient_2_quantity]
+		_craft_ing2.visible = true
+	else:
+		_craft_ing2.visible = false
+	_craft_result.text  = "%s ×%d" % [r.result_item.item_name, r.result_quantity]
+	_craft_warn.visible = r.requires_station
+	_craft_detail.visible = true
+	_update_craft_btn(r)
+
+func _update_craft_btn(r: CraftingRecipe) -> void:
+	var state: CraftState = _craft_state(r)
+	match state:
+		CraftState.CAN:
+			_craft_btn.text = "CRAFT"; _craft_btn.disabled = false
+			var ps := _sb(C_CAN_CRAFT, C_BORDER, 4, 8, 8, 6, 6)
+			_craft_btn.add_theme_stylebox_override("normal", ps)
+			_craft_btn.add_theme_color_override("font_color", Color(0.8, 1.0, 0.8, 1.0))
+		CraftState.NO_MATS:
+			_craft_btn.text = "MISSING MATERIALS"; _craft_btn.disabled = true
+			var ps := _sb(C_NO_MAT, C_BORDER, 4, 8, 8, 6, 6)
+			_craft_btn.add_theme_stylebox_override("normal", ps)
+			_craft_btn.add_theme_color_override("font_color", Color(1.0, 0.7, 0.7, 1.0))
+		CraftState.NO_STATION:
+			_craft_btn.text = "NEEDS STATION"; _craft_btn.disabled = true
+			var ps := _sb(C_NO_STA, C_BORDER, 4, 8, 8, 6, 6)
+			_craft_btn.add_theme_stylebox_override("normal", ps)
+			_craft_btn.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4, 1.0))
+
+func _on_craft() -> void:
+	if _selected_idx < 0: return
+	var r: CraftingRecipe = _filtered[_selected_idx] as CraftingRecipe
+	if _craft_state(r) != CraftState.CAN: return
+	for _n in range(r.ingredient_1_quantity):
+		Global.remove_item(r.ingredient_1)
+	if r.ingredient_2 != null:
+		for _n in range(r.ingredient_2_quantity):
+			Global.remove_item(r.ingredient_2)
+	Global.add_item({"quantity": r.result_quantity, "data": r.result_item})
+	_update_craft_btn(r)
+	_refresh_crafting()
+
+# ── Inventory logic ───────────────────────────────────────────────
+func _refresh_inv() -> void:
+	if _slots.is_empty(): return
+	for idx in range(_slots.size()):
+		var item = Global.Inventory[idx] if idx < Global.Inventory.size() else null
+		if item != null: _slots[idx].set_item(item)
+		else:            _slots[idx].set_empty()
 	if _active_idx >= 0:
-		var still_there = _active_idx < Global.Inventory.size() \
-				and Global.Inventory[_active_idx] != null
-		if not still_there:
-			_tip_root.visible = false
+		var ok: bool = _active_idx < Global.Inventory.size() \
+			and Global.Inventory[_active_idx] != null
+		if not ok:
+			if _tip_root != null: _tip_root.visible = false
 			_active_idx = -1
 
-# ── Slot click → show tooltip ─────────────────────────────────────
 func _on_slot_clicked(idx: int) -> void:
+	if _tip_root == null: return
 	var item = Global.Inventory[idx] if idx < Global.Inventory.size() else null
 	if item == null:
-		_tip_root.visible = false
-		_active_idx = -1
-		return
+		_tip_root.visible = false; _active_idx = -1; return
 	_active_idx = idx
 	var data: ItemData = item["data"] as ItemData
-	_tip_name.text    = data.item_name
-	_tip_qty.text     = "Qty: %d / %d" % [item["quantity"], Global.MAX_STACK]
-	_tip_type.text    = data.item_type.capitalize()
-	_tip_effect.text  = ("+ " + data.effect) if data.effect != "" else ""
+	_tip_name.text   = data.item_name
+	_tip_qty.text    = "Qty: %d / %d" % [item["quantity"], Global.MAX_STACK]
+	_tip_type.text   = data.item_type.capitalize()
+	_tip_effect.text = ("+ " + data.effect) if data.effect != "" else ""
 	_tip_root.visible = true
 
-# ── Drop ──────────────────────────────────────────────────────────
 func _on_drop_pressed() -> void:
-	if _active_idx < 0:
-		return
+	if _active_idx < 0: return
 	var item = Global.Inventory[_active_idx]
-	if item == null:
-		return
+	if item == null: return
 	if Global.player_node:
 		var pos := (Global.player_node as Node2D).global_position + Vector2(0, 50)
 		Global.drop_item(item, pos)
 		Global.remove_item(item["data"] as ItemData)
-	_tip_root.visible = false
+	if _tip_root != null: _tip_root.visible = false
 	_active_idx = -1
 
-# ── Open crafting ────────────────────────────────────────────────
-func _open_crafting() -> void:
-	if _crafting_menu != null:
-		_close()
-		_crafting_menu.call("show_menu")
-
-# ── Close ─────────────────────────────────────────────────────────
 func _close() -> void:
-	# Toggle the parent CanvasLayer (same as pressing E)
 	get_parent().visible = false
 	if Global.pause_on_inventory:
 		get_tree().paused = false
+
+# ── Helpers ───────────────────────────────────────────────────────
+func i(base: int, s: float) -> int: return int(base * s)
+
+func _sb(bg: Color, border: Color, r: int, ml: int, mr: int, mt: int, mb: int) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg; sb.border_color = border
+	sb.set_border_width_all(1); sb.set_corner_radius_all(r)
+	sb.content_margin_left = ml; sb.content_margin_right  = mr
+	sb.content_margin_top  = mt; sb.content_margin_bottom = mb
+	return sb
+
+func _lbl(text: String, size: int, col: Color) -> Label:
+	var l := Label.new(); l.text = text
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", col)
+	return l
+
+func _div(parent: Node) -> void:
+	var d := ColorRect.new()
+	d.color = C_DIVIDER; d.custom_minimum_size = Vector2(0, 1)
+	parent.add_child(d)

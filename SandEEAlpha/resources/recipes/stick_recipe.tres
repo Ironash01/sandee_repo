@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://dm8k60hjum41i"]
+
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_fscb8"]
+[ext_resource type="Resource" uid="uid://6bk4sjwa0vjn" path="res://resources/items/wood.tres" id="1_l1lcc"]
+[ext_resource type="Resource" uid="uid://b8pqqosrxqkwa" path="res://resources/items/stick.tres" id="2_koego"]
+
+[resource]
+script = ExtResource("1_fscb8")
+result_item = ExtResource("2_koego")
+result_quantity = 4
+ingredient_1 = ExtResource("1_l1lcc")
+ingredient_1_quantity = 2
+category = "Others"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

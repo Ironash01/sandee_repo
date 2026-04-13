@@ -35,7 +35,6 @@ var _station_warn:  Label
 var _craft_btn:     Button
 var _cat_btns:      Dictionary = {}
 var _row_btns:      Array      = []
-var _center:        CenterContainer
 
 # ── Lifecycle ─────────────────────────────────────────────────────
 func _ready() -> void:
@@ -49,19 +48,34 @@ func _ready() -> void:
 	Global.ui_scale_changed.connect(_on_ui_scale)
 	visible = false
 
-func _on_ui_scale(s: float) -> void:
-	if _center != null:
-		_center.scale = Vector2(s, s)
+func _on_ui_scale(_s: float) -> void:
+	var was_visible: bool = visible
+	for child in get_children():
+		child.queue_free()
+	_cat_btns.clear()
+	_row_btns.clear()
+	_recipe_list  = null
+	_detail_panel = null
+	_selected_idx = -1
+	await get_tree().process_frame
+	_build()
+	_filter_and_refresh()
+	visible = was_visible
+
+# ── Recipe registry — add new .tres paths here ───────────────────
+const _RECIPE_PATHS: Array = [
+	"res://resources/recipes/crafting_station_recipe.tres",
+	"res://resources/recipes/stick_recipe.tres"
+]
 
 func _load_recipes() -> void:
-	# Load from explicit registry — avoids DirAccess issues in exported builds
-	var db: Script = load("res://resources/recipes/recipe_db.gd") as Script
-	if db == null:
-		return
-	for res in db.ALL_RECIPES:
-		if res is CraftingRecipe and (res as CraftingRecipe).result_item != null:
-			if (res as CraftingRecipe).result_item.is_craftable:
-				_recipes.append(res)
+	for path in _RECIPE_PATHS:
+		var res: Resource = load(path) as Resource
+		if res == null or not (res is CraftingRecipe):
+			continue
+		var recipe: CraftingRecipe = res as CraftingRecipe
+		if recipe.result_item != null and recipe.result_item.is_craftable:
+			_recipes.append(recipe)
 
 # ── Build UI ──────────────────────────────────────────────────────
 func _build() -> void:
@@ -73,10 +87,9 @@ func _build() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
 
-	_center = CenterContainer.new()
-	_center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_center)
-	var center: CenterContainer = _center
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(center)
 
 	# Outer HBox: vertical tab strip + main panel side by side
 	var outer := HBoxContainer.new()

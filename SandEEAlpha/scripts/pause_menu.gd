@@ -19,19 +19,23 @@ var _val_labels: Dictionary = {}
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-
 	_build_overlay()
 	_build_pause_panel()
 	_build_settings_panel()
 	Global.ui_scale_changed.connect(_on_ui_scale)
-
 	visible = false
 
-func _on_ui_scale(s: float) -> void:
+func _on_ui_scale(_s: float) -> void:
+	# Rebuild panels with new scale
 	if _pause_center != null:
-		_pause_center.scale = Vector2(s, s)
+		_pause_center.queue_free()
+		_pause_center = null
 	if _settings_center != null:
-		_settings_center.scale = Vector2(s, s)
+		_settings_center.queue_free()
+		_settings_center = null
+	_val_labels.clear()
+	_build_pause_panel()
+	_build_settings_panel()
 
 # ── Dark overlay ──────────────────────────────────────────────────
 func _build_overlay() -> void:
@@ -42,12 +46,13 @@ func _build_overlay() -> void:
 
 # ── Pause panel ───────────────────────────────────────────────────
 func _build_pause_panel() -> void:
+	var s: float = Global.ui_scale
 	_pause_center = CenterContainer.new()
 	_pause_center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_pause_center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(280, 270)
+	panel.custom_minimum_size = Vector2(280 * s, 270 * s)
 	var ps1 := StyleBoxFlat.new()
 	ps1.bg_color     = C_PANEL
 	ps1.border_color = C_BORDER
@@ -73,24 +78,25 @@ func _build_pause_panel() -> void:
 	var title := Label.new()
 	title.text = "— PAUSED —"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_font_size_override("font_size", int(26 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
-	_add_spacer(vbox, 10)
+	_add_spacer(vbox, int(10 * s))
 	_make_btn(vbox, "Resume",       _on_resume)
 	_make_btn(vbox, "Settings",     _on_open_settings)
 	_make_btn(vbox, "Quit to Menu", _on_quit)
 
 # ── Settings panel ────────────────────────────────────────────────
 func _build_settings_panel() -> void:
+	var s: float = Global.ui_scale
 	_settings_center = CenterContainer.new()
 	_settings_center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_settings_center.visible = false
 	add_child(_settings_center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(420, 390)
+	panel.custom_minimum_size = Vector2(420 * s, 390 * s)
 	var ps2 := StyleBoxFlat.new()
 	ps2.bg_color     = C_PANEL
 	ps2.border_color = C_BORDER
@@ -115,11 +121,11 @@ func _build_settings_panel() -> void:
 	var title := Label.new()
 	title.text = "SETTINGS"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_font_size_override("font_size", int(22 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
-	_add_spacer(vbox, 6)
+	_add_spacer(vbox, int(6 * s))
 
 	_section_label(vbox, "Audio")
 	_add_slider_row(vbox, "Master Volume", "master_volume", 0.0, 1.0, 0.05, Global.master_volume)
@@ -130,7 +136,24 @@ func _build_settings_panel() -> void:
 
 	_section_label(vbox, "Display")
 	_add_slider_row(vbox, "Camera Zoom", "camera_zoom", 0.5, 3.0, 0.1, Global.camera_zoom)
-	_add_slider_row(vbox, "UI Scale",     "ui_scale",    0.5, 2.0, 0.1, Global.ui_scale)
+
+	# UI Scale — Small / Medium / Large buttons
+	var ui_row := HBoxContainer.new()
+	ui_row.add_theme_constant_override("separation", 6)
+	vbox.add_child(ui_row)
+	var ui_lbl := Label.new()
+	ui_lbl.text = "UI Scale"
+	ui_lbl.custom_minimum_size = Vector2(140, 0)
+	ui_lbl.add_theme_font_size_override("font_size", 13)
+	ui_row.add_child(ui_lbl)
+	for entry in [["S", 0.75], ["M", 1.0], ["L", 1.5]]:
+		var scale_btn := Button.new()
+		scale_btn.text = entry[0] as String
+		scale_btn.custom_minimum_size = Vector2(38, 0)
+		scale_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var scale_val: float = entry[1] as float
+		scale_btn.pressed.connect(func() -> void: _on_ui_scale_preset(scale_val))
+		ui_row.add_child(scale_btn)
 
 	var fs_row := HBoxContainer.new()
 	vbox.add_child(fs_row)
@@ -164,7 +187,7 @@ func _build_settings_panel() -> void:
 func _make_btn(parent: Node, label: String, callback: Callable) -> Button:
 	var btn := Button.new()
 	btn.text = label
-	btn.custom_minimum_size = Vector2(240, 42)
+	btn.custom_minimum_size = Vector2(240 * Global.ui_scale, 42 * Global.ui_scale)
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	btn.pressed.connect(callback)
 	parent.add_child(btn)
@@ -231,19 +254,20 @@ func _on_setting_changed(key: String, value: float) -> void:
 		"camera_zoom":
 			Global.camera_zoom = value
 			Global.camera_zoom_changed.emit(value)
-		"ui_scale":
-			Global.ui_scale = value
-			Global.ui_scale_changed.emit(value)
 	if key in _val_labels:
 		(_val_labels[key] as Label).text = _fmt(value, key)
 
 func _fmt(value: float, key: String) -> String:
-	if key in ["camera_zoom", "ui_scale"]:
+	if key == "camera_zoom":
 		return "%.1fx" % value
 	return "%d%%" % int(value * 100.0)
 
 func _on_pause_inventory_toggled(pressed: bool) -> void:
 	Global.pause_on_inventory = pressed
+
+func _on_ui_scale_preset(scale_val: float) -> void:
+	Global.ui_scale = scale_val
+	Global.ui_scale_changed.emit(scale_val)
 
 func _on_fullscreen_toggled(pressed: bool) -> void:
 	if pressed:
