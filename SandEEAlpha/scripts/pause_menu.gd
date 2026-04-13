@@ -23,8 +23,15 @@ func _ready() -> void:
 	_build_overlay()
 	_build_pause_panel()
 	_build_settings_panel()
+	Global.ui_scale_changed.connect(_on_ui_scale)
 
 	visible = false
+
+func _on_ui_scale(s: float) -> void:
+	if _pause_center != null:
+		_pause_center.scale = Vector2(s, s)
+	if _settings_center != null:
+		_settings_center.scale = Vector2(s, s)
 
 # ── Dark overlay ──────────────────────────────────────────────────
 func _build_overlay() -> void:
@@ -123,6 +130,7 @@ func _build_settings_panel() -> void:
 
 	_section_label(vbox, "Display")
 	_add_slider_row(vbox, "Camera Zoom", "camera_zoom", 0.5, 3.0, 0.1, Global.camera_zoom)
+	_add_slider_row(vbox, "UI Scale",     "ui_scale",    0.5, 2.0, 0.1, Global.ui_scale)
 
 	var fs_row := HBoxContainer.new()
 	vbox.add_child(fs_row)
@@ -223,11 +231,14 @@ func _on_setting_changed(key: String, value: float) -> void:
 		"camera_zoom":
 			Global.camera_zoom = value
 			Global.camera_zoom_changed.emit(value)
+		"ui_scale":
+			Global.ui_scale = value
+			Global.ui_scale_changed.emit(value)
 	if key in _val_labels:
 		(_val_labels[key] as Label).text = _fmt(value, key)
 
 func _fmt(value: float, key: String) -> String:
-	if key == "camera_zoom":
+	if key in ["camera_zoom", "ui_scale"]:
 		return "%.1fx" % value
 	return "%d%%" % int(value * 100.0)
 

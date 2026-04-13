@@ -25,6 +25,10 @@ class_name ItemData
 ## Name of the animation to play on the placed object
 @export var place_animation_name: String = ""
 
+# ── Crafting ─────────────────────────────────────────────────────
+## Enable to make this item appear in the crafting menu
+@export var is_craftable: bool = false
+
 # ── World scene ───────────────────────────────────────────────────
 ## Scene instantiated when this item is placed on the map
 @export var place_scene_path: String = ""

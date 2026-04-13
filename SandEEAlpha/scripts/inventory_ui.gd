@@ -21,14 +21,26 @@ var _tip_type:   Label
 var _tip_effect: Label
 var _tip_qty:    Label
 
-var _active_idx: int = -1
+var _active_idx:     int     = -1
+var _crafting_menu: Control = null
 
 # ── Lifecycle ─────────────────────────────────────────────────────
+var _center: CenterContainer
+
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build()
 	Global.Inventory_updated.connect(_refresh)
+	Global.ui_scale_changed.connect(_on_ui_scale)
 	_refresh()
+
+func _on_ui_scale(s: float) -> void:
+	if _center != null:
+		_center.scale = Vector2(s, s)
+	# Preload crafting menu into same CanvasLayer
+	var cm_scene: PackedScene = load("res://scenes/ui/CraftingMenu.tscn") as PackedScene
+	_crafting_menu = cm_scene.instantiate() as Control
+	get_parent().add_child(_crafting_menu)
 
 # ── UI construction ───────────────────────────────────────────────
 func _build() -> void:
@@ -40,9 +52,10 @@ func _build() -> void:
 	add_child(overlay)
 
 	# Center container — centers the panel on screen
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
+	_center = CenterContainer.new()
+	_center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(_center)
+	var center: CenterContainer = _center
 
 	# Main panel
 	var panel := PanelContainer.new()
@@ -72,6 +85,23 @@ func _build() -> void:
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
+
+	var craft_btn := Button.new()
+	craft_btn.text = "✦ CRAFT"
+	craft_btn.add_theme_font_size_override("font_size", 12)
+	var cps := StyleBoxFlat.new()
+	cps.bg_color     = Color(0.12, 0.28, 0.48, 1.0)
+	cps.border_color = C_BORDER
+	cps.set_border_width_all(1)
+	cps.set_corner_radius_all(3)
+	cps.content_margin_left   = 10
+	cps.content_margin_right  = 10
+	cps.content_margin_top    = 3
+	cps.content_margin_bottom = 3
+	craft_btn.add_theme_stylebox_override("normal", cps)
+	craft_btn.add_theme_color_override("font_color", C_TITLE)
+	craft_btn.pressed.connect(_open_crafting)
+	header.add_child(craft_btn)
 
 	var close_btn := Button.new()
 	close_btn.text = "✕"
@@ -231,6 +261,12 @@ func _on_drop_pressed() -> void:
 		Global.remove_item(item["data"] as ItemData)
 	_tip_root.visible = false
 	_active_idx = -1
+
+# ── Open crafting ────────────────────────────────────────────────
+func _open_crafting() -> void:
+	if _crafting_menu != null:
+		_close()
+		_crafting_menu.call("show_menu")
 
 # ── Close ─────────────────────────────────────────────────────────
 func _close() -> void:

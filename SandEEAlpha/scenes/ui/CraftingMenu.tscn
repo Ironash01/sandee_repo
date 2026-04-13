@@ -1,0 +1,13 @@
+[gd_scene format=3 uid="uid://dbg8scj0eal3"]
+
+[ext_resource type="Script" uid="uid://ctxli0exv7m0w" path="res://scripts/crafting_menu.gd" id="1_cm"]
+
+[node name="CraftingMenu" type="Control" unique_id=1051585964]
+process_mode = 3
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_cm")
