@@ -18,8 +18,10 @@ const SAND_THRESHOLD: float  = 0.2
 const FORCED_PLAINS_RADIUS: float = 128
 
 # For Foliage Gen
-const FOLIAGE_SPACING: float   = 16
-const REJECTION_THRESHOLD: int = 30
+const FOLIAGE_SPACING: float     = 16   # base spacing for all biomes
+const FOLIAGE_SPACING_FOREST: float = 10  # tighter spacing inside forest clusters
+const REJECTION_THRESHOLD: int  = 30
+const FOREST_CLUSTER_CHANCE: float = 0.35  # % of plain tiles that seed a dense cluster
 
 # Exports
 @export var random_seed: int = 1234
@@ -167,10 +169,23 @@ func place_block():
 	# Sprite2D is center-anchored. For sprites taller than TILE_SIZE,
 	# shift up so the bottom of the sprite aligns with the bottom of the tile.
 	var sprite = obj.get_node_or_null("Sprite2D")
+	if not sprite:
+		sprite = obj.get_node_or_null("AnimatedSprite2D")
+
 	if sprite:
-		var frame_height = sprite.texture.get_height() / max(sprite.vframes, 1)
-		var y_offset = (TILE_SIZE / 2.0) - (frame_height / 2.0)
-		sprite.position = Vector2(0, y_offset)
+		var frame_height := 0.0
+		if sprite is Sprite2D and sprite.texture:
+			frame_height = sprite.texture.get_height() / max(sprite.vframes, 1)
+		elif sprite is AnimatedSprite2D and sprite.sprite_frames:
+			var frames: SpriteFrames = sprite.sprite_frames
+			var anim: StringName = sprite.animation
+			if frames.has_animation(anim) and frames.get_frame_count(anim) > 0:
+				var tex = frames.get_frame_texture(anim, 0)
+				if tex:
+					frame_height = tex.get_height()
+		if frame_height > 0.0:
+			var y_offset = (TILE_SIZE / 2.0) - (frame_height / 2.0)
+			sprite.position = Vector2(0, y_offset)
 
 	# Play placement animation if configured
 	var _data: ItemData = item["data"] as ItemData
@@ -229,11 +244,13 @@ func _get_tile_type(hum: float, temp: float, alt: float) -> Terrain:
 func _place_foliage() -> void:
 	var points:      PackedVector2Array = _generate_points()
 	var cell_offset: Vector2i           = Vector2i(width, height) / 2
+
+	# Track occupied positions to avoid overlaps in forest clusters
+	var placed_positions: Array = []
+
 	for point in points:
 		var int_point:  Vector2i = Vector2i(point)
 		var tile_coord: Vector2i = int_point - cell_offset
-		# Derive terrain from the atlas coord set in _generate_terrain()
-		# (0,0)=Plain  (1,0)=Desert  (1,1)=Snowy  water tiles return source_id -1
 		var src_id: int = ground_layer.get_cell_source_id(tile_coord)
 		if src_id == -1:
 			continue  # water — skip
@@ -243,13 +260,46 @@ func _place_foliage() -> void:
 			tree_type_val = 1  # Desert
 		elif atlas_coord == Vector2i(1, 1):
 			tree_type_val = 2  # Snowy
-		# Spawn tree at the tile world position
 		var local_pos: Vector2 = ground_layer.map_to_local(tile_coord)
 		var world_pos: Vector2 = ground_layer.to_global(local_pos)
-		var tree: Node2D       = TREE_SCENE.instantiate() as Node2D
-		tree.set("tree_type", tree_type_val)
-		tree.global_position   = world_pos
-		add_child(tree)
+		_spawn_tree(world_pos, tree_type_val)
+		placed_positions.append(world_pos)
+
+		# Forest clusters — only on plain tiles
+		if tree_type_val == 0 and rng.randf() < FOREST_CLUSTER_CHANCE:
+			_spawn_forest_cluster(world_pos, placed_positions)
+
+func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
+	var tree: Node2D = TREE_SCENE.instantiate() as Node2D
+	tree.set("tree_type", tree_type_val)
+	tree.global_position = world_pos
+	add_child(tree)
+
+func _spawn_forest_cluster(center: Vector2, placed: Array) -> void:
+	# Spawn 2–5 extra trees tightly packed around this point
+	var count: int = rng.randi_range(2, 5)
+	for _i in range(count):
+		var angle: float  = rng.randf() * TAU
+		var dist: float   = rng.randf_range(FOLIAGE_SPACING_FOREST, FOLIAGE_SPACING_FOREST * 2.5)
+		var pos: Vector2  = center + Vector2.from_angle(angle) * dist
+		# Check not too close to any existing tree
+		var too_close: bool = false
+		for existing in placed:
+			if pos.distance_squared_to(existing as Vector2) < FOLIAGE_SPACING_FOREST * FOLIAGE_SPACING_FOREST:
+				too_close = true
+				break
+		if too_close:
+			continue
+		# Verify the tile at this position is plain ground
+		var tile_coord: Vector2i = ground_layer.local_to_map(ground_layer.to_local(pos))
+		var src_id: int = ground_layer.get_cell_source_id(tile_coord)
+		if src_id == -1:
+			continue
+		var atlas_coord: Vector2i = ground_layer.get_cell_atlas_coords(tile_coord)
+		if atlas_coord != Vector2i(0, 0):
+			continue  # not plain
+		_spawn_tree(pos, 0)
+		placed.append(pos)
 
 func _generate_points() -> PackedVector2Array:
 	var cell_size   = FOLIAGE_SPACING / sqrt(2)

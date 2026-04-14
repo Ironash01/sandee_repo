@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://blgp6a8kkubs1"]
+
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_474m0"]
+[ext_resource type="Resource" uid="uid://d0nvefalh2tmo" path="res://resources/items/cpu.tres" id="1_t47n2"]
+[ext_resource type="Resource" uid="uid://dw0e508n83nv" path="res://resources/items/ironrod.tres" id="2_qoyrx"]
+[ext_resource type="Resource" uid="uid://bp7stegc5saap" path="res://resources/items/wireframe.tres" id="3_h47gl"]
+
+[resource]
+script = ExtResource("1_474m0")
+result_item = ExtResource("3_h47gl")
+ingredient_1 = ExtResource("1_t47n2")
+ingredient_2 = ExtResource("2_qoyrx")
+ingredient_2_quantity = 4
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

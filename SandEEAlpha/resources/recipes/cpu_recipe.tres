@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://ovwpru10sn6s"]
+
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_1g8rn"]
+[ext_resource type="Resource" uid="uid://b3egbcfvo05d0" path="res://resources/items/wire.tres" id="1_4y8xo"]
+[ext_resource type="Resource" uid="uid://cn28cwotlpqss" path="res://resources/items/silicon.tres" id="2_2bypc"]
+[ext_resource type="Resource" uid="uid://d0nvefalh2tmo" path="res://resources/items/cpu.tres" id="3_pd7mc"]
+
+[resource]
+script = ExtResource("1_1g8rn")
+result_item = ExtResource("3_pd7mc")
+ingredient_1 = ExtResource("1_4y8xo")
+ingredient_1_quantity = 10
+ingredient_2 = ExtResource("2_2bypc")
+ingredient_2_quantity = 5
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

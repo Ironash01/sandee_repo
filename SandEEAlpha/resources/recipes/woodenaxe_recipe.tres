@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://7tl36umk537u"]
+
+[ext_resource type="Resource" uid="uid://6bk4sjwa0vjn" path="res://resources/items/wood.tres" id="1_8xwyg"]
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_dp5bi"]
+[ext_resource type="Resource" uid="uid://b8pqqosrxqkwa" path="res://resources/items/stick.tres" id="2_rldu0"]
+[ext_resource type="Resource" uid="uid://erk8amb8y0wn" path="res://resources/items/woodenaxe.tres" id="3_2382f"]
+
+[resource]
+script = ExtResource("1_dp5bi")
+result_item = ExtResource("3_2382f")
+ingredient_1 = ExtResource("1_8xwyg")
+ingredient_1_quantity = 3
+ingredient_2 = ExtResource("2_rldu0")
+ingredient_2_quantity = 2
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

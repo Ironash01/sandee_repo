@@ -1,0 +1,26 @@
+[gd_scene format=3 uid="uid://dvfw1y8gqmjnj"]
+
+[ext_resource type="Script" uid="uid://drft1qtsiron7" path="res://scripts/lua_npc.gd" id="1_lua"]
+
+[sub_resource type="RectangleShape2D" id="RectShape_lua"]
+size = Vector2(20, 30)
+
+[sub_resource type="CircleShape2D" id="CircleShape_interact"]
+radius = 56.0
+
+[node name="LuaNPC" type="Node2D" unique_id=1321413095]
+script = ExtResource("1_lua")
+
+[node name="Sprite2D" type="AnimatedSprite2D" parent="." unique_id=236635100]
+scale = Vector2(1.6, 1.6)
+
+[node name="StaticBody2D" type="StaticBody2D" parent="." unique_id=412609602]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="StaticBody2D" unique_id=1513647922]
+position = Vector2(0, 8)
+shape = SubResource("RectShape_lua")
+
+[node name="InteractArea" type="Area2D" parent="." unique_id=1064029441]
+
+[node name="InteractShape" type="CollisionShape2D" parent="InteractArea" unique_id=1212958735]
+shape = SubResource("CircleShape_interact")

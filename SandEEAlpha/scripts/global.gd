@@ -22,6 +22,7 @@ var sfx_volume:         float = 1.0
 var camera_zoom:        float = 1.0
 var pause_on_inventory: bool  = true
 var inventory_open:     bool  = false
+var lua_ui_open:        bool  = false
 var player_near_station: bool  = false
 var ui_scale:            float = 1.0
 

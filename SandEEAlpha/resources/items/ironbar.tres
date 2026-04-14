@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://dcqn7oo0b6ntf"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_ecxd4"]
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_yjyxk"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_msehw"]
+atlas = ExtResource("1_yjyxk")
+region = Rect2(288, 64, 32, 32)
+
+[resource]
+script = ExtResource("1_ecxd4")
+item_name = "Ironbar"
+description = "Can be made into weapons of mass destruction!"
+icon = SubResource("AtlasTexture_msehw")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

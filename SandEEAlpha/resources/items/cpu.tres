@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://d0nvefalh2tmo"]
+
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_8iims"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_ao1ws"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_ds4d7"]
+atlas = ExtResource("1_8iims")
+region = Rect2(192, 64, 32, 32)
+
+[resource]
+script = ExtResource("1_ao1ws")
+item_name = "CPU"
+description = "The brain of everything."
+icon = SubResource("AtlasTexture_ds4d7")
+is_craftable = true
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

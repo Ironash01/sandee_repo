@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://d2qyjuvf8o0u"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_2brq7"]
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_nay73"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_g5gwp"]
+atlas = ExtResource("1_nay73")
+region = Rect2(128, 64, 32, 32)
+
+[resource]
+script = ExtResource("1_2brq7")
+item_name = "Copper"
+description = "Can be used for electric conductivity."
+icon = SubResource("AtlasTexture_g5gwp")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

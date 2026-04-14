@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://c8yfxlhehk2es"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_kr1b0"]
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_y3lro"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_5w8jq"]
+atlas = ExtResource("1_y3lro")
+region = Rect2(32, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_xnay8"]
+atlas = ExtResource("1_y3lro")
+region = Rect2(32, 0, 32, 32)
+
+[resource]
+script = ExtResource("1_kr1b0")
+item_name = "Planks"
+description = "The original wood :>"
+icon = SubResource("AtlasTexture_5w8jq")
+is_placeable = true
+placeable_sprite = SubResource("AtlasTexture_xnay8")
+is_craftable = true
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://dx8imo05dujdk"]
+
+[ext_resource type="Resource" uid="uid://dcqn7oo0b6ntf" path="res://resources/items/ironbar.tres" id="1_gd4ac"]
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_iv5b4"]
+[ext_resource type="Resource" uid="uid://dw0e508n83nv" path="res://resources/items/ironrod.tres" id="2_ortya"]
+
+[resource]
+script = ExtResource("1_iv5b4")
+result_item = ExtResource("2_ortya")
+ingredient_1 = ExtResource("1_gd4ac")
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"
