@@ -22,7 +22,18 @@ const SLOT_SCENE := preload("res://scenes/ui/InventorySlot.tscn")
 const CRAFT_CATEGORIES := ["Materials", "Blocks", "Weapons", "Others"]
 const RECIPE_PATHS: Array = [
 	"res://resources/recipes/crafting_station_recipe.tres",
-	"res://resources/recipes/stick_recipe.tres"
+	"res://resources/recipes/stick_recipe.tres",
+	"res://resources/recipes/cpu_recipe.tres",
+	"res://resources/recipes/ironrod_recipe.tres",
+	"res://resources/recipes/plain_planks_recipe.tres",
+	"res://resources/recipes/wireframe_recipe.tres",
+	"res://resources/recipes/wire_recipe.tres",
+	"res://resources/recipes/woodenaxe_recipe.tres",
+	"res://resources/recipes/woodensword _recipe.tres"
+	
+	
+	
+	
 	
 ]
 

@@ -3,7 +3,6 @@
 [ext_resource type="Script" uid="uid://c8rev8jtlhmr5" path="res://scripts/world.gd" id="1_rwgxs"]
 [ext_resource type="Texture2D" uid="uid://b6autn8ilocsj" path="res://sprites/tilesets/sandee+alpha_basicTileSetRevamped.png" id="2_i7141"]
 [ext_resource type="Texture2D" uid="uid://cyctj3adikrl2" path="res://sprites/tilesets/tiles - tree - 32x32.png" id="2_k0juu"]
-[ext_resource type="PackedScene" uid="uid://dowk37xlssd3h" path="res://scenes/objects/ObjectItem.tscn" id="2_pr0gy"]
 [ext_resource type="Texture2D" uid="uid://cwecurj4yu1cw" path="res://sprites/tilesets/tiles-earth-32x32.png" id="3_71j4m"]
 [ext_resource type="Texture2D" uid="uid://bo2pfa26duglj" path="res://sprites/tilesets/tiles-grass light-32x32.png" id="4_qfnet"]
 [ext_resource type="Texture2D" uid="uid://brsck4n4bcnol" path="res://sprites/tilesets/tiles-water.png" id="5_71j4m"]

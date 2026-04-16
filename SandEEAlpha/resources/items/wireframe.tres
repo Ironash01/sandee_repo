@@ -9,6 +9,8 @@ region = Rect2(224, 64, 32, 32)
 
 [resource]
 script = ExtResource("1_ru0u4")
+item_name = "Wireframe"
+description = "Frame those wires"
 icon = SubResource("AtlasTexture_clc28")
 is_craftable = true
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"
