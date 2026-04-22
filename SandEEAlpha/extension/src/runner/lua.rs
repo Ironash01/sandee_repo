@@ -2,7 +2,7 @@ use std::{str::FromStr, vec};
 
 use anyhow::Result;
 use godot::prelude::*;
-use mlua::{IntoLua, Lua, Scope, Table, Value, Variadic};
+use mlua::{IntoLua, Lua, Table, Value, Variadic};
 use strum::{AsRefStr, EnumString};
 
 use crate::runner::vector::LuaVector;
@@ -13,7 +13,8 @@ pub enum LuaSignal {
     Generic,
     Print,
     Move,
-    PickUp,
+    Attack,
+    Interact,
     DropItem,
     PlaceItem,
 }
@@ -91,8 +92,11 @@ impl INode for LuaState {
                         .signal_move()
                         .emit(Vector2::new(vector.x, vector.y));
                 }
-                LuaSignal::PickUp => {
-                    self.signals().signal_pick_up().emit();
+                LuaSignal::Attack => {
+                    self.signals().signal_attack().emit();
+                }
+                LuaSignal::Interact => {
+                    self.signals().signal_interact().emit();
                 }
                 LuaSignal::DropItem => {
                     let quantity: u32 = signal.get("arg").expect("Failed to get signal argument");
@@ -131,7 +135,9 @@ impl LuaState {
     #[signal]
     fn signal_move(vector: Vector2);
     #[signal]
-    fn signal_pick_up();
+    fn signal_attack();
+    #[signal]
+    fn signal_interact();
     #[signal]
     fn signal_drop_item(held_item: String, quantity: u32);
     #[signal]
@@ -199,12 +205,19 @@ impl LuaState {
         })?;
         globals.set("move", move_func)?;
 
-        let pick_up_func = self.lua.create_function(|state, ()| {
+        let attack_func = self.lua.create_function(|state, ()| {
             let signals: Table = state.globals().get("signals")?;
-            insert_signal(signals, state, LuaSignal::PickUp, Value::Nil)?;
+            insert_signal(signals, state, LuaSignal::Attack, Value::Nil)?;
             Ok(())
         })?;
-        globals.set("pick_up", pick_up_func)?;
+        globals.set("attack", attack_func)?;
+
+        let interact_func = self.lua.create_function(|state, ()| {
+            let signals: Table = state.globals().get("signals")?;
+            insert_signal(signals, state, LuaSignal::Interact, Value::Nil)?;
+            Ok(())
+        })?;
+        globals.set("interact", interact_func)?;
 
         let drop_item_func = self.lua.create_function(|state, quantity: Value| {
             let signals: Table = state.globals().get("signals")?;
