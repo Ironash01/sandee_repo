@@ -45,7 +45,8 @@ func _find_lua_state() -> void:
 	_lua_state.connect("code_executed", _on_code_executed)
 	_lua_state.connect("code_failed",  _on_code_failed)
 	_print_output("[color=#88ffaa]Lua interpreter ready.[/color]")
-	_print_output("[color=#5588aa]Available functions: print(), move(x,y), vector:new(x,y)[/color]")
+	_print_output("[color=#5588aa]chop_trees(radius)  move(x,y)  interact()  drop_item(qty)  print(val)[/color]")
+	_print_output("[color=#5588aa]radius = blocks (1 block = 32px) — e.g. chop_trees(20)[/color]")
 
 # ── Build UI ──────────────────────────────────────────────────────
 func _build() -> void:
@@ -117,7 +118,12 @@ func _build() -> void:
 
 	_code_edit = TextEdit.new()
 	_code_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_code_edit.placeholder_text    = "-- Write Lua here\nprint(\"hello\")\nmove(1, 0)"
+	_code_edit.placeholder_text    = "-- if no item held, chop a tree:
+if held_item == nil then
+    interact()
+else
+    print(held_item.name)
+end"
 	_code_edit.syntax_highlighter  = null
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_EDITOR; es.border_color = C_BORDER
@@ -198,7 +204,7 @@ func _build() -> void:
 	# Hint at bottom
 	_divider(vbox)
 	var hint := Label.new()
-	hint.text = "Hint: move(x, y)  •  print(val)  •  vector:new(x,y)  •  Escape to close"
+	hint.text = "chop_trees(radius)  •  move(x,y)  •  interact()  •  attack()  •  drop_item(qty)  •  held_item.name  •  Escape to close"
 	hint.add_theme_font_size_override("font_size", 10)
 	hint.add_theme_color_override("font_color", C_MUTED)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -212,8 +218,22 @@ func _run_code() -> void:
 	var code: String = _code_edit.text.strip_edges()
 	if code.is_empty():
 		return
-	_lua_state.set("code", code)
+	# ── Preamble: inject helper functions the user can call ────────
+	# chop_trees(radius) encodes the radius via sentinel move(r, -1)
+	# then triggers interact() — lua_npc.gd decodes and runs the
+	# autonomous coroutine.
+	var preamble: String = """
+-- Built-in helpers (always available)
+function chop_trees(radius)
+    radius = radius or 5
+    move(radius, -1)
+    interact()
+end
+"""
+	_lua_state.set("code", preamble + code)
 	_lua_state.call("run_code")
+	# Close so the game unpauses and the NPC can physically move
+	_close()
 
 func _clear_code() -> void:
 	_code_edit.text = ""

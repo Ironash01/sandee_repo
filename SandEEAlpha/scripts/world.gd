@@ -18,10 +18,12 @@ const SAND_THRESHOLD: float  = 0.2
 const FORCED_PLAINS_RADIUS: float = 128
 
 # For Foliage Gen
-const FOLIAGE_SPACING: float     = 16   # base spacing for all biomes
-const FOLIAGE_SPACING_FOREST: float = 10  # tighter spacing inside forest clusters
-const REJECTION_THRESHOLD: int  = 30
-const FOREST_CLUSTER_CHANCE: float = 0.35  # % of plain tiles that seed a dense cluster
+const FOLIAGE_SPACING: float       = 16   # base Poisson min-distance (in tiles)
+const REJECTION_THRESHOLD: int     = 30
+const FOREST_CLUSTER_CHANCE: float = 0.70  # % of plain/snowy base trees that seed a cluster
+const CLUSTER_EXTRA_MIN: int       = 3    # min extra trees per cluster
+const CLUSTER_EXTRA_MAX: int       = 7    # max extra trees per cluster
+const CLUSTER_RADIUS_TILES: int    = 4    # how many tiles out a cluster can spread
 
 # Exports
 @export var random_seed: int = 1234
@@ -47,10 +49,19 @@ var ghost: Node2D = null
 var ghost_sprite: Sprite2D = null
 var ghost_last_type: String = ""  # tracks when item changes so we can rebuild sprite
 
+# Tracks occupied cells so we never double-place (cell → Node2D)
+var _placed_blocks: Dictionary = {}
+
 # Valid item_type values that are allowed to be placed
 const PLACEABLE_TYPES = ["block", "door"]
 
+# ── Block mode (toggled by CTRL) ─────────────────────────────────
+# When false: ghost is hidden, clicks do NOT place blocks.
+# When true:  ghost is shown and placement is allowed.
+var block_mode: bool = false
+
 func _ready() -> void:
+	y_sort_enabled = true   # trees (and all Node2D children) sort by Y automatically
 	rng.set_seed(random_seed)
 	_set_up_noise(humidity,    0.003)
 	_set_up_noise(temperature, 0.002)
@@ -74,6 +85,18 @@ func _setup_ghost():
 
 # ── Input ────────────────────────────────────────────────────────
 func _input(event):
+	# CTRL toggles block-placement mode on/off
+	if event is InputEventKey and event.keycode == KEY_CTRL:
+		if event.pressed and not event.echo:
+			block_mode = not block_mode
+			if not block_mode:
+				ghost.visible = false
+		return
+
+	# Only allow placement while block mode is active
+	if not block_mode:
+		return
+
 	if event.is_action_pressed("mouse_left"):
 		place_block()
 
@@ -87,6 +110,11 @@ func _is_placeable_item(item) -> bool:
 	return (item["data"] as ItemData).is_placeable
 
 func _update_ghost():
+	# Ghost only shows when block mode is active AND a placeable item is selected
+	if not block_mode:
+		ghost.visible = false
+		return
+
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		ghost.visible = false
@@ -107,7 +135,7 @@ func _update_ghost():
 	ghost.global_position = editable_layer.to_global(world_pos)
 
 	# Tint: red if occupied, white-transparent if free
-	var occupied = editable_layer.get_cell_source_id(cell) != -1
+	var occupied = _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1
 	if occupied:
 		ghost_sprite.modulate = Color(1.0, 0.3, 0.3, 0.5)
 	else:
@@ -138,7 +166,7 @@ func place_block():
 	var cell      = editable_layer.local_to_map(mouse_pos)
 
 	# Don't place on an already occupied cell
-	if editable_layer.get_cell_source_id(cell) != -1:
+	if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
 		print("Cell already occupied.")
 		return
 
@@ -159,6 +187,11 @@ func place_block():
 	# Pass ItemData so generic PlaceableBlock can set its sprite
 	if obj.has_method("setup"):
 		obj.call("setup", item["data"] as ItemData)
+	# Register this cell so overlaps are blocked
+	_placed_blocks[cell] = obj
+	# Let the block unregister itself when broken
+	if obj.has_method("set_world_cell"):
+		obj.call("set_world_cell", cell, self)
 	# Add to editable_layer so coordinates match the tilemap space
 	editable_layer.add_child(obj)
 	# map_to_local returns the tile CENTER in Godot TileMapLayer.
@@ -196,6 +229,9 @@ func place_block():
 
 	# Consume 1 from inventory
 	Global.remove_item(item["data"] as ItemData)
+
+func unregister_block(cell: Vector2i) -> void:
+	_placed_blocks.erase(cell)
 
 # ── Terrain Generation ───────────────────────────────────────────
 func _generate_terrain():
@@ -245,8 +281,8 @@ func _place_foliage() -> void:
 	var points:      PackedVector2Array = _generate_points()
 	var cell_offset: Vector2i           = Vector2i(width, height) / 2
 
-	# Track occupied positions to avoid overlaps in forest clusters
-	var placed_positions: Array = []
+	# One tree per tile — track every occupied tile coord
+	var occupied_tiles: Dictionary = {}
 
 	for point in points:
 		var int_point:  Vector2i = Vector2i(point)
@@ -255,19 +291,28 @@ func _place_foliage() -> void:
 		if src_id == -1:
 			continue  # water — skip
 		var atlas_coord: Vector2i = ground_layer.get_cell_atlas_coords(tile_coord)
-		var tree_type_val: int = 0  # default Plain
-		if atlas_coord == Vector2i(1, 0):
-			tree_type_val = 1  # Desert
+
+		# ── Biome filter: only Plain and Snowy get trees ─────────
+		var tree_type_val: int
+		if atlas_coord == Vector2i(0, 0):
+			tree_type_val = 0  # Plain
 		elif atlas_coord == Vector2i(1, 1):
 			tree_type_val = 2  # Snowy
+		else:
+			continue           # Desert (1,0) or unknown — no trees
+
+		# Skip if tile already has a tree
+		if occupied_tiles.has(tile_coord):
+			continue
+		occupied_tiles[tile_coord] = true
+
 		var local_pos: Vector2 = ground_layer.map_to_local(tile_coord)
 		var world_pos: Vector2 = ground_layer.to_global(local_pos)
 		_spawn_tree(world_pos, tree_type_val)
-		placed_positions.append(world_pos)
 
-		# Forest clusters — only on plain tiles
-		if tree_type_val == 0 and rng.randf() < FOREST_CLUSTER_CHANCE:
-			_spawn_forest_cluster(world_pos, placed_positions)
+		# Seed a forest cluster on this tile (plain or snowy)
+		if rng.randf() < FOREST_CLUSTER_CHANCE:
+			_spawn_forest_cluster(tile_coord, tree_type_val, occupied_tiles)
 
 func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	var tree: Node2D = TREE_SCENE.instantiate() as Node2D
@@ -275,31 +320,48 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	tree.global_position = world_pos
 	add_child(tree)
 
-func _spawn_forest_cluster(center: Vector2, placed: Array) -> void:
-	# Spawn 2–5 extra trees tightly packed around this point
-	var count: int = rng.randi_range(2, 5)
-	for _i in range(count):
-		var angle: float  = rng.randf() * TAU
-		var dist: float   = rng.randf_range(FOLIAGE_SPACING_FOREST, FOLIAGE_SPACING_FOREST * 2.5)
-		var pos: Vector2  = center + Vector2.from_angle(angle) * dist
-		# Check not too close to any existing tree
-		var too_close: bool = false
-		for existing in placed:
-			if pos.distance_squared_to(existing as Vector2) < FOLIAGE_SPACING_FOREST * FOLIAGE_SPACING_FOREST:
-				too_close = true
-				break
-		if too_close:
-			continue
-		# Verify the tile at this position is plain ground
-		var tile_coord: Vector2i = ground_layer.local_to_map(ground_layer.to_local(pos))
-		var src_id: int = ground_layer.get_cell_source_id(tile_coord)
-		if src_id == -1:
-			continue
-		var atlas_coord: Vector2i = ground_layer.get_cell_atlas_coords(tile_coord)
-		if atlas_coord != Vector2i(0, 0):
-			continue  # not plain
-		_spawn_tree(pos, 0)
-		placed.append(pos)
+# Places extra trees on adjacent tile cells around a seed tile.
+# All positions are snapped to the tile grid — guarantees one tree per tile.
+func _spawn_forest_cluster(seed_tile: Vector2i, tree_type_val: int, occupied: Dictionary) -> void:
+	var count: int = rng.randi_range(CLUSTER_EXTRA_MIN, CLUSTER_EXTRA_MAX)
+	var radius: int = CLUSTER_RADIUS_TILES
+
+	# Gather candidate tiles in the cluster radius
+	var candidates: Array = []
+	for dx in range(-radius, radius + 1):
+		for dy in range(-radius, radius + 1):
+			if dx == 0 and dy == 0:
+				continue
+			var candidate: Vector2i = seed_tile + Vector2i(dx, dy)
+			if occupied.has(candidate):
+				continue
+			var src_id: int = ground_layer.get_cell_source_id(candidate)
+			if src_id == -1:
+				continue  # water
+			var atlas: Vector2i = ground_layer.get_cell_atlas_coords(candidate)
+			# Only allow same biome (plain stays plain, snowy stays snowy)
+			if tree_type_val == 0 and atlas != Vector2i(0, 0):
+				continue
+			if tree_type_val == 2 and atlas != Vector2i(1, 1):
+				continue
+			candidates.append(candidate)
+
+	# Shuffle candidates and pick up to `count`
+	for i in range(candidates.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp = candidates[i]
+		candidates[i] = candidates[j]
+		candidates[j] = tmp
+
+	var placed: int = 0
+	for tile in candidates:
+		if placed >= count:
+			break
+		occupied[tile] = true
+		var local_pos: Vector2 = ground_layer.map_to_local(tile as Vector2i)
+		var world_pos: Vector2 = ground_layer.to_global(local_pos)
+		_spawn_tree(world_pos, tree_type_val)
+		placed += 1
 
 func _generate_points() -> PackedVector2Array:
 	var cell_size   = FOLIAGE_SPACING / sqrt(2)

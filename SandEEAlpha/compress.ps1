@@ -1,1 +1,1 @@
-Compress-Archive -Path ".\*" -DestinationPath "..\sandee_alpha.zip"
+Get-ChildItem -Path ".\*" | Where-Object { $_.Name -ne "ext_bin" } | Compress-Archive -DestinationPath "..\sandee_alpha.zip"

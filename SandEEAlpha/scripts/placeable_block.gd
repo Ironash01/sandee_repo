@@ -1,20 +1,18 @@
 extends Node2D
 
 # ── Block type flags ──────────────────────────────────────────────
-# Set by world.gd after instantiation via setup()
 var item_data: ItemData = null
-
-# Wooden block — requires an axe to break
-var requires_axe: bool = false
 
 const HITS_TO_BREAK:  int = 3
 const ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 
-var _hit_count:     int  = 0
-var _player_nearby: bool = false
+var _hit_count:     int      = 0
+var _player_nearby: bool     = false
+var _world_cell:    Vector2i = Vector2i(-99999, -99999)
+var _world_ref:     Node     = null
 
-@onready var _sprite:  Sprite2D = $Sprite2D
-@onready var _interact: Area2D  = $InteractArea
+@onready var _sprite:   Sprite2D = $Sprite2D
+@onready var _interact: Area2D   = $InteractArea
 
 func _ready() -> void:
 	if item_data != null:
@@ -24,11 +22,13 @@ func _ready() -> void:
 
 func setup(data: ItemData) -> void:
 	item_data = data
-	# Determine if this is a wooden block (requires axe)
-	var name_lower: String = data.item_name.to_lower()
-	requires_axe = name_lower.contains("wood") or name_lower.contains("plank")
 	if _sprite != null:
 		_apply_sprite()
+
+# Called by world.gd after placement so we can unregister on break
+func set_world_cell(cell: Vector2i, world: Node) -> void:
+	_world_cell = cell
+	_world_ref  = world
 
 func _apply_sprite() -> void:
 	var tex: Texture2D = item_data.placeable_sprite \
@@ -46,32 +46,34 @@ func _input(event: InputEvent) -> void:
 		_try_hit()
 
 func _try_hit() -> void:
-	if requires_axe and not _player_has_axe():
-		return   # silently block — no axe equipped
+	# All blocks require a pickaxe
+	if not _player_has_pickaxe():
+		return   # silently block — no pickaxe equipped
 	_hit_count += 1
 	if _hit_count >= HITS_TO_BREAK:
 		_break()
 
-func _player_has_axe() -> bool:
-	# Check the currently selected hotbar slot first, then full hotbar
+func _player_has_pickaxe() -> bool:
 	var selected = Global.get_hotbar_item()
-	if _is_axe(selected):
+	if _is_pickaxe(selected):
 		return true
-	# Also check rest of hotbar
 	for slot in Global.Hotbar:
-		if slot != null and _is_axe(slot):
+		if slot != null and _is_pickaxe(slot):
 			return true
 	return false
 
-func _is_axe(slot) -> bool:
+func _is_pickaxe(slot) -> bool:
 	if slot == null:
 		return false
 	var data: ItemData = slot["data"] as ItemData
 	if data == null:
 		return false
-	return data.item_type == "weapon" and data.item_name.to_lower().contains("axe")
+	return data.item_name.to_lower().contains("pickaxe")
 
 func _break() -> void:
+	# Unregister this cell from the world so the spot can be re-used
+	if _world_ref != null and _world_ref.has_method("unregister_block"):
+		_world_ref.call("unregister_block", _world_cell)
 	# Drop the item back into the world
 	if item_data != null:
 		var drop: Node = ITEM_SCENE.instantiate() as Node

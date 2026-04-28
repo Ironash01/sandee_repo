@@ -4,16 +4,17 @@ enum TreeType { Plain, Desert, Snowy }
 
 @export var tree_type: TreeType = TreeType.Plain
 
-const HITS_TO_DESTROY: int = 5
-const WOOD_DROP_COUNT: int  = 4
+const TILE_SIZE:       int        = 32
+const HITS_TO_DESTROY: int        = 5
+const WOOD_DROP_COUNT: int        = 4
 const ITEM_SCENE:  PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 const WOOD_DATA:   ItemData    = preload("res://resources/items/wood.tres")
 
 var _hit_count:     int  = 0
 var _player_nearby: bool = false
 
-@onready var _sprite:  Sprite2D        = $Sprite2D
-@onready var _interact: Area2D         = $InteractArea
+@onready var _sprite:  Sprite2D         = $Sprite2D
+@onready var _interact: Area2D          = $InteractArea
 @onready var _anim:     AnimationPlayer = $tree_shake
 
 func _ready() -> void:
@@ -31,15 +32,24 @@ func _apply_sprite() -> void:
 		_:
 			_sprite.modulate = Color(1.0, 1.0, 1.0, 1.0)
 
+	# Sprite2D is center-anchored. Shift it so the sprite's bottom edge
+	# aligns with the tile's bottom edge (tile center = origin, tile bottom = +16).
+	#   sprite.position.y = tile_bottom - sprite_half_height
+	#                     = (TILE_SIZE / 2) - (frame_height / 2)
+	if _sprite.texture:
+		var frame_h: float = float(_sprite.texture.get_height())
+		_sprite.position.y = (TILE_SIZE / 2.0) - (frame_h / 2.0)
+
 func _input(event: InputEvent) -> void:
 	if not _player_nearby:
 		return
 	if event is InputEventMouseButton \
 			and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
-		_on_hit()
+		hit()
 
-func _on_hit() -> void:
+# ── Public — called by player click OR LuaNPC signal_interact ─────
+func hit() -> void:
 	_hit_count += 1
 	if _anim != null:
 		_anim.stop()

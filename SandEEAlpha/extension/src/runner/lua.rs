@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, vec};
 
 use anyhow::Result;
 use godot::prelude::*;
@@ -7,11 +7,16 @@ use strum::{AsRefStr, EnumString};
 
 use crate::runner::vector::LuaVector;
 
+// signal enum for Lua and Godot
 #[derive(AsRefStr, EnumString)]
 pub enum LuaSignal {
     Generic,
     Print,
     Move,
+    Attack,
+    Interact,
+    DropItem,
+    PlaceItem,
 }
 
 fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<Table> {
@@ -21,14 +26,30 @@ fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<T
     Ok(signal)
 }
 
+fn insert_signal<V: IntoLua>(
+    signals: Table,
+    state: &Lua,
+    signal_type: LuaSignal,
+    arg: V,
+) -> Result<()> {
+    signals.raw_insert(
+        1,
+        build_lua_signal(state, signal_type, arg.into_lua(state)?)?,
+    )?;
+    Ok(())
+}
+
+// Lua State node for automatica
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct LuaState {
     #[var]
     code: GString,
+    #[var]
+    held_item: GString,
+    #[var]
+    held_item_quantity: u32,
     lua: Lua,
-    /// Blocks Move signals until GDScript calls notify_move_done()
-    waiting_for_move: bool,
     base: Base<Node>,
 }
 
@@ -37,8 +58,9 @@ impl INode for LuaState {
     fn init(base: Base<Node>) -> Self {
         let mut res = Self {
             code: GString::new(),
+            held_item: GString::new(),
+            held_item_quantity: 0,
             lua: Lua::new(),
-            waiting_for_move: false,
             base,
         };
         res.prepare_lua_state()
@@ -53,55 +75,57 @@ impl INode for LuaState {
             .get("signals")
             .expect("Failed to get signals");
 
-        // Walk the queue from the end (index = length down to 1).
-        // Print signals are emitted and removed immediately.
-        // The first Move signal found is emitted only if we are not already
-        // waiting for a previous move to complete; then we stop scanning.
-        let len = signals.len().unwrap_or(0) as i64;
-        let mut i = len;
-        while i >= 1 {
-            let signal: Table = match signals.get(i) {
-                Ok(v) => v,
-                Err(_) => { i -= 1; continue; }
-            };
-            let signal_type: String = match signal.get("type") {
-                Ok(v) => v,
-                Err(_) => { i -= 1; continue; }
-            };
+        while !signals.is_empty() {
+            let signal: Table = signals.pop().expect("Failed to load signal");
+            let signal_type: String = signal.get("type").expect("Failed to get signal type");
+            match LuaSignal::from_str(signal_type.as_str()).expect("Failed to convert signal type")
+            {
+                LuaSignal::Print => {
+                    let print_string: String =
+                        signal.get("arg").expect("Failed to get signal argument");
+                    self.signals().signal_print().emit(print_string);
+                }
+                LuaSignal::Move => {
+                    let vector: LuaVector =
+                        signal.get("arg").expect("Failed to get signal argument");
+                    self.signals()
+                        .signal_move()
+                        .emit(Vector2::new(vector.x, vector.y));
+                }
+                LuaSignal::Attack => {
+                    self.signals().signal_attack().emit();
+                }
+                LuaSignal::Interact => {
+                    self.signals().signal_interact().emit();
+                }
+                LuaSignal::DropItem => {
+                    let quantity: u32 = signal.get("arg").expect("Failed to get signal argument");
+                    let held_item = self.held_item.to_string();
+                    self.signals().signal_drop_item().emit(held_item, quantity);
 
-            match LuaSignal::from_str(&signal_type) {
-                Ok(LuaSignal::Print) => {
-                    // Remove by overwriting with the last element then popping
-                    let last: Value = signals.get(len).unwrap_or(Value::Nil);
-                    let _ = signals.set(i, last);
-                    let _ = signals.pop::<Value>();
-                    let text: String = signal.get("arg").unwrap_or_default();
-                    self.signals().signal_print().emit(text);
-                }
-                Ok(LuaSignal::Move) => {
-                    if !self.waiting_for_move {
-                        let last: Value = signals.get(len).unwrap_or(Value::Nil);
-                        let _ = signals.set(i, last);
-                        let _ = signals.pop::<Value>();
-                        let vector: LuaVector = signal.get("arg")
-                            .expect("Failed to get move arg");
-                        self.waiting_for_move = true;
-                        self.signals()
-                            .signal_move()
-                            .emit(Vector2::new(vector.x, vector.y));
+                    self.held_item_quantity = self.held_item_quantity.saturating_sub(quantity);
+                    if self.held_item_quantity == 0 {
+                        self.held_item = GString::new();
                     }
-                    // Always stop after the first Move — one in-flight at a time
-                    break;
                 }
-                _ => {}
+                LuaSignal::PlaceItem => {
+                    let held_item = self.held_item.to_string();
+                    self.signals().signal_place_item().emit(held_item);
+
+                    self.held_item_quantity = self.held_item_quantity.saturating_sub(1);
+                    if self.held_item_quantity == 0 {
+                        self.held_item = GString::new();
+                    }
+                }
+                _ => (),
             }
-            i -= 1;
         }
     }
 }
 
 #[godot_api]
 impl LuaState {
+    // Godot Signals
     #[signal]
     fn code_executed();
     #[signal]
@@ -110,14 +134,15 @@ impl LuaState {
     fn signal_print(string: String);
     #[signal]
     fn signal_move(vector: Vector2);
-
-    /// Called by GDScript when the NPC finishes walking to its destination.
-    /// Clears the gate so the next Move signal can be emitted.
-    #[func]
-    fn notify_move_done(&mut self) {
-        self.waiting_for_move = false;
-    }
-
+    #[signal]
+    fn signal_attack();
+    #[signal]
+    fn signal_interact();
+    #[signal]
+    fn signal_drop_item(held_item: String, quantity: u32);
+    #[signal]
+    fn signal_place_item(held_item: String);
+    // Godot Functions
     #[func]
     fn run_code(&mut self) {
         if let Err(e) = self._run_code(self.code.to_string().as_ref()) {
@@ -128,42 +153,90 @@ impl LuaState {
     }
 
     fn _run_code(&mut self, code: &str) -> Result<()> {
+        // set variables that the user must be able to retrieve
+        let globals = self.lua.globals();
+        if self.held_item.is_empty() {
+            globals.set("held_item", Value::Nil)?;
+        } else {
+            let held_item = self.lua.create_table()?;
+            held_item.set("name", self.held_item.to_string())?;
+            held_item.set("quantity", self.held_item_quantity)?;
+            globals.set("held_item", held_item)?;
+        }
         self.lua.load(code).exec()?;
         Ok(())
     }
 
-    pub fn prepare_lua_state(&mut self) -> Result<()> {
+    // Internals
+    fn prepare_lua_state(&mut self) -> Result<()> {
         let globals = self.lua.globals();
         let signals = self.lua.create_table()?;
         globals.set("signals", signals)?;
+        // vector singleton
         globals.set("vector", LuaVector::new(0., 0.))?;
 
-        let print = self.lua.create_function(|state, args: Variadic<Value>| {
+        // signals as functions
+        let print_func = self.lua.create_function(|state, args: Variadic<Value>| {
             let signals: Table = state.globals().get("signals")?;
-            let parts: Vec<String> = args.iter().map(|x| x.to_string()).collect::<Result<_, _>>()?;
-            signals.raw_insert(
-                1,
-                build_lua_signal(state, LuaSignal::Print, parts.join("\t").into_lua(state)?)?,
-            )?;
+            let print_string: Vec<String> = args
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Result<_, _>>()?;
+            let print_string = print_string.join("\t");
+            insert_signal(signals, state, LuaSignal::Print, print_string)?;
             Ok(())
         })?;
-        globals.set("print", print)?;
+        globals.set("print", print_func)?;
 
         let move_func = self.lua.create_function(|state, (x, y): (Value, Value)| {
             let signals: Table = state.globals().get("signals")?;
             let vector = match (x, y) {
                 (Value::Integer(x), Value::Integer(y)) => Ok(LuaVector::new(x as f32, y as f32)),
                 (Value::Number(x), Value::Number(y)) => Ok(LuaVector::new(x as f32, y as f32)),
-                (Value::UserData(v), Value::Nil) => v.borrow::<LuaVector>().map(|d| *d),
-                _ => Err(mlua::Error::RuntimeError("arguments not supported.".into())),
+                (Value::UserData(vector), Value::Nil) => {
+                    vector.borrow::<LuaVector>().map(|data| *data)
+                }
+                (_, _) => Err(mlua::Error::RuntimeError(String::from(
+                    "arguments not supported.",
+                ))),
             }?;
-            signals.raw_insert(
-                1,
-                build_lua_signal(state, LuaSignal::Move, vector.into_lua(state)?)?,
-            )?;
+            insert_signal(signals, state, LuaSignal::Move, vector)?;
             Ok(())
         })?;
         globals.set("move", move_func)?;
+
+        let attack_func = self.lua.create_function(|state, ()| {
+            let signals: Table = state.globals().get("signals")?;
+            insert_signal(signals, state, LuaSignal::Attack, Value::Nil)?;
+            Ok(())
+        })?;
+        globals.set("attack", attack_func)?;
+
+        let interact_func = self.lua.create_function(|state, ()| {
+            let signals: Table = state.globals().get("signals")?;
+            insert_signal(signals, state, LuaSignal::Interact, Value::Nil)?;
+            Ok(())
+        })?;
+        globals.set("interact", interact_func)?;
+
+        let drop_item_func = self.lua.create_function(|state, quantity: Value| {
+            let signals: Table = state.globals().get("signals")?;
+            let quantity = match quantity {
+                Value::Integer(q) => q as u32,
+                Value::Number(q) => q as u32,
+                _ => 1,
+            };
+            insert_signal(signals, state, LuaSignal::DropItem, quantity)?;
+            Ok(())
+        })?;
+        globals.set("drop_item", drop_item_func)?;
+
+        let place_item_func = self.lua.create_function(|state, ()| {
+            let signals: Table = state.globals().get("signals")?;
+            insert_signal(signals, state, LuaSignal::PlaceItem, Value::Nil)?;
+            Ok(())
+        })?;
+        globals.set("place_item", place_item_func)?;
 
         Ok(())
     }

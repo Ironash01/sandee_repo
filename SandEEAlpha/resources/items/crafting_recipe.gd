@@ -13,7 +13,7 @@ class_name CraftingRecipe
 @export var ingredient_2_quantity: int = 1
 
 # ── Category (drives which tab this appears under) ────────────────
-@export_enum("Materials", "Blocks", "Weapons", "Others") var category: String = "Materials"
+@export_enum("Materials", "Blocks", "Weapons & Tools", "Others") var category: String = "Materials"
 
 # ── Station requirement ───────────────────────────────────────────
 ## If true, player must be near a Crafting Station to craft this

@@ -13,7 +13,6 @@ const C_TAB_ACT  := Color(0.08, 0.10, 0.20, 0.97)
 const C_TAB_IDLE := Color(0.04, 0.06, 0.12, 0.97)
 const C_CAN_CRAFT := Color(0.15, 0.45, 0.20, 1.00)
 const C_NO_MAT   := Color(0.30, 0.20, 0.20, 1.00)
-const C_NO_STA   := Color(0.35, 0.28, 0.10, 1.00)
 const C_SEL      := Color(0.25, 0.40, 0.75, 1.00)
 
 const COLS       := 5
@@ -30,11 +29,6 @@ const RECIPE_PATHS: Array = [
 	"res://resources/recipes/wire_recipe.tres",
 	"res://resources/recipes/woodenaxe_recipe.tres",
 	"res://resources/recipes/woodensword _recipe.tres"
-	
-	
-	
-	
-	
 ]
 
 # ── Inventory refs ────────────────────────────────────────────────
@@ -53,7 +47,7 @@ var _tab_inv_btn:  Button
 var _tab_craft_btn: Button
 
 # ── Crafting refs ─────────────────────────────────────────────────
-var _recipes:       Array = []
+var _recipes:       Array = []   # only no-station recipes
 var _filtered:      Array = []
 var _active_cat:    String = "Materials"
 var _selected_idx:  int   = -1
@@ -63,7 +57,6 @@ var _craft_name:    Label
 var _craft_ing1:    Label
 var _craft_ing2:    Label
 var _craft_result:  Label
-var _craft_warn:    Label
 var _craft_btn:     Button
 var _craft_cat_btns: Dictionary = {}
 var _craft_row_btns: Array = []
@@ -87,7 +80,8 @@ func _load_recipes() -> void:
 		if res == null or not (res is CraftingRecipe):
 			continue
 		var r: CraftingRecipe = res as CraftingRecipe
-		if r.result_item != null and r.result_item.is_craftable:
+		# ── KEY FIX: inventory crafting only shows hand-craftable recipes ──
+		if r.result_item != null and r.result_item.is_craftable and not r.requires_station:
 			_recipes.append(r)
 
 # ── Build ─────────────────────────────────────────────────────────
@@ -348,8 +342,6 @@ func _build_craft_detail(s: float) -> Control:
 	_div(vbox)
 	vbox.add_child(_lbl("RESULT", i(10,s), C_MUTED))
 	_craft_result = _lbl("", i(12,s), C_EFFECT); vbox.add_child(_craft_result)
-	_craft_warn   = _lbl("⚠ Needs Station", i(10,s), Color(1.0, 0.75, 0.2, 1.0))
-	_craft_warn.visible = false; vbox.add_child(_craft_warn)
 
 	var sp := Control.new(); sp.size_flags_vertical = Control.SIZE_EXPAND_FILL; vbox.add_child(sp)
 
@@ -382,6 +374,7 @@ func _craft_highlight_tabs() -> void:
 func _craft_filter_refresh() -> void:
 	_filtered = []; _craft_row_btns = []
 	for r in _recipes:
+		# _recipes already excludes requires_station; just filter by category
 		if (r as CraftingRecipe).category == _active_cat:
 			_filtered.append(r)
 	if _craft_list == null: return
@@ -413,16 +406,13 @@ func _count_item(data: ItemData) -> int:
 			n += (slot as Dictionary)["quantity"]
 	return n
 
-enum CraftState { CAN, NO_MATS, NO_STATION }
+enum CraftState { CAN, NO_MATS }
 
 func _craft_state(r: CraftingRecipe) -> CraftState:
 	var ok: bool = _count_item(r.ingredient_1) >= r.ingredient_1_quantity
 	if r.ingredient_2 != null:
 		ok = ok and _count_item(r.ingredient_2) >= r.ingredient_2_quantity
-	if not ok: return CraftState.NO_MATS
-	if r.requires_station and not Global.player_near_station:
-		return CraftState.NO_STATION
-	return CraftState.CAN
+	return CraftState.CAN if ok else CraftState.NO_MATS
 
 func _refresh_crafting() -> void:
 	for idx in range(_craft_row_btns.size()):
@@ -432,9 +422,8 @@ func _refresh_crafting() -> void:
 		var btn: Button       = _craft_row_btns[idx] as Button
 		var bg: Color; var fc: Color; var mod: float
 		match state:
-			CraftState.CAN:        bg = C_TIP_BG; fc = C_TITLE; mod = 1.0
-			CraftState.NO_MATS:    bg = C_TIP_BG; fc = C_MUTED; mod = 0.55
-			CraftState.NO_STATION: bg = Color(0.14,0.12,0.06,1); fc = Color(1,0.75,0.2,1); mod = 0.8
+			CraftState.CAN:     bg = C_TIP_BG; fc = C_TITLE; mod = 1.0
+			CraftState.NO_MATS: bg = C_TIP_BG; fc = C_MUTED; mod = 0.55
 		var ps := _sb(bg, C_BORDER, 3, 8, 8, 5, 5)
 		btn.add_theme_stylebox_override("normal",  ps)
 		btn.add_theme_stylebox_override("hover",   ps)
@@ -455,7 +444,6 @@ func _craft_select(idx: int) -> void:
 	else:
 		_craft_ing2.visible = false
 	_craft_result.text  = "%s ×%d" % [r.result_item.item_name, r.result_quantity]
-	_craft_warn.visible = r.requires_station
 	_craft_detail.visible = true
 	_update_craft_btn(r)
 
@@ -472,11 +460,6 @@ func _update_craft_btn(r: CraftingRecipe) -> void:
 			var ps := _sb(C_NO_MAT, C_BORDER, 4, 8, 8, 6, 6)
 			_craft_btn.add_theme_stylebox_override("normal", ps)
 			_craft_btn.add_theme_color_override("font_color", Color(1.0, 0.7, 0.7, 1.0))
-		CraftState.NO_STATION:
-			_craft_btn.text = "NEEDS STATION"; _craft_btn.disabled = true
-			var ps := _sb(C_NO_STA, C_BORDER, 4, 8, 8, 6, 6)
-			_craft_btn.add_theme_stylebox_override("normal", ps)
-			_craft_btn.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4, 1.0))
 
 func _on_craft() -> void:
 	if _selected_idx < 0: return

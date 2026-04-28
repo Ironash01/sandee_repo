@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://btfk4q47rv276"]
+
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_8cica"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_gufxu"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_trikl"]
+atlas = ExtResource("1_8cica")
+region = Rect2(64, 96, 32, 32)
+
+[resource]
+script = ExtResource("2_gufxu")
+item_name = "Wooden Pickaxe"
+description = "Can destroy your anal."
+item_type = "weapon"
+icon = SubResource("AtlasTexture_trikl")
+is_craftable = true
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

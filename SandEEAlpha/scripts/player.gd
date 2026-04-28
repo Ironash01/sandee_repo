@@ -129,7 +129,7 @@ func _give_debug_items() -> void:
 
 func _input(event: InputEvent) -> void:
 	# Block all gameplay input while the Lua UI is open
-	if Global.lua_ui_open:
+	if Global.lua_ui_open or Global.station_ui_open:
 		return
 	# Debug: Shift+E gives all items
 	if event is InputEventKey and event.pressed 			and event.keycode == KEY_E 			and event.shift_pressed:

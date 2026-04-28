@@ -13,9 +13,26 @@ const C_SEL       := Color(0.25, 0.40, 0.75, 1.00)
 const C_TAB_BG    := Color(0.06, 0.08, 0.17, 1.00)
 const C_CAN_CRAFT := Color(0.15, 0.45, 0.20, 1.00)
 const C_NO_MAT    := Color(0.30, 0.20, 0.20, 1.00)
-const C_NO_STA    := Color(0.35, 0.28, 0.10, 1.00)
 
 const CATEGORIES  := ["Materials", "Blocks", "Weapons", "Others"]
+
+# ── Unified recipe list (shared with inventory_ui.gd) ─────────────
+const RECIPE_PATHS: Array = [
+	"res://resources/recipes/crafting_station_recipe.tres",
+	"res://resources/recipes/stick_recipe.tres",
+	"res://resources/recipes/cpu_recipe.tres",
+	"res://resources/recipes/ironrod_recipe.tres",
+	"res://resources/recipes/plain_planks_recipe.tres",
+	"res://resources/recipes/wireframe_recipe.tres",
+	"res://resources/recipes/wire_recipe.tres",
+	"res://resources/recipes/woodenaxe_recipe.tres",
+	"res://resources/recipes/woodensword _recipe.tres"
+]
+
+# ── Mode ──────────────────────────────────────────────────────────
+# false = unused (station always opens via open_as_station)
+# true  = crafting station (station-required recipes only)
+var _station_mode: bool = false
 
 # ── State ─────────────────────────────────────────────────────────
 var _tree:         SceneTree
@@ -31,16 +48,18 @@ var _detail_name:   Label
 var _detail_ing1:   Label
 var _detail_ing2:   Label
 var _detail_result: Label
-var _station_warn:  Label
 var _craft_btn:     Button
 var _cat_btns:      Dictionary = {}
 var _row_btns:      Array      = []
+var _title_label:   Label
 
 # ── Lifecycle ─────────────────────────────────────────────────────
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_tree = get_tree()
+	if has_meta("station_mode"):
+		_station_mode = get_meta("station_mode")
 	_load_recipes()
 	_build()
 	Global.Inventory_updated.connect(_refresh_highlights)
@@ -62,20 +81,25 @@ func _on_ui_scale(_s: float) -> void:
 	_filter_and_refresh()
 	visible = was_visible
 
-# ── Recipe registry — add new .tres paths here ───────────────────
-const _RECIPE_PATHS: Array = [
-	"res://resources/recipes/crafting_station_recipe.tres",
-	"res://resources/recipes/stick_recipe.tres"
-]
-
 func _load_recipes() -> void:
-	for path in _RECIPE_PATHS:
+	for path in RECIPE_PATHS:
 		var res: Resource = load(path) as Resource
 		if res == null or not (res is CraftingRecipe):
 			continue
 		var recipe: CraftingRecipe = res as CraftingRecipe
 		if recipe.result_item != null and recipe.result_item.is_craftable:
 			_recipes.append(recipe)
+
+# ── Public: open this menu in station mode ─────────────────────────
+func open_as_station() -> void:
+	_station_mode = true
+	if _title_label != null:
+		_title_label.text = "CRAFTING STATION"
+	_selected_idx = -1
+	if _detail_panel != null:
+		_detail_panel.visible = false
+	_filter_and_refresh()
+	show_menu()
 
 # ── Build UI ──────────────────────────────────────────────────────
 func _build() -> void:
@@ -91,12 +115,11 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
-	# Outer HBox: vertical tab strip + main panel side by side
 	var outer := HBoxContainer.new()
 	outer.add_theme_constant_override("separation", 0)
 	center.add_child(outer)
 
-	# ── Left vertical tab strip ───────────────────────────────────
+	# Left tab strip
 	var tab_strip := PanelContainer.new()
 	var ts_ps := _sb(C_TAB_BG, C_BORDER, 6, 0, 0, 0, 0)
 	tab_strip.add_theme_stylebox_override("panel", ts_ps)
@@ -107,28 +130,25 @@ func _build() -> void:
 	tab_vbox.add_theme_constant_override("separation", 2)
 	tab_strip.add_child(tab_vbox)
 
-	# Template icon placeholder (TextureRect — swap texture later)
 	var icon_rect := TextureRect.new()
 	icon_rect.custom_minimum_size  = Vector2(28 * s, 28 * s)
 	icon_rect.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon_rect.expand_mode          = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	icon_rect.modulate             = C_MUTED
-	# No texture assigned — shows empty placeholder for now
 	tab_vbox.add_child(icon_rect)
 
-	# Rotated "CRAFTING" label — rotated 90° via pivot
 	var tab_label_wrap := Control.new()
 	tab_label_wrap.custom_minimum_size = Vector2(36 * s, 100 * s)
 	tab_vbox.add_child(tab_label_wrap)
 	var tab_lbl := Label.new()
-	tab_lbl.text = "CRAFTING"
+	tab_lbl.text = "STATION"
 	tab_lbl.add_theme_font_size_override("font_size", int(10 * s))
 	tab_lbl.add_theme_color_override("font_color", C_TITLE)
 	tab_lbl.rotation_degrees = 90.0
 	tab_lbl.position         = Vector2(28 * s, 8 * s)
 	tab_label_wrap.add_child(tab_lbl)
 
-	# ── Main panel ────────────────────────────────────────────────
+	# Main panel
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(600 * s, 420 * s)
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(16*s), int(16*s), int(14*s), int(16*s))
@@ -142,9 +162,9 @@ func _build() -> void:
 	# Header
 	var header := HBoxContainer.new()
 	vbox.add_child(header)
-	var title := _lbl("CRAFTING MENU", int(16 * s), C_TITLE)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(title)
+	_title_label = _lbl("CRAFTING STATION", int(16 * s), C_TITLE)
+	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(_title_label)
 	var close := Button.new()
 	close.text = "✕"
 	close.flat = true
@@ -218,9 +238,6 @@ func _build_detail(s: float) -> Control:
 	vbox.add_child(_lbl("RESULT", int(11 * s), C_MUTED))
 	_detail_result = _lbl("", int(13 * s), C_EFFECT)
 	vbox.add_child(_detail_result)
-	_station_warn = _lbl("⚠ Requires Crafting Station", int(11 * s), Color(1.0, 0.75, 0.2, 1.0))
-	_station_warn.visible = false
-	vbox.add_child(_station_warn)
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -284,18 +301,14 @@ func _count_item(data: ItemData) -> int:
 			total += (slot as Dictionary)["quantity"]
 	return total
 
-enum CraftState { CAN_CRAFT, NO_MATS, NO_STATION }
+enum CraftState { CAN_CRAFT, NO_MATS }
 
 func _craft_state(recipe: CraftingRecipe) -> CraftState:
 	var has_mats: bool = _count_item(recipe.ingredient_1) >= recipe.ingredient_1_quantity
 	if recipe.ingredient_2 != null:
 		has_mats = has_mats and \
 			_count_item(recipe.ingredient_2) >= recipe.ingredient_2_quantity
-	if not has_mats:
-		return CraftState.NO_MATS
-	if recipe.requires_station and not Global.player_near_station:
-		return CraftState.NO_STATION
-	return CraftState.CAN_CRAFT
+	return CraftState.CAN_CRAFT if has_mats else CraftState.NO_MATS
 
 # ── Category ──────────────────────────────────────────────────────
 func _on_category(cat: String) -> void:
@@ -309,8 +322,12 @@ func _filter_and_refresh() -> void:
 	_filtered = []
 	_row_btns = []
 	for r in _recipes:
-		if (r as CraftingRecipe).category == _active_cat:
-			_filtered.append(r)
+		var recipe: CraftingRecipe = r as CraftingRecipe
+		if recipe.category != _active_cat:
+			continue
+		# Station UI: only recipes that require a station
+		if recipe.requires_station:
+			_filtered.append(recipe)
 
 	for child in _recipe_list.get_children():
 		child.queue_free()
@@ -348,10 +365,6 @@ func _refresh_highlights() -> void:
 				bg_col  = C_TIP_BG;  txt_col = C_TITLE;  mod = 1.0
 			CraftState.NO_MATS:
 				bg_col  = C_TIP_BG;  txt_col = C_MUTED;  mod = 0.55
-			CraftState.NO_STATION:
-				bg_col  = Color(0.14, 0.12, 0.06, 1.0)
-				txt_col = Color(1.0, 0.75, 0.2, 1.0)
-				mod     = 0.80
 		var ps := _sb(bg_col, C_BORDER, 3, 8, 8, 6, 6)
 		btn.add_theme_stylebox_override("normal",  ps)
 		btn.add_theme_stylebox_override("hover",   ps)
@@ -374,7 +387,6 @@ func _on_select(idx: int) -> void:
 	else:
 		_detail_ing2.visible = false
 	_detail_result.text   = "%s ×%d" % [recipe.result_item.item_name, recipe.result_quantity]
-	_station_warn.visible = recipe.requires_station
 	_detail_panel.visible = true
 	_update_craft_btn(recipe)
 
@@ -394,12 +406,6 @@ func _update_craft_btn(recipe: CraftingRecipe) -> void:
 			var ps := _sb(C_NO_MAT, C_BORDER, 4, 8, 8, 8, 8)
 			_craft_btn.add_theme_stylebox_override("normal",  ps)
 			_craft_btn.add_theme_color_override("font_color", Color(1.0, 0.7, 0.7, 1.0))
-		CraftState.NO_STATION:
-			_craft_btn.text     = "NEEDS CRAFTING STATION"
-			_craft_btn.disabled = true
-			var ps := _sb(C_NO_STA, C_BORDER, 4, 8, 8, 8, 8)
-			_craft_btn.add_theme_stylebox_override("normal",  ps)
-			_craft_btn.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4, 1.0))
 
 # ── Craft ─────────────────────────────────────────────────────────
 func _on_craft() -> void:
@@ -419,14 +425,16 @@ func _on_craft() -> void:
 
 # ── Show / Hide ───────────────────────────────────────────────────
 func show_menu() -> void:
+	Global.station_ui_open = true
 	visible = true
-	if _tree != null:
-		_tree.paused = true
+	if Global.pause_on_inventory:
+		get_tree().paused = true
 
 func hide_menu() -> void:
+	Global.station_ui_open = false
 	visible = false
-	if _tree != null:
-		_tree.paused = false
+	if Global.pause_on_inventory:
+		get_tree().paused = false
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape") and visible:

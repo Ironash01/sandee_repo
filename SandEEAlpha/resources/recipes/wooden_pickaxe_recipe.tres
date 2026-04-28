@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://b8s0selhm5i0j"]
+
+[ext_resource type="Resource" uid="uid://6bk4sjwa0vjn" path="res://resources/items/wood.tres" id="1_0q4l7"]
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_vjo0a"]
+[ext_resource type="Resource" uid="uid://b8pqqosrxqkwa" path="res://resources/items/stick.tres" id="2_qyj0i"]
+[ext_resource type="Resource" uid="uid://btfk4q47rv276" path="res://resources/items/wooden_pickaxe.tres" id="3_mwtt5"]
+
+[resource]
+script = ExtResource("1_vjo0a")
+result_item = ExtResource("3_mwtt5")
+ingredient_1 = ExtResource("1_0q4l7")
+ingredient_1_quantity = 3
+ingredient_2 = ExtResource("2_qyj0i")
+ingredient_2_quantity = 2
+category = "Weapons"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"
