@@ -1,26 +1,37 @@
 [gd_scene format=3 uid="uid://dvfw1y8gqmjnj"]
 
 [ext_resource type="Script" uid="uid://drft1qtsiron7" path="res://scripts/lua_npc.gd" id="1_lua"]
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="2_atlas"]
 
-[sub_resource type="RectangleShape2D" id="RectShape_lua"]
-size = Vector2(20, 30)
+[sub_resource type="AtlasTexture" id="AtlasTexture_beacon"]
+atlas = ExtResource("2_atlas")
+region = Rect2(256, 64, 32, 32)
 
-[sub_resource type="CircleShape2D" id="CircleShape_interact"]
-radius = 56.0
+[sub_resource type="RectangleShape2D" id="RectShape_station"]
+size = Vector2(28, 28)
+
+[sub_resource type="CircleShape2D" id="CircleShape_click"]
+radius = 28.0
 
 [node name="LuaNPC" type="Node2D" unique_id=1321413095]
 script = ExtResource("1_lua")
 
-[node name="Sprite2D" type="AnimatedSprite2D" parent="." unique_id=236635100]
+[node name="BeaconSprite" type="Sprite2D" parent="." unique_id=555000001]
+texture = SubResource("AtlasTexture_beacon")
+
+[node name="StationBody" type="StaticBody2D" parent="." unique_id=412609602]
+
+[node name="StationCol" type="CollisionShape2D" parent="StationBody" unique_id=1513647922]
+shape = SubResource("RectShape_station")
+
+[node name="ClickArea" type="Area2D" parent="." unique_id=555000002]
+input_pickable = true
+
+[node name="ClickShape" type="CollisionShape2D" parent="ClickArea" unique_id=555000003]
+shape = SubResource("CircleShape_click")
+
+[node name="Robot" type="Node2D" parent="." unique_id=555000004]
+position = Vector2(0, 36)
+
+[node name="RobotSprite" type="AnimatedSprite2D" parent="Robot" unique_id=236635100]
 scale = Vector2(1.6, 1.6)
-
-[node name="StaticBody2D" type="StaticBody2D" parent="." unique_id=412609602]
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="StaticBody2D" unique_id=1513647922]
-position = Vector2(0, 8)
-shape = SubResource("RectShape_lua")
-
-[node name="InteractArea" type="Area2D" parent="." unique_id=1064029441]
-
-[node name="InteractShape" type="CollisionShape2D" parent="InteractArea" unique_id=1212958735]
-shape = SubResource("CircleShape_interact")

@@ -12,6 +12,6 @@ ingredient_1 = ExtResource("1_0q4l7")
 ingredient_1_quantity = 3
 ingredient_2 = ExtResource("2_qyj0i")
 ingredient_2_quantity = 2
-category = "Weapons"
+category = "Weapons & Tools"
 requires_station = true
 metadata/_custom_type_script = "uid://bfxcb6bsffusb"

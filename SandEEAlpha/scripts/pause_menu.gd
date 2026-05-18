@@ -277,12 +277,16 @@ func _on_fullscreen_toggled(pressed: bool) -> void:
 
 # ── Panel navigation ──────────────────────────────────────────────
 func show_menu() -> void:
+	if Global.any_ui_open():
+		return
+	Global.pause_menu_open = true
 	visible = true
 	_pause_center.visible    = true
 	_settings_center.visible = false
 	get_tree().paused = true
 
 func hide_menu() -> void:
+	Global.pause_menu_open = false
 	visible = false
 	get_tree().paused = false
 
@@ -298,6 +302,9 @@ func _on_back() -> void:
 	_pause_center.visible    = true
 
 func _on_quit() -> void:
+	if Global.active_save_slot > 0:
+		Global.save_game(Global.active_save_slot)
+	Global.pause_menu_open = false
 	get_tree().paused = false
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu_ver.tscn")
 
@@ -308,5 +315,5 @@ func _input(event: InputEvent) -> void:
 			_on_back()
 		elif visible:
 			hide_menu()
-		else:
+		elif not Global.any_ui_open():
 			show_menu()

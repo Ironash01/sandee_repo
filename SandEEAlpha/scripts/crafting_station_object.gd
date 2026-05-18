@@ -14,6 +14,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
+	Global.request_close_all_ui.connect(_on_close_all_ui)
 
 	var menu_scene: PackedScene = load("res://scenes/ui/CraftingMenu.tscn") as PackedScene
 	var canvas := CanvasLayer.new()
@@ -25,11 +26,16 @@ func _ready() -> void:
 	canvas.add_child(_ui)
 	_ui.visible = false
 
+func _on_close_all_ui() -> void:
+	if _ui != null and _ui.visible:
+		_ui.hide_menu()
+
 func _input(event: InputEvent) -> void:
 	if not _player_nearby or _ui == null or _ui.visible:
 		return
-	# Block if any other UI is already open
-	if Global.inventory_open or Global.lua_ui_open:
+	if Global.block_mode:
+		return
+	if Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if event is InputEventMouseButton \
 			and event.pressed \

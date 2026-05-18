@@ -5,6 +5,7 @@ var item_data: ItemData = null
 
 const HITS_TO_BREAK:  int = 3
 const ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
+const INTERACT_RADIUS_PX: float = 64.0   # 2 × 32 px tiles
 
 var _hit_count:     int      = 0
 var _player_nearby: bool     = false
@@ -40,10 +41,21 @@ func _apply_sprite() -> void:
 func _input(event: InputEvent) -> void:
 	if not _player_nearby:
 		return
+	# Don't interact with placed objects while build mode is active
+	if Global.block_mode:
+		return
+	# Enforce hard interaction radius
+	if not _player_within_radius():
+		return
 	if event is InputEventMouseButton \
 			and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		_try_hit()
+
+func _player_within_radius() -> bool:
+	if Global.player_node == null:
+		return true
+	return (Global.player_node as Node2D).global_position.distance_to(global_position) <= INTERACT_RADIUS_PX
 
 func _try_hit() -> void:
 	# All blocks require a pickaxe

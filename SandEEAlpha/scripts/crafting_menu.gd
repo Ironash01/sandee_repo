@@ -14,20 +14,10 @@ const C_TAB_BG    := Color(0.06, 0.08, 0.17, 1.00)
 const C_CAN_CRAFT := Color(0.15, 0.45, 0.20, 1.00)
 const C_NO_MAT    := Color(0.30, 0.20, 0.20, 1.00)
 
-const CATEGORIES  := ["Materials", "Blocks", "Weapons", "Others"]
+const CATEGORIES  := ["Materials", "Blocks", "Weapons & Tools", "Others"]
 
-# ── Unified recipe list (shared with inventory_ui.gd) ─────────────
-const RECIPE_PATHS: Array = [
-	"res://resources/recipes/crafting_station_recipe.tres",
-	"res://resources/recipes/stick_recipe.tres",
-	"res://resources/recipes/cpu_recipe.tres",
-	"res://resources/recipes/ironrod_recipe.tres",
-	"res://resources/recipes/plain_planks_recipe.tres",
-	"res://resources/recipes/wireframe_recipe.tres",
-	"res://resources/recipes/wire_recipe.tres",
-	"res://resources/recipes/woodenaxe_recipe.tres",
-	"res://resources/recipes/woodensword _recipe.tres"
-]
+# ── Auto-discovered recipe directory (no hardcoded list needed) ────
+const RECIPE_DIR: String = "res://resources/recipes/"
 
 # ── Mode ──────────────────────────────────────────────────────────
 # false = unused (station always opens via open_as_station)
@@ -82,13 +72,21 @@ func _on_ui_scale(_s: float) -> void:
 	visible = was_visible
 
 func _load_recipes() -> void:
-	for path in RECIPE_PATHS:
-		var res: Resource = load(path) as Resource
-		if res == null or not (res is CraftingRecipe):
-			continue
-		var recipe: CraftingRecipe = res as CraftingRecipe
-		if recipe.result_item != null and recipe.result_item.is_craftable:
-			_recipes.append(recipe)
+	var dir := DirAccess.open(RECIPE_DIR)
+	if dir == null:
+		push_error("CraftingMenu: cannot open recipe dir: " + RECIPE_DIR)
+		return
+	dir.list_dir_begin()
+	var fname: String = dir.get_next()
+	while fname != "":
+		if not dir.current_is_dir() and fname.ends_with(".tres"):
+			var res: Resource = load(RECIPE_DIR + fname) as Resource
+			if res != null and res is CraftingRecipe:
+				var recipe: CraftingRecipe = res as CraftingRecipe
+				if recipe.result_item != null and recipe.result_item.is_craftable:
+					_recipes.append(recipe)
+		fname = dir.get_next()
+	dir.list_dir_end()
 
 # ── Public: open this menu in station mode ─────────────────────────
 func open_as_station() -> void:
@@ -425,17 +423,16 @@ func _on_craft() -> void:
 
 # ── Show / Hide ───────────────────────────────────────────────────
 func show_menu() -> void:
-	Global.station_ui_open = true
 	visible = true
-	if Global.pause_on_inventory:
-		get_tree().paused = true
+	Global.open_ui()
 
 func hide_menu() -> void:
-	Global.station_ui_open = false
+	if not visible:
+		return
 	visible = false
-	if Global.pause_on_inventory:
-		get_tree().paused = false
+	Global.close_ui()
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape") and visible:
+		get_viewport().set_input_as_handled()
 		hide_menu()

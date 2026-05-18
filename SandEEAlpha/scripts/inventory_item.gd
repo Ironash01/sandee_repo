@@ -10,16 +10,32 @@ var scene_path: String = "res://scenes/ui/InventoryItem.tscn"
 var player_in_range: bool = false
 var npc_in_range:    Node  = null   # LuaNPC that is close enough to collect
 
+# ── Wobble ────────────────────────────────────────────────────────
+const WOBBLE_SPEED:      float = 3.0   # rotations per second (radians)
+const WOBBLE_AMPLITUDE:  float = 0.18  # radians (~10°)
+const DROP_SCALE:        float = 0.55  # dropped items are smaller than full size
+var   _wobble_time:      float = 0.0
+
 func _ready() -> void:
+	# Smaller scale for dropped items in the world
+	scale = Vector2(DROP_SCALE, DROP_SCALE)
+	# Random phase offset so items don't all wobble in sync
+	_wobble_time = randf_range(0.0, TAU)
+
 	if not Engine.is_editor_hint():
 		if item_data != null:
 			icon_sprite.texture = item_data.icon
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
 		if item_data != null:
 			icon_sprite.texture = item_data.icon
 		return
+
+	# Wobble rotation
+	_wobble_time += delta * WOBBLE_SPEED
+	rotation = sin(_wobble_time) * WOBBLE_AMPLITUDE
+
 	if player_in_range:
 		pickup_item()
 

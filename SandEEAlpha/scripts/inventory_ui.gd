@@ -18,22 +18,13 @@ const C_SEL      := Color(0.25, 0.40, 0.75, 1.00)
 const COLS       := 5
 const SLOT_SCENE := preload("res://scenes/ui/InventorySlot.tscn")
 
-const CRAFT_CATEGORIES := ["Materials", "Blocks", "Weapons", "Others"]
-const RECIPE_PATHS: Array = [
-	"res://resources/recipes/crafting_station_recipe.tres",
-	"res://resources/recipes/stick_recipe.tres",
-	"res://resources/recipes/cpu_recipe.tres",
-	"res://resources/recipes/ironrod_recipe.tres",
-	"res://resources/recipes/plain_planks_recipe.tres",
-	"res://resources/recipes/wireframe_recipe.tres",
-	"res://resources/recipes/wire_recipe.tres",
-	"res://resources/recipes/woodenaxe_recipe.tres",
-	"res://resources/recipes/woodensword _recipe.tres"
-]
+const CRAFT_CATEGORIES := ["Materials", "Blocks", "Weapons & Tools", "Others"]
+const RECIPE_DIR: String = "res://resources/recipes/"
 
 # ── Inventory refs ────────────────────────────────────────────────
 var _slots:         Array   = []
 var _tip_root:      Control = null
+var _rebuild_ver:   int     = 0
 var _tip_name:      Label
 var _tip_type:      Label
 var _tip_effect:    Label
@@ -75,17 +66,27 @@ func _on_ui_scale(_s: float) -> void:
 
 func _load_recipes() -> void:
 	_recipes.clear()
-	for path in RECIPE_PATHS:
-		var res: Resource = load(path) as Resource
-		if res == null or not (res is CraftingRecipe):
-			continue
-		var r: CraftingRecipe = res as CraftingRecipe
-		# ── KEY FIX: inventory crafting only shows hand-craftable recipes ──
-		if r.result_item != null and r.result_item.is_craftable and not r.requires_station:
-			_recipes.append(r)
+	var dir := DirAccess.open(RECIPE_DIR)
+	if dir == null:
+		push_error("InventoryUI: cannot open recipe dir: " + RECIPE_DIR)
+		return
+	dir.list_dir_begin()
+	var fname: String = dir.get_next()
+	while fname != "":
+		if not dir.current_is_dir() and fname.ends_with(".tres"):
+			var res: Resource = load(RECIPE_DIR + fname) as Resource
+			if res != null and res is CraftingRecipe:
+				var r: CraftingRecipe = res as CraftingRecipe
+				# Inventory crafting: only hand-craftable (no station required)
+				if r.result_item != null and r.result_item.is_craftable and not r.requires_station:
+					_recipes.append(r)
+		fname = dir.get_next()
+	dir.list_dir_end()
 
 # ── Build ─────────────────────────────────────────────────────────
 func _rebuild() -> void:
+	_rebuild_ver += 1
+	var my_ver: int = _rebuild_ver
 	_slots = []; _tip_root = null; _craft_list = null; _craft_detail = null
 	_craft_cat_btns.clear(); _craft_row_btns.clear()
 	_tip_name = null; _tip_type = null; _tip_effect = null; _tip_qty = null
@@ -93,6 +94,8 @@ func _rebuild() -> void:
 	for child in get_children():
 		child.queue_free()
 	await get_tree().process_frame
+	if _rebuild_ver != my_ver:
+		return
 	_build()
 	_refresh_inv()
 	_switch_tab("inventory")
@@ -481,12 +484,14 @@ func _refresh_inv() -> void:
 		var item = Global.Inventory[idx] if idx < Global.Inventory.size() else null
 		if item != null: _slots[idx].set_item(item)
 		else:            _slots[idx].set_empty()
-	if _active_idx >= 0:
-		var ok: bool = _active_idx < Global.Inventory.size() \
-			and Global.Inventory[_active_idx] != null
-		if not ok:
-			if _tip_root != null: _tip_root.visible = false
-			_active_idx = -1
+	if _active_idx < 0: return
+	var active_item: Variant = Global.Inventory[_active_idx] \
+		if _active_idx < Global.Inventory.size() else null
+	if active_item == null:
+		if _tip_root != null: _tip_root.visible = false
+		_active_idx = -1
+	elif _tip_qty != null:
+		_tip_qty.text = "Qty: %d / %d" % [active_item["quantity"], Global.MAX_STACK]
 
 func _on_slot_clicked(idx: int) -> void:
 	if _tip_root == null: return
@@ -503,19 +508,29 @@ func _on_slot_clicked(idx: int) -> void:
 
 func _on_drop_pressed() -> void:
 	if _active_idx < 0: return
-	var item = Global.Inventory[_active_idx]
-	if item == null: return
-	if Global.player_node:
-		var pos := (Global.player_node as Node2D).global_position + Vector2(0, 50)
-		Global.drop_item(item, pos)
-		Global.remove_item(item["data"] as ItemData)
-	if _tip_root != null: _tip_root.visible = false
-	_active_idx = -1
+	var slot: Variant = Global.Inventory[_active_idx]
+	if slot == null: return
+	if not Global.player_node: return
+
+	var pos: Vector2 = (Global.player_node as Node2D).global_position + Vector2(0, 50)
+	Global.drop_item({"data": slot["data"], "quantity": 1}, pos)
+
+	# Decrement this exact slot, not the first matching one
+	slot["quantity"] -= 1
+	if slot["quantity"] <= 0:
+		Global.Inventory[_active_idx] = null
+		if _tip_root != null: _tip_root.visible = false
+		_active_idx = -1
+	else:
+		# Keep tooltip open and show updated count immediately
+		if _tip_qty != null:
+			_tip_qty.text = "Qty: %d / %d" % [slot["quantity"], Global.MAX_STACK]
+
+	Global.Inventory_updated.emit()
 
 func _close() -> void:
 	get_parent().visible = false
-	if Global.pause_on_inventory:
-		get_tree().paused = false
+	Global.close_ui()
 
 # ── Helpers ───────────────────────────────────────────────────────
 func i(base: int, s: float) -> int: return int(base * s)

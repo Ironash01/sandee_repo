@@ -6,8 +6,33 @@ var selected_index: int = 0
 const C_SLOT_BG  := Color(0.11, 0.15, 0.26, 1.00)
 const C_SLOT_SEL := Color(0.25, 0.40, 0.75, 1.00)
 
+const C_HEALTH_FILL  := Color(0.85, 0.15, 0.15, 1.00)
+const C_HEALTH_BG    := Color(0.22, 0.04, 0.04, 1.00)
+const C_STAMINA_FILL := Color(0.85, 0.78, 0.15, 1.00)
+const C_STAMINA_BG   := Color(0.26, 0.22, 0.04, 1.00)
+# 9 slots × 40 px + 8 gaps × 4 px = 392 — must match the hotbar HBoxContainer width
+const HOTBAR_PX := 392
+const BAR_H     := 8
+
 const SLOT_SIZE    := 40
 const SLOT_SCRIPT  := preload("res://scripts/hotbar_slot.gd")
+
+# ── Stat bars ─────────────────────────────────────────────────────
+var _stat_container: Control  = null
+var _health_fill:   ColorRect = null
+var _stamina_fill:  ColorRect = null
+var _health_bg:     Control   = null
+var _stamina_bg:    Control   = null
+
+# ── Build mode indicator ──────────────────────────────────────────
+var _build_label: Label = null
+
+# ── Pickup popup ──────────────────────────────────────────────────
+var _popup_label: Label       = null
+var _hover_label: Label       = null
+var _popup_tween:  Tween       = null
+var _popup_timer:  float       = 0.0
+const POPUP_DURATION := 1.8
 
 func _ready() -> void:
 	var hbox: HBoxContainer = $CanvasLayer/HBoxContainer as HBoxContainer
@@ -49,9 +74,55 @@ func _ready() -> void:
 		label.visible      = false
 		child.add_child(label)
 
+	# ── Build Mode Label (above HBoxContainer) ────────────────────
+	var canvas: CanvasLayer = $CanvasLayer as CanvasLayer
+	_build_label = Label.new()
+	_build_label.name = "BuildModeLabel"
+	_build_label.text = "⚒ BUILD MODE"
+	_build_label.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0, 1.0))
+	_build_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	_build_label.add_theme_constant_override("shadow_offset_x", 1)
+	_build_label.add_theme_constant_override("shadow_offset_y", 1)
+	_build_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_build_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_build_label.visible = false
+	canvas.add_child(_build_label)
+
+	# ── Pickup popup label ────────────────────────────────────────
+	_popup_label = Label.new()
+	_popup_label.name = "PickupPopup"
+	_popup_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.8, 1.0))
+	_popup_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_popup_label.add_theme_constant_override("shadow_offset_x", 1)
+	_popup_label.add_theme_constant_override("shadow_offset_y", 1)
+	_popup_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_popup_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_popup_label.modulate.a = 0.0
+	canvas.add_child(_popup_label)
+
+	# ── Block hover label (bottom-left) ──────────────────────────
+	_hover_label = Label.new()
+	_hover_label.name = "BlockHoverLabel"
+	_hover_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.9, 1.0))
+	_hover_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_hover_label.add_theme_constant_override("shadow_offset_x", 1)
+	_hover_label.add_theme_constant_override("shadow_offset_y", 1)
+	_hover_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_hover_label.visible = false
+	canvas.add_child(_hover_label)
+
+	_build_stat_bars(canvas)
+	_apply_label_scale()
+
+	Global.ui_scale_changed.connect(func(_s: float) -> void: _apply_label_scale())
 	Global.Hotbar_updated.connect(_refresh_hotbar)
 	Global.hotbar_selection_changed.connect(_on_selection_changed)
 	Global.inventory_toggled.connect(_on_inventory_toggled)
+	Global.block_mode_changed.connect(_on_build_mode_changed)
+	Global.item_picked_up.connect(_on_item_picked_up)
+	Global.hover_label_changed.connect(_on_hover_label_changed)
+	Global.health_changed.connect(_on_health_changed)
+	Global.stamina_changed.connect(_on_stamina_changed)
 
 	_refresh_hotbar()
 	_highlight_slot(0)
@@ -73,6 +144,27 @@ func _style_slot(slot: TextureRect) -> void:
 
 func _on_inventory_toggled(_is_open: bool) -> void:
 	pass  # hotbar stays fully visible when inventory is open
+
+func _on_build_mode_changed(enabled: bool) -> void:
+	if _build_label != null:
+		_build_label.visible = enabled
+
+func _on_item_picked_up(item_name: String, item_type: String) -> void:
+	if _popup_label == null:
+		return
+	# Format: "Wood  [block]"
+	var type_display: String = item_type.capitalize()
+	_popup_label.text = "%s  [%s]" % [item_name, type_display]
+
+	# Kill any running tween and restart
+	if _popup_tween != null and _popup_tween.is_valid():
+		_popup_tween.kill()
+
+	_popup_tween = create_tween()
+	# Fade in quickly, hold, then fade out
+	_popup_tween.tween_property(_popup_label, "modulate:a", 1.0, 0.15)
+	_popup_tween.tween_interval(POPUP_DURATION - 0.45)
+	_popup_tween.tween_property(_popup_label, "modulate:a", 0.0, 0.30)
 
 func _input(event: InputEvent) -> void:
 	for i in range(9):
@@ -102,6 +194,103 @@ func _highlight_slot(index: int) -> void:
 			(slots[selected_index] as TextureRect).get_node_or_null("SlotBG") as ColorRect
 		if bg != null:
 			bg.color = C_SLOT_SEL
+
+func _apply_label_scale() -> void:
+	var s: float = Global.ui_scale
+	var fs_build: int = int(15 * s)
+	var fs_popup: int = int(15 * s)
+	var fs_hover: int = int(15 * s)
+	if _build_label != null:
+		_build_label.add_theme_font_size_override("font_size", fs_build)
+		_build_label.offset_top    = int(-80 * s)
+		_build_label.offset_bottom = int(-56 * s)
+	if _popup_label != null:
+		_popup_label.add_theme_font_size_override("font_size", fs_popup)
+		_popup_label.offset_top    = int(-108 * s)
+		_popup_label.offset_bottom = int(-80  * s)
+	if _hover_label != null:
+		_hover_label.add_theme_font_size_override("font_size", fs_hover)
+		_hover_label.offset_left   = int(14 * s)
+		_hover_label.offset_top    = int(-44 * s)
+		_hover_label.offset_right  = int(320 * s)
+		_hover_label.offset_bottom = int(-12 * s)
+	if _stat_container != null:
+		_stat_container.offset_top    = -64
+		_stat_container.offset_bottom = -44
+
+func _on_hover_label_changed(text: String) -> void:
+	if _hover_label == null:
+		return
+	_hover_label.text    = text
+	_hover_label.visible = text != ""
+
+# ── Stat bar builders ─────────────────────────────────────────────
+func _build_stat_bars(canvas: CanvasLayer) -> void:
+	_stat_container = CenterContainer.new()
+	_stat_container.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	canvas.add_child(_stat_container)
+
+	# Fixed width matches the hotbar exactly so bar edges align
+	var outer := HBoxContainer.new()
+	outer.custom_minimum_size = Vector2(HOTBAR_PX, 0)
+	outer.add_theme_constant_override("separation", 8)
+	_stat_container.add_child(outer)
+
+	var hp_data := _make_stat_row("HP", C_HEALTH_BG, C_HEALTH_FILL)
+	_health_bg   = hp_data[0] as Control
+	_health_fill = hp_data[1] as ColorRect
+	outer.add_child(hp_data[2] as Node)
+
+	var sp_data := _make_stat_row("SP", C_STAMINA_BG, C_STAMINA_FILL)
+	_stamina_bg   = sp_data[0] as Control
+	_stamina_fill = sp_data[1] as ColorRect
+	outer.add_child(sp_data[2] as Node)
+
+func _make_stat_row(lbl_text: String, bg_col: Color, fill_col: Color) -> Array:
+	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 4)
+
+	var lbl := Label.new()
+	lbl.text = lbl_text
+	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_color_override("font_color", Color(0.80, 0.90, 1.00, 1.00))
+	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	lbl.add_theme_constant_override("shadow_offset_x", 1)
+	lbl.add_theme_constant_override("shadow_offset_y", 1)
+	lbl.custom_minimum_size = Vector2(20, 0)
+	lbl.vertical_alignment  = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(lbl)
+
+	# Expands to fill its share of HOTBAR_PX — no fixed width needed
+	var bar_bg := Control.new()
+	bar_bg.custom_minimum_size   = Vector2(0, BAR_H)
+	bar_bg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar_bg.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+	row.add_child(bar_bg)
+
+	var bg_rect := ColorRect.new()
+	bg_rect.color = bg_col
+	bg_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bar_bg.add_child(bg_rect)
+
+	var fill := ColorRect.new()
+	fill.color         = fill_col
+	fill.anchor_left   = 0.0;  fill.anchor_top    = 0.0
+	fill.anchor_right  = 1.0;  fill.anchor_bottom = 1.0
+	fill.offset_left   = 0;    fill.offset_top    = 0
+	fill.offset_right  = 0;    fill.offset_bottom = 0
+	bar_bg.add_child(fill)
+
+	return [bar_bg, fill, row]
+
+func _on_health_changed(value: float, max_v: float) -> void:
+	if _health_fill != null:
+		_health_fill.anchor_right = clampf(value / max_v, 0.0, 1.0) if max_v > 0.0 else 0.0
+
+func _on_stamina_changed(value: float, max_v: float) -> void:
+	if _stamina_fill != null:
+		_stamina_fill.anchor_right = clampf(value / max_v, 0.0, 1.0) if max_v > 0.0 else 0.0
 
 func _refresh_hotbar() -> void:
 	for i in range(min(slots.size(), Global.HOTBAR_SIZE)):

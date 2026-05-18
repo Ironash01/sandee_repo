@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://oapsmxpmoqpa"]
+
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_cv07x"]
+[ext_resource type="Resource" uid="uid://c8yfxlhehk2es" path="res://resources/items/plains_planks.tres" id="1_g76q6"]
+[ext_resource type="Resource" uid="uid://bsdfsphtbm7mm" path="res://resources/items/chest.tres" id="2_snmrk"]
+
+[resource]
+script = ExtResource("1_cv07x")
+result_item = ExtResource("2_snmrk")
+ingredient_1 = ExtResource("1_g76q6")
+ingredient_1_quantity = 10
+category = "Blocks"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

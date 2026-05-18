@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://bjiajyv2oikxy"]
 
 [ext_resource type="Script" uid="uid://b4oss0t26p2pl" path="res://scripts/tree.gd" id="1_tree"]
-[ext_resource type="Texture2D" uid="uid://buupsqkdqm8ot" path="res://sprites/tree/basictree_alpha.png" id="2_tree"]
+[ext_resource type="Texture2D" uid="uid://bxhly2j4djgma" path="res://sprites/tree/basictree_alpha.png" id="2_tree"]
 
 [sub_resource type="Animation" id="Animation_f8e6q"]
 length = 0.001

@@ -9,15 +9,19 @@ const C_DIVIDER := Color(0.20, 0.28, 0.50, 1.00)
 const C_EDITOR  := Color(0.05, 0.07, 0.13, 1.00)
 const C_OUTPUT  := Color(0.04, 0.06, 0.10, 1.00)
 const C_OK      := Color(0.15, 0.45, 0.20, 1.00)
+const C_STOP    := Color(0.50, 0.20, 0.08, 1.00)
 const C_ERR     := Color(0.45, 0.12, 0.12, 1.00)
 const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.50)
 
 # ── Refs ──────────────────────────────────────────────────────────
-var _code_edit:   TextEdit
-var _output:      RichTextLabel
-var _run_btn:     Button
-var _clear_btn:   Button
-var _lua_state:   Node       # LuaState from extension
+var _code_edit: TextEdit
+var _output:    RichTextLabel
+var _run_btn:   Button
+var _stop_btn:  Button
+var _body:      Control   # code + output view
+var _encycl:    Control   # encyclopedia view
+var _lua_state: Node
+var _running:   bool = false
 
 # ── Lifecycle ─────────────────────────────────────────────────────
 func _ready() -> void:
@@ -26,29 +30,19 @@ func _ready() -> void:
 	_build()
 	call_deferred("_find_lua_state")
 
-# Pause game and block player input whenever this UI opens or closes
-func _notification(what: int) -> void:
-	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree():
-		Global.lua_ui_open = visible
-		get_tree().paused  = visible
-
 func _find_lua_state() -> void:
-	# LuaState is a sibling of this node's parent (the NPC)
-	# Walk up: UI → CanvasLayer → LuaNPC → look for LuaState child
 	var npc: Node = get_parent().get_parent()
 	_lua_state = npc.get_node_or_null("LuaState")
 	if _lua_state == null:
-		_print_output("[color=#ff8888]LuaState node not found on NPC. Add a LuaState child to LuaNPC.tscn.[/color]")
+		_print_output("[color=#ff8888]LuaState not found on NPC.[/color]")
 		return
-	_lua_state.connect("signal_print", _on_lua_print)
-	_lua_state.connect("signal_move",  _on_lua_move)
+	_lua_state.connect("signal_print",  _on_lua_print)
+	_lua_state.connect("signal_move",   _on_lua_move)
 	_lua_state.connect("code_executed", _on_code_executed)
-	_lua_state.connect("code_failed",  _on_code_failed)
-	_print_output("[color=#88ffaa]Lua interpreter ready.[/color]")
-	_print_output("[color=#5588aa]chop_trees(radius)  move(x,y)  interact()  drop_item(qty)  print(val)[/color]")
-	_print_output("[color=#5588aa]radius = blocks (1 block = 32px) — e.g. chop_trees(20)[/color]")
+	_lua_state.connect("code_failed",   _on_code_failed)
+	_print_output("[color=#88ffaa]Robot ready. See Encyclopedia for available functions.[/color]")
 
-# ── Build UI ──────────────────────────────────────────────────────
+# ── Build ─────────────────────────────────────────────────────────
 func _build() -> void:
 	var overlay := ColorRect.new()
 	overlay.color        = C_OVERLAY
@@ -61,7 +55,7 @@ func _build() -> void:
 	add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(680, 460)
+	panel.custom_minimum_size = Vector2(700, 480)
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
@@ -74,8 +68,9 @@ func _build() -> void:
 	vbox.add_theme_constant_override("separation", 10)
 	panel.add_child(vbox)
 
-	# Header
+	# ── Header ───────────────────────────────────────────────────
 	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 6)
 	vbox.add_child(header)
 
 	var icon := Label.new()
@@ -90,40 +85,61 @@ func _build() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 
-	var close := Button.new()
-	close.text = "✕"; close.flat = true
-	close.add_theme_color_override("font_color", C_MUTED)
-	close.pressed.connect(_close)
-	header.add_child(close)
+	var enc_btn := Button.new()
+	enc_btn.text = "📖  Encyclopedia"
+	enc_btn.add_theme_font_size_override("font_size", 12)
+	var ebs := StyleBoxFlat.new()
+	ebs.bg_color = Color(0.12, 0.18, 0.36, 1.0)
+	ebs.border_color = C_BORDER
+	ebs.set_border_width_all(1); ebs.set_corner_radius_all(4)
+	ebs.content_margin_left = 10; ebs.content_margin_right  = 10
+	ebs.content_margin_top  =  4; ebs.content_margin_bottom =  4
+	enc_btn.add_theme_stylebox_override("normal",  ebs)
+	enc_btn.add_theme_stylebox_override("hover",   ebs)
+	enc_btn.add_theme_stylebox_override("pressed", ebs)
+	enc_btn.add_theme_color_override("font_color", C_TITLE)
+	enc_btn.pressed.connect(_toggle_encyclopedia)
+	header.add_child(enc_btn)
+
+	var close_btn := Button.new()
+	close_btn.text = "✕"; close_btn.flat = true
+	close_btn.add_theme_color_override("font_color", C_MUTED)
+	close_btn.pressed.connect(_close)
+	header.add_child(close_btn)
 
 	_divider(vbox)
 
-	# Body — editor left, output right
+	# ── Main body (code + output) ────────────────────────────────
+	_body = _build_body()
+	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_body)
+
+	# ── Encyclopedia (hidden by default) ─────────────────────────
+	_encycl = _build_encyclopedia()
+	_encycl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_encycl.visible = false
+	vbox.add_child(_encycl)
+
+# ── Body: code editor + output ────────────────────────────────────
+func _build_body() -> Control:
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", 10)
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(body)
 
-	# ── Code editor ────────────────────────────────────────────────
-	var editor_wrap := VBoxContainer.new()
-	editor_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	editor_wrap.add_theme_constant_override("separation", 6)
-	body.add_child(editor_wrap)
+	# Code editor
+	var ed_wrap := VBoxContainer.new()
+	ed_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ed_wrap.add_theme_constant_override("separation", 6)
+	body.add_child(ed_wrap)
 
 	var ed_lbl := Label.new()
 	ed_lbl.text = "CODE"
 	ed_lbl.add_theme_font_size_override("font_size", 11)
 	ed_lbl.add_theme_color_override("font_color", C_MUTED)
-	editor_wrap.add_child(ed_lbl)
+	ed_wrap.add_child(ed_lbl)
 
 	_code_edit = TextEdit.new()
 	_code_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_code_edit.placeholder_text    = "-- if no item held, chop a tree:
-if held_item == nil then
-    interact()
-else
-    print(held_item.name)
-end"
+	_code_edit.placeholder_text    = "-- write your Lua code here\ninteract()"
 	_code_edit.syntax_highlighter  = null
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_EDITOR; es.border_color = C_BORDER
@@ -134,39 +150,26 @@ end"
 	_code_edit.add_theme_stylebox_override("focus",  es)
 	_code_edit.add_theme_color_override("font_color", C_TITLE)
 	_code_edit.add_theme_font_size_override("font_size", 13)
-	editor_wrap.add_child(_code_edit)
+	ed_wrap.add_child(_code_edit)
 
-	# Buttons
+	# Buttons: RUN  STOP  CLEAR
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 6)
-	editor_wrap.add_child(btn_row)
+	ed_wrap.add_child(btn_row)
 
-	_run_btn = Button.new()
-	_run_btn.text = "▶  RUN"
+	_run_btn = _make_btn("▶  RUN",  Color(0.8, 1.0, 0.8, 1.0), C_OK,  _run_code)
 	_run_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_run_btn.custom_minimum_size   = Vector2(0, 34)
-	var rs := StyleBoxFlat.new()
-	rs.bg_color = C_OK; rs.border_color = C_BORDER
-	rs.set_border_width_all(1); rs.set_corner_radius_all(4)
-	rs.content_margin_top = 6; rs.content_margin_bottom = 6
-	_run_btn.add_theme_stylebox_override("normal", rs)
-	_run_btn.add_theme_color_override("font_color", Color(0.8, 1.0, 0.8, 1.0))
-	_run_btn.pressed.connect(_run_code)
 	btn_row.add_child(_run_btn)
 
-	_clear_btn = Button.new()
-	_clear_btn.text = "✕ CLEAR"
-	_clear_btn.custom_minimum_size = Vector2(0, 34)
-	var cs := StyleBoxFlat.new()
-	cs.bg_color = C_ERR; cs.border_color = C_BORDER
-	cs.set_border_width_all(1); cs.set_corner_radius_all(4)
-	cs.content_margin_top = 6; cs.content_margin_bottom = 6
-	_clear_btn.add_theme_stylebox_override("normal", cs)
-	_clear_btn.add_theme_color_override("font_color", Color(1.0, 0.8, 0.8, 1.0))
-	_clear_btn.pressed.connect(_clear_code)
-	btn_row.add_child(_clear_btn)
+	_stop_btn = _make_btn("■  STOP", Color(1.0, 0.8, 0.6, 1.0), C_STOP, _stop_code)
+	_stop_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_stop_btn.disabled = true
+	btn_row.add_child(_stop_btn)
 
-	# ── Output panel ───────────────────────────────────────────────
+	var clear_btn := _make_btn("✕ CLEAR", Color(1.0, 0.8, 0.8, 1.0), C_ERR, _clear_code)
+	btn_row.add_child(clear_btn)
+
+	# Output panel
 	var out_wrap := VBoxContainer.new()
 	out_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	out_wrap.add_theme_constant_override("separation", 6)
@@ -193,24 +196,95 @@ end"
 	out_panel.add_child(scroll)
 
 	_output = RichTextLabel.new()
-	_output.bbcode_enabled       = true
-	_output.scroll_following     = true
+	_output.bbcode_enabled        = true
+	_output.scroll_following      = true
 	_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_output.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	_output.add_theme_font_size_override("font_size", 12)
 	_output.add_theme_color_override("default_color", C_TITLE)
 	scroll.add_child(_output)
 
-	# Hint at bottom
-	_divider(vbox)
-	var hint := Label.new()
-	hint.text = "chop_trees(radius)  •  move(x,y)  •  interact()  •  attack()  •  drop_item(qty)  •  held_item.name  •  Escape to close"
-	hint.add_theme_font_size_override("font_size", 10)
-	hint.add_theme_color_override("font_color", C_MUTED)
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(hint)
+	return body
+
+# ── Encyclopedia ──────────────────────────────────────────────────
+func _build_encyclopedia() -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 10)
+
+	var hdr := Label.new()
+	hdr.text = "FUNCTION REFERENCE"
+	hdr.add_theme_font_size_override("font_size", 13)
+	hdr.add_theme_color_override("font_color", C_TITLE)
+	root.add_child(hdr)
+
+	_divider(root)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 14)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+
+	_enc_section(list, "HIGH-LEVEL HELPERS")
+	_enc_entry(list, "auto_work()",
+		"Full work cycle: chop all trees in radius → deposit collected items into the nearest chest → return to station.")
+	_enc_entry(list, "chop_trees(radius)",
+		"Chop every tree within radius blocks of the station (defaults to 20 if omitted). Collects dropped items after each tree, then walks home.")
+	_enc_entry(list, "deposit_chest()",
+		"Walk to the nearest chest within radius, deposit everything in the robot's inventory, then return to the station.")
+	_enc_entry(list, "chest_contents()",
+		"Print the contents of the nearest chest to the output panel. Outputs each item and quantity, or a message if the chest is empty or out of range.")
+	_enc_entry(list, "return_to_spawn()",
+		"Walk the robot directly back to the station and stop. Use this to abort a long task or reset position.")
+
+	_divider(list)
+
+	_enc_section(list, "LOW-LEVEL PRIMITIVES")
+	_enc_entry(list, "move(x, y)",
+		"Set the robot's movement velocity to (x, y) pixels per second. Positive x = east, positive y = south. Call move(0, 0) to stop. Note: sequences of move() calls all fire instantly — only the last value takes effect.")
+	_enc_entry(list, "interact()",
+		"Execute the pending action. With no sentinel move() before it, defaults to chopping all trees then returning home. Only one action runs at a time — calls while the robot is busy are ignored.")
+	_enc_entry(list, "drop_item(\"name\", qty)",
+		"Drop qty copies of the named item at the robot's current position. Example: drop_item(\"Wood\", 5). The item must be in the robot's inventory.")
+	_enc_entry(list, "print(val)",
+		"Print a value to the output panel. Accepts strings, numbers, and booleans. Output stays visible while the panel is open.")
+
+	return root
+
+func _enc_section(parent: Node, text: String) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 10)
+	lbl.add_theme_color_override("font_color", C_MUTED)
+	parent.add_child(lbl)
+
+func _enc_entry(parent: Node, sig: String, desc: String) -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	parent.add_child(box)
+
+	var sig_lbl := Label.new()
+	sig_lbl.text = sig
+	sig_lbl.add_theme_font_size_override("font_size", 13)
+	sig_lbl.add_theme_color_override("font_color", Color(0.55, 0.90, 1.00, 1.0))
+	box.add_child(sig_lbl)
+
+	var desc_lbl := Label.new()
+	desc_lbl.text = desc
+	desc_lbl.add_theme_font_size_override("font_size", 11)
+	desc_lbl.add_theme_color_override("font_color", C_MUTED)
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(desc_lbl)
 
 # ── Actions ───────────────────────────────────────────────────────
+func _toggle_encyclopedia() -> void:
+	_encycl.visible = not _encycl.visible
+	_body.visible   = not _encycl.visible
+
 func _run_code() -> void:
 	if _lua_state == null:
 		_print_output("[color=#ff8888]No LuaState connected.[/color]")
@@ -218,31 +292,68 @@ func _run_code() -> void:
 	var code: String = _code_edit.text.strip_edges()
 	if code.is_empty():
 		return
-	# ── Preamble: inject helper functions the user can call ────────
-	# chop_trees(radius) encodes the radius via sentinel move(r, -1)
-	# then triggers interact() — lua_npc.gd decodes and runs the
-	# autonomous coroutine.
+
 	var preamble: String = """
--- Built-in helpers (always available)
+-- Built-in helpers
 function chop_trees(radius)
-    radius = radius or 5
-    move(radius, -1)
+    move(radius or 20, -1)
+    interact()
+end
+function auto_work()
+    move(0, -2)
+    interact()
+end
+function deposit_chest()
+    move(0, -4)
+    interact()
+end
+function return_to_spawn()
+    move(0, -3)
+    interact()
+end
+function chest_contents()
+    move(0, -5)
     interact()
 end
 """
 	_lua_state.set("code", preamble + code)
 	_lua_state.call("run_code")
-	# Close so the game unpauses and the NPC can physically move
-	_close()
+
+	# Unpause so the robot can move, but keep the panel open
+	_running = true
+	get_tree().paused  = false
+	_run_btn.disabled  = true
+	_stop_btn.disabled = false
+	_code_edit.editable = false
+	_print_output("[color=#88ffaa]▶ Running...[/color]")
+
+func _stop_code() -> void:
+	var npc: Node = get_parent().get_parent()
+	if npc.has_method("stop_work"):
+		npc.call("stop_work")
+
+	_running = false
+	get_tree().paused   = true   # re-pause for editing
+	_run_btn.disabled   = false
+	_stop_btn.disabled  = true
+	_code_edit.editable = true
+	_print_output("[color=#ffaa44]■ Stopped.[/color]")
 
 func _clear_code() -> void:
 	_code_edit.text = ""
 
 func _close() -> void:
-	visible = false  # _notification sets Global.lua_ui_open and unpauses
+	# Reset UI state but do NOT stop the robot — it keeps running after the panel closes
+	_running            = false
+	_run_btn.disabled   = false
+	_stop_btn.disabled  = true
+	_code_edit.editable = true
+	Global.close_ui()
+	visible = false
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape") and visible:
+		get_viewport().set_input_as_handled()
 		_close()
 
 # ── Lua signal handlers ───────────────────────────────────────────
@@ -250,19 +361,41 @@ func _on_lua_print(text: String) -> void:
 	_print_output("[color=#aaddff]» %s[/color]" % text)
 
 func _on_lua_move(vec: Vector2) -> void:
-	_print_output("[color=#88ffaa]move → (%.2f, %.2f)[/color]" % [vec.x, vec.y])
+	_print_output("[color=#88ffaa]move → (%.1f, %.1f)[/color]" % [vec.x, vec.y])
 
 func _on_code_executed() -> void:
-	_print_output("[color=#88ffaa]✓ OK[/color]")
+	_print_output("[color=#88ffaa]✓ Code executed[/color]")
 
 func _on_code_failed(error: String) -> void:
-	_print_output("[color=#ff8888]✗ Error: %s[/color]" % error)
+	_print_output("[color=#ff8888]✗ %s[/color]" % error)
+	# Re-enable editing on error
+	if _running:
+		_running = false
+		get_tree().paused   = true
+		_run_btn.disabled   = false
+		_stop_btn.disabled  = true
+		_code_edit.editable = true
 
 func _print_output(line: String) -> void:
 	if _output == null: return
 	_output.append_text(line + "\n")
 
 # ── Helpers ───────────────────────────────────────────────────────
+func _make_btn(label: String, font_col: Color, bg: Color, cb: Callable) -> Button:
+	var btn := Button.new()
+	btn.text = label
+	btn.custom_minimum_size = Vector2(0, 34)
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg; s.border_color = C_BORDER
+	s.set_border_width_all(1); s.set_corner_radius_all(4)
+	s.content_margin_top = 6; s.content_margin_bottom = 6
+	btn.add_theme_stylebox_override("normal",  s)
+	btn.add_theme_stylebox_override("hover",   s)
+	btn.add_theme_stylebox_override("pressed", s)
+	btn.add_theme_color_override("font_color", font_col)
+	btn.pressed.connect(cb)
+	return btn
+
 func _divider(parent: Node) -> void:
 	var d := ColorRect.new()
 	d.color = C_DIVIDER; d.custom_minimum_size = Vector2(0, 1)

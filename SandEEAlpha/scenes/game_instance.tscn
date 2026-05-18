@@ -23,9 +23,11 @@ process_mode = 3
 [node name="PauseMenu" parent="CanvasLayer" unique_id=728603994 instance=ExtResource("2_pause")]
 
 [node name="PauseButton" type="Button" parent="CanvasLayer" unique_id=2100391308]
-offset_left = 8.0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -68.0
 offset_top = 8.0
-offset_right = 68.0
+offset_right = -8.0
 offset_bottom = 34.0
 text = "| | Pause"
 

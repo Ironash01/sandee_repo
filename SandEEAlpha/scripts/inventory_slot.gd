@@ -122,24 +122,32 @@ func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
 func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	_drag_over = false
 	queue_redraw()
-	var from_idx: int = data["from_index"]
+	var from_idx: int  = data["from_index"]
 	var source: String = data.get("source", "inventory")
-	var to_idx: int = slot_index
+	var to_idx: int    = slot_index
+
 	if source == "hotbar":
-		# Swap hotbar slot with this inventory slot
-		var tmp: Variant = Global.Inventory[to_idx]
+		var tmp: Variant          = Global.Inventory[to_idx]
 		Global.Inventory[to_idx]  = Global.Hotbar[from_idx]
 		Global.Hotbar[from_idx]   = tmp
+		_update_visual()
 		Global.Hotbar_updated.emit()
 		Global.Inventory_updated.emit()
 	else:
-		# Swap within inventory
 		if from_idx == to_idx:
 			return
-		var tmp: Variant = Global.Inventory[to_idx]
+		var tmp: Variant           = Global.Inventory[to_idx]
 		Global.Inventory[to_idx]   = Global.Inventory[from_idx]
 		Global.Inventory[from_idx] = tmp
+		_update_visual()
 		Global.Inventory_updated.emit()
+
+func _update_visual() -> void:
+	var current = Global.Inventory[slot_index]
+	if current != null:
+		set_item(current as Dictionary)
+	else:
+		set_empty()
 
 # Clear drag-over highlight if drag exits without drop
 func _notification(what: int) -> void:

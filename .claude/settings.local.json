@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Recurse -Include \"*.theme\", \"*.tres\")",
+      "Bash(Select-Object -ExpandProperty FullName)"
+    ]
+  }
+}

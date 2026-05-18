@@ -1,7 +1,24 @@
 [gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://bsdfsphtbm7mm"]
 
 [ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_d4cv2"]
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_hf80f"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_d4cv2"]
+atlas = ExtResource("1_hf80f")
+region = Rect2(64, 128, 32, 32)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_hf80f"]
+atlas = ExtResource("1_hf80f")
+region = Rect2(64, 128, 32, 32)
 
 [resource]
 script = ExtResource("1_d4cv2")
+item_name = "Chest"
+description = "Stores items."
+item_type = "block"
+icon = SubResource("AtlasTexture_d4cv2")
+is_placeable = true
+placeable_sprite = SubResource("AtlasTexture_hf80f")
+is_craftable = true
+place_scene_path = "res://scenes/objects/ChestBlock.tscn"
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

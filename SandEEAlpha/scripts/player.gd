@@ -1,16 +1,20 @@
 extends CharacterBody2D
 
-@export var movement_speed: int = 80
+@export var movement_speed: int   = 80
+const SPRINT_MULTIPLIER:   float = 1.8
 
 @onready var sprite:           AnimatedSprite2D = $PlayerSprite
 @onready var interaction_shape: CollisionShape2D = $Area2D/InteractionCol
 @onready var inventory_layer:   CanvasLayer      = $InventoryUI
 
 var input_direction: Vector2 = Vector2.ZERO
-var _last_dir: String = "south"   # default facing
+var _last_dir:   String = "south"   # default facing
+var _sprinting:          bool  = false
+var _stamina_exhausted:  bool  = false
+var _move_mission_done:  bool  = false
+const STAMINA_RECOVER_THRESHOLD: float = 15.0
 
 # ── Direction map ─────────────────────────────────────────────────
-# Maps 8-way input to sprite folder name
 const DIRS: Array = [
 	{"name": "south",      "vec": Vector2( 0,  1)},
 	{"name": "north",      "vec": Vector2( 0, -1)},
@@ -29,9 +33,16 @@ func _ready() -> void:
 	Global.set_player_reference(self)
 	$mainCam.zoom = Vector2(Global.camera_zoom, Global.camera_zoom)
 	Global.camera_zoom_changed.connect(_on_camera_zoom_changed)
-
 	sprite.sprite_frames = _build_frames()
 	sprite.play("idle_south")
+	Global.request_close_all_ui.connect(_on_close_all_ui)
+	if Global.has_pending_pos:
+		global_position    = Global.pending_player_pos
+		Global.has_pending_pos = false
+	for m in Global.missions:
+		if m["id"] == "move" and m["completed"]:
+			_move_mission_done = true
+			break
 
 func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
@@ -44,7 +55,6 @@ func _build_frames() -> SpriteFrames:
 	for d in DIRS:
 		var dir: String = d["name"]
 
-		# Steve idle (4 frames)
 		var idle_anim := "idle_" + dir.replace("-", "_")
 		sf.add_animation(idle_anim)
 		sf.set_animation_speed(idle_anim, 5.0)
@@ -53,7 +63,6 @@ func _build_frames() -> SpriteFrames:
 			var path := "res://sprites/char/steve/animations/Breathing_Idle-a7ad4449/%s/frame_%03d.png" % [dir, f]
 			sf.add_frame(idle_anim, load(path) as Texture2D)
 
-		# Steve walk (8 frames)
 		var walk_anim := "walk_" + dir.replace("-", "_")
 		sf.add_animation(walk_anim)
 		sf.set_animation_speed(walk_anim, 10.0)
@@ -69,14 +78,97 @@ func get_input() -> void:
 	input_direction = Input.get_vector(
 		"gameplay_left", "gameplay_right", "gameplay_up", "gameplay_down"
 	).normalized()
-	velocity = input_direction * movement_speed
+	var want_sprint: bool = Input.is_key_pressed(KEY_SHIFT) and input_direction != Vector2.ZERO
+	_sprinting = want_sprint and not _stamina_exhausted
+	velocity = input_direction * movement_speed * (SPRINT_MULTIPLIER if _sprinting else 1.0)
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if get_tree().paused:
 		return
 	get_input()
+	if not _move_mission_done and input_direction != Vector2.ZERO:
+		_move_mission_done = true
+		Global.complete_mission("move")
+	# ── Water barrier — block movement into water tiles ───────────
+	if not _has_boat():
+		var world_node := _get_world_node()
+		if world_node != null:
+			var water_layer: TileMapLayer = world_node.get_node_or_null("Water") as TileMapLayer
+			if water_layer != null:
+				_clamp_velocity_for_water(water_layer, delta)
 	move_and_slide()
 	_update_animation()
+	_tick_stamina(delta)
+
+func _tick_stamina(delta: float) -> void:
+	if _sprinting:
+		Global.stamina = maxf(0.0, Global.stamina - 10.0 * delta)
+		if Global.stamina <= 0.0:
+			_stamina_exhausted = true
+	else:
+		Global.stamina = minf(Global.max_stamina, Global.stamina + 5.0 * delta)
+		if _stamina_exhausted and Global.stamina >= STAMINA_RECOVER_THRESHOLD:
+			_stamina_exhausted = false
+	Global.stamina_changed.emit(Global.stamina, Global.max_stamina)
+
+# ── Boat / water helpers ──────────────────────────────────────────
+
+# Clamp velocity per-axis so the player can slide along a shoreline.
+func _clamp_velocity_for_water(water_layer: TileMapLayer, delta: float) -> void:
+	const HALF_W: float = 10.0
+	const HALF_H: float = 16.5
+	const OY:     float = 6.5
+
+	if velocity.x != 0.0:
+		var sx: float     = sign(velocity.x)
+		var lead_x: float = global_position.x + velocity.x * delta + sx * HALF_W
+		var cy: float     = global_position.y + OY
+		if _water_at(water_layer, Vector2(lead_x, cy - HALF_H)) \
+		or _water_at(water_layer, Vector2(lead_x, cy)) \
+		or _water_at(water_layer, Vector2(lead_x, cy + HALF_H)):
+			velocity.x = 0.0
+
+	if velocity.y != 0.0:
+		var sy: float     = sign(velocity.y)
+		var lead_y: float = global_position.y + OY + velocity.y * delta + sy * HALF_H
+		var cx: float     = global_position.x
+		if _water_at(water_layer, Vector2(cx - HALF_W, lead_y)) \
+		or _water_at(water_layer, Vector2(cx,          lead_y)) \
+		or _water_at(water_layer, Vector2(cx + HALF_W, lead_y)):
+			velocity.y = 0.0
+
+func _water_at(water_layer: TileMapLayer, global_pt: Vector2) -> bool:
+	var tc: Vector2i = water_layer.local_to_map(water_layer.to_local(global_pt))
+	return water_layer.get_cell_source_id(tc) != -1
+
+func _has_boat() -> bool:
+	for i in range(Global.Hotbar.size()):
+		var slot = Global.Hotbar[i]
+		if slot != null:
+			var d: ItemData = slot["data"] as ItemData
+			if d.item_type == "boat" or d.item_name.to_lower().contains("boat"):
+				return true
+	for i in range(Global.Inventory.size()):
+		var slot = Global.Inventory[i]
+		if slot != null:
+			var d: ItemData = slot["data"] as ItemData
+			if d.item_type == "boat" or d.item_name.to_lower().contains("boat"):
+				return true
+	return false
+
+func _get_world_node() -> Node:
+	var scene: Node = get_tree().current_scene
+	if scene == null:
+		return null
+	var world := scene.get_node_or_null("world_gen")
+	if world != null:
+		return world
+	world = scene.get_node_or_null("World")
+	if world != null:
+		return world
+	if scene.has_node("Water"):
+		return scene
+	return null
 
 # ── Animation ─────────────────────────────────────────────────────
 func _get_closest_dir(vec: Vector2) -> String:
@@ -91,11 +183,12 @@ func _get_closest_dir(vec: Vector2) -> String:
 
 func _update_animation() -> void:
 	if input_direction == Vector2.ZERO:
-		# Idle — keep last direction
+		sprite.speed_scale = 1.0
 		var anim := "idle_" + _last_dir.replace("-", "_")
 		if sprite.animation != anim:
 			sprite.play(anim)
 	else:
+		sprite.speed_scale = SPRINT_MULTIPLIER if _sprinting else 1.0
 		_last_dir = _get_closest_dir(input_direction)
 		var anim := "walk_" + _last_dir.replace("-", "_")
 		if sprite.animation != anim:
@@ -127,23 +220,41 @@ func _give_debug_items() -> void:
 		if data != null:
 			Global.add_item({"quantity": 10, "data": data})
 
+# ── UI management ─────────────────────────────────────────────────
+func _on_close_all_ui() -> void:
+	if inventory_layer.visible:
+		inventory_layer.visible = false
+		Global.close_ui()
+		Global.inventory_toggled.emit(false)
+
 func _input(event: InputEvent) -> void:
-	# Block all gameplay input while the Lua UI is open
-	if Global.lua_ui_open or Global.station_ui_open:
-		return
-	# Debug: Shift+E gives all items
-	if event is InputEventKey and event.pressed 			and event.keycode == KEY_E 			and event.shift_pressed:
+	# Debug shortcut must come before the inventory action check because
+	# Shift+E would otherwise match the "inventory" action (same key, Shift ignored by action system)
+	if event is InputEventKey and event.pressed \
+			and event.keycode == KEY_E and event.shift_pressed:
 		_give_debug_items()
 		return
+
+	if event is InputEventKey and event.pressed \
+			and event.keycode == KEY_R and event.shift_pressed:
+		Global.reset_missions()
+		_move_mission_done = false
+		return
+
+	# Inventory key: can always close; blocked from opening when another UI is active
 	if event.is_action_pressed("inventory"):
-		var opening := not inventory_layer.visible
-		inventory_layer.visible = opening
-		Global.inventory_open   = opening
-		if not Global.pause_on_inventory:
-			get_tree().paused = false
-		else:
-			get_tree().paused = opening
-		Global.inventory_toggled.emit(opening)
+		if inventory_layer.visible:
+			inventory_layer.visible = false
+			Global.close_ui()
+			Global.inventory_toggled.emit(false)
+		elif not Global.any_ui_open() and not Global.pause_menu_open:
+			inventory_layer.visible = true
+			Global.open_ui()
+			Global.inventory_toggled.emit(true)
+		return
+
+	if Global.any_ui_open() or Global.pause_menu_open:
+		return
 
 func apply_item_effect(item) -> void:
 	match item["effect"]:

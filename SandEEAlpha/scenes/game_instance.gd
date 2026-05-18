@@ -9,8 +9,29 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 @onready var pause_btn:  Button  = $CanvasLayer/PauseButton
 
 func _ready() -> void:
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	Global.ui_scale = 1.5
+	Global.ui_scale_changed.emit(Global.ui_scale)
+
 	pause_btn.pressed.connect(pause_menu.show_menu)
 	_style_pause_button()
+	_start_autosave()
+	_add_mission_ui()
+
+func _add_mission_ui() -> void:
+	var ui: Control = load("res://scripts/mission_ui.gd").new() as Control
+	$CanvasLayer.add_child(ui)
+
+func _start_autosave() -> void:
+	var timer := Timer.new()
+	timer.wait_time = 300.0  # 5 minutes
+	timer.autostart = true
+	timer.timeout.connect(_on_autosave)
+	add_child(timer)
+
+func _on_autosave() -> void:
+	if Global.active_save_slot > 0:
+		Global.save_game(Global.active_save_slot)
 
 func _style_pause_button() -> void:
 	# Normal state
