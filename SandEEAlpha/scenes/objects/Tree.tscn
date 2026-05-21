@@ -1,44 +1,7 @@
 [gd_scene format=3 uid="uid://bjiajyv2oikxy"]
 
 [ext_resource type="Script" uid="uid://b4oss0t26p2pl" path="res://scripts/tree.gd" id="1_tree"]
-[ext_resource type="Texture2D" uid="uid://bxhly2j4djgma" path="res://sprites/tree/basictree_alpha.png" id="2_tree"]
-
-[sub_resource type="Animation" id="Animation_f8e6q"]
-length = 0.001
-tracks/0/type = "value"
-tracks/0/imported = false
-tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:frame")
-tracks/0/interp = 1
-tracks/0/loop_wrap = true
-tracks/0/keys = {
-"times": PackedFloat32Array(0),
-"transitions": PackedFloat32Array(1),
-"update": 1,
-"values": [0]
-}
-
-[sub_resource type="Animation" id="Animation_t3xsr"]
-resource_name = "plain_shake"
-length = 0.23333333
-tracks/0/type = "value"
-tracks/0/imported = false
-tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:frame")
-tracks/0/interp = 1
-tracks/0/loop_wrap = true
-tracks/0/keys = {
-"times": PackedFloat32Array(0, 0.06666667, 0.13333334, 0.2),
-"transitions": PackedFloat32Array(1, 1, 1, 1),
-"update": 1,
-"values": [0, 1, 2, 0]
-}
-
-[sub_resource type="AnimationLibrary" id="AnimationLibrary_pexyv"]
-_data = {
-&"RESET": SubResource("Animation_f8e6q"),
-&"plain_shake": SubResource("Animation_t3xsr")
-}
+[ext_resource type="Texture2D" uid="uid://cjyaahgcveroy" path="res://sprites/tree/new_tree.webp" id="2_f8e6q"]
 
 [sub_resource type="RectangleShape2D" id="RectShape_tree"]
 size = Vector2(26, 60)
@@ -49,12 +12,9 @@ radius = 48.0
 [node name="Tree" type="Node2D" unique_id=505052138 groups=["Tree"]]
 script = ExtResource("1_tree")
 
-[node name="tree_shake" type="AnimationPlayer" parent="." unique_id=1864393078]
-libraries/ = SubResource("AnimationLibrary_pexyv")
-
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1627066653]
-texture = ExtResource("2_tree")
-hframes = 3
+texture = ExtResource("2_f8e6q")
+hframes = 1
 
 [node name="StaticBody2D" type="StaticBody2D" parent="." unique_id=1214510744]
 

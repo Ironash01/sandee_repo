@@ -11,7 +11,8 @@ var input_direction: Vector2 = Vector2.ZERO
 var _last_dir:   String = "south"   # default facing
 var _sprinting:          bool  = false
 var _stamina_exhausted:  bool  = false
-var _move_mission_done:  bool  = false
+var _move_mission_done:      bool  = false
+var _inventory_mission_done: bool  = false
 const STAMINA_RECOVER_THRESHOLD: float = 15.0
 
 # ── Direction map ─────────────────────────────────────────────────
@@ -34,15 +35,21 @@ func _ready() -> void:
 	$mainCam.zoom = Vector2(Global.camera_zoom, Global.camera_zoom)
 	Global.camera_zoom_changed.connect(_on_camera_zoom_changed)
 	sprite.sprite_frames = _build_frames()
+	sprite.scale = Vector2(0.980, 0.980)
+	var shadow_mat := ShaderMaterial.new()
+	shadow_mat.shader = preload("res://shaders/drop_shadow.gdshader")
+	shadow_mat.set_shader_parameter("shadow_x",     4.0)
+	shadow_mat.set_shader_parameter("shadow_y",     4.0)
+	shadow_mat.set_shader_parameter("shadow_alpha", 0.28)
+	sprite.material = shadow_mat
 	sprite.play("idle_south")
 	Global.request_close_all_ui.connect(_on_close_all_ui)
 	if Global.has_pending_pos:
 		global_position    = Global.pending_player_pos
 		Global.has_pending_pos = false
 	for m in Global.missions:
-		if m["id"] == "move" and m["completed"]:
-			_move_mission_done = true
-			break
+		if m["id"] == "move"           and m["completed"]: _move_mission_done      = true
+		if m["id"] == "open_inventory" and m["completed"]: _inventory_mission_done = true
 
 func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
@@ -85,6 +92,7 @@ func get_input() -> void:
 func _physics_process(delta: float) -> void:
 	if get_tree().paused:
 		return
+	z_index = int(global_position.y / 32)
 	get_input()
 	if not _move_mission_done and input_direction != Vector2.ZERO:
 		_move_mission_done = true
@@ -238,7 +246,8 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed \
 			and event.keycode == KEY_R and event.shift_pressed:
 		Global.reset_missions()
-		_move_mission_done = false
+		_move_mission_done      = false
+		_inventory_mission_done = false
 		return
 
 	# Inventory key: can always close; blocked from opening when another UI is active
@@ -251,6 +260,9 @@ func _input(event: InputEvent) -> void:
 			inventory_layer.visible = true
 			Global.open_ui()
 			Global.inventory_toggled.emit(true)
+			if not _inventory_mission_done:
+				_inventory_mission_done = true
+				Global.complete_mission("open_inventory")
 		return
 
 	if Global.any_ui_open() or Global.pause_menu_open:

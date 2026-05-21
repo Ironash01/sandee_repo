@@ -1,0 +1,15 @@
+[gd_scene format=3 uid="uid://bwolfmob00001"]
+
+[ext_resource type="Script" uid="uid://c2y1uiepygmrn" path="res://scripts/wolf.gd" id="1_wolf"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_wolf"]
+radius = 8.0
+height = 16.0
+
+[node name="Wolf" type="CharacterBody2D" groups=["Wolf"] unique_id=802000003]
+script = ExtResource("1_wolf")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=802000001]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=802000002]
+shape = SubResource("CapsuleShape2D_wolf")

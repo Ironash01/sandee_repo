@@ -7,7 +7,7 @@ func _ready() -> void:
 
 # ── Drag out of hotbar (only when inventory is open) ──────────────
 func _get_drag_data(_at_position: Vector2) -> Variant:
-	if not Global.inventory_open:
+	if not Global.any_ui_open():
 		return null
 	var item: Variant = Global.Hotbar[slot_index]
 	if item == null:
@@ -31,6 +31,9 @@ func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
 func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	var from_idx: int  = data["from_index"]
 	var src: String    = data.get("source", "")
+
+	if slot_index < 0 or slot_index >= Global.Hotbar.size():
+		return
 
 	if src == "inventory":
 		if from_idx < 0 or from_idx >= Global.Inventory.size():

@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Recurse -Include \"*.theme\", \"*.tres\")",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Path \"E:\\\\Documents\\\\GitHubRepositories\\\\sandee_repo\\\\SandEEAlpha\\\\scripts\" -Recurse -File)",
+      "Bash(Sort-Object)",
+      "Bash(Select-String \"uid\")",
+      "Bash(python3 *)",
+      "Bash(python *)"
     ]
   }
 }

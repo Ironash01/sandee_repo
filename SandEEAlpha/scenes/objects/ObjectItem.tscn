@@ -69,7 +69,7 @@ libraries/ = SubResource("AnimationLibrary_v5ndm")
 [node name="StaticBody2D" type="StaticBody2D" parent="Sprite2D" unique_id=288174462]
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Sprite2D/StaticBody2D" unique_id=1080010765]
-position = Vector2(-0.5, 8)
+position = Vector2(-0.5, 20)
 shape = SubResource("RectangleShape2D_4g2s1")
 
 [node name="Area2D" type="Area2D" parent="Sprite2D" unique_id=672872807]

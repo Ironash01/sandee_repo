@@ -474,6 +474,7 @@ func _on_craft() -> void:
 		for _n in range(r.ingredient_2_quantity):
 			Global.remove_item(r.ingredient_2)
 	Global.add_item({"quantity": r.result_quantity, "data": r.result_item})
+	Global.complete_mission("craft_item")
 	_update_craft_btn(r)
 	_refresh_crafting()
 

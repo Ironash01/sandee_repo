@@ -106,41 +106,45 @@ func _build_list_panel() -> void:
 
 	_rebuild_list_rows()
 
-# ── Completion popup ──────────────────────────────────────────────
+# ── Completion popup (top banner) ─────────────────────────────────
 func _build_popup() -> void:
 	_popup_panel = PanelContainer.new()
-	_popup_panel.custom_minimum_size = Vector2(340, 0)
+	_popup_panel.custom_minimum_size = Vector2(640, 0)
 	_popup_panel.add_theme_stylebox_override("panel",
-			_make_sb(C_POPUP_BG, C_POPUP_BORDER, 2, 8, 30, 30, 24, 24))
+			_make_sb(C_POPUP_BG, C_POPUP_BORDER, 2, 6, 36, 36, 16, 16))
 	_popup_panel.visible = false
 	add_child(_popup_panel)
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 12)
-	_popup_panel.add_child(vbox)
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 24)
+	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	_popup_panel.add_child(hbox)
 
 	var header := Label.new()
 	header.text = "✦  MISSION COMPLETE  ✦"
-	header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	header.add_theme_font_size_override("font_size", 18)
+	header.add_theme_font_size_override("font_size", 16)
 	header.add_theme_color_override("font_color", C_STAR)
-	vbox.add_child(header)
+	hbox.add_child(header)
 
-	vbox.add_child(_hsep())
+	var vsep := VSeparator.new()
+	vsep.custom_minimum_size = Vector2(2, 0)
+	hbox.add_child(vsep)
 
 	_popup_title_label = Label.new()
-	_popup_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_popup_title_label.add_theme_font_size_override("font_size", 15)
 	_popup_title_label.add_theme_color_override("font_color", C_TITLE)
-	_popup_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vbox.add_child(_popup_title_label)
+	_popup_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(_popup_title_label)
+
+	var vsep2 := VSeparator.new()
+	vsep2.custom_minimum_size = Vector2(2, 0)
+	hbox.add_child(vsep2)
 
 	var star_lbl := Label.new()
 	star_lbl.text = "★  +1 Star"
-	star_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	star_lbl.add_theme_font_size_override("font_size", 18)
+	star_lbl.add_theme_font_size_override("font_size", 16)
 	star_lbl.add_theme_color_override("font_color", C_STAR)
-	vbox.add_child(star_lbl)
+	hbox.add_child(star_lbl)
 
 	_popup_timer = Timer.new()
 	_popup_timer.wait_time = 3.0
@@ -171,7 +175,7 @@ func _on_mission_completed(id: String) -> void:
 			break
 	_popup_panel.visible = true
 	_popup_timer.start()
-	call_deferred("_center_panels")
+	call_deferred("_position_popup")
 
 func _hide_popup() -> void:
 	_popup_panel.visible = false
@@ -248,7 +252,12 @@ func _center_panels() -> void:
 		var ms := _list_panel.get_combined_minimum_size()
 		_list_panel.position = (vp - ms) * 0.5
 		_list_panel.size = ms
-	if _popup_panel != null:
-		var ms := _popup_panel.get_combined_minimum_size()
-		_popup_panel.position = (vp - ms) * 0.5
-		_popup_panel.size = ms
+
+func _position_popup() -> void:
+	if _popup_panel == null:
+		return
+	var vp := get_viewport_rect().size
+	var ms := _popup_panel.get_combined_minimum_size()
+	var w  := maxf(ms.x, vp.x * 0.72)
+	_popup_panel.size     = Vector2(w, ms.y)
+	_popup_panel.position = Vector2((vp.x - w) * 0.5, 16.0)

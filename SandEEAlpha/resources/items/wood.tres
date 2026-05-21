@@ -19,4 +19,5 @@ item_type = "block"
 icon = SubResource("AtlasTexture_wood")
 is_placeable = true
 placeable_sprite = SubResource("AtlasTexture_4004f")
+block_level = 4
 place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"

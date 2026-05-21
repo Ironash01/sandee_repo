@@ -29,6 +29,17 @@ class_name ItemData
 ## Enable to make this item appear in the crafting menu
 @export var is_craftable: bool = false
 
+# ── Block breaking ────────────────────────────────────────────────
+## For block items: hardness 0-10; break duration = block_level - pickaxe_level (seconds, min 0.1)
+@export_range(0, 10) var block_level: int = 0
+
+## Minimum pickaxe_level required to break this block (0 = any pickaxe works)
+@export_range(0, 10) var min_pickaxe_level: int = 0
+
+# ── Pickaxe tier ──────────────────────────────────────────────────
+## For pickaxe items: mining tier (0 = wooden, higher = faster / unlocks harder blocks)
+@export_range(0, 10) var pickaxe_level: int = 0
+
 # ── World scene ───────────────────────────────────────────────────
 ## Scene instantiated when this item is placed on the map
 @export var place_scene_path: String = ""

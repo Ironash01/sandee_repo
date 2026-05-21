@@ -28,7 +28,7 @@ signal stamina_changed(value: float, max_value: float)
 var master_volume:      float = 1.0
 var music_volume:       float = 1.0
 var sfx_volume:         float = 1.0
-var camera_zoom:        float = 1.0
+var camera_zoom:        float = 1.3
 var pause_on_inventory: bool  = true
 var pause_menu_open:    bool  = false
 # ── Unified UI stack ──────────────────────────────────────────────
@@ -66,7 +66,10 @@ func _ready() -> void:
 
 func _init_missions() -> void:
 	missions = [
-		{"id": "move", "title": "Input any movement", "completed": false},
+		{"id": "move",             "title": "Input any movement",    "completed": false},
+		{"id": "open_inventory",   "title": "Open your inventory",   "completed": false},
+		{"id": "cut_tree",         "title": "Cut your first tree",   "completed": false},
+		{"id": "craft_item",       "title": "Craft your first item", "completed": false},
 	]
 
 func complete_mission(id: String) -> void:

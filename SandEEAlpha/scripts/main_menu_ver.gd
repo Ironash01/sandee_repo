@@ -122,7 +122,7 @@ func _build_slot_overlay() -> void:
 	vbox.add_child(div)
 
 	for i in range(1, 4):
-		vbox.add_child(_make_slot_button(i))
+		vbox.add_child(_make_slot_row(i))
 
 	_add_spacer(vbox, 4)
 	_add_menu_btn(vbox, "< Back", func() -> void: _slot_overlay.visible = false)
@@ -232,10 +232,15 @@ func _add_spacer(parent: Node, height: int) -> void:
 	s.custom_minimum_size = Vector2(0, height)
 	parent.add_child(s)
 
-func _make_slot_button(slot_idx: int) -> Control:
+func _make_slot_row(slot_idx: int) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	# ── Main slot button ──────────────────────────────────────────
 	var btn := Button.new()
 	btn.text = ""
-	btn.custom_minimum_size = Vector2(330, 70)
+	btn.custom_minimum_size = Vector2(0, 70)
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = C_PANEL; normal.border_color = C_BORDER
@@ -285,7 +290,32 @@ func _make_slot_button(slot_idx: int) -> Control:
 		date_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		content.add_child(date_lbl)
 
-	return btn
+	row.add_child(btn)
+
+	# ── Delete button (only for existing saves) ───────────────────
+	if not info.is_empty():
+		var del_btn := Button.new()
+		del_btn.text = "X"
+		del_btn.custom_minimum_size = Vector2(44, 70)
+		del_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+		del_btn.add_theme_font_size_override("font_size", 13)
+		var ds := StyleBoxFlat.new()
+		ds.bg_color     = Color(0.18, 0.06, 0.06, 0.97)
+		ds.border_color = Color(0.55, 0.22, 0.22, 1.0)
+		ds.set_border_width_all(1); ds.set_corner_radius_all(4)
+		var dsh := StyleBoxFlat.new()
+		dsh.bg_color     = Color(0.38, 0.10, 0.10, 0.97)
+		dsh.border_color = Color(1.0, 0.40, 0.40, 1.0)
+		dsh.set_border_width_all(1); dsh.set_corner_radius_all(4)
+		del_btn.add_theme_stylebox_override("normal",  ds)
+		del_btn.add_theme_stylebox_override("hover",   dsh)
+		del_btn.add_theme_stylebox_override("pressed", ds)
+		del_btn.add_theme_color_override("font_color",       Color(1.0, 0.55, 0.55, 1.0))
+		del_btn.add_theme_color_override("font_hover_color", Color(1.0, 0.35, 0.35, 1.0))
+		del_btn.pressed.connect(func() -> void: call_deferred("_delete_save", slot_idx))
+		row.add_child(del_btn)
+
+	return row
 
 func _add_slider_row(parent: Node, label_text: String, init_v: float, callback: Callable) -> void:
 	var row := HBoxContainer.new()
@@ -336,11 +366,24 @@ func _on_slot_selected(slot: int) -> void:
 	if Global.has_save(slot):
 		Global.load_game(slot)
 	else:
-		Global.active_save_slot = slot
+		Global.active_save_slot    = slot
 		Global.Hotbar.fill(null)
 		Global.Inventory.fill(null)
-		Global.has_pending_pos = false
+		Global.has_pending_pos     = false
+		Global.pending_world_data.clear()
+		Global.reset_missions()
 	get_tree().change_scene_to_file("res://scenes/game_instance.tscn")
+
+func _delete_save(slot: int) -> void:
+	var dir := DirAccess.open("user://")
+	if dir != null:
+		dir.remove("save_slot_%d.json" % slot)
+	# Rebuild the slot overlay to reflect the deletion
+	_slot_overlay.queue_free()
+	_slot_overlay = null
+	_build_slot_overlay()
+	add_child(_slot_overlay)
+	_slot_overlay.visible = true
 
 func _on_quit() -> void:
 	get_tree().quit()

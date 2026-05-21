@@ -14,6 +14,7 @@ atlas = ExtResource("8_0cmsc")
 region = Rect2(0, 16, 32, 32)
 
 [node name="Game" type="Node2D" unique_id=215356930]
+y_sort_enabled = true
 script = ExtResource("1_egp1g")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=457529082]
@@ -34,7 +35,6 @@ text = "| | Pause"
 [node name="Control" parent="CanvasLayer" unique_id=1912151607 instance=ExtResource("1_bj3gq")]
 
 [node name="World" parent="." unique_id=98158199 instance=ExtResource("3_kafmv")]
-object = null
 
 [node name="Player" parent="." unique_id=382532469 instance=ExtResource("4_2glxl")]
 process_mode = 3
