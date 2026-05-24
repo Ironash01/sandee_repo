@@ -23,12 +23,14 @@ var _walk_dir: Vector2 = Vector2.ZERO
 var _last_dir: String = "south"
 
 @onready var _sprite: AnimatedSprite2D = $AnimatedSprite2D
+var _water_layer: TileMapLayer = null
 
 func _ready() -> void:
 	add_to_group("Wolf")
 	_sprite.sprite_frames = _build_frames()
 	_sprite.play("idle_south")
 	_timer = randf_range(0.5, 2.0)
+	_water_layer = get_parent().get_node_or_null("Water") as TileMapLayer
 
 func _physics_process(delta: float) -> void:
 	_timer -= delta
@@ -36,12 +38,24 @@ func _physics_process(delta: float) -> void:
 		_pick_new_action()
 
 	if _state == State.WALK:
-		velocity = _walk_dir * SPEED
-		_update_walk_anim(_walk_dir)
-		move_and_slide()
+		var next_pos: Vector2 = global_position + _walk_dir * SPEED * delta
+		if _is_on_water(next_pos):
+			_state = State.IDLE
+			_walk_dir = Vector2.ZERO
+			_timer = 0.0
+		else:
+			velocity = _walk_dir * SPEED
+			_update_walk_anim(_walk_dir)
+			move_and_slide()
 	else:
 		velocity = Vector2.ZERO
 		_play_idle(_last_dir)
+
+func _is_on_water(world_pos: Vector2) -> bool:
+	if _water_layer == null:
+		return false
+	var tile: Vector2i = _water_layer.local_to_map(_water_layer.to_local(world_pos))
+	return _water_layer.get_cell_source_id(tile) != -1
 
 func _pick_new_action() -> void:
 	if _state == State.IDLE:

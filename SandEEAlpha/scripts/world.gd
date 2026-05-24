@@ -34,8 +34,8 @@ const LARGE_FOREST_R_MAX:     int   = 20  # was 30
 const LARGE_FOREST_COUNT_MIN: int   = 3   # was 6
 const LARGE_FOREST_COUNT_MAX: int   = 7   # was 12
 const LARGE_FOREST_ATTEMPTS:  int   = 400 # was 600
-const LARGE_FOREST_D_CENTER:  float = 0.70 # was 0.80
-const LARGE_FOREST_D_EDGE:    float = 0.15 # was 0.20
+const LARGE_FOREST_D_CENTER:  float = 0.40 # was 0.70
+const LARGE_FOREST_D_EDGE:    float = 0.07 # was 0.15
 
 @export var random_seed: int  = 1234
 @export var width:       int  = 1024
@@ -322,8 +322,9 @@ func _update_ghost() -> void:
 		return
 	ghost.visible = true
 	var occupied:    bool = _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1
+	var on_water:    bool = water_layer.get_cell_source_id(cell) != -1
 	var player_here: bool = _cell_blocked_by_player(cell)
-	ghost_sprite.modulate = Color(1.0, 0.3, 0.3, 0.5) if (occupied or player_here) \
+	ghost_sprite.modulate = Color(1.0, 0.3, 0.3, 0.5) if (occupied or on_water or player_here) \
 		else Color(1.0, 1.0, 1.0, 0.5)
 
 func _rebuild_ghost_sprite(item: Dictionary) -> void:
@@ -350,6 +351,8 @@ func place_block() -> void:
 	if _cell_blocked_by_player(cell):
 		return
 	if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
+		return
+	if water_layer.get_cell_source_id(cell) != -1:
 		return
 	var world_pos  := editable_layer.map_to_local(cell)
 	var item_data: ItemData = item["data"] as ItemData
@@ -437,10 +440,9 @@ func spawn_player() -> void:
 # ── Experimental ground ──────────────────────────────────────────────
 # Spritesheet layout (128×64 px, 4 cols × 2 rows of 32×32):
 #   Row 0, cols 0-3  → four plains / grass variants
-#   Row 1, col 0     → snow variant 1  (light grey)
-#   Row 1, col 1     → desert variant 1 (tan / sand)
-#   Row 1, col 2     → snow variant 2  (dark icy blue)
-#   Row 1, col 3     → desert variant 2 (darker rock-sand)
+#   Row 1, col 0     → snow (light grey)
+#   Row 1, col 1     → desert (tan / sand)
+#   Row 1, cols 2-3  → ocean-coloured tiles (not assigned to any biome)
 func _apply_experimental_ground() -> void:
 	var tex := load("res://sprites/ground/EXPERIMENTALGROUND.webp") as Texture2D
 	if tex == null:
@@ -474,8 +476,8 @@ func _cell_biome_type(tile_coord: Vector2i) -> int:
 	if src == _exp_ground_src:
 		if a.y == 0: return 0
 		if a.y == 1:
-			if a.x % 2 == 0: return 2
-			else:             return 1
+			if a.x == 0: return 2  # snow
+			if a.x == 1: return 1  # desert
 		return -1
 	if a == Vector2i(0, 0): return 0
 	if a == Vector2i(1, 0): return 1
@@ -491,14 +493,9 @@ func _generate_terrain() -> void:
 	var desert_cols: Array[int] = []
 	var snow_cols:   Array[int] = []
 	if use_experimental_ground and _exp_ground_src != -1 and _exp_ground_rows >= 2:
-		for c in range(1, _exp_ground_cols, 2):
-			desert_cols.append(c)
-		if desert_cols.is_empty():
-			desert_cols.append(0)
-		for c in range(0, _exp_ground_cols, 2):
-			snow_cols.append(c)
-		if snow_cols.is_empty():
-			snow_cols.append(0)
+		# Col 0 = snow, col 1 = desert; cols 2-3 are ocean-coloured — skip them.
+		snow_cols.append(0)
+		desert_cols.append(1 if _exp_ground_cols >= 2 else 0)
 
 	var use_exp: bool = use_experimental_ground and _exp_ground_src != -1
 	for x in width:
@@ -683,7 +680,7 @@ func _spawn_dense_forest(center: Vector2i, occupied_tiles: Dictionary) -> void:
 				sqrt(dist_sq) / float(radius))
 			if rng.randf() > prob:
 				continue
-			occupied_tiles[tile] = true
+			_mark_tree_tile(tile, occupied_tiles)
 			var local_pos: Vector2 = ground_layer.map_to_local(tile)
 			var world_pos: Vector2 = ground_layer.to_global(local_pos)
 			_spawn_tree(world_pos, tree_type_val)
