@@ -3,9 +3,14 @@ extends CharacterBody2D
 @export var movement_speed: int   = 80
 const SPRINT_MULTIPLIER:   float = 1.8
 
+const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png")
+
 @onready var sprite:           AnimatedSprite2D = $PlayerSprite
 @onready var interaction_shape: CollisionShape2D = $Area2D/InteractionCol
 @onready var inventory_layer:   CanvasLayer      = $InventoryUI
+
+# Rebuilding costs ~72 texture lookups; caching mainly helps on scene reload/respawn.
+static var _shared_frames: SpriteFrames = null
 
 var input_direction: Vector2 = Vector2.ZERO
 var _last_dir:   String = "south"   # default facing
@@ -14,6 +19,12 @@ var _stamina_exhausted:  bool  = false
 var _move_mission_done:      bool  = false
 var _inventory_mission_done: bool  = false
 const STAMINA_RECOVER_THRESHOLD: float = 15.0
+
+# Recomputed only on Inventory_updated/Hotbar_updated instead of every
+# physics frame — avoids scanning both arrays with string ops at 60Hz.
+var _has_boat_cached: bool = false
+# Resolved once instead of walking the scene tree every physics frame.
+var _world_node_cache: Node = null
 
 # ── Direction map ─────────────────────────────────────────────────
 const DIRS: Array = [
@@ -34,14 +45,13 @@ func _ready() -> void:
 	Global.set_player_reference(self)
 	$mainCam.zoom = Vector2(Global.camera_zoom, Global.camera_zoom)
 	Global.camera_zoom_changed.connect(_on_camera_zoom_changed)
-	sprite.sprite_frames = _build_frames()
+	if _shared_frames == null:
+		_shared_frames = _build_frames()
+	sprite.sprite_frames = _shared_frames
 	sprite.scale = Vector2(0.980, 0.980)
-	var shadow_mat := ShaderMaterial.new()
-	shadow_mat.shader = preload("res://shaders/drop_shadow.gdshader")
-	shadow_mat.set_shader_parameter("shadow_x",     4.0)
-	shadow_mat.set_shader_parameter("shadow_y",     4.0)
-	shadow_mat.set_shader_parameter("shadow_alpha", 0.28)
-	sprite.material = shadow_mat
+	# Offset tuned to sit under the feet — PlayerCol's collision box
+	# (position.y 6.5, half-height 16.5) bottoms out around y=23.
+	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 14.0), Vector2(0.8, 0.4), 0.35))
 	sprite.play("idle_south")
 	Global.request_close_all_ui.connect(_on_close_all_ui)
 	if Global.has_pending_pos:
@@ -50,6 +60,9 @@ func _ready() -> void:
 	for m in Global.missions:
 		if m["id"] == "move"           and m["completed"]: _move_mission_done      = true
 		if m["id"] == "open_inventory" and m["completed"]: _inventory_mission_done = true
+	Global.Inventory_updated.connect(_refresh_has_boat_cache)
+	Global.Hotbar_updated.connect(_refresh_has_boat_cache)
+	_refresh_has_boat_cache()
 
 func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
@@ -98,7 +111,7 @@ func _physics_process(delta: float) -> void:
 		_move_mission_done = true
 		Global.complete_mission("move")
 	# ── Water barrier — block movement into water tiles ───────────
-	if not _has_boat():
+	if not _has_boat_cached:
 		var world_node := _get_world_node()
 		if world_node != null:
 			var water_layer: TileMapLayer = world_node.get_node_or_null("Water") as TileMapLayer
@@ -149,7 +162,10 @@ func _water_at(water_layer: TileMapLayer, global_pt: Vector2) -> bool:
 	var tc: Vector2i = water_layer.local_to_map(water_layer.to_local(global_pt))
 	return water_layer.get_cell_source_id(tc) != -1
 
-func _has_boat() -> bool:
+func _refresh_has_boat_cache() -> void:
+	_has_boat_cached = _compute_has_boat()
+
+func _compute_has_boat() -> bool:
 	for i in range(Global.Hotbar.size()):
 		var slot = Global.Hotbar[i]
 		if slot != null:
@@ -165,18 +181,18 @@ func _has_boat() -> bool:
 	return false
 
 func _get_world_node() -> Node:
+	if is_instance_valid(_world_node_cache):
+		return _world_node_cache
 	var scene: Node = get_tree().current_scene
 	if scene == null:
 		return null
 	var world := scene.get_node_or_null("world_gen")
-	if world != null:
-		return world
-	world = scene.get_node_or_null("World")
-	if world != null:
-		return world
-	if scene.has_node("Water"):
-		return scene
-	return null
+	if world == null:
+		world = scene.get_node_or_null("World")
+	if world == null and scene.has_node("Water"):
+		world = scene
+	_world_node_cache = world
+	return world
 
 # ── Animation ─────────────────────────────────────────────────────
 func _get_closest_dir(vec: Vector2) -> String:
@@ -256,10 +272,12 @@ func _input(event: InputEvent) -> void:
 			inventory_layer.visible = false
 			Global.close_ui()
 			Global.inventory_toggled.emit(false)
+			get_viewport().set_input_as_handled()
 		elif not Global.any_ui_open() and not Global.pause_menu_open:
 			inventory_layer.visible = true
 			Global.open_ui()
 			Global.inventory_toggled.emit(true)
+			get_viewport().set_input_as_handled()
 			if not _inventory_mission_done:
 				_inventory_mission_done = true
 				Global.complete_mission("open_inventory")

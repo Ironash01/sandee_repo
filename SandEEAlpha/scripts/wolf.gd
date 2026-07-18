@@ -14,6 +14,7 @@ const DIRS: Array = [
 ]
 
 const SPRITE_BASE: String = "res://sprites/mobs/wolf/32x32_Simple_white_wolf_with_pixelated_art_style_a"
+const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png")
 
 enum State { IDLE, WALK }
 
@@ -25,10 +26,39 @@ var _last_dir: String = "south"
 @onready var _sprite: AnimatedSprite2D = $AnimatedSprite2D
 var _water_layer: TileMapLayer = null
 
+# Shared across every Wolf instance — built once on first spawn instead of
+# per-instance, since world-gen can spawn dozens of wolves with identical frames.
+static var _shared_frames: SpriteFrames = null
+
+# ── Despawn zone (driven by world.gd's periodic distance check) ──────
+enum DespawnZone { INNER, SAFE, OUTER }
+const ZONE_DESPAWN_TIME := {
+	DespawnZone.INNER: 1800.0,  # 30 min — within 100 blocks of player or world spawn
+	DespawnZone.SAFE:  900.0,   # 15 min — within 200 blocks of player or world spawn
+	DespawnZone.OUTER: 300.0,   # 5 min  — beyond 200 blocks of both
+}
+var _despawn_zone: int = -1
+var _despawn_remaining: float = 0.0
+
+# Called by world.gd on a periodic tick with the current zone and how much
+# time elapsed since the last check. Crossing into a different zone resets
+# the countdown to that zone's full duration — no carry-over between zones.
+func _apply_despawn_zone(zone: int, elapsed: float) -> void:
+	if zone != _despawn_zone:
+		_despawn_zone      = zone
+		_despawn_remaining = ZONE_DESPAWN_TIME[zone]
+		return
+	_despawn_remaining -= elapsed
+	if _despawn_remaining <= 0.0:
+		queue_free()
+
 func _ready() -> void:
 	add_to_group("Wolf")
-	_sprite.sprite_frames = _build_frames()
+	if _shared_frames == null:
+		_shared_frames = _build_frames()
+	_sprite.sprite_frames = _shared_frames
 	_sprite.play("idle_south")
+	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 5.0), Vector2(0.6, 0.3), 0.35))
 	_timer = randf_range(0.5, 2.0)
 	_water_layer = get_parent().get_node_or_null("Water") as TileMapLayer
 

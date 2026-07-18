@@ -6,6 +6,7 @@ extends Node2D
 # NPC can call has_space() and deposit_item() autonomously.
 
 const MAX_SLOTS: int = 8
+const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_blockbase.png")
 
 # ── Theme (matches LuaEditorUI) ───────────────────────────────────
 const C_PANEL   := Color(0.08, 0.10, 0.20, 0.97)
@@ -32,6 +33,7 @@ var _slot_buttons:  Array   = []
 func _ready() -> void:
 	slots.resize(MAX_SLOTS)
 	add_to_group("Chest")
+	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 10.0), Vector2(0.8, 0.4), 0.35))
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
 	_build_ui()

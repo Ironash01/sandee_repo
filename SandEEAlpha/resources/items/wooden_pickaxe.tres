@@ -14,4 +14,5 @@ description = "Can destroy your anal."
 item_type = "weapon"
 icon = SubResource("AtlasTexture_trikl")
 is_craftable = true
+pickaxe_level = 1
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

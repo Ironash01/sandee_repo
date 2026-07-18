@@ -42,7 +42,7 @@ var _recipes:       Array = []   # only no-station recipes
 var _filtered:      Array = []
 var _active_cat:    String = "Materials"
 var _selected_idx:  int   = -1
-var _craft_list:    VBoxContainer
+var _craft_list:    GridContainer
 var _craft_detail:  Control
 var _craft_name:    Label
 var _craft_ing1:    Label
@@ -60,6 +60,19 @@ func _ready() -> void:
 	Global.Inventory_updated.connect(_refresh_inv)
 	Global.Hotbar_updated.connect(_refresh_crafting)
 	Global.ui_scale_changed.connect(_on_ui_scale)
+
+# Closing via the same "inventory" key is handled here rather than relying
+# on player.gd to see the press: once this panel's CanvasLayer is visible,
+# its own UI tree gets input priority over the Player node, so the
+# re-press was never reaching player.gd's _input(). Guarded on the parent
+# CanvasLayer's visibility (which is what actually shows/hides the panel),
+# so this is a no-op — not a double-toggle — if something else already
+# closed it first.
+func _input(event: InputEvent) -> void:
+	if get_parent().visible and event.is_action_pressed("inventory"):
+		get_viewport().set_input_as_handled()
+		_close()
+		Global.inventory_toggled.emit(false)
 
 func _on_ui_scale(_s: float) -> void:
 	_rebuild()
@@ -309,13 +322,15 @@ func _build_craft_content(s: float) -> Control:
 
 	# Recipe list
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size    = Vector2(i(180, s), 0)
+	scroll.custom_minimum_size    = Vector2(i(200, s), 0)
 	scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(scroll)
 
-	_craft_list = VBoxContainer.new()
-	_craft_list.add_theme_constant_override("separation", i(3, s))
+	_craft_list = GridContainer.new()
+	_craft_list.columns = 3
+	_craft_list.add_theme_constant_override("h_separation", i(4, s))
+	_craft_list.add_theme_constant_override("v_separation", i(4, s))
 	_craft_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_craft_list)
 
@@ -389,9 +404,12 @@ func _craft_filter_refresh() -> void:
 	for idx in range(_filtered.size()):
 		var r: CraftingRecipe = _filtered[idx] as CraftingRecipe
 		var btn := Button.new()
-		btn.text = r.result_item.item_name
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", i(12, s))
+		btn.custom_minimum_size     = Vector2(i(56, s), i(56, s))
+		btn.icon                    = r.result_item.icon
+		btn.expand_icon             = true
+		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
+		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+		btn.tooltip_text            = r.result_item.item_name
 		var i2 := idx
 		btn.pressed.connect(func() -> void: _craft_select(i2))
 		_craft_list.add_child(btn)
@@ -427,7 +445,7 @@ func _refresh_crafting() -> void:
 		match state:
 			CraftState.CAN:     bg = C_TIP_BG; fc = C_TITLE; mod = 1.0
 			CraftState.NO_MATS: bg = C_TIP_BG; fc = C_MUTED; mod = 0.55
-		var ps := _sb(bg, C_BORDER, 3, 8, 8, 5, 5)
+		var ps := _sb(bg, C_BORDER, 4, 4, 4, 4, 4)
 		btn.add_theme_stylebox_override("normal",  ps)
 		btn.add_theme_stylebox_override("hover",   ps)
 		btn.add_theme_stylebox_override("pressed", ps)

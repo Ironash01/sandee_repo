@@ -1,5 +1,34 @@
 extends Node
 
+# ── Shadow sprites ────────────────────────────────────────────────
+# Flat blob-shadow builder shared by every entity that draws one
+# (player, mobs, trees, placed blocks) instead of duplicating the same
+# Sprite2D setup per script.
+func make_shadow_sprite(texture: Texture2D, offset: Vector2, scale_v: Vector2, alpha: float) -> Sprite2D:
+	var shadow := Sprite2D.new()
+	shadow.texture  = texture
+	shadow.position = offset
+	shadow.scale    = scale_v
+	shadow.modulate = Color(0.0, 0.0, 0.0, alpha)
+	shadow.z_index  = -1
+	return shadow
+
+# ── Break progress bar ────────────────────────────────────────────
+# Shared visual for anything breakable (placed blocks, trees) — one
+# consistent bar instead of each script drawing its own copy.
+const BREAK_BAR_WIDTH:  float = 32.0
+const BREAK_BAR_HEIGHT: float = 5.0
+const BREAK_BAR_BG:     Color = Color(0.10, 0.10, 0.10, 0.85)
+const BREAK_BAR_FILL:   Color = Color(0.30, 0.90, 0.30, 1.00)
+
+# Must be called from inside the caller's own _draw() — CanvasItem only
+# allows draw_* calls while that specific node is in its drawing pass.
+func draw_break_bar(ci: CanvasItem, progress: float, y_offset: float = -20.0) -> void:
+	var half_w: float = BREAK_BAR_WIDTH * 0.5
+	ci.draw_rect(Rect2(-half_w, y_offset, BREAK_BAR_WIDTH, BREAK_BAR_HEIGHT), BREAK_BAR_BG)
+	var fill_w: float = BREAK_BAR_WIDTH * clampf(progress, 0.0, 1.0)
+	ci.draw_rect(Rect2(-half_w, y_offset, fill_w, BREAK_BAR_HEIGHT), BREAK_BAR_FILL)
+
 # ── Inventory constants ───────────────────────────────────────────
 const MAX_STACK:      int = 32
 const HOTBAR_SIZE:    int = 9

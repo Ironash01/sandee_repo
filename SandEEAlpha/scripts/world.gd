@@ -5,11 +5,24 @@ const TREE_SCENE:      PackedScene = preload("res://scenes/objects/Tree.tscn")
 const WOLF_SCENE:      PackedScene = preload("res://scenes/mobs/Wolf.tscn")
 const NEW_TREE_TEX:    Texture2D   = preload("res://sprites/tree/new_tree.webp")
 const SNOWY_TREE_TEX:  Texture2D   = preload("res://sprites/tilesets/basictree_alpha.png")
-const SHADOW_SHADER:   Shader      = preload("res://shaders/drop_shadow.gdshader")
+const SHADOW_TEXTURE:  Texture2D   = preload("res://sprites/shadow/shadow_base.png")
 const ITEM_DROP_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 
-# Shared across all tree instances — one GPU material state per texture type.
-var _tree_shadow_mat: ShaderMaterial = null
+# Extra pixels beyond the geometrically-exact half-tile offset used to plant
+# a tree's trunk base on the grid line — tune this if the source art has
+# transparent padding under the trunk that the math can't see.
+const TREE_BASE_EXTRA_OFFSET_PX: float = 4.0
+
+# The tree's local origin (0,0) IS the trunk's visual base (see _spawn_tree),
+# so 0.0 sits the shadow right at the base line. A previous +3.0 left a gap
+# under the trunk that read as the tree floating above its own shadow.
+const TREE_SHADOW_OFFSET_Y: float = -7.0
+
+# Ghost preview, placement grid, and cursor highlight all need to draw above
+# every Y-sorted world sprite (trees etc. use z_index = position.y / TILE_SIZE,
+# which can reach several hundred near the map edges) so they never get
+# visually overlapped by a tree the guide is standing in front of/behind.
+const PLACEMENT_GUIDE_Z_INDEX: int = 2000
 
 enum Terrain { Water, Plain, Desert, Snowy }
 @export var player: CharacterBody2D
@@ -56,6 +69,43 @@ const WOLF_SCAN_STEP:    int   = 5
 # O(n²) physics overhead. Must be larger than InteractArea radius (48px).
 const TREE_INTERACT_RADIUS: float = 300.0
 
+# ── Chunk grid ──────────────────────────────────────────────────────
+# 25x25-tile chunks, indexed from the top-left of the world (0,0) toward
+# the bottom-right. Used to gate the periodic outer-region mob spawner
+# so the same area can't repeatedly spawn mobs within a short window.
+const CHUNK_SIZE: int = 25
+
+var _chunk_cols: int = 0
+var _chunk_rows: int = 0
+# "cx,cy" -> Unix timestamp of the last mob spawned in that chunk. String
+# keys so this round-trips cleanly through JSON.stringify()/parse_string().
+var _chunk_last_spawn: Dictionary = {}
+
+# ── Mob lifecycle (preservation / despawn / spawn) ──────────────────
+# "Preserve" radii: which live mobs get written into the save file, so they
+# reappear at their last-known position instead of resetting to their
+# deterministic world-gen spawn point.
+const MOB_PRESERVE_PLAYER_RADIUS: float = 75.0  * TILE_SIZE  # moves with the player
+const MOB_PRESERVE_SPAWN_RADIUS:  float = 100.0 * TILE_SIZE  # fixed at world spawn
+
+# "Despawn" radii: how far a mob currently is from the player or world spawn.
+# The actual per-zone despawn durations (30/15/5 min) live on the mob script
+# itself (see wolf.gd ZONE_DESPAWN_TIME) — this just classifies the zone.
+const DESPAWN_INNER_RADIUS: float = 100.0 * TILE_SIZE
+const DESPAWN_SAFE_RADIUS:  float = 200.0 * TILE_SIZE
+const DESPAWN_CHECK_INTERVAL: float = 10.0
+
+# Periodic outer-region spawner.
+const OUTER_SPAWN_INTERVAL:  float = 120.0  # 2 minutes
+const CHUNK_SPAWN_COOLDOWN:  float = 600.0  # 10 minutes — per chunk
+
+enum MobFaction { FRIENDLY, ENEMY }
+# Pool of mobs the outer-region spawner can pick from. Only Wolf exists today
+# (Friendly); future enemy mobs just need an entry here with ENEMY faction.
+var MOB_SPAWN_POOL: Array = [
+	{"type": "wolf", "scene": WOLF_SCENE, "faction": MobFaction.FRIENDLY},
+]
+
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 var humidity:    FastNoiseLite = FastNoiseLite.new()
@@ -81,6 +131,17 @@ var _grid_overlay:      Node2D = null
 var _cursor_highlight:  Node2D = null
 var _placed_blocks:     Dictionary = {}
 
+# Tiles blocked from placement because a tree's 3x3 footprint covers them.
+# Dictionary value is a reference count so overlapping tree footprints don't
+# unblock a tile just because ONE of several nearby trees was chopped down.
+var _tree_occupied_tiles: Dictionary = {}
+const TREE_PLACE_BLOCK_RADIUS: int = 1  # 1 => 3x3 footprint around the tree's cell
+
+# ── Chunk border debug overlay (Ctrl+Shift+C) ────────────────────────
+var _chunk_border_overlay: Node2D = null
+var _show_chunk_borders:   bool   = false
+const CHUNK_BORDER_COLOR: Color = Color(1.0, 0.55, 0.0, 0.9)  # orange
+
 const PLACEABLE_TYPES:    Array  = ["block", "door"]
 const PLACE_RADIUS_TILES: int    = 6
 const INTERACT_RADIUS_PX: float  = 64.0
@@ -94,14 +155,10 @@ func _ready() -> void:
 	_set_up_noise(altitude,    0.005)
 	if use_experimental_ground:
 		_apply_experimental_ground()
-	_tree_shadow_mat = ShaderMaterial.new()
-	_tree_shadow_mat.shader = SHADOW_SHADER
-	_tree_shadow_mat.set_shader_parameter("shadow_x",     7.0)
-	_tree_shadow_mat.set_shader_parameter("shadow_y",     7.0)
-	_tree_shadow_mat.set_shader_parameter("shadow_alpha", 0.35)
 	_setup_ghost()
 	_setup_grid_overlay()
 	_setup_cursor_highlight()
+	_setup_chunk_border_overlay()
 	Global.hotbar_selection_changed.connect(_on_hotbar_changed)
 	Global.Hotbar_updated.connect(_on_hotbar_changed)
 	# Set world reference immediately so game_instance can connect signals.
@@ -112,6 +169,10 @@ func _ready() -> void:
 	_queue_generation.call_deferred()
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == KEY_C and event.ctrl_pressed and event.shift_pressed:
+		_toggle_chunk_borders()
+		return
 	if event is InputEventKey and event.keycode == KEY_CTRL:
 		if event.pressed and not event.echo:
 			Global.block_mode = not Global.block_mode
@@ -169,6 +230,8 @@ func _queue_generation() -> void:
 func _begin_generation() -> void:
 	_gen_start_ms = Time.get_ticks_msec()
 	print("[WORLD] generation started — map %dx%d tiles" % [width, height])
+	generation_status_changed.emit("Chunking the chunks, chuckingly")
+	_compute_chunks()
 	generation_status_changed.emit("Generating terrain...")
 	var t0 := Time.get_ticks_msec()
 	_generate_terrain()
@@ -176,6 +239,11 @@ func _begin_generation() -> void:
 	generation_status_changed.emit("Spawning trees and forests...")
 	_spawn_wolves.call_deferred()
 	_deferred_foliage.call_deferred()
+
+func _compute_chunks() -> void:
+	_chunk_cols = ceili(float(width)  / CHUNK_SIZE)
+	_chunk_rows = ceili(float(height) / CHUNK_SIZE)
+	_chunk_last_spawn.clear()
 
 func _deferred_foliage() -> void:
 	var t0 := Time.get_ticks_msec()
@@ -186,6 +254,8 @@ func _deferred_foliage() -> void:
 		apply_world_save_data(Global.pending_world_data)
 		Global.pending_world_data.clear()
 	_start_interaction_updater()
+	_start_despawn_timer()
+	_start_outer_spawn_timer()
 	generation_complete.emit()
 
 func _start_interaction_updater() -> void:
@@ -214,11 +284,186 @@ func _update_tree_interactions() -> void:
 			interact.monitoring  = should_be_active
 			interact.monitorable = should_be_active
 
+# ── Mob world spawn reference ───────────────────────────────────────
+func _world_spawn_pos() -> Vector2:
+	return to_global(Vector2.ZERO)
+
+# ── Mob despawn timer (inner/safe/outer) ─────────────────────────────
+func _start_despawn_timer() -> void:
+	var t := Timer.new()
+	t.wait_time = DESPAWN_CHECK_INTERVAL
+	t.autostart = true
+	t.timeout.connect(_update_mob_despawn_timers)
+	add_child(t)
+
+func _update_mob_despawn_timers() -> void:
+	var p := _get_player()
+	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
+	var spawn_pos:  Vector2 = _world_spawn_pos()
+	for mob in get_tree().get_nodes_in_group("Wolf"):
+		if not is_instance_valid(mob):
+			continue
+		var m2d: Node2D = mob as Node2D
+		var dp: float = m2d.global_position.distance_to(player_pos)
+		var ds: float = m2d.global_position.distance_to(spawn_pos)
+		var zone: int
+		if dp <= DESPAWN_INNER_RADIUS or ds <= DESPAWN_INNER_RADIUS:
+			zone = 0  # inner — 30 min
+		elif dp <= DESPAWN_SAFE_RADIUS or ds <= DESPAWN_SAFE_RADIUS:
+			zone = 1  # safe — 15 min
+		else:
+			zone = 2  # outer — 5 min
+		if mob.has_method("_apply_despawn_zone"):
+			mob.call("_apply_despawn_zone", zone, DESPAWN_CHECK_INTERVAL)
+
+# ── Chunk grid helpers ────────────────────────────────────────────────
+func _chunk_key(chunk: Vector2i) -> String:
+	return "%d,%d" % [chunk.x, chunk.y]
+
+func _chunk_world_rect(chunk: Vector2i) -> Rect2:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var tile_tl: Vector2i = Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+	var world_tl: Vector2 = ground_layer.to_global(ground_layer.map_to_local(tile_tl)) \
+		- Vector2(TILE_SIZE, TILE_SIZE) * 0.5
+	var size_px: Vector2 = Vector2(CHUNK_SIZE, CHUNK_SIZE) * TILE_SIZE
+	return Rect2(world_tl, size_px)
+
+# Nearest-corner distance from a chunk's world-space rect to a point.
+func _chunk_min_corner_dist(chunk: Vector2i, point: Vector2) -> float:
+	var r: Rect2 = _chunk_world_rect(chunk)
+	var corners: Array[Vector2] = [
+		r.position,
+		r.position + Vector2(r.size.x, 0.0),
+		r.position + Vector2(0.0, r.size.y),
+		r.position + r.size,
+	]
+	var best: float = INF
+	for c in corners:
+		best = minf(best, c.distance_to(point))
+	return best
+
+func _is_chunk_outer(chunk: Vector2i, player_pos: Vector2, spawn_pos: Vector2) -> bool:
+	return _chunk_min_corner_dist(chunk, player_pos) > DESPAWN_SAFE_RADIUS \
+		and _chunk_min_corner_dist(chunk, spawn_pos) > DESPAWN_SAFE_RADIUS
+
+func _is_chunk_on_cooldown(chunk: Vector2i) -> bool:
+	var key: String = _chunk_key(chunk)
+	if not _chunk_last_spawn.has(key):
+		return false
+	var last: float = float(_chunk_last_spawn[key])
+	return (Time.get_unix_time_from_system() - last) < CHUNK_SPAWN_COOLDOWN
+
+func _random_valid_tile_in_chunk(chunk: Vector2i) -> Variant:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+	for _i in range(20):
+		var tile: Vector2i = tl + Vector2i(rng.randi_range(0, CHUNK_SIZE - 1), rng.randi_range(0, CHUNK_SIZE - 1))
+		if _cell_biome_type(tile) != 0:  # Plains only, matches existing wolf spawn rules
+			continue
+		if _has_water_nearby(tile, 3):
+			continue
+		return tile
+	return null
+
+func _spawn_mob_at(tile: Vector2i, scene: PackedScene) -> void:
+	var local_pos: Vector2 = ground_layer.map_to_local(tile)
+	var world_pos: Vector2 = ground_layer.to_global(local_pos)
+	var mob: Node2D = scene.instantiate() as Node2D
+	if mob == null:
+		return
+	add_child(mob)
+	mob.global_position = world_pos
+
+# ── Periodic outer-region spawner ────────────────────────────────────
+func _start_outer_spawn_timer() -> void:
+	var t := Timer.new()
+	t.wait_time = OUTER_SPAWN_INTERVAL
+	t.autostart = true
+	t.timeout.connect(_try_outer_spawn)
+	add_child(t)
+
+func _try_outer_spawn() -> void:
+	var p := _get_player()
+	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
+	var spawn_pos:  Vector2 = _world_spawn_pos()
+
+	var eligible: Array[Vector2i] = []
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if _is_chunk_on_cooldown(chunk):
+				continue
+			if _is_chunk_outer(chunk, player_pos, spawn_pos):
+				eligible.append(chunk)
+	if eligible.is_empty():
+		return
+
+	var chunk: Vector2i = eligible[rng.randi_range(0, eligible.size() - 1)]
+	var pool_entry: Dictionary = MOB_SPAWN_POOL[rng.randi_range(0, MOB_SPAWN_POOL.size() - 1)]
+	var count: int = rng.randi_range(1, 3) if pool_entry["faction"] == MobFaction.FRIENDLY else 1
+
+	for _n in range(count):
+		var tile = _random_valid_tile_in_chunk(chunk)
+		if tile == null:
+			continue
+		_spawn_mob_at(tile, pool_entry["scene"] as PackedScene)
+
+	_chunk_last_spawn[_chunk_key(chunk)] = Time.get_unix_time_from_system()
+
+# ── Mob preservation (save/load) ─────────────────────────────────────
+func _is_in_preserve_zone(pos: Vector2, player_pos: Vector2) -> bool:
+	if pos.distance_to(player_pos) <= MOB_PRESERVE_PLAYER_RADIUS:
+		return true
+	return pos.distance_to(_world_spawn_pos()) <= MOB_PRESERVE_SPAWN_RADIUS
+
+func _collect_preserved_mobs() -> Array:
+	var mobs_data: Array = []
+	var p := _get_player()
+	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
+	for mob in get_tree().get_nodes_in_group("Wolf"):
+		if not is_instance_valid(mob):
+			continue
+		var m2d: Node2D = mob as Node2D
+		if _is_in_preserve_zone(m2d.global_position, player_pos):
+			mobs_data.append({"type": "wolf", "x": m2d.global_position.x, "y": m2d.global_position.y})
+	return mobs_data
+
+func _restore_mobs(mobs_data: Array) -> void:
+	var p := _get_player()
+	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
+
+	# The save data is authoritative for these zones — remove the
+	# deterministically-regenerated mobs that fall inside them first.
+	for mob in get_tree().get_nodes_in_group("Wolf"):
+		if not is_instance_valid(mob):
+			continue
+		var m2d: Node2D = mob as Node2D
+		if _is_in_preserve_zone(m2d.global_position, player_pos):
+			mob.queue_free()
+
+	for entry in mobs_data:
+		if not (entry is Dictionary):
+			continue
+		var e: Dictionary = entry as Dictionary
+		if str(e.get("type", "")) != "wolf":
+			continue
+		var pos := Vector2(float(e.get("x", 0.0)), float(e.get("y", 0.0)))
+		var wolf: Node2D = WOLF_SCENE.instantiate() as Node2D
+		if wolf == null:
+			continue
+		add_child(wolf)
+		wolf.global_position = pos
+
 # ── Ghost preview ────────────────────────────────────────────────────
 func _setup_ghost() -> void:
 	ghost = Node2D.new()
 	ghost.visible = false
-	ghost.z_index = 500
+	# Tree z_index is Y-sorted (int(global_position.y / TILE_SIZE)) and can
+	# reach into the hundreds near the map edges, so placement guides need a
+	# z_index comfortably above that range to never be hidden behind a tree.
+	ghost.z_index = PLACEMENT_GUIDE_Z_INDEX
 	add_child(ghost)
 	ghost_sprite = Sprite2D.new()
 	ghost_sprite.modulate = Color(1, 1, 1, 0.5)
@@ -226,7 +471,7 @@ func _setup_ghost() -> void:
 
 func _setup_grid_overlay() -> void:
 	_grid_overlay = Node2D.new()
-	_grid_overlay.z_index = 0
+	_grid_overlay.z_index = PLACEMENT_GUIDE_Z_INDEX
 	_grid_overlay.visible = false
 	editable_layer.add_child(_grid_overlay)
 	_grid_overlay.draw.connect(_on_grid_draw)
@@ -251,13 +496,39 @@ func _on_grid_draw() -> void:
 				continue
 			var cp: Vector2 = editable_layer.map_to_local(cell)
 			var rect := Rect2(cp.x - half, cp.y - half, TILE_SIZE, TILE_SIZE)
-			var color: Color = Color(1.0, 0.2, 0.2, 0.55) if _cell_blocked_by_player(cell) \
+			# Tree-occupied cells still show the grid (tinted red like a
+			# player-blocked cell) instead of disappearing — forests are dense
+			# enough that skipping the whole footprint blanked out most of the
+			# grid near the player.
+			var color: Color = Color(1.0, 0.2, 0.2, 0.55) \
+				if (_cell_blocked_by_player(cell) or _is_tree_occupied(cell)) \
 				else Color(1.0, 1.0, 1.0, 0.45)
 			_grid_overlay.draw_rect(rect, color, false, 1.0)
 
+# ── Chunk border debug overlay ────────────────────────────────────────
+func _setup_chunk_border_overlay() -> void:
+	_chunk_border_overlay = Node2D.new()
+	_chunk_border_overlay.z_index = 400
+	_chunk_border_overlay.visible = false
+	add_child(_chunk_border_overlay)
+	_chunk_border_overlay.draw.connect(_on_chunk_border_draw)
+
+func _toggle_chunk_borders() -> void:
+	_show_chunk_borders = not _show_chunk_borders
+	_chunk_border_overlay.visible = _show_chunk_borders
+	if _show_chunk_borders:
+		_chunk_border_overlay.queue_redraw()
+
+func _on_chunk_border_draw() -> void:
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var r: Rect2 = _chunk_world_rect(Vector2i(cx, cy))
+			var local_rect := Rect2(_chunk_border_overlay.to_local(r.position), r.size)
+			_chunk_border_overlay.draw_rect(local_rect, CHUNK_BORDER_COLOR, false, 2.0)
+
 func _setup_cursor_highlight() -> void:
 	_cursor_highlight = Node2D.new()
-	_cursor_highlight.z_index = 500
+	_cursor_highlight.z_index = PLACEMENT_GUIDE_Z_INDEX
 	_cursor_highlight.visible = false
 	_cursor_highlight.draw.connect(func() -> void:
 		var half: float = TILE_SIZE * 0.5
@@ -321,7 +592,8 @@ func _update_ghost() -> void:
 		ghost.visible = false
 		return
 	ghost.visible = true
-	var occupied:    bool = _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1
+	var occupied:    bool = _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1 \
+		or _is_tree_occupied(cell)
 	var on_water:    bool = water_layer.get_cell_source_id(cell) != -1
 	var player_here: bool = _cell_blocked_by_player(cell)
 	ghost_sprite.modulate = Color(1.0, 0.3, 0.3, 0.5) if (occupied or on_water or player_here) \
@@ -351,6 +623,8 @@ func place_block() -> void:
 	if _cell_blocked_by_player(cell):
 		return
 	if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
+		return
+	if _is_tree_occupied(cell):
 		return
 	if water_layer.get_cell_source_id(cell) != -1:
 		return
@@ -563,6 +837,28 @@ func _mark_tree_tile(tile: Vector2i, occupied: Dictionary) -> void:
 		for dy in range(-1, 2):
 			occupied[tile + Vector2i(dx, dy)] = true
 
+# ── Live tree occupancy (blocks placement near a standing tree) ─────
+func _mark_tree_occupied(cell: Vector2i) -> void:
+	for dx in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
+		for dy in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
+			var t: Vector2i = cell + Vector2i(dx, dy)
+			_tree_occupied_tiles[t] = int(_tree_occupied_tiles.get(t, 0)) + 1
+
+func _unmark_tree_occupied(cell: Vector2i) -> void:
+	for dx in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
+		for dy in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
+			var t: Vector2i = cell + Vector2i(dx, dy)
+			if not _tree_occupied_tiles.has(t):
+				continue
+			var remaining: int = int(_tree_occupied_tiles[t]) - 1
+			if remaining <= 0:
+				_tree_occupied_tiles.erase(t)
+			else:
+				_tree_occupied_tiles[t] = remaining
+
+func _is_tree_occupied(cell: Vector2i) -> bool:
+	return _tree_occupied_tiles.has(cell)
+
 func _place_foliage() -> void:
 	var cell_offset: Vector2i = Vector2i(width, height) / 2
 	var occupied_tiles: Dictionary = {}
@@ -694,8 +990,9 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	_tree_spawn_count += 1
 
 	var sprite := tree.get_node_or_null("Sprite2D") as Sprite2D
+	var frame_w: float = 32.0
+	var frame_h: float = 32.0
 	if sprite != null:
-		sprite.material = _tree_shadow_mat
 		if tree_type_val == 2:  # Snowy
 			# basictree_alpha.png is 128×64 — 4 frames of 32px each
 			sprite.texture = SNOWY_TREE_TEX
@@ -706,6 +1003,18 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 		sprite.frame   = 0
 		if sprite.texture != null:
 			sprite.position.y = -(sprite.texture.get_height() * 0.5)
+			frame_w = sprite.texture.get_width()  / float(maxi(sprite.hframes, 1))
+			frame_h = sprite.texture.get_height() / float(maxi(sprite.vframes, 1))
+
+	# Flat blob shadow sprite at the tree's base — replaces the old
+	# per-pixel drop_shadow.gdshader silhouette approach. Scaled off the
+	# tree's own frame size so NewTree (96px) and Snowy (32px) don't share
+	# an identical shadow footprint.
+	var shadow_scale := Vector2(
+		(frame_w * 0.55) / SHADOW_TEXTURE.get_width(),
+		(frame_h * 0.22) / SHADOW_TEXTURE.get_height()
+	)
+	tree.add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, TREE_SHADOW_OFFSET_Y), shadow_scale, 0.35))
 
 	# Disable Area2D monitoring before entering the scene tree.
 	# Without this, every add_child triggers an O(n) broadphase scan against all
@@ -719,8 +1028,21 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	tree.set("tree_type", tree_type_val)
 	add_child(tree)
 	tree.scale         = Vector2(1.15, 1.15)
-	tree.global_position = world_pos + Vector2(0.0, TILE_SIZE * 0.5)
+	# world_pos is the tile's center; the sprite's own -(height/2) offset means
+	# the tree's local origin (this anchor point) IS the trunk's visual base
+	# regardless of tree.scale, so +half a tile lands it exactly on the tile's
+	# bottom grid line. TREE_BASE_EXTRA_OFFSET_PX is an extra empirical nudge
+	# on top of that — the source art may have a little transparent padding
+	# under the trunk that the exact math can't account for.
+	tree.global_position = world_pos + Vector2(0.0, TILE_SIZE * 0.5 + TREE_BASE_EXTRA_OFFSET_PX)
 	tree.z_index = int(tree.global_position.y / TILE_SIZE)
+
+	# Block placement can't see trees (they're not on editable_layer or in
+	# _placed_blocks), so track a 3x3 footprint here to stop blocks being
+	# placed on top of / right next to a live tree.
+	var tree_cell: Vector2i = editable_layer.local_to_map(editable_layer.to_local(world_pos))
+	_mark_tree_occupied(tree_cell)
+	tree.set_meta("spawn_cell", tree_cell)
 
 func _spawn_scattered_group(origin: Vector2i, tree_type_val: int, extra: int, occupied_tiles: Dictionary) -> void:
 	if extra <= 0:
@@ -879,14 +1201,18 @@ func _spawn_wolf_at(tile: Vector2i) -> void:
 	wolf.global_position = world_pos
 
 # ── Tree removal tracking ────────────────────────────────────────────
-func notify_tree_removed(world_pos: Vector2) -> void:
-	_removed_trees.append({"x": world_pos.x, "y": world_pos.y})
+func notify_tree_removed(tree: Node2D) -> void:
+	_removed_trees.append({"x": tree.global_position.x, "y": tree.global_position.y})
+	if tree.has_meta("spawn_cell"):
+		_unmark_tree_occupied(tree.get_meta("spawn_cell") as Vector2i)
 
 # ── World save / load ────────────────────────────────────────────────
 func get_world_save_data() -> Dictionary:
 	var data: Dictionary = {
 		"placed_blocks": [],
 		"removed_trees": _removed_trees.duplicate(),
+		"mobs":                  _collect_preserved_mobs(),
+		"chunk_spawn_cooldowns": _chunk_last_spawn.duplicate(),
 	}
 	for cell in _placed_blocks:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
@@ -932,8 +1258,14 @@ func apply_world_save_data(data: Dictionary) -> void:
 				if not (node is Node2D):
 					continue
 				if (node as Node2D).global_position.distance_to(pos) < 8.0:
+					if node.has_meta("spawn_cell"):
+						_unmark_tree_occupied(node.get_meta("spawn_cell") as Vector2i)
 					node.queue_free()
 					break
+	if data.has("chunk_spawn_cooldowns") and data["chunk_spawn_cooldowns"] is Dictionary:
+		_chunk_last_spawn = (data["chunk_spawn_cooldowns"] as Dictionary).duplicate()
+	if data.has("mobs") and data["mobs"] is Array:
+		_restore_mobs(data["mobs"] as Array)
 	if not data.has("placed_blocks"):
 		return
 	for block_data in (data["placed_blocks"] as Array):

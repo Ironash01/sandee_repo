@@ -32,7 +32,7 @@ var _active_cat:   String = "Materials"
 var _selected_idx: int    = -1
 
 # ── Node refs ─────────────────────────────────────────────────────
-var _recipe_list:   VBoxContainer
+var _recipe_list:   GridContainer
 var _detail_panel:  Control
 var _detail_name:   Label
 var _detail_ing1:   Label
@@ -197,13 +197,15 @@ func _build() -> void:
 	vbox.add_child(body)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size    = Vector2(int(220 * s), 0)
+	scroll.custom_minimum_size    = Vector2(int(200 * s), 0)
 	scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(scroll)
 
-	_recipe_list = VBoxContainer.new()
-	_recipe_list.add_theme_constant_override("separation", int(4 * s))
+	_recipe_list = GridContainer.new()
+	_recipe_list.columns = 3
+	_recipe_list.add_theme_constant_override("h_separation", int(4 * s))
+	_recipe_list.add_theme_constant_override("v_separation", int(4 * s))
 	_recipe_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_recipe_list)
 
@@ -338,9 +340,12 @@ func _filter_and_refresh() -> void:
 	for i in range(_filtered.size()):
 		var recipe: CraftingRecipe = _filtered[i] as CraftingRecipe
 		var btn    := Button.new()
-		btn.text                  = recipe.result_item.item_name
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", int(13 * s))
+		btn.custom_minimum_size     = Vector2(int(56 * s), int(56 * s))
+		btn.icon                    = recipe.result_item.icon
+		btn.expand_icon             = true
+		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
+		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+		btn.tooltip_text            = recipe.result_item.item_name
 		var idx := i
 		btn.pressed.connect(func() -> void: _on_select(idx))
 		_recipe_list.add_child(btn)
@@ -363,7 +368,7 @@ func _refresh_highlights() -> void:
 				bg_col  = C_TIP_BG;  txt_col = C_TITLE;  mod = 1.0
 			CraftState.NO_MATS:
 				bg_col  = C_TIP_BG;  txt_col = C_MUTED;  mod = 0.55
-		var ps := _sb(bg_col, C_BORDER, 3, 8, 8, 6, 6)
+		var ps := _sb(bg_col, C_BORDER, 4, 4, 4, 4, 4)
 		btn.add_theme_stylebox_override("normal",  ps)
 		btn.add_theme_stylebox_override("hover",   ps)
 		btn.add_theme_stylebox_override("pressed", ps)

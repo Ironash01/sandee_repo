@@ -12,6 +12,7 @@ const APPROACH_PX:        float = 40.0
 const CHOP_DELAY:         float = 0.25
 const PICKUP_DELAY:       float = 0.4
 const NPC_SPEED:          float = 90.0
+const SHADOW_TEXTURE:     Texture2D = preload("res://sprites/shadow/shadow_base.png")
 
 const DIRS: Array = [
 	{"name": "south",      "vec": Vector2( 0,  1)},
@@ -49,12 +50,20 @@ var _ui:           Control = null
 @onready var _robot_sprite: AnimatedSprite2D = $Robot/RobotSprite
 @onready var _click_area:   Area2D           = $ClickArea
 
+# Shared across every Lua station robot — built once instead of per-instance
+# when multiple stations are placed.
+static var _shared_frames: SpriteFrames = null
+
 # ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
-	_robot_sprite.sprite_frames = _build_frames()
+	if _shared_frames == null:
+		_shared_frames = _build_frames()
+	_robot_sprite.sprite_frames = _shared_frames
 	_play_idle(_last_dir)
+	# Attached to _robot (not the station) so it moves with the robot as it walks.
+	_robot.add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 5.0), Vector2(0.6, 0.3), 0.35))
 
 	_click_area.body_entered.connect(_on_body_entered)
 	_click_area.body_exited.connect(_on_body_exited)
@@ -188,7 +197,7 @@ func _auto_work() -> void:
 		if _stop_requested: break
 		while is_instance_valid(tree):
 			if _stop_requested: break
-			tree.call("hit")
+			tree.call("chop", CHOP_DELAY)
 			await get_tree().create_timer(CHOP_DELAY).timeout
 		await get_tree().create_timer(PICKUP_DELAY).timeout
 		_collect_drops_nearby()
@@ -212,7 +221,7 @@ func _chop_all_trees() -> void:
 		if _stop_requested: break
 		while is_instance_valid(tree):
 			if _stop_requested: break
-			tree.call("hit")
+			tree.call("chop", CHOP_DELAY)
 			await get_tree().create_timer(CHOP_DELAY).timeout
 		await get_tree().create_timer(PICKUP_DELAY).timeout
 		_collect_drops_nearby()
