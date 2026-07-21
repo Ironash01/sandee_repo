@@ -7,7 +7,23 @@
       "Bash(Sort-Object)",
       "Bash(Select-String \"uid\")",
       "Bash(python3 *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(where godot *)",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\\\' -Recurse -Filter 'Godot*.exe' -ErrorAction SilentlyContinue -Depth 3 | Select-Object -First 5 FullName\")",
+      "Bash(\"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless --check-only --quit)",
+      "Bash(\"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless --quit)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(\"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://scenes/world_gen.tscn --quit)",
+      "Bash(echo \"grep exit:$?\")",
+      "Bash(\"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://scenes/game_instance.tscn --quit)",
+      "Bash(\"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless --script res://_tmp_check.gd)",
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://scenes/game_instance.tscn --quit-after 90)",
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless --script res://_tmp_biome_test.gd)",
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless --script res://_tmp_daynight_test.gd)",
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://_tmp_daynight_test.tscn --quit)",
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://scenes/game_instance.tscn --quit-after 120)",
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://_tmp_storm_test.tscn --quit)",
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://_tmp_storm_test.tscn)"
     ]
   }
 }

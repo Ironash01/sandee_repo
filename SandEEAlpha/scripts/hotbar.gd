@@ -34,6 +34,11 @@ var _popup_tween:  Tween       = null
 var _popup_timer:  float       = 0.0
 const POPUP_DURATION := 1.8
 
+# ── Lua-stuck alert ─────────────────────────────────────────────────
+var _stuck_label: Label = null
+var _stuck_tween: Tween = null
+const STUCK_POPUP_DURATION := 3.0
+
 func _ready() -> void:
 	var hbox: HBoxContainer = $CanvasLayer/HBoxContainer as HBoxContainer
 	hbox.add_theme_constant_override("separation", 4)
@@ -100,6 +105,18 @@ func _ready() -> void:
 	_popup_label.modulate.a = 0.0
 	canvas.add_child(_popup_label)
 
+	# ── Lua-stuck alert label (top-center) ────────────────────────
+	_stuck_label = Label.new()
+	_stuck_label.name = "LuaStuckPopup"
+	_stuck_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3, 1.0))
+	_stuck_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_stuck_label.add_theme_constant_override("shadow_offset_x", 1)
+	_stuck_label.add_theme_constant_override("shadow_offset_y", 1)
+	_stuck_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_stuck_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_stuck_label.modulate.a = 0.0
+	canvas.add_child(_stuck_label)
+
 	# ── Block hover label (bottom-left) ──────────────────────────
 	_hover_label = Label.new()
 	_hover_label.name = "BlockHoverLabel"
@@ -120,6 +137,7 @@ func _ready() -> void:
 	Global.inventory_toggled.connect(_on_inventory_toggled)
 	Global.block_mode_changed.connect(_on_build_mode_changed)
 	Global.item_picked_up.connect(_on_item_picked_up)
+	Global.lua_stuck_notice.connect(_on_lua_stuck_notice)
 	Global.hover_label_changed.connect(_on_hover_label_changed)
 	Global.health_changed.connect(_on_health_changed)
 	Global.stamina_changed.connect(_on_stamina_changed)
@@ -166,6 +184,19 @@ func _on_item_picked_up(item_name: String, item_type: String) -> void:
 	_popup_tween.tween_interval(POPUP_DURATION - 0.45)
 	_popup_tween.tween_property(_popup_label, "modulate:a", 0.0, 0.30)
 
+func _on_lua_stuck_notice(message: String) -> void:
+	if _stuck_label == null:
+		return
+	_stuck_label.text = message
+
+	if _stuck_tween != null and _stuck_tween.is_valid():
+		_stuck_tween.kill()
+
+	_stuck_tween = create_tween()
+	_stuck_tween.tween_property(_stuck_label, "modulate:a", 1.0, 0.15)
+	_stuck_tween.tween_interval(STUCK_POPUP_DURATION - 0.45)
+	_stuck_tween.tween_property(_stuck_label, "modulate:a", 0.0, 0.30)
+
 func _input(event: InputEvent) -> void:
 	for i in range(9):
 		if event.is_action_pressed("hotbar_%d" % (i + 1)):
@@ -200,6 +231,7 @@ func _apply_label_scale() -> void:
 	var fs_build: int = int(15 * s)
 	var fs_popup: int = int(15 * s)
 	var fs_hover: int = int(15 * s)
+	var fs_stuck: int = int(20 * s)
 	if _build_label != null:
 		_build_label.add_theme_font_size_override("font_size", fs_build)
 		_build_label.offset_top    = int(-80 * s)
@@ -214,6 +246,10 @@ func _apply_label_scale() -> void:
 		_hover_label.offset_top    = int(-44 * s)
 		_hover_label.offset_right  = int(320 * s)
 		_hover_label.offset_bottom = int(-12 * s)
+	if _stuck_label != null:
+		_stuck_label.add_theme_font_size_override("font_size", fs_stuck)
+		_stuck_label.offset_top    = int(24 * s)
+		_stuck_label.offset_bottom = int(56 * s)
 	if _stat_container != null:
 		_stat_container.offset_top    = -64
 		_stat_container.offset_bottom = -44

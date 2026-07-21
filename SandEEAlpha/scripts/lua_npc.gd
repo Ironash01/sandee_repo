@@ -14,6 +14,18 @@ const PICKUP_DELAY:       float = 0.4
 const NPC_SPEED:          float = 90.0
 const SHADOW_TEXTURE:     Texture2D = preload("res://sprites/shadow/shadow_base.png")
 
+# ── Obstacle avoidance / stuck detection ─────────────────────────
+# Trees, placed blocks, chests, etc. are all StaticBody2D on the default
+# physics layer (bit 0) — same layer the player's CharacterBody2D collides
+# against — so a raycast on that mask reliably detects anything solid.
+const OBSTACLE_MASK:         int   = 1
+const OBSTACLE_LOOKAHEAD_PX: float = 28.0  # a bit under one tile (32px)
+# Angles tried, in order, either side of the direct line to the target when
+# that line is blocked — sweeps out to a full about-face for dead ends.
+const REROUTE_ANGLES_DEG: Array = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0]
+const STUCK_TIMEOUT_MS:   int   = 4000  # no net progress for this long → give up
+const STUCK_PROGRESS_EPS: float = 4.0   # px of closing distance that counts as progress
+
 const DIRS: Array = [
 	{"name": "south",      "vec": Vector2( 0,  1)},
 	{"name": "north",      "vec": Vector2( 0, -1)},
@@ -46,7 +58,7 @@ var _npc_inventory:   Array   = []       # [{data: ItemData, quantity: int}, ...
 var _lua_state:    Node    = null
 var _ui:           Control = null
 
-@onready var _robot:        Node2D           = $Robot
+@onready var _robot:        CharacterBody2D  = $Robot
 @onready var _robot_sprite: AnimatedSprite2D = $Robot/RobotSprite
 @onready var _click_area:   Area2D           = $ClickArea
 
@@ -107,11 +119,17 @@ func _draw() -> void:
 	draw_arc(Vector2.ZERO, CHOP_RADIUS_PX, 0.0, TAU, 96, Color(0.3, 0.8, 1.0, 0.55), 2.5)
 
 # ── Physics: move robot child each frame ─────────────────────────
-func _physics_process(delta: float) -> void:
+# Robot is a CharacterBody2D so move_and_slide() gives it real collision
+# against trees/blocks/chests as a hard backstop — the raycast steering in
+# the walk helpers picks a clear direction, but this is what actually stops
+# it from ever tunnelling through an obstacle the steering missed.
+func _physics_process(_delta: float) -> void:
 	if _robot_vel != Vector2.ZERO:
-		_robot.position += _robot_vel * delta
+		_robot.velocity = _robot_vel
+		_robot.move_and_slide()
 		_update_walk_animation(_robot_vel)
 	else:
+		_robot.velocity = Vector2.ZERO
 		_play_idle(_last_dir)
 
 # ── Station click (left = editor, right = radius toggle) ─────────
@@ -193,7 +211,9 @@ func _auto_work() -> void:
 		if _stop_requested: break
 		var tree: Node2D = _nearest_tree_in_radius()
 		if tree == null: break
-		await _walk_to_node(tree)
+		if not await _walk_to_node(tree):
+			_is_working = false
+			return
 		if _stop_requested: break
 		while is_instance_valid(tree):
 			if _stop_requested: break
@@ -205,9 +225,13 @@ func _auto_work() -> void:
 	if not _stop_requested:
 		var chest: Node = _nearest_chest_in_radius()
 		if chest != null and is_instance_valid(chest):
-			await _walk_to_node(chest as Node2D)
+			if not await _walk_to_node(chest as Node2D):
+				_is_working = false
+				return
 			_deposit_to_chest(chest)
-		await _walk_to_spawn()
+		if not await _walk_to_spawn():
+			_is_working = false
+			return
 
 	_stop_requested = false
 	_is_working     = false
@@ -217,7 +241,9 @@ func _chop_all_trees() -> void:
 		if _stop_requested: break
 		var tree: Node2D = _nearest_tree_in_radius()
 		if tree == null: break
-		await _walk_to_node(tree)
+		if not await _walk_to_node(tree):
+			_is_working = false
+			return
 		if _stop_requested: break
 		while is_instance_valid(tree):
 			if _stop_requested: break
@@ -227,7 +253,9 @@ func _chop_all_trees() -> void:
 		_collect_drops_nearby()
 
 	if not _stop_requested:
-		await _walk_to_spawn()
+		if not await _walk_to_spawn():
+			_is_working = false
+			return
 	_stop_requested = false
 	_is_working     = false
 
@@ -238,7 +266,9 @@ func _walk_to_spawn_then_stop() -> void:
 func _deposit_then_stop() -> void:
 	var chest: Node = _nearest_chest_in_radius()
 	if chest != null and is_instance_valid(chest):
-		await _walk_to_node(chest as Node2D)
+		if not await _walk_to_node(chest as Node2D):
+			_is_working = false
+			return
 		_deposit_to_chest(chest)
 	await _walk_to_spawn()
 	_is_working = false
@@ -263,23 +293,102 @@ func _print_chest_items() -> void:
 
 # ── Walk helpers ──────────────────────────────────────────────────
 
-# Walk robot toward a world node.
-func _walk_to_node(target: Node2D) -> void:
+# Walk robot toward a world node, rerouting around solid obstacles (trees,
+# placed blocks, chests). Returns false if it got stuck and had to be
+# recalled to the station instead of arriving normally.
+func _walk_to_node(target: Node2D) -> bool:
+	var exclude_rids:  Array = _collision_rids_of(target)
+	var last_dist:     float = INF
+	var stuck_since_ms: int  = -1
 	while is_instance_valid(target):
 		var dist: float = _robot.global_position.distance_to(target.global_position)
 		if dist <= APPROACH_PX:
 			_robot_vel = Vector2.ZERO
-			return
-		_robot_vel = _robot.global_position.direction_to(target.global_position) * NPC_SPEED
+			return true
+
+		var desired: Vector2 = _robot.global_position.direction_to(target.global_position)
+		var travel:  Vector2 = _pick_travel_dir(_robot.global_position, desired, exclude_rids)
+		_robot_vel = travel * NPC_SPEED
+
+		if dist < last_dist - STUCK_PROGRESS_EPS:
+			last_dist      = dist
+			stuck_since_ms = -1
+		elif stuck_since_ms == -1:
+			stuck_since_ms = Time.get_ticks_msec()
+		elif Time.get_ticks_msec() - stuck_since_ms > STUCK_TIMEOUT_MS:
+			_handle_stuck()
+			return false
+
 		await get_tree().process_frame
 	_robot_vel = Vector2.ZERO
+	return true
 
-# Walk robot back to station origin (position 0,0 relative to station).
-func _walk_to_spawn() -> void:
+# Walk robot back to station origin (position 0,0 relative to station),
+# rerouting around solid obstacles. Returns false if it got stuck (already
+# teleported home by _handle_stuck in that case).
+func _walk_to_spawn() -> bool:
+	var last_dist:     float = INF
+	var stuck_since_ms: int  = -1
 	while _robot.position.length() > 8.0:
-		_robot_vel = (_robot.position * -1.0).normalized() * NPC_SPEED
+		var dist: float = _robot.position.length()
+
+		var desired: Vector2 = (_robot.position * -1.0).normalized()
+		var travel:  Vector2 = _pick_travel_dir(_robot.global_position, desired, [])
+		_robot_vel = travel * NPC_SPEED
+
+		if dist < last_dist - STUCK_PROGRESS_EPS:
+			last_dist      = dist
+			stuck_since_ms = -1
+		elif stuck_since_ms == -1:
+			stuck_since_ms = Time.get_ticks_msec()
+		elif Time.get_ticks_msec() - stuck_since_ms > STUCK_TIMEOUT_MS:
+			_handle_stuck()
+			return false
+
 		await get_tree().process_frame
-	_robot_vel    = Vector2.ZERO
+	_robot_vel      = Vector2.ZERO
+	_robot.position = Vector2.ZERO
+	return true
+
+# ── Obstacle avoidance ──────────────────────────────────────────────
+
+# True if a straight line from `from` along `dir`, one lookahead step long,
+# is clear of solid bodies other than those in `exclude_rids`.
+func _path_is_clear(from: Vector2, dir: Vector2, exclude_rids: Array) -> bool:
+	if dir == Vector2.ZERO:
+		return true
+	var space_state := get_world_2d().direct_space_state
+	var query := PhysicsRayQueryParameters2D.create(from, from + dir.normalized() * OBSTACLE_LOOKAHEAD_PX)
+	query.collision_mask = OBSTACLE_MASK
+	query.exclude        = exclude_rids
+	return space_state.intersect_ray(query).is_empty()
+
+# Picks the clear direction closest to desired_dir, sweeping wider angles
+# either side when the direct line is blocked. Vector2.ZERO means every
+# candidate direction is blocked (fully boxed in).
+func _pick_travel_dir(from: Vector2, desired_dir: Vector2, exclude_rids: Array) -> Vector2:
+	if _path_is_clear(from, desired_dir, exclude_rids):
+		return desired_dir
+	for angle in REROUTE_ANGLES_DEG:
+		var candidate: Vector2 = desired_dir.rotated(deg_to_rad(angle))
+		if _path_is_clear(from, candidate, exclude_rids):
+			return candidate
+	return Vector2.ZERO
+
+# Collision body RIDs belonging to a target node, so walking TOWARD a
+# tree/chest doesn't treat that same destination as an obstacle to dodge.
+func _collision_rids_of(node: Node) -> Array:
+	var rids: Array = []
+	if node == null:
+		return rids
+	for body in node.find_children("*", "StaticBody2D", true, false):
+		rids.append((body as StaticBody2D).get_rid())
+	return rids
+
+# Shows the stuck dialogue and instantly recalls the robot to its station.
+func _handle_stuck() -> void:
+	Global.lua_stuck_notice.emit("A LUA got stuck!")
+	_robot_vel      = Vector2.ZERO
 	_robot.position = Vector2.ZERO
 
 # ── Search helpers ────────────────────────────────────────────────

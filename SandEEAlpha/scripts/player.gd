@@ -26,6 +26,36 @@ var _has_boat_cached: bool = false
 # Resolved once instead of walking the scene tree every physics frame.
 var _world_node_cache: Node = null
 
+# ── Snowfall weather effect ───────────────────────────────────────
+# Single GPUParticles2D under the camera — follows it for free via normal
+# transform inheritance, so there's no per-frame script cost while active.
+# Biome is only polled twice a second (see _biome_check_timer), not per-frame.
+var _snow_particles:     GPUParticles2D = null
+var _in_snow_biome:      bool = false
+var _biome_check_timer:  Timer = null
+var _snow_fade_tween:    Tween = null
+const SNOW_FADE_TIME: float = 1.5
+
+# ── Snowstorm ─────────────────────────────────────────────────────
+# Rolled once per day-start (Global.day_started, fired by day_night_cycle.gd)
+# while standing in snow — no per-frame cost. Ends on leaving snow biome
+# (checked in the same 0.5s poll as the base snowfall) or when night falls.
+const SNOWSTORM_CHANCE:      float = 0.2   # 1 in 5
+const SNOWSTORM_SPEED_MULT:  float = 0.55
+const STORM_SPREAD:          float = 45.0
+const STORM_VEL_MIN:         float = 70.0
+const STORM_VEL_MAX:         float = 120.0
+const CALM_SPREAD:           float = 15.0
+const CALM_VEL_MIN:          float = 35.0
+const CALM_VEL_MAX:          float = 60.0
+# Storm coverage/density — still a single GPU-simulated particle system (one
+# draw call), just a bigger emission volume and more of them in it. Sized to
+# stay full-screen even at the lowest camera zoom (0.5x, see pause_menu.gd).
+const CALM_AMOUNT:           int   = 80
+const STORM_AMOUNT:          int   = 4000  # 10x — still one GPU-instanced draw call
+const CALM_BOX_EXTENTS:      Vector3 = Vector3(900.0, 350.0, 1.0)
+const STORM_BOX_EXTENTS:     Vector3 = Vector3(1800.0, 1000.0, 1.0)
+
 # ── Direction map ─────────────────────────────────────────────────
 const DIRS: Array = [
 	{"name": "south",      "vec": Vector2( 0,  1)},
@@ -64,6 +94,15 @@ func _ready() -> void:
 	Global.Hotbar_updated.connect(_refresh_has_boat_cache)
 	_refresh_has_boat_cache()
 
+	_snow_particles = _build_snow_particles()
+	_biome_check_timer = Timer.new()
+	_biome_check_timer.wait_time = 0.5
+	_biome_check_timer.autostart = true
+	_biome_check_timer.timeout.connect(_check_biome)
+	add_child(_biome_check_timer)
+	Global.day_started.connect(_on_day_started)
+	Global.night_started.connect(_on_night_started)
+
 func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
 
@@ -100,7 +139,8 @@ func get_input() -> void:
 	).normalized()
 	var want_sprint: bool = Input.is_key_pressed(KEY_SHIFT) and input_direction != Vector2.ZERO
 	_sprinting = want_sprint and not _stamina_exhausted
-	velocity = input_direction * movement_speed * (SPRINT_MULTIPLIER if _sprinting else 1.0)
+	var storm_mult: float = SNOWSTORM_SPEED_MULT if Global.snowstorm_active else 1.0
+	velocity = input_direction * movement_speed * (SPRINT_MULTIPLIER if _sprinting else 1.0) * storm_mult
 
 func _physics_process(delta: float) -> void:
 	if get_tree().paused:
@@ -179,6 +219,110 @@ func _compute_has_boat() -> bool:
 			if d.item_type == "boat" or d.item_name.to_lower().contains("boat"):
 				return true
 	return false
+
+# ── Snowfall weather effect ────────────────────────────────────────
+func _build_snow_particles() -> GPUParticles2D:
+	var p := GPUParticles2D.new()
+	p.name         = "SnowParticles"
+	p.z_index      = 900
+	p.amount       = CALM_AMOUNT   # kept low — GPU-simulated, but no need to overdo it
+	p.lifetime     = 4.0
+	p.preprocess   = 2.0    # already mid-fall the moment it's switched on
+	p.local_coords = true   # simulated relative to the camera — free follow, no script cost
+	p.emitting     = false
+	p.visible      = false
+	p.modulate.a   = 0.0
+	p.texture      = SHADOW_TEXTURE   # reuse the existing soft blob texture, tinted white below
+	p.position     = Vector2(0.0, -100.0)
+
+	var mat := ParticleProcessMaterial.new()
+	mat.direction             = Vector3(0.1, 1.0, 0.0)
+	mat.spread                = CALM_SPREAD
+	mat.gravity               = Vector3(0.0, 40.0, 0.0)
+	mat.initial_velocity_min  = CALM_VEL_MIN
+	mat.initial_velocity_max  = CALM_VEL_MAX
+	mat.angular_velocity_min  = -30.0
+	mat.angular_velocity_max  = 30.0
+	mat.scale_min             = 0.10
+	mat.scale_max             = 0.22
+	mat.color                 = Color(1.0, 1.0, 1.0, 0.9)
+	mat.emission_shape        = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	mat.emission_box_extents  = CALM_BOX_EXTENTS   # comfortably wider/taller than any viewport at typical zoom
+	p.process_material = mat
+
+	$mainCam.add_child(p)
+	return p
+
+# Polled on a 0.5s timer instead of every physics frame — a single tile
+# lookup twice a second is negligible next to the cost of getting this wrong.
+func _check_biome() -> void:
+	var world_node := _get_world_node()
+	if world_node == null or not world_node.has_method("is_snow_biome_at"):
+		return
+	var is_snow: bool = bool(world_node.call("is_snow_biome_at", global_position))
+	if Global.snowstorm_active and not is_snow:
+		_end_snowstorm()
+	if is_snow == _in_snow_biome:
+		return
+	_in_snow_biome = is_snow
+	_set_snow_effect(is_snow)
+
+# ── Snowstorm ─────────────────────────────────────────────────────
+func _on_day_started() -> void:
+	if not Global.snowstorm_active and _in_snow_biome and randf() < SNOWSTORM_CHANCE:
+		_start_snowstorm()
+
+func _on_night_started() -> void:
+	if Global.snowstorm_active:
+		_end_snowstorm()
+
+func _start_snowstorm() -> void:
+	Global.snowstorm_active = true
+	Global.snowstorm_changed.emit(true)
+	_apply_storm_intensity(true)
+
+func _end_snowstorm() -> void:
+	Global.snowstorm_active = false
+	Global.snowstorm_changed.emit(false)
+	_apply_storm_intensity(false)
+
+# Reuses the single snowfall particle system — no extra nodes. "Heavier"
+# snow is just faster/wider-spread existing particles, all cheap runtime
+# property writes with no reallocation.
+func _apply_storm_intensity(active: bool) -> void:
+	if _snow_particles == null:
+		return
+	_snow_particles.speed_scale = 2.0 if active else 1.0
+	_snow_particles.amount      = STORM_AMOUNT if active else CALM_AMOUNT
+	var mat: ParticleProcessMaterial = _snow_particles.process_material as ParticleProcessMaterial
+	if mat != null:
+		mat.spread               = STORM_SPREAD if active else CALM_SPREAD
+		mat.initial_velocity_min = STORM_VEL_MIN if active else CALM_VEL_MIN
+		mat.initial_velocity_max = STORM_VEL_MAX if active else CALM_VEL_MAX
+		mat.emission_box_extents = STORM_BOX_EXTENTS if active else CALM_BOX_EXTENTS
+	# amount changes need a restart to actually resize the particle buffer —
+	# without it the extra particles never spawn until the next full cycle.
+	if _snow_particles.emitting:
+		_snow_particles.restart()
+
+func _set_snow_effect(active: bool) -> void:
+	if _snow_particles == null:
+		return
+	if _snow_fade_tween != null and _snow_fade_tween.is_valid():
+		_snow_fade_tween.kill()
+
+	if active:
+		_snow_particles.emitting = true
+		_snow_particles.visible  = true
+		_snow_fade_tween = create_tween()
+		_snow_fade_tween.tween_property(_snow_particles, "modulate:a", 1.0, SNOW_FADE_TIME)
+	else:
+		_snow_fade_tween = create_tween()
+		_snow_fade_tween.tween_property(_snow_particles, "modulate:a", 0.0, SNOW_FADE_TIME)
+		_snow_fade_tween.tween_callback(func() -> void:
+			_snow_particles.emitting = false
+			_snow_particles.visible  = false
+		)
 
 func _get_world_node() -> Node:
 	if is_instance_valid(_world_node_cache):

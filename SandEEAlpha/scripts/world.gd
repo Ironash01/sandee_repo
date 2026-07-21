@@ -758,6 +758,15 @@ func _cell_biome_type(tile_coord: Vector2i) -> int:
 	if a == Vector2i(1, 1): return 2
 	return -1
 
+# Public: true if the given world position sits on snowy terrain — used by
+# weather effects (e.g. the player-attached snowfall particles).
+# NOTE: _cell_biome_type()'s return codes (0=Plain,1=Desert,2=Snowy,-1=Water)
+# are its own numbering, NOT the Terrain enum above (Water=0,Plain=1,
+# Desert=2,Snowy=3) — comparing against Terrain.Snowy here would be wrong.
+func is_snow_biome_at(world_pos: Vector2) -> bool:
+	var tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(world_pos))
+	return _cell_biome_type(tile) == 2
+
 # ── Terrain Generation ───────────────────────────────────────────────
 func _generate_terrain() -> void:
 	var cell_offset := Vector2i(width, height) / 2

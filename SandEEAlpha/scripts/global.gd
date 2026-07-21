@@ -76,6 +76,13 @@ signal inventory_toggled(is_open: bool)
 signal block_mode_changed(enabled: bool)
 signal item_picked_up(item_name: String, item_type: String)
 signal hover_label_changed(text: String)
+signal lua_stuck_notice(message: String)
+
+# ── Day/night + weather ──────────────────────────────────────────
+signal day_started
+signal night_started
+signal snowstorm_changed(active: bool)
+var snowstorm_active: bool = false
 
 # ── Missions ──────────────────────────────────────────────────────
 var missions: Array = []
