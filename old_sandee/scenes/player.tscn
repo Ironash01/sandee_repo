@@ -1,8 +1,8 @@
-[gd_scene format=3 uid="uid://bb3l8tfms77vn"]
+[gd_scene format=3 uid="uid://ctvsablv7oxbp"]
 
-[ext_resource type="Script" uid="uid://df1jv8llv5qse" path="res://scripts/player_body.gd" id="1_p0emr"]
+[ext_resource type="Script" uid="uid://c5enodolxo7sh" path="res://scripts/player_body.gd" id="1_p0emr"]
 [ext_resource type="Texture2D" uid="uid://bahdkohgfum8p" path="res://sprites/Astronaut Player/Astronaut Player.png" id="2_gfdqb"]
-[ext_resource type="Script" uid="uid://dpx3dghgbh2l0" path="res://scenes/interaction_shape.gd" id="3_3li8b"]
+[ext_resource type="Script" uid="uid://y4jt252w52yw" path="res://scenes/interaction_shape.gd" id="3_3li8b"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_phglh"]
 size = Vector2(20, 31)
@@ -24,6 +24,7 @@ tracks/0/keys = {
 
 [sub_resource type="Animation" id="Animation_m1xck"]
 resource_name = "idle_down"
+length = 0.26666668
 loop_mode = 1
 tracks/0/type = "value"
 tracks/0/imported = false
@@ -55,6 +56,7 @@ tracks/0/keys = {
 
 [sub_resource type="Animation" id="Animation_xtyfu"]
 resource_name = "idle_up"
+length = 0.2
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true

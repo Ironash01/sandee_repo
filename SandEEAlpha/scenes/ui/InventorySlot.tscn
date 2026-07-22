@@ -1,0 +1,143 @@
+[gd_scene format=3 uid="uid://q3np21teydc0"]
+
+[ext_resource type="Script" uid="uid://l6k3oj0xgnmm" path="res://scripts/inventory_slot.gd" id="1_d7lwx"]
+[ext_resource type="Texture2D" uid="uid://ha3i74xw7xcm" path="res://sprites/ui/SandEE_UIAlpha.png" id="2_4fflr"]
+[ext_resource type="Texture2D" uid="uid://bg7iv6t8kx5jj" path="res://sprites/items/SandEE_TemplateSword.png" id="3_bjutu"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_tqf7h"]
+atlas = ExtResource("2_4fflr")
+region = Rect2(32, 96, 32, 32)
+
+[sub_resource type="StyleBoxLine" id="StyleBoxLine_ir7pf"]
+grow_begin = 0.0
+grow_end = 0.0
+thickness = 0
+
+[node name="InventorySlot" type="Control" unique_id=1036941907]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 3
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -20.0
+offset_top = -20.0
+offset_right = 20.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+script = ExtResource("1_d7lwx")
+
+[node name="SlotTexture" type="TextureRect" parent="." unique_id=2030535090]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+texture = SubResource("AtlasTexture_tqf7h")
+
+[node name="ItemIcon" type="Sprite2D" parent="." unique_id=1764284443]
+position = Vector2(20, 20)
+scale = Vector2(1.4, 1.4)
+texture = ExtResource("3_bjutu")
+
+[node name="ItemQuantity" type="Label" parent="." unique_id=1745754291]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 0.762
+anchor_right = 1.0
+anchor_bottom = 0.762
+offset_left = -10.0
+offset_top = -8.480001
+offset_right = 2.0
+offset_bottom = 8.519999
+grow_horizontal = 0
+grow_vertical = 2
+text = "1"
+
+[node name="ItemButton" type="Button" parent="." unique_id=1447055990]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/normal = SubResource("StyleBoxLine_ir7pf")
+
+[node name="DetailsPanel" type="ColorRect" parent="." unique_id=1267373733]
+visible = false
+layout_mode = 0
+offset_left = 46.0
+offset_right = 159.0
+offset_bottom = 74.0
+color = Color(0.288518, 0.28851798, 0.28851798, 1)
+
+[node name="ItemName" type="Label" parent="DetailsPanel" unique_id=1760782796]
+layout_mode = 1
+offset_left = 5.0
+offset_right = 45.0
+offset_bottom = 17.0
+text = "Name"
+
+[node name="ItemType" type="Label" parent="DetailsPanel" unique_id=450015362]
+layout_mode = 1
+anchors_preset = 4
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_left = 5.0
+offset_top = -8.5
+offset_right = 45.0
+offset_bottom = 8.5
+grow_vertical = 2
+text = "Item Type"
+
+[node name="ItemEffect" type="Label" parent="DetailsPanel" unique_id=325828070]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 5.0
+offset_top = -17.0
+offset_right = 49.0
+grow_vertical = 0
+text = "Effect"
+
+[node name="UsagePanel" type="ColorRect" parent="." unique_id=1608724031]
+visible = false
+layout_mode = 1
+offset_left = -4.0
+offset_top = -56.0
+offset_right = 44.0
+offset_bottom = -4.0
+color = Color(0.21176471, 0.21176471, 0.21176471, 0)
+
+[node name="UseButton" type="Button" parent="UsagePanel" unique_id=520571730]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -22.5
+offset_right = 22.5
+offset_bottom = 25.0
+grow_horizontal = 2
+text = "USE"
+
+[node name="DropButton" type="Button" parent="UsagePanel" unique_id=822635591]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -22.5
+offset_top = -25.0
+offset_right = 22.5
+grow_horizontal = 2
+grow_vertical = 0
+text = "DROP"
+
+[connection signal="mouse_entered" from="ItemButton" to="." method="_on_item_button_mouse_entered"]
+[connection signal="mouse_exited" from="ItemButton" to="." method="_on_item_button_mouse_exited"]
+[connection signal="pressed" from="ItemButton" to="." method="_on_item_button_pressed"]
