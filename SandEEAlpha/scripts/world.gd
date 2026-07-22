@@ -1,7 +1,11 @@
 extends Node2D
 
 enum Terrain { Water, Plain, Desert, Snowy }
+@export var player : CharacterBody2D
 
+#spawn center
+
+var spawn_center : Vector2
 # For Terrain Gen
 const WATER_THRESHOLD: float = 0.33
 const SNOW_THRESHOLD: float = 0.38
@@ -132,7 +136,7 @@ func _generate_points() -> PackedVector2Array:
 	while not spawn_points.is_empty(): # while there's still points to generate from
 		# pick random point from spawn points
 		var spawn_point_index: int = rng.randi_range(0, spawn_points.size() - 1)
-		var spawn_center: Vector2 = points[spawn_points[spawn_point_index]]
+		spawn_center = points[spawn_points[spawn_point_index]]
 		var point_accepted: bool = false
 		
 		# until rejection
@@ -192,3 +196,6 @@ func _point_to_cell_index(point: Vector2, cell_size: float, grid_width: int, gri
 	assert(x < grid_width, "Out of bounds: x")
 	assert(y < grid_height, "Out of bounds. y = %.3f. grid_y = %f. cell_size = %f" % [point.y, point.y / cell_size, cell_size])
 	return x + y * grid_width
+	
+func spawn_player():
+	player.position = Vector2(spawn_center)

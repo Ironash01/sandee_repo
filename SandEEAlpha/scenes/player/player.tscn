@@ -1,9 +1,12 @@
 [gd_scene format=3 uid="uid://b2luk2qj6moim"]
 
 [ext_resource type="Texture2D" uid="uid://bahdkohgfum8p" path="res://sprites/Astronaut Player/Astronaut Player.png" id="1_8afob"]
+[ext_resource type="Script" uid="uid://iqxvatxxyy5n" path="res://scripts/player.gd" id="1_dovo2"]
+[ext_resource type="Script" uid="uid://362km8fwe8ja" path="res://scripts/animation_player.gd" id="3_gmlin"]
+[ext_resource type="PackedScene" uid="uid://b4g45xju68url" path="res://scenes/ui/inventory_ui.tscn" id="4_lvxji"]
 
 [sub_resource type="Animation" id="Animation_gmlin"]
-length = 0.001
+length = 0.26666668
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
@@ -17,9 +20,57 @@ tracks/0/keys = {
 "values": [0]
 }
 
+[sub_resource type="Animation" id="Animation_0owmy"]
+resource_name = "idle_down"
+length = 0.06666667
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath(".:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 1,
+"values": [0]
+}
+
+[sub_resource type="Animation" id="Animation_qek5x"]
+resource_name = "idle_side"
+length = 0.06666667
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath(".:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 1,
+"values": [8]
+}
+
+[sub_resource type="Animation" id="Animation_5gtgg"]
+resource_name = "idle_up"
+length = 0.06666667
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath(".:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 1,
+"values": [16]
+}
+
 [sub_resource type="Animation" id="Animation_lvxji"]
 resource_name = "walk_down"
-length = 0.46666667
+length = 0.5
 loop_mode = 1
 tracks/0/type = "value"
 tracks/0/imported = false
@@ -28,15 +79,32 @@ tracks/0/path = NodePath(".:frame")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
-"times": PackedFloat32Array(0, 0.06666667, 0.13333334, 0.2, 0.26666668, 0.33333334, 0.4),
-"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1),
+"times": PackedFloat32Array(0, 0.1, 0.16666667, 0.3, 0.36666667, 0.43333334),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [1, 2, 3, 4, 5, 7]
+}
+
+[sub_resource type="Animation" id="Animation_75vfm"]
+resource_name = "walk_side"
+length = 0.3
+loop_mode = 1
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath(".:frame")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 0.033333335, 0.06666667, 0.10000001, 0.13333334, 0.16666667, 0.20000002, 0.23333335),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1),
 "update": 1,
-"values": [1, 2, 3, 4, 5, 6, 7]
+"values": [8, 9, 10, 11, 12, 13, 14, 15]
 }
 
 [sub_resource type="Animation" id="Animation_p47bc"]
 resource_name = "walk_up"
-length = 0.4
+length = 0.36666667
 loop_mode = 1
 tracks/0/type = "value"
 tracks/0/imported = false
@@ -54,13 +122,63 @@ tracks/0/keys = {
 [sub_resource type="AnimationLibrary" id="AnimationLibrary_75vfm"]
 _data = {
 &"RESET": SubResource("Animation_gmlin"),
+&"idle_down": SubResource("Animation_0owmy"),
+&"idle_side": SubResource("Animation_qek5x"),
+&"idle_up": SubResource("Animation_5gtgg"),
 &"walk_down": SubResource("Animation_lvxji"),
+&"walk_side": SubResource("Animation_75vfm"),
 &"walk_up": SubResource("Animation_p47bc")
 }
 
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_h17s1"]
+animation = &"idle_side"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_gx1jg"]
+animation = &"idle_up"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_0owmy"]
+animation = &"idle_side"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_qek5x"]
+animation = &"idle_down"
+
 [sub_resource type="AnimationNodeBlendSpace2D" id="AnimationNodeBlendSpace2D_0owmy"]
+blend_point_0/node = SubResource("AnimationNodeAnimation_h17s1")
+blend_point_0/pos = Vector2(-1, 0.1)
+blend_point_1/node = SubResource("AnimationNodeAnimation_gx1jg")
+blend_point_1/pos = Vector2(0, -1.1)
+blend_point_2/node = SubResource("AnimationNodeAnimation_0owmy")
+blend_point_2/pos = Vector2(1, 0)
+blend_point_3/node = SubResource("AnimationNodeAnimation_qek5x")
+blend_point_3/pos = Vector2(0, 1.1)
+min_space = Vector2(-1, -1.1)
+max_space = Vector2(1, 1.1)
+blend_mode = 1
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_gmlin"]
+animation = &"walk_side"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_lvxji"]
+animation = &"walk_side"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_p47bc"]
+animation = &"walk_down"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_75vfm"]
+animation = &"walk_up"
 
 [sub_resource type="AnimationNodeBlendSpace2D" id="AnimationNodeBlendSpace2D_qek5x"]
+blend_point_0/node = SubResource("AnimationNodeAnimation_gmlin")
+blend_point_0/pos = Vector2(-1, 0)
+blend_point_1/node = SubResource("AnimationNodeAnimation_lvxji")
+blend_point_1/pos = Vector2(1, 0)
+blend_point_2/node = SubResource("AnimationNodeAnimation_p47bc")
+blend_point_2/pos = Vector2(0, 1.1)
+blend_point_3/node = SubResource("AnimationNodeAnimation_75vfm")
+blend_point_3/pos = Vector2(0, -1.1)
+min_space = Vector2(-1, -1.1)
+max_space = Vector2(1, 1.1)
+blend_mode = 1
 
 [sub_resource type="AnimationNodeStateMachineTransition" id="AnimationNodeStateMachineTransition_5gtgg"]
 advance_mode = 2
@@ -73,41 +191,90 @@ advance_condition = &"is_moving"
 advance_mode = 2
 advance_condition = &"is_idle"
 
-[sub_resource type="AnimationNodeStateMachineTransition" id="AnimationNodeStateMachineTransition_fm80t"]
-advance_mode = 2
-
 [sub_resource type="AnimationNodeStateMachine" id="AnimationNodeStateMachine_gx1jg"]
 states/End/position = Vector2(695, 100)
 states/Start/position = Vector2(174, 94)
 states/idle/node = SubResource("AnimationNodeBlendSpace2D_0owmy")
 states/idle/position = Vector2(316, 100)
 states/walking/node = SubResource("AnimationNodeBlendSpace2D_qek5x")
-states/walking/position = Vector2(482, 100)
-transitions = ["Start", "idle", SubResource("AnimationNodeStateMachineTransition_5gtgg"), "idle", "walking", SubResource("AnimationNodeStateMachineTransition_h17s1"), "walking", "idle", SubResource("AnimationNodeStateMachineTransition_je7p5"), "walking", "End", SubResource("AnimationNodeStateMachineTransition_fm80t")]
+states/walking/position = Vector2(483, 100)
+transitions = ["Start", "idle", SubResource("AnimationNodeStateMachineTransition_5gtgg"), "idle", "walking", SubResource("AnimationNodeStateMachineTransition_h17s1"), "walking", "idle", SubResource("AnimationNodeStateMachineTransition_je7p5")]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dovo2"]
 size = Vector2(20, 33)
 
-[node name="Player" type="CharacterBody2D" unique_id=382532469]
+[sub_resource type="CircleShape2D" id="CircleShape2D_0owmy"]
+radius = 40.4475
 
-[node name="Sprite2D" type="Sprite2D" parent="." unique_id=2030758558]
+[node name="Player" type="CharacterBody2D" unique_id=382532469 groups=["Player"]]
+process_mode = 3
+script = ExtResource("1_dovo2")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=2027758664]
+z_index = 5
+zoom = Vector2(2, 2)
+
+[node name="PlayerSprite" type="Sprite2D" parent="." unique_id=2030758558]
 texture = ExtResource("1_8afob")
 hframes = 8
 vframes = 3
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=1461690480]
-root_node = NodePath("../Sprite2D")
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=1461690480 node_paths=PackedStringArray("animation_tree", "player")]
+root_node = NodePath("../PlayerSprite")
 libraries/ = SubResource("AnimationLibrary_75vfm")
+script = ExtResource("3_gmlin")
+animation_tree = NodePath("../PlayerAnimationTree")
+player = NodePath("..")
 
-[node name="AnimationTree" type="AnimationTree" parent="." unique_id=940601]
-root_node = NodePath("../Sprite2D")
+[node name="PlayerAnimationTree" type="AnimationTree" parent="." unique_id=940601]
+root_node = NodePath("../PlayerSprite")
 tree_root = SubResource("AnimationNodeStateMachine_gx1jg")
+advance_expression_base_node = NodePath("../AnimationPlayer")
 anim_player = NodePath("../AnimationPlayer")
 parameters/conditions/is_idle = false
 parameters/conditions/is_moving = false
-parameters/idle/blend_position = Vector2(0, 0)
-parameters/walking/blend_position = Vector2(0, 0)
+parameters/idle/blend_position = Vector2(-0.47283047, -0.05569625)
+parameters/walking/blend_position = Vector2(-0.0024330616, -0.013924122)
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=393008661]
+[node name="PlayerCol" type="CollisionShape2D" parent="." unique_id=393008661]
 position = Vector2(0, 6.5)
 shape = SubResource("RectangleShape2D_dovo2")
+
+[node name="Area2D" type="Area2D" parent="." unique_id=577045286]
+
+[node name="InteractionCol" type="CollisionShape2D" parent="Area2D" unique_id=1406951497]
+shape = SubResource("CircleShape2D_0owmy")
+
+[node name="InventoryUI" type="CanvasLayer" parent="." unique_id=866163215]
+
+[node name="ColorRect" type="ColorRect" parent="InventoryUI" unique_id=1494728434]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -350.0
+offset_top = -250.0
+offset_right = 350.0
+offset_bottom = 250.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+color = Color(0.6706895, 0.6706895, 0.6706895, 1)
+
+[node name="InventoryUi" parent="InventoryUI/ColorRect" unique_id=762786338 instance=ExtResource("4_lvxji")]
+layout_mode = 1
+
+[node name="Label" type="Label" parent="InventoryUI" unique_id=564145799]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -32.0
+offset_top = 131.0
+offset_right = 33.0
+offset_bottom = 168.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 50
+text = "Inventory
+"
