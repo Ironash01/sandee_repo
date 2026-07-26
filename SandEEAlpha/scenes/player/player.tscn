@@ -11,7 +11,9 @@ radius = 40.4475
 
 [node name="Player" type="CharacterBody2D" unique_id=382532469 groups=["Player"]]
 process_mode = 3
+y_sort_enabled = true
 script = ExtResource("1_dovo2")
+metadata/_edit_vertical_guides_ = [702.0]
 
 [node name="mainCam" type="Camera2D" parent="." unique_id=2027758664]
 z_index = 5

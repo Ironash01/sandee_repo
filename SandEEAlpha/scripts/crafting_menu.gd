@@ -83,7 +83,8 @@ func _load_recipes() -> void:
 			var res: Resource = load(RECIPE_DIR + fname) as Resource
 			if res != null and res is CraftingRecipe:
 				var recipe: CraftingRecipe = res as CraftingRecipe
-				if recipe.result_item != null and recipe.result_item.is_craftable:
+				if recipe.result_item != null and recipe.result_item.is_craftable \
+						and not recipe.result_item.is_dev_item:
 					_recipes.append(recipe)
 		fname = dir.get_next()
 	dir.list_dir_end()
@@ -148,7 +149,7 @@ func _build() -> void:
 
 	# Main panel
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(600 * s, 420 * s)
+	panel.custom_minimum_size = Vector2(760 * s, 520 * s)
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(16*s), int(16*s), int(14*s), int(16*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	outer.add_child(panel)
@@ -197,15 +198,15 @@ func _build() -> void:
 	vbox.add_child(body)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size    = Vector2(int(200 * s), 0)
+	scroll.custom_minimum_size    = Vector2(int(320 * s), 0)
 	scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(scroll)
 
 	_recipe_list = GridContainer.new()
-	_recipe_list.columns = 3
-	_recipe_list.add_theme_constant_override("h_separation", int(4 * s))
-	_recipe_list.add_theme_constant_override("v_separation", int(4 * s))
+	_recipe_list.columns = 4
+	_recipe_list.add_theme_constant_override("h_separation", int(8 * s))
+	_recipe_list.add_theme_constant_override("v_separation", int(8 * s))
 	_recipe_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_recipe_list)
 
@@ -340,7 +341,7 @@ func _filter_and_refresh() -> void:
 	for i in range(_filtered.size()):
 		var recipe: CraftingRecipe = _filtered[i] as CraftingRecipe
 		var btn    := Button.new()
-		btn.custom_minimum_size     = Vector2(int(56 * s), int(56 * s))
+		btn.custom_minimum_size     = Vector2(Global.ITEM_SLOT_SIZE * s, Global.ITEM_SLOT_SIZE * s)
 		btn.icon                    = recipe.result_item.icon
 		btn.expand_icon             = true
 		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
@@ -438,7 +439,14 @@ func hide_menu() -> void:
 	visible = false
 	Global.close_ui()
 
+# E (the "inventory" action) also closes the station menu here — unlike the
+# inventory panel, this menu isn't a child of the player, so player.gd never
+# sees the re-press to close it (any_ui_open() is already true while this is
+# open, so its own E-toggle branch is a no-op) — it must close itself.
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape") and visible:
+		get_viewport().set_input_as_handled()
+		hide_menu()
+	elif event.is_action_pressed("inventory") and visible:
 		get_viewport().set_input_as_handled()
 		hide_menu()

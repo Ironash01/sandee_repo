@@ -293,6 +293,12 @@ func _break() -> void:
 		if slot == null: continue
 		var drop: Node = ITEM_SCENE.instantiate()
 		drop.call("set_item_data", (slot as Dictionary)["data"] as ItemData)
-		get_parent().add_child(drop)
+		# World itself (via _world_ref, set by set_world_cell, falling back to
+		# the Global reference tree.gd already uses) rather than get_parent() —
+		# this node is now parented directly under World, not a TileMapLayer,
+		# but spell it out explicitly rather than relying on wherever the
+		# parent happens to be.
+		var drop_parent: Node = _world_ref if _world_ref != null else Global.world_node
+		drop_parent.add_child(drop)
 		(drop as Node2D).global_position = global_position + Vector2(randf_range(-20,20), randf_range(-20,20))
 	queue_free()

@@ -23,7 +23,15 @@
       "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://_tmp_daynight_test.tscn --quit)",
       "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://scenes/game_instance.tscn --quit-after 120)",
       "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://_tmp_storm_test.tscn --quit)",
-      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://_tmp_storm_test.tscn)"
+      "Bash(timeout 30 \"C:\\\\portable_programs\\\\Godot_v4.6-stable_win64.exe\\\\Godot_v4.6-stable_win64_console.exe\" --headless res://_tmp_storm_test.tscn)",
+      "Bash(grep -iE \"global.gd$|player.gd$\")",
+      "Bash(grep -iE \"player.tscn$\")",
+      "Skill(run)",
+      "Bash(where godot.exe)",
+      "Read(//e//**)",
+      "Read(//mnt/**)",
+      "Read(//c//**)",
+      "Bash(grep -n \"_spawn_exit_marker\\\\|^$\" SandEEAlpha/scripts/cave_world.gd)"
     ]
   }
 }

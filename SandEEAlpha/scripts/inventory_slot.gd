@@ -13,8 +13,9 @@ const C_DRAG_OVER  := Color(1.00, 0.85, 0.25, 1.00)
 var slot_index: int = -1
 var item: Variant = null
 
-var _hovered:   bool = false
-var _drag_over: bool = false
+var _hovered:      bool = false
+var _drag_over:    bool = false
+var _is_drag_source: bool = false
 
 # ── Child nodes (built in _ready) ────────────────────────────────
 var _bg:   ColorRect
@@ -22,11 +23,14 @@ var _icon: TextureRect
 var _qty:  Label
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(52, 52)
+	var sz: float = Global.ITEM_SLOT_SIZE * Global.ui_scale
+	custom_minimum_size = Vector2(sz, sz)
 	mouse_filter        = Control.MOUSE_FILTER_STOP
 	_build_visuals()
 
 func _build_visuals() -> void:
+	var s: float = Global.ui_scale
+
 	# Slot background
 	_bg = ColorRect.new()
 	_bg.color = C_SLOT_BG
@@ -40,21 +44,21 @@ func _build_visuals() -> void:
 	_icon.stretch_mode     = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_icon.mouse_filter     = Control.MOUSE_FILTER_IGNORE
 	_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_icon.offset_left   =  6
-	_icon.offset_top    =  6
-	_icon.offset_right  = -6
-	_icon.offset_bottom = -6
+	_icon.offset_left   =  int(8 * s)
+	_icon.offset_top    =  int(8 * s)
+	_icon.offset_right  = -int(8 * s)
+	_icon.offset_bottom = -int(8 * s)
 	_icon.visible       = false
 	add_child(_icon)
 
 	# Quantity label (bottom-right)
 	_qty = Label.new()
-	_qty.add_theme_font_size_override("font_size", 10)
+	_qty.add_theme_font_size_override("font_size", int(12 * s))
 	_qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_qty.offset_left   = -22
-	_qty.offset_top    = -14
-	_qty.offset_right  = -2
-	_qty.offset_bottom = -2
+	_qty.offset_left   = -int(26 * s)
+	_qty.offset_top    = -int(16 * s)
+	_qty.offset_right  = -int(2 * s)
+	_qty.offset_bottom = -int(2 * s)
 	_qty.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_qty.mouse_filter  = Control.MOUSE_FILTER_IGNORE
 	_qty.visible       = false
@@ -105,11 +109,13 @@ func _get_drag_data(_at_position: Vector2) -> Variant:
 	# Build a semi-transparent drag preview
 	var preview := TextureRect.new()
 	preview.texture             = (item["data"] as ItemData).icon
-	preview.custom_minimum_size = Vector2(44, 44)
+	var prev_sz: float = Global.ITEM_SLOT_SIZE * Global.ui_scale * 0.75
+	preview.custom_minimum_size = Vector2(prev_sz, prev_sz)
 	preview.expand_mode         = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	preview.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	preview.modulate            = Color(1, 1, 1, 0.72)
 	set_drag_preview(preview)
+	_is_drag_source = true
 	return {"from_index": slot_index, "item": item, "source": "inventory"}
 
 func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
@@ -149,8 +155,26 @@ func _update_visual() -> void:
 	else:
 		set_empty()
 
-# Clear drag-over highlight if drag exits without drop
+# Clear drag-over highlight if drag exits without drop; if this slot was the
+# drag's source and it wasn't accepted by any slot, drop the stack in the world.
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_DRAG_END:
 		_drag_over = false
 		queue_redraw()
+		if _is_drag_source:
+			_is_drag_source = false
+			if not get_viewport().gui_is_drag_successful():
+				_drop_to_world()
+
+func _drop_to_world() -> void:
+	if slot_index < 0 or slot_index >= Global.Inventory.size():
+		return
+	var slot: Variant = Global.Inventory[slot_index]
+	if slot == null:
+		return
+	if not Global.player_node:
+		return
+	var pos: Vector2 = (Global.player_node as Node2D).global_position + Vector2(0, 50)
+	Global.drop_item({"data": slot["data"], "quantity": slot["quantity"]}, pos)
+	Global.Inventory[slot_index] = null
+	Global.Inventory_updated.emit()

@@ -9,6 +9,17 @@ class_name ItemData
 @export_enum("material", "block", "door", "weapon", "consumable") var item_type: String = "material"
 @export var effect: String = ""
 
+# ── Dev items ─────────────────────────────────────────────────────
+## World-gen/game-placed only (e.g. cave ore placeholders) — never appears
+## in any player-facing UI (Hotbar, Inventory, crafting menu) and can never
+## be picked up, mined, or crafted into the inventory. Enforced centrally in
+## Global.add_item(), the single funnel every acquisition path goes through.
+@export var is_dev_item: bool = false
+
+# ── Weapon ────────────────────────────────────────────────────────
+## Enable to allow this weapon to cut solid grass tufts (grass is otherwise uncuttable)
+@export var is_sword: bool = false
+
 # ── Inventory icon ────────────────────────────────────────────────
 @export var icon: Texture2D
 

@@ -16,7 +16,8 @@ const C_NO_MAT   := Color(0.30, 0.20, 0.20, 1.00)
 const C_SEL      := Color(0.25, 0.40, 0.75, 1.00)
 
 const COLS       := 5
-const SLOT_SCENE := preload("res://scenes/ui/InventorySlot.tscn")
+const SLOT_SCENE  := preload("res://scenes/ui/InventorySlot.tscn")
+const TRASH_SCRIPT := preload("res://scripts/trash_slot.gd")
 
 const CRAFT_CATEGORIES := ["Materials", "Blocks", "Weapons & Tools", "Others"]
 const RECIPE_DIR: String = "res://resources/recipes/"
@@ -167,7 +168,7 @@ func _build() -> void:
 	outer.add_child(panel)
 
 	var stack := Control.new()
-	stack.custom_minimum_size = Vector2(i(380,s), i(300,s))
+	stack.custom_minimum_size = Vector2(i(620,s), i(460,s))
 	panel.add_child(stack)
 
 	# ── Inventory tab content ─────────────────────────────────────
@@ -179,6 +180,22 @@ func _build() -> void:
 	_craft_panel = _build_craft_content(s)
 	_craft_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	stack.add_child(_craft_panel)
+
+	# ── Trash slot (bottom of UI) — drag an item here to delete it ──
+	var trash_spacer := Control.new()
+	trash_spacer.custom_minimum_size = Vector2(0, i(10, s))
+	outer.add_child(trash_spacer)
+
+	var trash_row := HBoxContainer.new()
+	trash_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	trash_row.add_theme_constant_override("separation", i(8, s))
+	outer.add_child(trash_row)
+
+	var trash_lbl := _lbl("DRAG HERE TO DELETE", i(10, s), C_MUTED)
+	trash_row.add_child(trash_lbl)
+
+	var trash: Control = TRASH_SCRIPT.new()
+	trash_row.add_child(trash)
 
 func _make_tab(label: String, active: bool, s: float, cb: Callable) -> Button:
 	var btn := Button.new()
@@ -235,14 +252,20 @@ func _build_inv_content(s: float) -> Control:
 	root.add_theme_constant_override("separation", i(10, s))
 
 	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", i(14, s))
+	body.add_theme_constant_override("separation", i(20, s))
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(body)
+
+	var grid_wrap := CenterContainer.new()
+	grid_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid_wrap.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	body.add_child(grid_wrap)
 
 	var grid := GridContainer.new()
 	grid.columns = COLS
-	grid.add_theme_constant_override("h_separation", i(5, s))
-	grid.add_theme_constant_override("v_separation",  i(5, s))
-	body.add_child(grid)
+	grid.add_theme_constant_override("h_separation", i(10, s))
+	grid.add_theme_constant_override("v_separation",  i(10, s))
+	grid_wrap.add_child(grid)
 
 	for idx in range(Global.INVENTORY_SIZE):
 		var slot = SLOT_SCENE.instantiate()
@@ -253,15 +276,16 @@ func _build_inv_content(s: float) -> Control:
 
 	_tip_root = _build_tooltip(s)
 	body.add_child(_tip_root)
-	_tip_root.visible = false
 
 	return root
 
+# Permanent sidebar — always visible, shows the selected item's info or a
+# placeholder when nothing is selected.
 func _build_tooltip(s: float) -> Control:
 	var root := Control.new()
-	root.custom_minimum_size   = Vector2(i(160,s), i(200,s))
+	root.custom_minimum_size   = Vector2(i(220,s), 0)
 	root.size_flags_horizontal = Control.SIZE_SHRINK_END
-	root.size_flags_vertical   = Control.SIZE_SHRINK_BEGIN
+	root.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 
 	var panel := PanelContainer.new()
 	var ps    := _sb(C_TIP_BG, C_BORDER, 4, i(12,s), i(12,s), i(12,s), i(12,s))
@@ -279,18 +303,15 @@ func _build_tooltip(s: float) -> Control:
 	_tip_qty    = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_qty)
 	_tip_type   = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_type)
 	_tip_effect = _lbl("", i(11,s), C_EFFECT); vbox.add_child(_tip_effect)
-	var sp := Control.new(); sp.custom_minimum_size = Vector2(0, i(8,s)); vbox.add_child(sp)
-	_div(vbox)
-	var sp2 := Control.new(); sp2.custom_minimum_size = Vector2(0, i(6,s)); vbox.add_child(sp2)
-	var drop := Button.new()
-	drop.text = "DROP"
-	drop.add_theme_font_size_override("font_size", i(12, s))
-	var ds := _sb(Color(0.55,0.15,0.15,1), Color(0.80,0.25,0.25,1), 3, i(8,s), i(8,s), i(6,s), i(6,s))
-	drop.add_theme_stylebox_override("normal", ds)
-	drop.add_theme_color_override("font_color", Color(1.0, 0.85, 0.85, 1.0))
-	drop.pressed.connect(_on_drop_pressed)
-	vbox.add_child(drop)
+	_show_tip_empty()
 	return root
+
+func _show_tip_empty() -> void:
+	if _tip_name == null: return
+	_tip_name.text   = "No item selected"
+	_tip_qty.text    = ""
+	_tip_type.text   = ""
+	_tip_effect.text = ""
 
 # ── Crafting content ──────────────────────────────────────────────
 func _build_craft_content(s: float) -> Control:
@@ -322,15 +343,15 @@ func _build_craft_content(s: float) -> Control:
 
 	# Recipe list
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size    = Vector2(i(200, s), 0)
+	scroll.custom_minimum_size    = Vector2(i(300, s), 0)
 	scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(scroll)
 
 	_craft_list = GridContainer.new()
-	_craft_list.columns = 3
-	_craft_list.add_theme_constant_override("h_separation", i(4, s))
-	_craft_list.add_theme_constant_override("v_separation", i(4, s))
+	_craft_list.columns = 4
+	_craft_list.add_theme_constant_override("h_separation", i(8, s))
+	_craft_list.add_theme_constant_override("v_separation", i(8, s))
 	_craft_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_craft_list)
 
@@ -404,7 +425,7 @@ func _craft_filter_refresh() -> void:
 	for idx in range(_filtered.size()):
 		var r: CraftingRecipe = _filtered[idx] as CraftingRecipe
 		var btn := Button.new()
-		btn.custom_minimum_size     = Vector2(i(56, s), i(56, s))
+		btn.custom_minimum_size     = Vector2(Global.ITEM_SLOT_SIZE * s, Global.ITEM_SLOT_SIZE * s)
 		btn.icon                    = r.result_item.icon
 		btn.expand_icon             = true
 		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
@@ -507,8 +528,8 @@ func _refresh_inv() -> void:
 	var active_item: Variant = Global.Inventory[_active_idx] \
 		if _active_idx < Global.Inventory.size() else null
 	if active_item == null:
-		if _tip_root != null: _tip_root.visible = false
 		_active_idx = -1
+		_show_tip_empty()
 	elif _tip_qty != null:
 		_tip_qty.text = "Qty: %d / %d" % [active_item["quantity"], Global.MAX_STACK]
 
@@ -516,36 +537,15 @@ func _on_slot_clicked(idx: int) -> void:
 	if _tip_root == null: return
 	var item = Global.Inventory[idx] if idx < Global.Inventory.size() else null
 	if item == null:
-		_tip_root.visible = false; _active_idx = -1; return
+		_active_idx = -1
+		_show_tip_empty()
+		return
 	_active_idx = idx
 	var data: ItemData = item["data"] as ItemData
 	_tip_name.text   = data.item_name
 	_tip_qty.text    = "Qty: %d / %d" % [item["quantity"], Global.MAX_STACK]
 	_tip_type.text   = data.item_type.capitalize()
 	_tip_effect.text = ("+ " + data.effect) if data.effect != "" else ""
-	_tip_root.visible = true
-
-func _on_drop_pressed() -> void:
-	if _active_idx < 0: return
-	var slot: Variant = Global.Inventory[_active_idx]
-	if slot == null: return
-	if not Global.player_node: return
-
-	var pos: Vector2 = (Global.player_node as Node2D).global_position + Vector2(0, 50)
-	Global.drop_item({"data": slot["data"], "quantity": 1}, pos)
-
-	# Decrement this exact slot, not the first matching one
-	slot["quantity"] -= 1
-	if slot["quantity"] <= 0:
-		Global.Inventory[_active_idx] = null
-		if _tip_root != null: _tip_root.visible = false
-		_active_idx = -1
-	else:
-		# Keep tooltip open and show updated count immediately
-		if _tip_qty != null:
-			_tip_qty.text = "Qty: %d / %d" % [slot["quantity"], Global.MAX_STACK]
-
-	Global.Inventory_updated.emit()
 
 func _close() -> void:
 	get_parent().visible = false

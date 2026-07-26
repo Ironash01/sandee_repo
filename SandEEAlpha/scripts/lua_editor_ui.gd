@@ -29,6 +29,24 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build()
 	call_deferred("_find_lua_state")
+	Global.ui_scale_changed.connect(_on_ui_scale)
+
+func _on_ui_scale(_s: float) -> void:
+	var saved_code: String = _code_edit.text if _code_edit != null else ""
+	var was_visible: bool  = visible
+	var was_encycl: bool   = _encycl != null and _encycl.visible
+	for child in get_children():
+		child.queue_free()
+	await get_tree().process_frame
+	_build()
+	_code_edit.text = saved_code
+	if _running:
+		_run_btn.disabled   = true
+		_stop_btn.disabled  = false
+		_code_edit.editable = false
+	if was_encycl:
+		_toggle_encyclopedia()
+	visible = was_visible
 
 func _find_lua_state() -> void:
 	var npc: Node = get_parent().get_parent()
@@ -44,6 +62,8 @@ func _find_lua_state() -> void:
 
 # ── Build ─────────────────────────────────────────────────────────
 func _build() -> void:
+	var s: float = Global.ui_scale
+
 	var overlay := ColorRect.new()
 	overlay.color        = C_OVERLAY
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -55,45 +75,45 @@ func _build() -> void:
 	add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(700, 480)
+	panel.custom_minimum_size = Vector2(i(960, s), i(620, s))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
-	ps.content_margin_left = 16; ps.content_margin_right  = 16
-	ps.content_margin_top  = 14; ps.content_margin_bottom = 16
+	ps.content_margin_left = i(18, s); ps.content_margin_right  = i(18, s)
+	ps.content_margin_top  = i(14, s); ps.content_margin_bottom = i(18, s)
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 10)
+	vbox.add_theme_constant_override("separation", i(10, s))
 	panel.add_child(vbox)
 
 	# ── Header ───────────────────────────────────────────────────
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 6)
+	header.add_theme_constant_override("separation", i(6, s))
 	vbox.add_child(header)
 
 	var icon := Label.new()
 	icon.text = "🤖"
-	icon.add_theme_font_size_override("font_size", 18)
+	icon.add_theme_font_size_override("font_size", i(20, s))
 	header.add_child(icon)
 
 	var title := Label.new()
 	title.text = "  LUA — Code Editor"
-	title.add_theme_font_size_override("font_size", 15)
+	title.add_theme_font_size_override("font_size", i(16, s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 
 	var enc_btn := Button.new()
 	enc_btn.text = "📖  Encyclopedia"
-	enc_btn.add_theme_font_size_override("font_size", 12)
+	enc_btn.add_theme_font_size_override("font_size", i(12, s))
 	var ebs := StyleBoxFlat.new()
 	ebs.bg_color = Color(0.12, 0.18, 0.36, 1.0)
 	ebs.border_color = C_BORDER
 	ebs.set_border_width_all(1); ebs.set_corner_radius_all(4)
-	ebs.content_margin_left = 10; ebs.content_margin_right  = 10
-	ebs.content_margin_top  =  4; ebs.content_margin_bottom =  4
+	ebs.content_margin_left = i(10, s); ebs.content_margin_right  = i(10, s)
+	ebs.content_margin_top  = i(4, s);  ebs.content_margin_bottom = i(4, s)
 	enc_btn.add_theme_stylebox_override("normal",  ebs)
 	enc_btn.add_theme_stylebox_override("hover",   ebs)
 	enc_btn.add_theme_stylebox_override("pressed", ebs)
@@ -103,37 +123,39 @@ func _build() -> void:
 
 	var close_btn := Button.new()
 	close_btn.text = "✕"; close_btn.flat = true
+	close_btn.add_theme_font_size_override("font_size", i(13, s))
 	close_btn.add_theme_color_override("font_color", C_MUTED)
+	close_btn.custom_minimum_size = Vector2(i(28, s), i(28, s))
 	close_btn.pressed.connect(_close)
 	header.add_child(close_btn)
 
 	_divider(vbox)
 
 	# ── Main body (code + output) ────────────────────────────────
-	_body = _build_body()
+	_body = _build_body(s)
 	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_body)
 
 	# ── Encyclopedia (hidden by default) ─────────────────────────
-	_encycl = _build_encyclopedia()
+	_encycl = _build_encyclopedia(s)
 	_encycl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_encycl.visible = false
 	vbox.add_child(_encycl)
 
 # ── Body: code editor + output ────────────────────────────────────
-func _build_body() -> Control:
+func _build_body(s: float) -> Control:
 	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", 10)
+	body.add_theme_constant_override("separation", i(14, s))
 
 	# Code editor
 	var ed_wrap := VBoxContainer.new()
 	ed_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ed_wrap.add_theme_constant_override("separation", 6)
+	ed_wrap.add_theme_constant_override("separation", i(6, s))
 	body.add_child(ed_wrap)
 
 	var ed_lbl := Label.new()
 	ed_lbl.text = "CODE"
-	ed_lbl.add_theme_font_size_override("font_size", 11)
+	ed_lbl.add_theme_font_size_override("font_size", i(11, s))
 	ed_lbl.add_theme_color_override("font_color", C_MUTED)
 	ed_wrap.add_child(ed_lbl)
 
@@ -144,40 +166,40 @@ func _build_body() -> Control:
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_EDITOR; es.border_color = C_BORDER
 	es.set_border_width_all(1); es.set_corner_radius_all(4)
-	es.content_margin_left = 8; es.content_margin_right  = 8
-	es.content_margin_top  = 8; es.content_margin_bottom = 8
+	es.content_margin_left = i(8, s); es.content_margin_right  = i(8, s)
+	es.content_margin_top  = i(8, s); es.content_margin_bottom = i(8, s)
 	_code_edit.add_theme_stylebox_override("normal", es)
 	_code_edit.add_theme_stylebox_override("focus",  es)
 	_code_edit.add_theme_color_override("font_color", C_TITLE)
-	_code_edit.add_theme_font_size_override("font_size", 13)
+	_code_edit.add_theme_font_size_override("font_size", i(14, s))
 	ed_wrap.add_child(_code_edit)
 
 	# Buttons: RUN  STOP  CLEAR
 	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 6)
+	btn_row.add_theme_constant_override("separation", i(6, s))
 	ed_wrap.add_child(btn_row)
 
-	_run_btn = _make_btn("▶  RUN",  Color(0.8, 1.0, 0.8, 1.0), C_OK,  _run_code)
+	_run_btn = _make_btn("▶  RUN",  Color(0.8, 1.0, 0.8, 1.0), C_OK,  _run_code, s)
 	_run_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_row.add_child(_run_btn)
 
-	_stop_btn = _make_btn("■  STOP", Color(1.0, 0.8, 0.6, 1.0), C_STOP, _stop_code)
+	_stop_btn = _make_btn("■  STOP", Color(1.0, 0.8, 0.6, 1.0), C_STOP, _stop_code, s)
 	_stop_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_stop_btn.disabled = true
 	btn_row.add_child(_stop_btn)
 
-	var clear_btn := _make_btn("✕ CLEAR", Color(1.0, 0.8, 0.8, 1.0), C_ERR, _clear_code)
+	var clear_btn := _make_btn("✕ CLEAR", Color(1.0, 0.8, 0.8, 1.0), C_ERR, _clear_code, s)
 	btn_row.add_child(clear_btn)
 
 	# Output panel
 	var out_wrap := VBoxContainer.new()
 	out_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	out_wrap.add_theme_constant_override("separation", 6)
+	out_wrap.add_theme_constant_override("separation", i(6, s))
 	body.add_child(out_wrap)
 
 	var out_lbl := Label.new()
 	out_lbl.text = "OUTPUT"
-	out_lbl.add_theme_font_size_override("font_size", 11)
+	out_lbl.add_theme_font_size_override("font_size", i(11, s))
 	out_lbl.add_theme_color_override("font_color", C_MUTED)
 	out_wrap.add_child(out_lbl)
 
@@ -186,8 +208,8 @@ func _build_body() -> Control:
 	var op := StyleBoxFlat.new()
 	op.bg_color = C_OUTPUT; op.border_color = C_BORDER
 	op.set_border_width_all(1); op.set_corner_radius_all(4)
-	op.content_margin_left = 8; op.content_margin_right  = 8
-	op.content_margin_top  = 8; op.content_margin_bottom = 8
+	op.content_margin_left = i(8, s); op.content_margin_right  = i(8, s)
+	op.content_margin_top  = i(8, s); op.content_margin_bottom = i(8, s)
 	out_panel.add_theme_stylebox_override("panel", op)
 	out_wrap.add_child(out_panel)
 
@@ -200,20 +222,20 @@ func _build_body() -> Control:
 	_output.scroll_following      = true
 	_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_output.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	_output.add_theme_font_size_override("font_size", 12)
+	_output.add_theme_font_size_override("font_size", i(13, s))
 	_output.add_theme_color_override("default_color", C_TITLE)
 	scroll.add_child(_output)
 
 	return body
 
 # ── Encyclopedia ──────────────────────────────────────────────────
-func _build_encyclopedia() -> Control:
+func _build_encyclopedia(s: float) -> Control:
 	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 10)
+	root.add_theme_constant_override("separation", i(10, s))
 
 	var hdr := Label.new()
 	hdr.text = "FUNCTION REFERENCE"
-	hdr.add_theme_font_size_override("font_size", 13)
+	hdr.add_theme_font_size_override("font_size", i(14, s))
 	hdr.add_theme_color_override("font_color", C_TITLE)
 	root.add_child(hdr)
 
@@ -225,57 +247,57 @@ func _build_encyclopedia() -> Control:
 	root.add_child(scroll)
 
 	var list := VBoxContainer.new()
-	list.add_theme_constant_override("separation", 14)
+	list.add_theme_constant_override("separation", i(14, s))
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(list)
 
-	_enc_section(list, "HIGH-LEVEL HELPERS")
+	_enc_section(list, "HIGH-LEVEL HELPERS", s)
 	_enc_entry(list, "auto_work()",
-		"Full work cycle: chop all trees in radius → deposit collected items into the nearest chest → return to station.")
+		"Full work cycle: chop all trees in radius → deposit collected items into the nearest chest → return to station.", s)
 	_enc_entry(list, "chop_trees(radius)",
-		"Chop every tree within radius blocks of the station (defaults to 20 if omitted). Collects dropped items after each tree, then walks home.")
+		"Chop every tree within radius blocks of the station (defaults to 20 if omitted). Collects dropped items after each tree, then walks home.", s)
 	_enc_entry(list, "deposit_chest()",
-		"Walk to the nearest chest within radius, deposit everything in the robot's inventory, then return to the station.")
+		"Walk to the nearest chest within radius, deposit everything in the robot's inventory, then return to the station.", s)
 	_enc_entry(list, "chest_contents()",
-		"Print the contents of the nearest chest to the output panel. Outputs each item and quantity, or a message if the chest is empty or out of range.")
+		"Print the contents of the nearest chest to the output panel. Outputs each item and quantity, or a message if the chest is empty or out of range.", s)
 	_enc_entry(list, "return_to_spawn()",
-		"Walk the robot directly back to the station and stop. Use this to abort a long task or reset position.")
+		"Walk the robot directly back to the station and stop. Use this to abort a long task or reset position.", s)
 
 	_divider(list)
 
-	_enc_section(list, "LOW-LEVEL PRIMITIVES")
+	_enc_section(list, "LOW-LEVEL PRIMITIVES", s)
 	_enc_entry(list, "move(x, y)",
-		"Set the robot's movement velocity to (x, y) pixels per second. Positive x = east, positive y = south. Call move(0, 0) to stop. Note: sequences of move() calls all fire instantly — only the last value takes effect.")
+		"Set the robot's movement velocity to (x, y) pixels per second. Positive x = east, positive y = south. Call move(0, 0) to stop. Note: sequences of move() calls all fire instantly — only the last value takes effect.", s)
 	_enc_entry(list, "interact()",
-		"Execute the pending action. With no sentinel move() before it, defaults to chopping all trees then returning home. Only one action runs at a time — calls while the robot is busy are ignored.")
+		"Execute the pending action. With no sentinel move() before it, defaults to chopping all trees then returning home. Only one action runs at a time — calls while the robot is busy are ignored.", s)
 	_enc_entry(list, "drop_item(\"name\", qty)",
-		"Drop qty copies of the named item at the robot's current position. Example: drop_item(\"Wood\", 5). The item must be in the robot's inventory.")
+		"Drop qty copies of the named item at the robot's current position. Example: drop_item(\"Wood\", 5). The item must be in the robot's inventory.", s)
 	_enc_entry(list, "print(val)",
-		"Print a value to the output panel. Accepts strings, numbers, and booleans. Output stays visible while the panel is open.")
+		"Print a value to the output panel. Accepts strings, numbers, and booleans. Output stays visible while the panel is open.", s)
 
 	return root
 
-func _enc_section(parent: Node, text: String) -> void:
+func _enc_section(parent: Node, text: String, s: float) -> void:
 	var lbl := Label.new()
 	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 10)
+	lbl.add_theme_font_size_override("font_size", i(10, s))
 	lbl.add_theme_color_override("font_color", C_MUTED)
 	parent.add_child(lbl)
 
-func _enc_entry(parent: Node, sig: String, desc: String) -> void:
+func _enc_entry(parent: Node, sig: String, desc: String, s: float) -> void:
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
+	box.add_theme_constant_override("separation", i(4, s))
 	parent.add_child(box)
 
 	var sig_lbl := Label.new()
 	sig_lbl.text = sig
-	sig_lbl.add_theme_font_size_override("font_size", 13)
+	sig_lbl.add_theme_font_size_override("font_size", i(14, s))
 	sig_lbl.add_theme_color_override("font_color", Color(0.55, 0.90, 1.00, 1.0))
 	box.add_child(sig_lbl)
 
 	var desc_lbl := Label.new()
 	desc_lbl.text = desc
-	desc_lbl.add_theme_font_size_override("font_size", 11)
+	desc_lbl.add_theme_font_size_override("font_size", i(12, s))
 	desc_lbl.add_theme_color_override("font_color", C_MUTED)
 	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(desc_lbl)
@@ -381,17 +403,20 @@ func _print_output(line: String) -> void:
 	_output.append_text(line + "\n")
 
 # ── Helpers ───────────────────────────────────────────────────────
-func _make_btn(label: String, font_col: Color, bg: Color, cb: Callable) -> Button:
+func i(base: int, s: float) -> int: return int(base * s)
+
+func _make_btn(label: String, font_col: Color, bg: Color, cb: Callable, s: float) -> Button:
 	var btn := Button.new()
 	btn.text = label
-	btn.custom_minimum_size = Vector2(0, 34)
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg; s.border_color = C_BORDER
-	s.set_border_width_all(1); s.set_corner_radius_all(4)
-	s.content_margin_top = 6; s.content_margin_bottom = 6
-	btn.add_theme_stylebox_override("normal",  s)
-	btn.add_theme_stylebox_override("hover",   s)
-	btn.add_theme_stylebox_override("pressed", s)
+	btn.custom_minimum_size = Vector2(0, i(38, s))
+	btn.add_theme_font_size_override("font_size", i(13, s))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg; sb.border_color = C_BORDER
+	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
+	sb.content_margin_top = i(6, s); sb.content_margin_bottom = i(6, s)
+	btn.add_theme_stylebox_override("normal",  sb)
+	btn.add_theme_stylebox_override("hover",   sb)
+	btn.add_theme_stylebox_override("pressed", sb)
 	btn.add_theme_color_override("font_color", font_col)
 	btn.pressed.connect(cb)
 	return btn

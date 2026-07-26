@@ -933,7 +933,5 @@ tile_set = SubResource("TileSet_71j4m")
 texture_filter = 1
 tile_set = SubResource("TileSet_qfnet")
 
-[node name="Camera2D" type="Camera2D" parent="." unique_id=1411188178]
-
 [node name="DayNightCycle" type="CanvasModulate" parent="."]
 script = ExtResource("2_dnc001")

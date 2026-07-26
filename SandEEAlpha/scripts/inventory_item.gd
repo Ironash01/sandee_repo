@@ -10,6 +10,9 @@ var scene_path: String = "res://scenes/ui/InventoryItem.tscn"
 var player_in_range: bool = false
 var npc_in_range:    Node  = null   # LuaNPC that is close enough to collect
 
+var quantity: int = 1
+var _qty_label: Label
+
 # ── Wobble ────────────────────────────────────────────────────────
 const WOBBLE_SPEED:      float = 3.0   # rotations per second (radians)
 const WOBBLE_AMPLITUDE:  float = 0.18  # radians (~10°)
@@ -25,6 +28,15 @@ func _ready() -> void:
 	if not Engine.is_editor_hint():
 		if item_data != null:
 			icon_sprite.texture = item_data.icon
+		_qty_label = Label.new()
+		_qty_label.add_theme_font_size_override("font_size", 12)
+		_qty_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+		_qty_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+		_qty_label.add_theme_constant_override("outline_size", 3)
+		_qty_label.position = Vector2(6, 6)
+		_qty_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_qty_label)
+		_update_qty_label()
 
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
@@ -43,7 +55,7 @@ func _process(delta: float) -> void:
 func pickup_item() -> void:
 	if item_data == null:
 		return
-	if Global.add_item({"quantity": 1, "data": item_data}):
+	if Global.add_item({"quantity": quantity, "data": item_data}):
 		queue_free()
 
 # ── NPC pickup — called directly by LuaNPC after interact ─────────
@@ -59,10 +71,18 @@ func npc_pickup(npc: Node) -> bool:
 	queue_free()
 	return true
 
-func set_item_data(data: ItemData) -> void:
+func set_item_data(data: ItemData, qty: int = 1) -> void:
 	item_data = data
+	quantity  = max(qty, 1)
 	if icon_sprite:
 		icon_sprite.texture = data.icon
+	_update_qty_label()
+
+func _update_qty_label() -> void:
+	if _qty_label == null:
+		return
+	_qty_label.visible = quantity > 1
+	_qty_label.text    = str(quantity)
 
 func _on_area_2d_body_entered(body: Node2D) -> void:
 	if body.is_in_group("Player"):

@@ -148,7 +148,10 @@ func _break() -> void:
 	if item_data != null:
 		var drop: Node = ITEM_SCENE.instantiate() as Node
 		drop.call("set_item_data", item_data)
-		get_parent().add_child(drop)
+		# World itself (via _world_ref, falling back to Global.world_node)
+		# rather than get_parent() — see chest_block.gd's _break() for why.
+		var drop_parent: Node = _world_ref if _world_ref != null else Global.world_node
+		drop_parent.add_child(drop)
 		drop.global_position = global_position + Vector2(0, -16)
 	queue_free()
 

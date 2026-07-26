@@ -66,6 +66,7 @@ func _update_color(delta: float) -> void:
 # used to roll the snowstorm chance and to cut a storm short when night falls.
 func _update_day_state() -> void:
 	var now_day: bool = is_daytime()
+	Global.is_daytime = now_day
 	if now_day and not _was_daytime:
 		Global.day_started.emit()
 	elif not now_day and _was_daytime:

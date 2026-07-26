@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://h6e61nnshom3"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_6yv2l"]
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_q1oyt"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_eq1bm"]
+atlas = ExtResource("1_q1oyt")
+region = Rect2(63.944, 0.224, 32, 32)
+
+[resource]
+script = ExtResource("1_6yv2l")
+item_name = "Stone"
+description = "The essence of the cavern."
+item_type = "block"
+icon = SubResource("AtlasTexture_eq1bm")
+is_placeable = true
+block_level = 5
+min_pickaxe_level = 1
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -325,7 +325,17 @@ func _set_snow_effect(active: bool) -> void:
 		)
 
 func _get_world_node() -> Node:
-	if is_instance_valid(_world_node_cache):
+	# is_inside_tree(), not just is_instance_valid() — entering/exiting a
+	# cave (game_instance.gd's enter_cave/exit_cave) swaps $World's child
+	# via remove_child(), never queue_free(), specifically so the overworld
+	# survives for the return trip. That means the old node stays "valid"
+	# forever, and without this check this cache would keep pointing at the
+	# stale (now off-tree) world — e.g. the water-avoidance code below would
+	# keep querying the OVERWORLD's Water layer using the player's new
+	# cave-space coordinates, and if that coincidentally lands on water,
+	# velocity gets clamped to zero every frame: looks exactly like the
+	# player being unable to move at all.
+	if is_instance_valid(_world_node_cache) and _world_node_cache.is_inside_tree():
 		return _world_node_cache
 	var scene: Node = get_tree().current_scene
 	if scene == null:
@@ -339,6 +349,12 @@ func _get_world_node() -> Node:
 	return world
 
 # ── Animation ─────────────────────────────────────────────────────
+# Public read of the player's current facing (world.gd's sword grass-cutting
+# needs this to pick which tiles are "in front" — _last_dir itself stays
+# private since nothing outside this file should be able to set it).
+func get_facing_dir() -> String:
+	return _last_dir
+
 func _get_closest_dir(vec: Vector2) -> String:
 	var best_dir: String = _last_dir
 	var best_dot: float  = -2.0

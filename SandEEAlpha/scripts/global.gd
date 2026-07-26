@@ -29,10 +29,59 @@ func draw_break_bar(ci: CanvasItem, progress: float, y_offset: float = -20.0) ->
 	var fill_w: float = BREAK_BAR_WIDTH * clampf(progress, 0.0, 1.0)
 	ci.draw_rect(Rect2(-half_w, y_offset, fill_w, BREAK_BAR_HEIGHT), BREAK_BAR_FILL)
 
+# ── Hitbox debug overlay helpers ────────────────────────────────────────
+# Moved out of world.gd so cave_world.gd (and any future world-like scene)
+# can draw the same hitbox visuals without duplicating this logic — the
+# only thing that ever differed between them was WHICH nodes to walk, not
+# HOW to draw a shape once found. `overlay` is the CanvasItem whose own
+# _draw()/draw signal callback is currently active — same "must be called
+# from inside the caller's own drawing pass" rule as draw_break_bar above,
+# it just also works transitively through these calls since Godot's rule
+# is about which CanvasItem issues the draw_* call, not which script does.
+#
+# Recursively finds every CollisionShape2D whose immediate parent is a
+# StaticBody2D or CharacterBody2D (the solid hitbox) — skips shapes parented
+# by Area2D (interact/click trigger ranges, not physical collision), and
+# doesn't care how deeply the body is nested (e.g. ObjectItem's collider
+# sits under Sprite2D/StaticBody2D, LuaNPC has two separate bodies).
+func draw_body_hitboxes(overlay: CanvasItem, root: Node, color: Color) -> void:
+	for child in root.get_children():
+		if child is CollisionShape2D and (child as CollisionShape2D).shape != null \
+				and (child.get_parent() is StaticBody2D or child.get_parent() is CharacterBody2D):
+			draw_shape_outline(overlay, child as CollisionShape2D, color)
+		draw_body_hitboxes(overlay, child, color)
+
+# Assumes axis-aligned shapes (none of the game's mob/block colliders are
+# rotated today) — draws an outline in the overlay's local space.
+func draw_shape_outline(overlay: CanvasItem, col: CollisionShape2D, color: Color) -> void:
+	var shape: Shape2D = col.shape
+	var center: Vector2 = overlay.to_local(col.global_position)
+	if shape is RectangleShape2D:
+		var size: Vector2 = (shape as RectangleShape2D).size
+		overlay.draw_rect(Rect2(center - size * 0.5, size), color, false, 2.0)
+	elif shape is CircleShape2D:
+		var r: float = (shape as CircleShape2D).radius
+		overlay.draw_arc(center, r, 0.0, TAU, 24, color, 2.0)
+	elif shape is CapsuleShape2D:
+		var cap: CapsuleShape2D = shape as CapsuleShape2D
+		var r: float = cap.radius
+		var half_h: float = cap.height * 0.5 - r
+		var top:    Vector2 = center + Vector2(0.0, -half_h)
+		var bottom: Vector2 = center + Vector2(0.0,  half_h)
+		overlay.draw_arc(top,    r, PI, TAU, 16, color, 2.0)
+		overlay.draw_arc(bottom, r, 0.0, PI, 16, color, 2.0)
+		overlay.draw_line(top + Vector2(-r, 0.0), bottom + Vector2(-r, 0.0), color, 2.0)
+		overlay.draw_line(top + Vector2( r, 0.0), bottom + Vector2( r, 0.0), color, 2.0)
+
 # ── Inventory constants ───────────────────────────────────────────
 const MAX_STACK:      int = 32
 const HOTBAR_SIZE:    int = 9
 const INVENTORY_SIZE: int = 20
+
+# Shared item-icon slot size (unscaled) — used by every UI that shows an
+# ItemData icon (inventory grid, hand-craft tab, crafting station, trash
+# slot) so icons read as the same size across all of them.
+const ITEM_SLOT_SIZE: float = 64.0
 
 # ── Storage — each slot is {"quantity": int, "data": ItemData} ────
 var Hotbar:    Array = []
@@ -83,6 +132,10 @@ signal day_started
 signal night_started
 signal snowstorm_changed(active: bool)
 var snowstorm_active: bool = false
+# Mirrored by day_night_cycle.gd on every crossing — lets code that needs to
+# know "is it day right now" (not just react to the transition) query this
+# directly instead of tracking the signals itself.
+var is_daytime: bool = true
 
 # ── Missions ──────────────────────────────────────────────────────
 var missions: Array = []
@@ -92,6 +145,7 @@ signal mission_completed(mission_id: String)
 # ── Player / world refs ───────────────────────────────────────────
 var player_node: Node = null
 var world_node:  Node = null
+var game_node:   Node = null  # game_instance.gd — CavePortal calls enter_cave()/exit_cave() on this
 
 @onready var inventory_slot_scene: PackedScene = preload("res://scenes/ui/InventorySlot.tscn")
 
@@ -99,6 +153,41 @@ func _ready() -> void:
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
 	_init_missions()
+
+# ── Centralized world debug/build-mode shortcuts ───────────────────────
+# Ctrl+Shift+H/C/T and the block-mode Ctrl toggle used to be hand-wired
+# into each world-like scene's own _input() (world.gd, then cave_world.gd
+# duplicating it) — every new scene type needed the same key-detection
+# copied in again. Detecting the keys HERE once and delegating to whichever
+# world is active (via has_method()/call(), same duck-typing convention
+# already used everywhere else in this codebase — e.g. placed blocks'
+# setup()/set_world_cell()) means a future scene just needs to implement
+# matching method names to get these shortcuts for free. World scripts
+# still own the actual toggle/draw logic — this only owns detecting the
+# keypress and routing it.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	var key_event := event as InputEventKey
+	if key_event.keycode == KEY_H and key_event.ctrl_pressed and key_event.shift_pressed:
+		_dispatch_to_world("toggle_hitboxes")
+	elif key_event.keycode == KEY_C and key_event.ctrl_pressed and key_event.shift_pressed:
+		_dispatch_to_world("toggle_chunk_borders")
+	elif key_event.keycode == KEY_T and key_event.ctrl_pressed and key_event.shift_pressed:
+		_dispatch_to_world("teleport_to_nearest_cave")
+	elif key_event.keycode == KEY_CTRL and not key_event.shift_pressed:
+		# Block mode itself is a plain global flag, not something any one
+		# world "owns" — flipping it here and letting each world's own
+		# per-frame ghost/grid update pick up the new value is simpler than
+		# also duck-typing a reaction method. (World.gd's old inline
+		# "ghost.visible = false" on toggle-off was redundant with that
+		# same per-frame check anyway, just hid it one frame sooner.)
+		block_mode = not block_mode
+		block_mode_changed.emit(block_mode)
+
+func _dispatch_to_world(method_name: String) -> void:
+	if world_node != null and is_instance_valid(world_node) and world_node.has_method(method_name):
+		world_node.call(method_name)
 
 func _init_missions() -> void:
 	missions = [
@@ -124,6 +213,12 @@ func reset_missions() -> void:
 # ── Add item ──────────────────────────────────────────────────────
 func add_item(item: Dictionary) -> bool:
 	var data: ItemData = item["data"] as ItemData
+	# Dev items (cave ore placeholders, etc.) are world-gen/game-placed only
+	# — this is the single funnel every acquisition path (mining drops,
+	# crafting results, chest transfers, starting-item grants) goes through,
+	# so rejecting here is enough to make them un-obtainable everywhere.
+	if data != null and data.is_dev_item:
+		return false
 	# 1. Stack in hotbar
 	for i in range(Hotbar.size()):
 		if Hotbar[i] != null \
@@ -234,7 +329,8 @@ func drop_item(inv_item: Dictionary, drop_position: Vector2) -> void:
 	if item_scene == null:
 		return
 	var inst: Node = item_scene.instantiate()
-	inst.call("set_item_data", inv_item["data"] as ItemData)
+	var qty: int = inv_item.get("quantity", 1)
+	inst.call("set_item_data", inv_item["data"] as ItemData, qty)
 	drop_position = adjust_drop_pos(drop_position)
 	(inst as Node2D).global_position = drop_position
 	get_tree().current_scene.add_child(inst)

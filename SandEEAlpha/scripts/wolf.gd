@@ -1,6 +1,19 @@
 extends CharacterBody2D
 
-const SPEED: float = 38.0
+const COMBAT_DATA: MobCombatData = preload("res://resources/mobs/wolf.tres")
+
+# ai_type -> AI script dispatch. Only "WOLF" exists today; add new entries
+# here as new AI types get built under scripts/AI/.
+const AI_SCRIPTS: Dictionary = {
+	"WOLF": preload("res://scripts/AI/WOLF.gd"),
+}
+
+# Mobs with damage > 1 hit the player on proximity contact (see _try_attack_player).
+const ATTACK_RANGE:    float = 24.0
+const ATTACK_COOLDOWN: float = 1.0
+
+var _ai:               RefCounted = null
+var _attack_cooldown:  float      = 0.0
 
 const DIRS: Array = [
 	{"name": "south",      "vec": Vector2( 0,  1)},
@@ -16,11 +29,6 @@ const DIRS: Array = [
 const SPRITE_BASE: String = "res://sprites/mobs/wolf/32x32_Simple_white_wolf_with_pixelated_art_style_a"
 const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png")
 
-enum State { IDLE, WALK }
-
-var _state: State = State.IDLE
-var _timer: float = 0.0
-var _walk_dir: Vector2 = Vector2.ZERO
 var _last_dir: String = "south"
 
 @onready var _sprite: AnimatedSprite2D = $AnimatedSprite2D
@@ -59,43 +67,34 @@ func _ready() -> void:
 	_sprite.sprite_frames = _shared_frames
 	_sprite.play("idle_south")
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 5.0), Vector2(0.6, 0.3), 0.35))
-	_timer = randf_range(0.5, 2.0)
 	_water_layer = get_parent().get_node_or_null("Water") as TileMapLayer
+	var ai_script: Script = AI_SCRIPTS.get(COMBAT_DATA.ai_type)
+	if ai_script != null:
+		_ai = ai_script.new()
 
 func _physics_process(delta: float) -> void:
-	_timer -= delta
-	if _timer <= 0.0:
-		_pick_new_action()
-
-	if _state == State.WALK:
-		var next_pos: Vector2 = global_position + _walk_dir * SPEED * delta
-		if _is_on_water(next_pos):
-			_state = State.IDLE
-			_walk_dir = Vector2.ZERO
-			_timer = 0.0
-		else:
-			velocity = _walk_dir * SPEED
-			_update_walk_anim(_walk_dir)
-			move_and_slide()
+	if _ai != null:
+		velocity = _ai.call("physics_update", self, COMBAT_DATA.speed, _water_layer, delta)
+	if velocity != Vector2.ZERO:
+		_update_walk_anim(velocity)
+		move_and_slide()
 	else:
-		velocity = Vector2.ZERO
 		_play_idle(_last_dir)
+	_try_attack_player(delta)
 
-func _is_on_water(world_pos: Vector2) -> bool:
-	if _water_layer == null:
-		return false
-	var tile: Vector2i = _water_layer.local_to_map(_water_layer.to_local(world_pos))
-	return _water_layer.get_cell_source_id(tile) != -1
-
-func _pick_new_action() -> void:
-	if _state == State.IDLE:
-		_state = State.WALK
-		_walk_dir = Vector2.from_angle(randf() * TAU)
-		_timer = randf_range(1.5, 4.0)
-	else:
-		_state = State.IDLE
-		_walk_dir = Vector2.ZERO
-		_timer = randf_range(1.0, 3.0)
+# Mobs with damage > 1 hit the player on proximity contact, on a cooldown.
+func _try_attack_player(delta: float) -> void:
+	if COMBAT_DATA.damage <= 1.0:
+		return
+	_attack_cooldown = maxf(0.0, _attack_cooldown - delta)
+	var p := Global.player_node as Node2D
+	if p == null or _attack_cooldown > 0.0:
+		return
+	if global_position.distance_to(p.global_position) > ATTACK_RANGE:
+		return
+	_attack_cooldown = ATTACK_COOLDOWN
+	Global.health = maxf(0.0, Global.health - COMBAT_DATA.damage)
+	Global.health_changed.emit(Global.health, Global.max_health)
 
 func _play_idle(dir: String) -> void:
 	var anim := "idle_" + dir.replace("-", "_")

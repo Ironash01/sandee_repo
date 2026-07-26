@@ -4,7 +4,6 @@ const TILE_SIZE = 32
 const TREE_SCENE:      PackedScene = preload("res://scenes/objects/Tree.tscn")
 const WOLF_SCENE:      PackedScene = preload("res://scenes/mobs/Wolf.tscn")
 const NEW_TREE_TEX:    Texture2D   = preload("res://sprites/tree/new_tree.webp")
-const SNOWY_TREE_TEX:  Texture2D   = preload("res://sprites/tilesets/basictree_alpha.png")
 const SHADOW_TEXTURE:  Texture2D   = preload("res://sprites/shadow/shadow_base.png")
 const ITEM_DROP_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 
@@ -19,9 +18,10 @@ const TREE_BASE_EXTRA_OFFSET_PX: float = 4.0
 const TREE_SHADOW_OFFSET_Y: float = -7.0
 
 # Ghost preview, placement grid, and cursor highlight all need to draw above
-# every Y-sorted world sprite (trees etc. use z_index = position.y / TILE_SIZE,
-# which can reach several hundred near the map edges) so they never get
-# visually overlapped by a tree the guide is standing in front of/behind.
+# every Y-sorted world sprite (player/trees/grass/placed blocks all use a
+# quantized z_index = int(y / TILE_SIZE), which can reach several hundred
+# near the map edges) so they never get visually overlapped by whatever the
+# guide is standing in front of/behind.
 const PLACEMENT_GUIDE_Z_INDEX: int = 2000
 
 enum Terrain { Water, Plain, Desert, Snowy }
@@ -39,6 +39,25 @@ const FORCED_PLAINS_RADIUS: float = 128
 const FOLIAGE_SPACING:    float = 16   # was 8 — wider spacing = ~4x fewer base points
 const SPAWN_CLEAR_TILES:  int   = 8
 const REJECTION_THRESHOLD: int  = 30
+
+# For Grass Gen — dense per-chunk fill (see _fill_chunk_grass), not a sparse
+# scatter: every chunk is filled to a random GRASS_CHUNK_COVERAGE_MIN..MAX
+# fraction of its eligible plains tiles at world-gen. World only decides
+# WHICH tiles get grass — how a single tuft looks/sizes/anchors/animates
+# lives in scripts/grass.gd (GrassTuft), instantiated via GRASS_SCENE.
+const GRASS_SCENE: PackedScene = preload("res://scenes/objects/Grass.tscn")
+const GRASS_CHUNK_COVERAGE_MIN: float = 0.15
+const GRASS_CHUNK_COVERAGE_MAX: float = 0.20
+# Per chunk fill, 70% of the time the target tile count is taken as one
+# compact cluster (nearest tiles to a random seed point) instead of spread
+# uniformly across the whole chunk.
+const GRASS_GROUPED_CHANCE: float = 0.70
+const GRASS_REGROW_INTERVAL: float = 600.0  # 10 minutes, matches the overworld day spawn cadence
+# How many chunks _fill_all_chunks_with_grass() processes before yielding a
+# frame — keeps the background fill from hitching gameplay while it catches
+# up after load. Higher = finishes filling in sooner but each yielded frame
+# does more work; lower = smoother but takes longer to fully fill in.
+const GRASS_CHUNKS_PER_FRAME: int = 4
 
 # For Large Forest Gen (plains and snowy only)
 const LARGE_FOREST_MIN_SEP:   int   = 100
@@ -65,8 +84,29 @@ const WOLF_SPAWN_CHANCE: float = 0.003  # was 0.08 — 8% of 5000 plains tiles =
 const WOLF_BAND_SIZE:    int   = 50
 const WOLF_SCAN_STEP:    int   = 5
 
+# One-shot at world-gen, one attempt per chunk (any land biome) — see
+# _spawn_cave_entrances(). CavePortal/CaveWorld/CaveGenerator handle
+# everything about what's actually inside.
+const CAVE_ENTRANCE_CHANCE:         float = 0.25   # per eligible chunk
+const CAVE_ENTRANCE_MIN_SPAWN_DIST: float = 200.0  # no caves closer than this to world spawn
+const CAVE_ENTRANCE_MIN_SEPARATION: float = 100.0  # no two caves closer than this to each other
+
+# Chunks a cave entrance claims are excluded from every other one-shot
+# generation pass (trees/forests, grass fill, wolves) — see
+# _is_chunk_cave_claimed(). Populated by _spawn_cave_entrances(), which must
+# therefore run BEFORE _spawn_wolves/_deferred_foliage (see the call order
+# where these are all queued via call_deferred()).
+var _cave_claimed_chunks: Dictionary = {}   # chunk coord (Vector2i) -> true
+var _cave_entrance_tiles: Array      = []   # placed entrance tiles, for the min-separation check
+
 # Trees beyond this radius have their Area2D monitoring disabled to avoid
 # O(n²) physics overhead. Must be larger than InteractArea radius (48px).
+# NOTE: grass deliberately does NOT use this per-node Area2D pattern — see
+# _try_cut_grass_with_sword below. A grass-scale
+# (thousands of tufts) periodic full-group scan was tried and became the
+# dominant runtime cost; grass cutting is driven centrally instead, same
+# O(1) dictionary-lookup approach _destroy_hovered_block() already uses for
+# placed blocks.
 const TREE_INTERACT_RADIUS: float = 300.0
 
 # ── Chunk grid ──────────────────────────────────────────────────────
@@ -77,9 +117,6 @@ const CHUNK_SIZE: int = 25
 
 var _chunk_cols: int = 0
 var _chunk_rows: int = 0
-# "cx,cy" -> Unix timestamp of the last mob spawned in that chunk. String
-# keys so this round-trips cleanly through JSON.stringify()/parse_string().
-var _chunk_last_spawn: Dictionary = {}
 
 # ── Mob lifecycle (preservation / despawn / spawn) ──────────────────
 # "Preserve" radii: which live mobs get written into the save file, so they
@@ -95,15 +132,17 @@ const DESPAWN_INNER_RADIUS: float = 100.0 * TILE_SIZE
 const DESPAWN_SAFE_RADIUS:  float = 200.0 * TILE_SIZE
 const DESPAWN_CHECK_INTERVAL: float = 10.0
 
-# Periodic outer-region spawner.
-const OUTER_SPAWN_INTERVAL:  float = 120.0  # 2 minutes
-const CHUNK_SPAWN_COOLDOWN:  float = 600.0  # 10 minutes — per chunk
+# Periodic overworld spawner — a single unified check across every eligible
+# outer chunk, cadence depending on time of day (see Global.is_daytime).
+const OUTER_SPAWN_INTERVAL_DAY:   float = 600.0  # 10 minutes
+const OUTER_SPAWN_INTERVAL_NIGHT: float = 180.0  # 3 minutes
 
-enum MobFaction { FRIENDLY, ENEMY }
-# Pool of mobs the outer-region spawner can pick from. Only Wolf exists today
-# (Friendly); future enemy mobs just need an entry here with ENEMY faction.
+# Pool of mobs the overworld spawner can pick from — each entry pairs a scene
+# with the MobCombatData resource that drives its spawn rules (biome,
+# day/night eligibility, min/max count per chunk). Add new mobs here as
+# their .tres + AI script get built.
 var MOB_SPAWN_POOL: Array = [
-	{"type": "wolf", "scene": WOLF_SCENE, "faction": MobFaction.FRIENDLY},
+	{"scene": WOLF_SCENE, "data": preload("res://resources/mobs/wolf.tres")},
 ]
 
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -122,6 +161,13 @@ signal generation_status_changed(status: String)
 var _removed_trees:    Array = []
 var _tree_spawn_count: int   = 0
 var _gen_start_ms:     int   = 0
+
+# ── Grass ──────────────────────────────────────────────────────────
+# Each tuft's own look/sizing/material lives in scripts/grass.gd
+# (GrassTuft) — see GRASS_SCENE above. World only tracks which tiles have
+# grass, for spawning/regrow/cutting purposes.
+var _grass_occupied_tiles: Dictionary   = {}     # tile -> GrassTuft, prevents stacking grass and gives cutting a direct node reference
+var _grass_spawn_count:    int          = 0
 
 # ── Block placement ──────────────────────────────────────────────────
 var ghost:           Node2D   = null
@@ -142,11 +188,29 @@ var _chunk_border_overlay: Node2D = null
 var _show_chunk_borders:   bool   = false
 const CHUNK_BORDER_COLOR: Color = Color(1.0, 0.55, 0.0, 0.9)  # orange
 
+# ── Hitbox debug overlay (Ctrl+Shift+H) ──────────────────────────────
+var _hitbox_overlay: Node2D = null
+var _show_hitboxes:  bool   = false
+const HITBOX_MOB_COLOR:   Color = Color(1.0, 0.15, 0.15, 0.9)  # red
+const HITBOX_BLOCK_COLOR: Color = Color(0.15, 0.55, 1.0, 0.9)  # blue
+const HITBOX_GRASS_COLOR: Color = Color(0.25, 0.95, 0.35, 0.9)  # green
+const GRASS_MARKER_RADIUS: float = 5.0  # small fixed marker, not a bounding box — see _draw_grass_tile_outline
+
 const PLACEABLE_TYPES:    Array  = ["block", "door"]
 const PLACE_RADIUS_TILES: int    = 6
 const INTERACT_RADIUS_PX: float  = 64.0
 
 func _ready() -> void:
+	# NOTE: do NOT set y_sort_enabled here. Game (World's parent in
+	# game_instance.tscn) already has y_sort_enabled = true, which propagates
+	# recursively through the whole subtree — that's almost certainly what's
+	# always correctly Y-sorted the player against trees/mobs. Re-enabling it
+	# here on World creates a NESTED Y-sort scope: World's own children get
+	# sorted correctly among themselves, but that sorted group then gets
+	# compared against Player (World's sibling under Game, not a descendant
+	# of World) as effectively one block using World's own static position —
+	# which is what caused grass to sort fine against other grass but
+	# inconsistently against the player depending on approach direction.
 	ground_layer.z_index = -300
 	water_layer.z_index  = -300
 	rng.set_seed(random_seed)
@@ -159,6 +223,8 @@ func _ready() -> void:
 	_setup_grid_overlay()
 	_setup_cursor_highlight()
 	_setup_chunk_border_overlay()
+	_setup_hitbox_overlay()
+	_setup_glow_environment()
 	Global.hotbar_selection_changed.connect(_on_hotbar_changed)
 	Global.Hotbar_updated.connect(_on_hotbar_changed)
 	# Set world reference immediately so game_instance can connect signals.
@@ -169,21 +235,21 @@ func _ready() -> void:
 	_queue_generation.call_deferred()
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo \
-			and event.keycode == KEY_C and event.ctrl_pressed and event.shift_pressed:
-		_toggle_chunk_borders()
-		return
-	if event is InputEventKey and event.keycode == KEY_CTRL:
-		if event.pressed and not event.echo:
-			Global.block_mode = not Global.block_mode
-			if not Global.block_mode:
-				ghost.visible = false
-			Global.block_mode_changed.emit(Global.block_mode)
-		return
+	# Ctrl+Shift+H/C/T and the block-mode Ctrl toggle are now detected once,
+	# centrally, in Global._input() (dispatches here via has_method()/call())
+	# — see Global's own comment for why. This function only needs to react
+	# to Global.block_mode/its own toggle_*() methods now, not detect the
+	# keypresses itself.
 	if not Global.block_mode:
 		# Shift + left-click: instantly destroy the nearest placed block.
 		if event.is_action_pressed("mouse_left") and Input.is_key_pressed(KEY_SHIFT):
 			_destroy_hovered_block()
+			return
+		# Plain left-click: sword-swing — cuts the 3-tile row in front of the
+		# player. Plain click previously did nothing here (only Shift+click
+		# did), so this doesn't collide with the block-destroy shortcut above.
+		if event.is_action_pressed("mouse_left") and not Input.is_key_pressed(KEY_SHIFT):
+			_try_cut_grass_with_sword()
 		return
 	if event.is_action_pressed("mouse_left"):
 		place_block()
@@ -212,17 +278,80 @@ func _destroy_hovered_block() -> void:
 		if idata != null:
 			var drop: Node = ITEM_DROP_SCENE.instantiate()
 			drop.call("set_item_data", idata)
-			editable_layer.add_child(drop)
+			add_child(drop)
 			drop.global_position = node.global_position + Vector2(0, -16)
 		node.queue_free()
 	_placed_blocks.erase(best_cell)
 
-func _process(_delta: float) -> void:
+# ── Grass cutting (sword-only, instant, facing-based) ──────────────────
+# Grass can only be cut while the selected hotbar item is a sword
+# (ItemData.is_sword) — no tool, no cut. A swing is instant (no hold timer,
+# unlike tree.gd's chopping) and hits a 3-tile-wide row directly in front of
+# the player rather than whatever tile the mouse happens to be over — mouse
+# position/INTERACT_RADIUS_PX are no longer involved at all, since "in front
+# of the player" is itself the range check.
+#
+# Row shape: center = player_tile + facing_vec (one tile ahead), with one
+# tile on each side along the perpendicular axis. rotate90(d) = (-d.y, d.x)
+# gives that perpendicular for any of the 8 facing directions (including
+# diagonals) from a single small lookup + two integer ops — no per-direction
+# tile-offset table to keep in sync.
+const GRASS_CUT_DIR_VECTORS: Dictionary = {
+	"south":      Vector2i(0, 1),
+	"north":      Vector2i(0, -1),
+	"east":       Vector2i(1, 0),
+	"west":       Vector2i(-1, 0),
+	"south-east": Vector2i(1, 1),
+	"south-west": Vector2i(-1, 1),
+	"north-east": Vector2i(1, -1),
+	"north-west": Vector2i(-1, -1),
+}
+
+func _try_cut_grass_with_sword() -> void:
+	if Global.any_ui_open() or Global.pause_menu_open:
+		return
+	var held: Variant = Global.get_hotbar_item()
+	if held == null or not (held as Dictionary).get("data"):
+		return
+	var data: ItemData = (held as Dictionary)["data"] as ItemData
+	if not data.is_sword:
+		return
+	var p: Node2D = _get_player()
+	if p == null or not p.has_method("get_facing_dir"):
+		return
+	var d: Vector2i = GRASS_CUT_DIR_VECTORS.get(p.call("get_facing_dir"), Vector2i(0, 1)) as Vector2i
+	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(p.global_position))
+	var center:      Vector2i = player_tile + d
+	var width_axis:  Vector2i = Vector2i(-d.y, d.x)
+	var cut_any: bool = false
+	for tile in [center - width_axis, center, center + width_axis]:
+		var tuft: GrassTuft = _grass_occupied_tiles.get(tile) as GrassTuft
+		if tuft != null and is_instance_valid(tuft):
+			tuft.cut()
+			cut_any = true
+	if cut_any:
+		# Consume the event so nothing else (e.g. a tree's own _input, if one
+		# happens to overlap) also reacts to this click.
+		get_viewport().set_input_as_handled()
+
+func _process(delta: float) -> void:
 	_update_ghost()
 	_update_hover()
 	_update_cursor_highlight()
+	_update_grass_ruffle()
 	if Global.block_mode and _grid_overlay != null:
 		_grid_overlay.queue_redraw()
+	if _show_hitboxes and _hitbox_overlay != null:
+		_hitbox_overlay.queue_redraw()
+
+# One Vector2 write per frame onto the single shared grass ShaderMaterial —
+# every tuft reads it on the GPU, so this costs the same whether there are
+# ten grass instances or a hundred thousand.
+func _update_grass_ruffle() -> void:
+	var p: Node2D = _get_player()
+	if p == null:
+		return
+	GrassTuft.get_grass_material().set_shader_parameter("player_pos", p.global_position)
 
 func _queue_generation() -> void:
 	_begin_generation.call_deferred()
@@ -237,13 +366,16 @@ func _begin_generation() -> void:
 	_generate_terrain()
 	print("[TERRAIN] done in %dms — %d tiles processed" % [Time.get_ticks_msec() - t0, width * height])
 	generation_status_changed.emit("Spawning trees and forests...")
+	# Cave entrances must claim their chunks BEFORE wolves/trees/grass are
+	# placed — those all check _is_chunk_cave_claimed() and skip claimed
+	# chunks entirely, which only works if the claims already exist.
+	_spawn_cave_entrances.call_deferred()
 	_spawn_wolves.call_deferred()
 	_deferred_foliage.call_deferred()
 
 func _compute_chunks() -> void:
 	_chunk_cols = ceili(float(width)  / CHUNK_SIZE)
 	_chunk_rows = ceili(float(height) / CHUNK_SIZE)
-	_chunk_last_spawn.clear()
 
 func _deferred_foliage() -> void:
 	var t0 := Time.get_ticks_msec()
@@ -256,10 +388,24 @@ func _deferred_foliage() -> void:
 	_start_interaction_updater()
 	_start_despawn_timer()
 	_start_outer_spawn_timer()
+	_start_grass_regrow_timer()
 	generation_complete.emit()
+	# Grass fill runs AFTER the player is already free to move, not before —
+	# it's purely decorative and each tuft now carries real collision shapes
+	# (see the O(n²) Area2D fix above), so spawning thousands of them
+	# synchronously here was the main remaining cause of "world loading feels
+	# slow." _fill_all_chunks_with_grass() spreads its own work across many
+	# frames internally (see GRASS_CHUNKS_PER_FRAME), so this call is
+	# deliberately fire-and-forget, not awaited — tiles fill in progressively
+	# in the background while the player is already exploring. Must still run
+	# after _place_foliage() (needs _tree_occupied_tiles final) and after
+	# apply_world_save_data() (needs _placed_blocks final so grass doesn't
+	# overlap restored structures) — both already happened above.
+	_fill_all_chunks_with_grass()
 
 func _start_interaction_updater() -> void:
-	# Immediate pass so trees near spawn are active the moment the player appears.
+	# Immediate pass so trees near spawn are active the moment the player
+	# appears. Grass has no equivalent — see _try_cut_grass_with_sword.
 	_update_tree_interactions()
 	var t := Timer.new()
 	t.wait_time  = 0.1
@@ -317,9 +463,6 @@ func _update_mob_despawn_timers() -> void:
 			mob.call("_apply_despawn_zone", zone, DESPAWN_CHECK_INTERVAL)
 
 # ── Chunk grid helpers ────────────────────────────────────────────────
-func _chunk_key(chunk: Vector2i) -> String:
-	return "%d,%d" % [chunk.x, chunk.y]
-
 func _chunk_world_rect(chunk: Vector2i) -> Rect2:
 	var half_w: int = width  / 2
 	var half_h: int = height / 2
@@ -347,22 +490,28 @@ func _is_chunk_outer(chunk: Vector2i, player_pos: Vector2, spawn_pos: Vector2) -
 	return _chunk_min_corner_dist(chunk, player_pos) > DESPAWN_SAFE_RADIUS \
 		and _chunk_min_corner_dist(chunk, spawn_pos) > DESPAWN_SAFE_RADIUS
 
-func _is_chunk_on_cooldown(chunk: Vector2i) -> bool:
-	var key: String = _chunk_key(chunk)
-	if not _chunk_last_spawn.has(key):
-		return false
-	var last: float = float(_chunk_last_spawn[key])
-	return (Time.get_unix_time_from_system() - last) < CHUNK_SPAWN_COOLDOWN
+# Maps _cell_biome_type()'s codes (0=Plain,1=Desert,2=Snowy,-1=Water) onto a
+# mob resource's biome checkboxes.
+func _mob_allows_biome(data: MobCombatData, biome_code: int) -> bool:
+	match biome_code:
+		0:  return data.spawn_plains
+		1:  return data.spawn_desert
+		2:  return data.spawn_snowy
+		-1: return data.spawn_ocean
+	return false
 
-func _random_valid_tile_in_chunk(chunk: Vector2i) -> Variant:
+func _random_valid_mob_tile_in_chunk(chunk: Vector2i, data: MobCombatData) -> Variant:
 	var half_w: int = width  / 2
 	var half_h: int = height / 2
 	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
 	for _i in range(20):
 		var tile: Vector2i = tl + Vector2i(rng.randi_range(0, CHUNK_SIZE - 1), rng.randi_range(0, CHUNK_SIZE - 1))
-		if _cell_biome_type(tile) != 0:  # Plains only, matches existing wolf spawn rules
+		var biome: int = _cell_biome_type(tile)
+		if not _mob_allows_biome(data, biome):
 			continue
-		if _has_water_nearby(tile, 3):
+		# Land mobs keep a shoreline buffer, same as the old Plains-only rule;
+		# an ocean-eligible mob obviously needs to be allowed on water itself.
+		if biome != -1 and _has_water_nearby(tile, 3):
 			continue
 		return tile
 	return null
@@ -376,15 +525,23 @@ func _spawn_mob_at(tile: Vector2i, scene: PackedScene) -> void:
 	add_child(mob)
 	mob.global_position = world_pos
 
-# ── Periodic outer-region spawner ────────────────────────────────────
+# ── Periodic overworld spawner ───────────────────────────────────────
+# A single unified check, cadence depending on time of day (Global.is_daytime)
+# — every OUTER_SPAWN_INTERVAL_DAY by day, OUTER_SPAWN_INTERVAL_NIGHT by
+# night. One-shot + self-rescheduled (rather than a fixed repeating Timer) so
+# the interval adapts across a day/night crossing instead of being locked in
+# at whatever it was when the Timer started.
 func _start_outer_spawn_timer() -> void:
 	var t := Timer.new()
-	t.wait_time = OUTER_SPAWN_INTERVAL
-	t.autostart = true
-	t.timeout.connect(_try_outer_spawn)
+	t.one_shot = true
+	t.timeout.connect(_run_overworld_spawn.bind(t))
 	add_child(t)
+	t.start(OUTER_SPAWN_INTERVAL_DAY if Global.is_daytime else OUTER_SPAWN_INTERVAL_NIGHT)
 
-func _try_outer_spawn() -> void:
+# Every eligible outer chunk gets a spawn attempt each time this runs (not
+# just one random chunk) — the timer's own day/night interval is what
+# throttles frequency now, so there's no separate per-chunk cooldown to track.
+func _run_overworld_spawn(t: Timer) -> void:
 	var p := _get_player()
 	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
 	var spawn_pos:  Vector2 = _world_spawn_pos()
@@ -393,24 +550,23 @@ func _try_outer_spawn() -> void:
 	for cx in range(_chunk_cols):
 		for cy in range(_chunk_rows):
 			var chunk := Vector2i(cx, cy)
-			if _is_chunk_on_cooldown(chunk):
-				continue
 			if _is_chunk_outer(chunk, player_pos, spawn_pos):
 				eligible.append(chunk)
-	if eligible.is_empty():
-		return
 
-	var chunk: Vector2i = eligible[rng.randi_range(0, eligible.size() - 1)]
-	var pool_entry: Dictionary = MOB_SPAWN_POOL[rng.randi_range(0, MOB_SPAWN_POOL.size() - 1)]
-	var count: int = rng.randi_range(1, 3) if pool_entry["faction"] == MobFaction.FRIENDLY else 1
-
-	for _n in range(count):
-		var tile = _random_valid_tile_in_chunk(chunk)
-		if tile == null:
+	for pool_entry in MOB_SPAWN_POOL:
+		var data: MobCombatData = pool_entry["data"] as MobCombatData
+		var eligible_now: bool = data.spawn_during_day if Global.is_daytime else data.spawn_during_night
+		if not eligible_now:
 			continue
-		_spawn_mob_at(tile, pool_entry["scene"] as PackedScene)
+		for chunk in eligible:
+			var count: int = rng.randi_range(data.min_spawn, data.max_spawn)
+			for _n in range(count):
+				var tile = _random_valid_mob_tile_in_chunk(chunk, data)
+				if tile == null:
+					continue
+				_spawn_mob_at(tile, pool_entry["scene"] as PackedScene)
 
-	_chunk_last_spawn[_chunk_key(chunk)] = Time.get_unix_time_from_system()
+	t.start(OUTER_SPAWN_INTERVAL_DAY if Global.is_daytime else OUTER_SPAWN_INTERVAL_NIGHT)
 
 # ── Mob preservation (save/load) ─────────────────────────────────────
 func _is_in_preserve_zone(pos: Vector2, player_pos: Vector2) -> bool:
@@ -460,9 +616,6 @@ func _restore_mobs(mobs_data: Array) -> void:
 func _setup_ghost() -> void:
 	ghost = Node2D.new()
 	ghost.visible = false
-	# Tree z_index is Y-sorted (int(global_position.y / TILE_SIZE)) and can
-	# reach into the hundreds near the map edges, so placement guides need a
-	# z_index comfortably above that range to never be hidden behind a tree.
 	ghost.z_index = PLACEMENT_GUIDE_Z_INDEX
 	add_child(ghost)
 	ghost_sprite = Sprite2D.new()
@@ -513,7 +666,7 @@ func _setup_chunk_border_overlay() -> void:
 	add_child(_chunk_border_overlay)
 	_chunk_border_overlay.draw.connect(_on_chunk_border_draw)
 
-func _toggle_chunk_borders() -> void:
+func toggle_chunk_borders() -> void:
 	_show_chunk_borders = not _show_chunk_borders
 	_chunk_border_overlay.visible = _show_chunk_borders
 	if _show_chunk_borders:
@@ -525,6 +678,107 @@ func _on_chunk_border_draw() -> void:
 			var r: Rect2 = _chunk_world_rect(Vector2i(cx, cy))
 			var local_rect := Rect2(_chunk_border_overlay.to_local(r.position), r.size)
 			_chunk_border_overlay.draw_rect(local_rect, CHUNK_BORDER_COLOR, false, 2.0)
+
+# ── Hitbox debug overlay ─────────────────────────────────────────────
+func _setup_hitbox_overlay() -> void:
+	_hitbox_overlay = Node2D.new()
+	# Above PLACEMENT_GUIDE_Z_INDEX (2000, used by the block-placement grid,
+	# ghost preview, and cursor highlight) so hitboxes always render on top
+	# of those instead of being hidden underneath while in block mode.
+	_hitbox_overlay.z_index = PLACEMENT_GUIDE_Z_INDEX + 100
+	_hitbox_overlay.visible = false
+	add_child(_hitbox_overlay)
+	_hitbox_overlay.draw.connect(_on_hitbox_draw)
+
+func toggle_hitboxes() -> void:
+	_show_hitboxes = not _show_hitboxes
+	_hitbox_overlay.visible = _show_hitboxes
+	if _show_hitboxes:
+		_hitbox_overlay.queue_redraw()
+
+# ── Glow / color grading ─────────────────────────────────────────────
+# Same idea as cave_world.gd's WorldEnvironment (added there first — see its
+# comment), but tuned very differently: the overworld's day_night_cycle.gd
+# CanvasModulate already sits near full white (1,1,1) at noon, so reusing
+# the cave's threshold (0.85) would make ordinary daylight bloom across the
+# whole screen instead of just genuinely bright highlights. Pushed well
+# above normal daylight brightness instead — with no torches/fire/emissive
+# effects in the overworld yet, glow itself won't have much to catch until
+# those exist, so the saturation/contrast bump is what actually reads as
+# less flat right now; glow is future-proofing for when it does.
+func _setup_glow_environment() -> void:
+	var world_env := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CANVAS
+	env.glow_enabled       = true
+	env.glow_intensity     = 0.7
+	env.glow_strength      = 1.0
+	env.glow_bloom         = 0.1
+	env.glow_hdr_threshold = 1.25  # above normal (1,1,1) daylight — only real highlights bloom
+	env.glow_blend_mode    = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	env.adjustment_enabled   = true
+	env.adjustment_saturation = 1.12
+	env.adjustment_contrast   = 1.05
+	world_env.environment = env
+	add_child(world_env)
+
+# Camera-visible world rect (+ a small margin) — grass alone can be tens of
+# thousands of tiles across the whole map, and this overlay redraws every
+# frame while active, so drawing off-screen entries was the actual cost.
+# Same technique as the (since-removed) grass animation LOD used.
+func _debug_visible_world_rect() -> Rect2:
+	var cam: Camera2D = get_viewport().get_camera_2d()
+	if cam == null:
+		return Rect2(Vector2(-1e6, -1e6), Vector2(2e6, 2e6))  # no camera — don't cull
+	var margin: float = TILE_SIZE * 4.0
+	var visible_size: Vector2 = get_viewport().get_visible_rect().size / cam.zoom
+	var half: Vector2 = visible_size * 0.5 + Vector2(margin, margin)
+	var center: Vector2 = cam.get_screen_center_position()
+	return Rect2(center - half, half * 2.0)
+
+func _on_hitbox_draw() -> void:
+	var view_rect: Rect2 = _debug_visible_world_rect()
+	for mob in get_tree().get_nodes_in_group("Wolf"):
+		if is_instance_valid(mob) and view_rect.has_point((mob as Node2D).global_position):
+			Global.draw_body_hitboxes(_hitbox_overlay, mob as Node, HITBOX_MOB_COLOR)
+	for entry in _placed_blocks.values():
+		var node: Node = (entry as Dictionary)["node"] as Node
+		if is_instance_valid(node) and view_rect.has_point((node as Node2D).global_position):
+			Global.draw_body_hitboxes(_hitbox_overlay, node, HITBOX_BLOCK_COLOR)
+	# Grass tufts do have a real collision shape now (see grass.gd/Grass.tscn),
+	# but this marker shows tile OCCUPANCY (_grass_occupied_tiles), which is
+	# distinct info from the physical collision box — kept as-is.
+	for tile in _grass_occupied_tiles.keys():
+		_draw_grass_tile_outline(tile as Vector2i, view_rect)
+
+# This marker tracks tile OCCUPANCY (_grass_occupied_tiles), not the tuft's
+# actual physical collision shape (see Grass.tscn's StaticBody2D) — the two
+# are deliberately different sizes/purposes, so this stays a discrete "does
+# this exact tile have grass" marker rather than trying to match the real
+# collision box. Two earlier rect-based attempts both misled: a tile-sized
+# box (32x32 at the tile anchor) left its bottom half always
+# empty, because the sprite is base-anchored AT that point and only extends
+# UPWARD from it (see _spawn_grass_at) — the visible blades actually poke
+# into the neighboring tile's box above. A sprite-bounds-sized box fixed
+# that but, at 2.7-tile-wide sprites and 15-20% tile coverage, constantly
+# overlapped neighbors and included the source art's own transparent frame
+# padding. Neither reads as clean at this density. A small fixed marker at
+# the tile's true anchor point — exactly where every tuft's roots sit —
+# sidesteps all three problems: nothing to resize, nothing to overlap.
+func _draw_grass_tile_outline(tile: Vector2i, view_rect: Rect2) -> void:
+	var local_pos: Vector2 = ground_layer.map_to_local(tile)
+	# Must match _spawn_grass_at's ground_anchor exactly (tile center +
+	# TILE_SIZE * 0.5 + GrassTuft.BASE_EXTRA_OFFSET_PX), not the raw tile center
+	# — otherwise this marker drifts from wherever the sprite actually anchors.
+	var tile_center:   Vector2 = ground_layer.to_global(local_pos)
+	var ground_anchor: Vector2 = tile_center + Vector2(0.0, TILE_SIZE * 0.5 + GrassTuft.BASE_EXTRA_OFFSET_PX)
+	if not view_rect.has_point(ground_anchor):
+		return
+	var center: Vector2 = _hitbox_overlay.to_local(ground_anchor)
+	var r: float = GRASS_MARKER_RADIUS
+	_hitbox_overlay.draw_arc(center, r, 0.0, TAU, 10, HITBOX_GRASS_COLOR, 2.0)
+	_hitbox_overlay.draw_line(center + Vector2(-r - 3.0, 0.0), center + Vector2(r + 3.0, 0.0), HITBOX_GRASS_COLOR, 1.5)
+	_hitbox_overlay.draw_line(center + Vector2(0.0, -r - 3.0), center + Vector2(0.0, r + 3.0), HITBOX_GRASS_COLOR, 1.5)
 
 func _setup_cursor_highlight() -> void:
 	_cursor_highlight = Node2D.new()
@@ -645,7 +899,12 @@ func place_block() -> void:
 	_placed_blocks[cell] = {"node": obj, "name": item_data.item_name}
 	if obj.has_method("set_world_cell"):
 		obj.call("set_world_cell", cell, self)
-	editable_layer.add_child(obj)
+	# Parented to World directly, NOT editable_layer (a TileMapLayer meant
+	# for painted tile cells) — mixing dynamic gameplay nodes into a
+	# TileMapLayer's children is the likely reason placed blocks sorted
+	# incorrectly against the player/grass/trees, which all live directly
+	# under World.
+	add_child(obj)
 	if not is_instance_valid(obj):
 		_placed_blocks.erase(cell)
 		return
@@ -868,6 +1127,225 @@ func _unmark_tree_occupied(cell: Vector2i) -> void:
 func _is_tree_occupied(cell: Vector2i) -> bool:
 	return _tree_occupied_tiles.has(cell)
 
+# ── Grass ─────────────────────────────────────────────────────────────
+# Per-tuft look/sizing/material now lives in scripts/grass.gd (GrassTuft) —
+# world.gd only decides which tiles get grass and instantiates GRASS_SCENE.
+func _is_valid_grass_tile(tile: Vector2i) -> bool:
+	if _grass_occupied_tiles.has(tile):
+		return false
+	if _cell_biome_type(tile) != 0:  # Plains only
+		return false
+	if _is_tree_occupied(tile):
+		return false
+	if _placed_blocks.has(tile):
+		return false
+	if editable_layer.get_cell_source_id(tile) != -1:
+		return false
+	if water_layer.get_cell_source_id(tile) != -1:
+		return false
+	return true
+
+func _spawn_grass_at(tile: Vector2i) -> void:
+	# _fill_all_chunks_with_grass()'s background coroutine (await
+	# get_tree().process_frame) keeps resuming even after this World node is
+	# removed from the tree — enter_cave()/exit_cave() do that with
+	# remove_child(), not queue_free(), specifically so the overworld
+	# survives the round trip, but an in-flight await doesn't know or care
+	# about that. If it resumes while off-tree, add_child(tuft) below no
+	# longer puts tuft in the tree either (a node's children aren't in the
+	# tree until the node itself is), so tuft's @onready vars (grass.gd's
+	# _sprite) never resolve — crashes as a null-instance property set the
+	# moment setup() touches _sprite. Bail out here rather than spawn
+	# anything while off-tree.
+	if not is_inside_tree():
+		return
+	# Grass now fills in over several frames in the BACKGROUND, after the
+	# player is already free to move (see _deferred_foliage) — unlike before,
+	# it's possible for a tuft to be about to spawn on the exact tile the
+	# player is currently standing on. Since tufts carry solid collision now,
+	# that would shove the player the instant it's added. Skip it (don't mark
+	# the tile occupied either) rather than spawn on top of them — it'll
+	# naturally get filled in by the next _regrow_grass pass instead.
+	var p: Node2D = _get_player()
+	if p != null:
+		var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(p.global_position))
+		if player_tile == tile:
+			return
+	var local_pos: Vector2 = ground_layer.map_to_local(tile)
+	# map_to_local() returns the tile's CENTER, not its bottom edge. _spawn_tree
+	# gets this right: it adds TILE_SIZE*0.5 to reach the tile's bottom grid
+	# line before anchoring anything to it — mirrored here, plus a small
+	# empirical nudge (GrassTuft.BASE_EXTRA_OFFSET_PX).
+	var tile_center:   Vector2 = ground_layer.to_global(local_pos)
+	var ground_anchor: Vector2 = tile_center + Vector2(0.0, TILE_SIZE * 0.5 + GrassTuft.BASE_EXTRA_OFFSET_PX)
+
+	var tuft: GrassTuft = GRASS_SCENE.instantiate() as GrassTuft
+	if tuft == null:
+		return
+	add_child(tuft)
+	tuft.setup(rng, ground_anchor, tile)
+
+	# Stores the tuft node itself (not just a bool) — _try_cut_grass_with_sword
+	# needs the actual node to drive the cut, and every other read site
+	# (.has()/.erase()/.keys()) doesn't care about the value.
+	_grass_occupied_tiles[tile] = tuft
+	_grass_spawn_count += 1
+
+# Seeded Fisher-Yates shuffle (Array.shuffle() uses the global RNG, which
+# would break world-gen determinism from `random_seed`).
+func _shuffle_tiles(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: Vector2i = arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp
+
+# Grows an irregular patch of `target` tiles outward from a random seed via
+# randomized flood-fill — each step picks a random tile off the growth
+# frontier (not always the newest one) and a random direction off it, so the
+# resulting shape is a ragged, organic blob rather than a smooth disc. A pure
+# nearest-neighbor-to-a-point sort (the previous approach) always produces
+# the same circular silhouette regardless of seed, just at different sizes/
+# positions — every group reading as "the same pattern" was that shape
+# repeating, not a variety problem. This grows a genuinely different outline
+# each call since growth order itself is randomized.
+# Moves the grown tiles to the front of `arr`; if the flood-fill runs out of
+# reachable neighbors before hitting `target` (possible near sparse/broken-up
+# eligible regions), tops up with whatever other eligible tiles remain so the
+# chunk still reaches its coverage target.
+func _cluster_tiles(arr: Array, target: int) -> void:
+	if arr.is_empty() or target <= 0:
+		return
+	var seed_tile: Vector2i = arr[rng.randi_range(0, arr.size() - 1)] as Vector2i
+	var eligible_set: Dictionary = {}
+	for t in arr:
+		eligible_set[t] = true
+
+	var cluster:  Array      = [seed_tile]
+	var claimed:  Dictionary = {seed_tile: true}
+	var frontier: Array      = [seed_tile]
+	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+	while cluster.size() < target and not frontier.is_empty():
+		var f_idx: int = rng.randi_range(0, frontier.size() - 1)
+		var from_tile: Vector2i = frontier[f_idx] as Vector2i
+		_shuffle_tiles(dirs)
+		var grew: bool = false
+		for d in dirs:
+			var n: Vector2i = from_tile + (d as Vector2i)
+			if eligible_set.has(n) and not claimed.has(n):
+				claimed[n] = true
+				cluster.append(n)
+				frontier.append(n)
+				grew = true
+				break
+		if not grew:
+			frontier.remove_at(f_idx)
+
+	if cluster.size() < target:
+		for t in arr:
+			if cluster.size() >= target:
+				break
+			if not claimed.has(t):
+				claimed[t] = true
+				cluster.append(t)
+
+	for i in range(cluster.size()):
+		arr[i] = cluster[i]
+
+# Fills a chunk with grass up to a random GRASS_CHUNK_COVERAGE_MIN..MAX
+# fraction (per-chunk, so coverage varies chunk to chunk) of its
+# currently-eligible plains tiles. Which tiles get picked depends on
+# GRASS_GROUPED_CHANCE: usually (70%) one irregular grown patch, otherwise
+# spread uniformly across the whole chunk. Idempotent — already-grass tiles
+# are excluded by _is_valid_grass_tile, so calling this again only tops up
+# whatever's still missing from that chunk's own target.
+func _fill_chunk_grass(chunk: Vector2i) -> void:
+	if _cave_claimed_chunks.has(chunk):
+		return
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+
+	# Plains-only — _is_valid_grass_tile rejects Desert/Snowy/Water outright.
+	var eligible: Array = []
+	for dx in range(CHUNK_SIZE):
+		for dy in range(CHUNK_SIZE):
+			var tile: Vector2i = tl + Vector2i(dx, dy)
+			if _is_valid_grass_tile(tile):
+				eligible.append(tile)
+	if eligible.is_empty():
+		return
+
+	var coverage: float = rng.randf_range(GRASS_CHUNK_COVERAGE_MIN, GRASS_CHUNK_COVERAGE_MAX)
+	var target:   int   = mini(ceili(eligible.size() * coverage), eligible.size())
+
+	if rng.randf() < GRASS_GROUPED_CHANCE:
+		_cluster_tiles(eligible, target)
+	else:
+		_shuffle_tiles(eligible)
+	for i in range(target):
+		_spawn_grass_at(eligible[i] as Vector2i)
+
+# Spread across many frames (GRASS_CHUNKS_PER_FRAME chunks at a time, then
+# yield) instead of one long synchronous burst — called fire-and-forget
+# after generation_complete has already fired (see _deferred_foliage), so
+# this running in the background doesn't block or hitch anything the player
+# is doing. Contains an await, so GDScript treats it as a coroutine
+# automatically; callers that don't need to wait for full completion (the
+# normal case) just call it without awaiting.
+func _fill_all_chunks_with_grass() -> void:
+	var t0: int = Time.get_ticks_msec()
+	var processed: int = 0
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			_fill_chunk_grass(Vector2i(cx, cy))
+			processed += 1
+			if processed % GRASS_CHUNKS_PER_FRAME == 0:
+				await get_tree().process_frame
+				# This await resumes on the SceneTree's own signal, which
+				# fires every frame regardless of whether World is still in
+				# the tree — a cave visit (enter_cave() removes World via
+				# remove_child(), not queue_free()) doesn't pause it the way
+				# a Timer would. Stop rather than keep grinding through the
+				# rest of the map off-tree (each call would now just no-op
+				# via _spawn_grass_at's own guard, but there's no point
+				# continuing); _regrow_grass will top the rest up later once
+				# World is back in the tree.
+				if not is_inside_tree():
+					return
+	print("[GRASS] spawned %d tufts in %dms (background-filled after load)" % [_grass_spawn_count, Time.get_ticks_msec() - t0])
+
+# ── Grass regrowth — every 10 minutes, per chunk ────────────────────────
+func _start_grass_regrow_timer() -> void:
+	var t := Timer.new()
+	t.wait_time = GRASS_REGROW_INTERVAL
+	t.autostart = true
+	t.timeout.connect(_regrow_grass)
+	add_child(t)
+
+func _tile_to_chunk(tile: Vector2i) -> Vector2i:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	return Vector2i(floori(float(tile.x + half_w) / CHUNK_SIZE), floori(float(tile.y + half_h) / CHUNK_SIZE))
+
+# A chunk containing any placed block OR a Lua robot (both live in
+# _placed_blocks — a robot is just a placeable item like any other block)
+# is skipped entirely: a "developed" chunk shouldn't spontaneously regrow.
+# Everything else gets topped back up toward its target coverage — a no-op
+# if it's already there, since _fill_chunk_grass only fills what's missing.
+func _regrow_grass() -> void:
+	var occupied_chunks: Dictionary = {}
+	for cell in _placed_blocks:
+		occupied_chunks[_tile_to_chunk(cell as Vector2i)] = true
+
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if occupied_chunks.has(chunk):
+				continue
+			_fill_chunk_grass(chunk)
+
 func _place_foliage() -> void:
 	var cell_offset: Vector2i = Vector2i(width, height) / 2
 	var occupied_tiles: Dictionary = {}
@@ -906,6 +1384,8 @@ func _place_foliage() -> void:
 		if tile_coord.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
 			continue
 		if _has_water_nearby(tile_coord, 3):
+			continue
+		if _is_chunk_cave_claimed(tile_coord):
 			continue
 		_mark_tree_tile(tile_coord, occupied_tiles)
 
@@ -947,6 +1427,8 @@ func _generate_forest_centers() -> Array[Vector2i]:
 			continue
 		if tile.distance_to(Vector2i.ZERO) < SPAWN_CLEAR_TILES + LARGE_FOREST_R_MAX:
 			continue
+		if _is_chunk_cave_claimed(tile):
+			continue
 
 		var too_close: bool = false
 		for c: Vector2i in centers:
@@ -981,6 +1463,8 @@ func _spawn_dense_forest(center: Vector2i, occupied_tiles: Dictionary) -> void:
 				continue
 			if _has_water_nearby(tile, 10):
 				continue
+			if _is_chunk_cave_claimed(tile):
+				continue
 			var prob: float = lerp(LARGE_FOREST_D_CENTER, LARGE_FOREST_D_EDGE,
 				sqrt(dist_sq) / float(radius))
 			if rng.randf() > prob:
@@ -998,18 +1482,17 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 		return
 	_tree_spawn_count += 1
 
+	# Every tree — regardless of biome — uses the default overworld tree sprite,
+	# so they all render (and cast the same shadow) identically for now.
 	var sprite := tree.get_node_or_null("Sprite2D") as Sprite2D
 	var frame_w: float = 32.0
 	var frame_h: float = 32.0
 	if sprite != null:
-		if tree_type_val == 2:  # Snowy
-			# basictree_alpha.png is 128×64 — 4 frames of 32px each
-			sprite.texture = SNOWY_TREE_TEX
-			sprite.hframes = 4
-			sprite.modulate = Color(0.75, 0.88, 1.0, 1.0)
-		# NewTree / plain: Tree.tscn already defaults to new_tree.webp hframes=1
-		sprite.vframes = 1
-		sprite.frame   = 0
+		sprite.texture  = NEW_TREE_TEX
+		sprite.modulate = Color(1, 1, 1, 1)
+		sprite.hframes  = 1
+		sprite.vframes  = 1
+		sprite.frame    = 0
 		if sprite.texture != null:
 			sprite.position.y = -(sprite.texture.get_height() * 0.5)
 			frame_w = sprite.texture.get_width()  / float(maxi(sprite.hframes, 1))
@@ -1017,8 +1500,7 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 
 	# Flat blob shadow sprite at the tree's base — replaces the old
 	# per-pixel drop_shadow.gdshader silhouette approach. Scaled off the
-	# tree's own frame size so NewTree (96px) and Snowy (32px) don't share
-	# an identical shadow footprint.
+	# tree's own frame size, which is now the same for every tree.
 	var shadow_scale := Vector2(
 		(frame_w * 0.55) / SHADOW_TEXTURE.get_width(),
 		(frame_h * 0.22) / SHADOW_TEXTURE.get_height()
@@ -1070,6 +1552,8 @@ func _spawn_scattered_group(origin: Vector2i, tree_type_val: int, extra: int, oc
 		if tile.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
 			continue
 		if ground_layer.get_cell_source_id(tile) == -1:
+			continue
+		if _is_chunk_cave_claimed(tile):
 			continue
 		var scatter_biome: int = _cell_biome_type(tile)
 		if tree_type_val == 0 and scatter_biome != 0:
@@ -1168,6 +1652,8 @@ func _spawn_wolves() -> void:
 				continue
 			if _has_water_nearby(cell, 3):
 				continue
+			if _is_chunk_cave_claimed(cell):
+				continue
 			all_plains.append(cell)
 			if yi < topmost_y:
 				topmost_y = yi
@@ -1209,19 +1695,92 @@ func _spawn_wolf_at(tile: Vector2i) -> void:
 	add_child(wolf)
 	wolf.global_position = world_pos
 
+# ── Cave entrance spawning ────────────────────────────────────────────
+# One-shot, same timing as _spawn_wolves — a single roll per chunk, any land
+# biome (Water excluded via _cell_biome_type() == -1). Excluded entirely
+# within CAVE_ENTRANCE_MIN_SPAWN_DIST of world spawn, and any roll landing
+# within CAVE_ENTRANCE_MIN_SEPARATION of an already-placed entrance is
+# dropped. Each entrance gets its own fixed seed here (via the world's own
+# seeded rng) so its interior is deterministic and identical every time
+# it's re-entered, without needing to generate the interior itself until
+# the player actually walks in (see CaveWorld). The whole chunk an entrance
+# lands in is marked claimed — see _is_chunk_cave_claimed().
+func _spawn_cave_entrances() -> void:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			if rng.randf() >= CAVE_ENTRANCE_CHANCE:
+				continue
+			var tl: Vector2i = Vector2i(cx * CHUNK_SIZE - half_w, cy * CHUNK_SIZE - half_h)
+			var tile: Vector2i = tl + Vector2i(rng.randi_range(0, CHUNK_SIZE - 1), rng.randi_range(0, CHUNK_SIZE - 1))
+			if _cell_biome_type(tile) == -1:
+				continue
+			if tile.distance_to(Vector2i.ZERO) < CAVE_ENTRANCE_MIN_SPAWN_DIST:
+				continue
+			var too_close: bool = false
+			for placed in _cave_entrance_tiles:
+				if tile.distance_to(placed as Vector2i) < CAVE_ENTRANCE_MIN_SEPARATION:
+					too_close = true
+					break
+			if too_close:
+				continue
+			_cave_claimed_chunks[Vector2i(cx, cy)] = true
+			_cave_entrance_tiles.append(tile)
+			_spawn_cave_entrance_at(tile)
+
+func _is_chunk_cave_claimed(tile: Vector2i) -> bool:
+	return _cave_claimed_chunks.has(_tile_to_chunk(tile))
+
+func _spawn_cave_entrance_at(tile: Vector2i) -> void:
+	var local_pos: Vector2 = ground_layer.map_to_local(tile)
+	var world_pos: Vector2 = ground_layer.to_global(local_pos)
+	var portal := CavePortal.new()
+	portal.mode      = CavePortal.Mode.ENTER
+	portal.cave_seed = rng.randi()
+	add_child(portal)
+	portal.global_position = world_pos
+
+# ── Debug: teleport to the nearest cave entrance (Ctrl+Shift+T) ────────
+func teleport_to_nearest_cave() -> void:
+	var p: Node2D = _get_player()
+	if p == null or _cave_entrance_tiles.is_empty():
+		return
+	var best_tile: Vector2i = _cave_entrance_tiles[0]
+	var best_dist: float    = INF
+	for t in _cave_entrance_tiles:
+		var tile: Vector2i     = t as Vector2i
+		var world_pos: Vector2 = ground_layer.to_global(ground_layer.map_to_local(tile))
+		var dist: float         = p.global_position.distance_to(world_pos)
+		if dist < best_dist:
+			best_dist = dist
+			best_tile = tile
+	# Land one tile south of the entrance, not exactly on it — lets the
+	# player see the marker and walk in deliberately rather than the
+	# CavePortal's own Area2D triggering entry the instant they land.
+	var target: Vector2 = ground_layer.to_global(ground_layer.map_to_local(best_tile + Vector2i(0, 1)))
+	p.global_position = target
+
 # ── Tree removal tracking ────────────────────────────────────────────
 func notify_tree_removed(tree: Node2D) -> void:
 	_removed_trees.append({"x": tree.global_position.x, "y": tree.global_position.y})
 	if tree.has_meta("spawn_cell"):
 		_unmark_tree_occupied(tree.get_meta("spawn_cell") as Vector2i)
 
+# ── Grass removal tracking ───────────────────────────────────────────
+# Called by GrassTuft._destroy() once a tuft is cut. Unlike trees, grass
+# isn't save/load persisted (it regenerates deterministically from the world
+# seed) — freeing the tile here just makes it eligible again for the next
+# _regrow_grass() pass.
+func notify_grass_removed(tile: Vector2i) -> void:
+	_grass_occupied_tiles.erase(tile)
+
 # ── World save / load ────────────────────────────────────────────────
 func get_world_save_data() -> Dictionary:
 	var data: Dictionary = {
 		"placed_blocks": [],
 		"removed_trees": _removed_trees.duplicate(),
-		"mobs":                  _collect_preserved_mobs(),
-		"chunk_spawn_cooldowns": _chunk_last_spawn.duplicate(),
+		"mobs":          _collect_preserved_mobs(),
 	}
 	for cell in _placed_blocks:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
@@ -1271,8 +1830,6 @@ func apply_world_save_data(data: Dictionary) -> void:
 						_unmark_tree_occupied(node.get_meta("spawn_cell") as Vector2i)
 					node.queue_free()
 					break
-	if data.has("chunk_spawn_cooldowns") and data["chunk_spawn_cooldowns"] is Dictionary:
-		_chunk_last_spawn = (data["chunk_spawn_cooldowns"] as Dictionary).duplicate()
 	if data.has("mobs") and data["mobs"] is Array:
 		_restore_mobs(data["mobs"] as Array)
 	if not data.has("placed_blocks"):
@@ -1304,7 +1861,7 @@ func apply_world_save_data(data: Dictionary) -> void:
 		_placed_blocks[cell] = {"node": obj, "name": idata.item_name}
 		if obj.has_method("set_world_cell"):
 			obj.call("set_world_cell", cell, self)
-		editable_layer.add_child(obj)
+		add_child(obj)
 		if not is_instance_valid(obj):
 			_placed_blocks.erase(cell)
 			continue

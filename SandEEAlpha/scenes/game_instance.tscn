@@ -5,13 +5,6 @@
 [ext_resource type="PackedScene" uid="uid://dpm4y6ku09hlf" path="res://scenes/ui/PauseMenu.tscn" id="2_pause"]
 [ext_resource type="PackedScene" uid="uid://ch5ppikl27a2n" path="res://scenes/world_gen.tscn" id="3_kafmv"]
 [ext_resource type="PackedScene" uid="uid://b2luk2qj6moim" path="res://scenes/player/player.tscn" id="4_2glxl"]
-[ext_resource type="PackedScene" uid="uid://chae2m53coo2i" path="res://scenes/ui/InventoryItem.tscn" id="5_2glxl"]
-[ext_resource type="Texture2D" uid="uid://bg7iv6t8kx5jj" path="res://sprites/items/SandEE_TemplateSword.png" id="6_hdajf"]
-[ext_resource type="Texture2D" uid="uid://qf2w1p7jh1hq" path="res://sprites/items/SandEE_FurnaceV2.png" id="8_0cmsc"]
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_mo7cb"]
-atlas = ExtResource("8_0cmsc")
-region = Rect2(0, 16, 32, 32)
 
 [node name="Game" type="Node2D" unique_id=215356930]
 y_sort_enabled = true
@@ -39,20 +32,4 @@ text = "| | Pause"
 [node name="Player" parent="." unique_id=382532469 instance=ExtResource("4_2glxl")]
 process_mode = 3
 texture_filter = 1
-
-[node name="sword" parent="." unique_id=541138292 instance=ExtResource("5_2glxl")]
-z_index = 5
-position = Vector2(132, 1)
-item_type = "DebugItem"
-item_name = "Template Sword"
-item_texture = ExtResource("6_hdajf")
-place_scene_path = ""
-
-[node name="testblock" parent="." unique_id=1165210587 instance=ExtResource("5_2glxl")]
-position = Vector2(201, 0)
-item_type = "block"
-item_name = "Furnace"
-item_texture = SubResource("AtlasTexture_mo7cb")
-place_scene_path = "res://scenes/objects/ObjectItem.tscn"
-
 

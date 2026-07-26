@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://16pg4cojt42p"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_k4pxo"]
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_ua177"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_6n6mn"]
+atlas = ExtResource("1_ua177")
+region = Rect2(160, 32, 32, 32)
+
+[resource]
+script = ExtResource("1_k4pxo")
+item_name = "Cave Floor 3"
+is_dev_item = true
+icon = SubResource("AtlasTexture_6n6mn")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

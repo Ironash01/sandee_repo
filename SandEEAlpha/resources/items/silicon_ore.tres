@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://cd53twn7w5i8k"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_my6ks"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_k4yid"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_1778b"]
+atlas = ExtResource("1_my6ks")
+region = Rect2(64, 32, 32, 32)
+
+[resource]
+script = ExtResource("2_k4yid")
+item_name = "Silicon Ore"
+description = "The material responsible for the eradication of humanity. Smelt it to get silicon"
+icon = SubResource("AtlasTexture_1778b")
+is_placeable = true
+block_level = 7
+min_pickaxe_level = 1
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

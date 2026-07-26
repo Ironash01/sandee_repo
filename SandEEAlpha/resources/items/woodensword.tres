@@ -12,6 +12,7 @@ script = ExtResource("1_8rcwp")
 item_name = "Wooden Sword"
 description = "The most basic hurt machine"
 item_type = "weapon"
+is_sword = true
 icon = SubResource("AtlasTexture_yt8p3")
 is_craftable = true
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

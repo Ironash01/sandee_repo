@@ -7,16 +7,18 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 
 @onready var pause_menu: Control         = $CanvasLayer/PauseMenu
 @onready var pause_btn:  Button          = $CanvasLayer/PauseButton
-@onready var _world:     Node2D          = $World
+@onready var _world:     Node2D          = $World  # the overworld — kept alive off-tree while in a cave, never freed
 @onready var _player:    CharacterBody2D = $Player
 
 var _loading_screen: CanvasLayer = null
 var _loading_label:  Label       = null
+var _cave_world:      CaveWorld  = null
 
 func _ready() -> void:
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	Global.ui_scale = 1.5
 	Global.ui_scale_changed.emit(Global.ui_scale)
+	Global.game_node = self
 
 	pause_btn.pressed.connect(pause_menu.show_menu)
 	_style_pause_button()
@@ -87,6 +89,42 @@ func _on_generation_complete() -> void:
 	# World is fully generated — safe to create the initial save now.
 	if Global.active_save_slot > 0 and not Global.has_save(Global.active_save_slot):
 		Global.save_game(Global.active_save_slot)
+
+# ── Cave entry/exit ─────────────────────────────────────────────────────
+# Swaps $World out for a freshly generated CaveWorld rather than a full
+# change_scene_to_file — Player/camera/Hotbar/PauseMenu all live as $World's
+# siblings here in Game, so a full scene change would destroy them (this is
+# also why the pre-existing Dungeon Portal system, which does use
+# change_scene_to_file, doesn't actually work today — dungeon1-5.tscn are
+# still empty stub scenes). The overworld $World is only removed from the
+# tree, never freed, so nothing about it needs to regenerate on return.
+func enter_cave(portal: CavePortal) -> void:
+	if _cave_world != null:
+		return
+	var return_position: Vector2 = _player.global_position
+	remove_child(_world)
+
+	_cave_world = CaveWorld.new()
+	_cave_world.name = "World"
+	add_child(_cave_world)
+	move_child(_cave_world, 0)
+	_cave_world.setup(portal.cave_seed, return_position)
+
+	Global.world_node       = _cave_world
+	_player.global_position = _cave_world.get_player_spawn_position()
+
+func exit_cave() -> void:
+	if _cave_world == null:
+		return
+	var return_position: Vector2 = _cave_world.overworld_return_position
+	remove_child(_cave_world)
+	_cave_world.queue_free()
+	_cave_world = null
+
+	add_child(_world)
+	move_child(_world, 0)
+	Global.world_node       = _world
+	_player.global_position = return_position
 
 # ── Autosave ──────────────────────────────────────────────────────────
 func _add_mission_ui() -> void:
