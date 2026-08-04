@@ -1,0 +1,53 @@
+[gd_scene format=3 uid="uid://ba33nymo1lcdx"]
+
+[ext_resource type="PackedScene" uid="uid://ljsj613w8cix" path="res://scenes/ui/code_editor.tscn" id="2_25jx0"]
+
+[node name="Node2D" type="Node2D" unique_id=1202137654]
+
+[node name="Control" type="Control" parent="." unique_id=495409997]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 1280.0
+offset_bottom = 720.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="StatsLabel" type="Label" parent="Control" unique_id=1938580917]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_top = 16.0
+offset_right = -16.0
+grow_horizontal = 0
+theme_override_font_sizes/font_size = 24
+text = "this is where i go"
+horizontal_alignment = 2
+
+[node name="Button" type="Button" parent="Control" unique_id=406829749]
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 0.8
+anchor_right = 0.382
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_bottom = -16.0
+grow_vertical = 0
+theme_override_font_sizes/font_size = 24
+text = "Run "
+
+[node name="CodeEditor" parent="Control" unique_id=794292869 instance=ExtResource("2_25jx0")]
+layout_mode = 1
+anchors_preset = -1
+anchor_bottom = 0.8
+grow_vertical = 1
+language = 1
+
+[node name="PythonState" type="PythonState" parent="." unique_id=949813975 node_paths=PackedStringArray("vm")]
+vm = NodePath("../PythonVM")
+
+[node name="PythonVM" type="PythonVM" parent="." unique_id=2143334523]
+
+[connection signal="pressed" from="Control/Button" to="." method="_on_button_pressed"]

@@ -11,3 +11,5 @@ windows.release.x86_64 = "res://ext_bin/x86_64-pc-windows-gnu/release/interprete
 
 [icons]
 LuaState = "res://extension/lua.svg"
+PythonState = "res://extension/python-config.svg"
+PythonVM = "res://extension/python.svg"
