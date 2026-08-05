@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://cd5bwrimt53t"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_gskn6"]
+
+[resource]
+script = ExtResource("1_gskn6")
+mission_name = "The INT room"
+mission_description = "In this room you shall learn how to declare an integer or any whole number in Python."
+entry_resource_file = "entry_2_python.tres"
+dungeon_index = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"
