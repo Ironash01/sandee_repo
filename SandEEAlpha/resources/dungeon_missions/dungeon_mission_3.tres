@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b65yb1ubxaiso"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_ao834"]
+
+[resource]
+script = ExtResource("1_ao834")
+mission_name = "How to float in python"
+mission_description = "In this dungeon you will know how to use the float keyword in Python."
+entry_resource_file = "entry_3_python.tres"
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

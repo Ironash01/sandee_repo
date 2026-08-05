@@ -4,8 +4,9 @@
 
 [resource]
 script = ExtResource("1_gskn6")
-mission_name = "The INT room"
+mission_name = "The Python int room"
 mission_description = "In this room you shall learn how to declare an integer or any whole number in Python."
 entry_resource_file = "entry_2_python.tres"
+quiz_resource_files = Array[String](["dm02_quiz_1_python.tres", "dm02_quiz_2_python.tres", "dm02_quiz_3_python.tres"])
 dungeon_index = 2
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

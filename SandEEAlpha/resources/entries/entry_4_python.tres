@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://s12pvihtbhlq"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_0vomm"]
+
+[resource]
+script = ExtResource("1_0vomm")
+entry_name = "What is boolean?"
+description = "In python we use the keyword boolean to declare are variable that is true or false. in other programming languages it could be 1 or 0.
+
+to use the boolean keyword you will only need to declare your variable and the put true or false.
+
+Here are some examples:
+
+is_rainy = true
+is_cloudy = false
+is_sunny = true
+
+Note: You can only declare true or false, other inputs will result to an error."
+keyword = "boolean"
+language = "python"
+category = "Easy"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

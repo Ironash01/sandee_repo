@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://uyn5lkk5vn0i"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_ldpye"]
+
+[resource]
+script = ExtResource("1_ldpye")
+mission_name = "Welcome to Algebra"
+mission_description = "In this dungeon you will know what are the basic different arithmetic expressions in Python."
+entry_resource_file = "entry_5_python.tres"
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

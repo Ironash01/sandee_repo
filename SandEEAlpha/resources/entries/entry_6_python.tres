@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://csi40o3jlcvor"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_t72nc"]
+
+[resource]
+script = ExtResource("1_t72nc")
+entry_name = "Strings"
+description = "In Python we call words, sentences, phrases as strings. to store strings in python we need to declare a variable to hold them first and then we will call that variable to print the text inside it.
+
+for example:
+
+first_name = \"Kairo\"
+fav_food = \"Jollibee chicken\"
+print(first_name)
+print(fav_food)
+
+output:
+Kairo
+Jollibee Chicken
+
+"
+keyword = "string"
+language = "python"
+category = "Easy"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

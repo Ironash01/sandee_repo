@@ -5,4 +5,17 @@
 [resource]
 script = ExtResource("1_t5fe6")
 entry_name = "int"
+description = "In Python to declare any whole number you are going to use the keyword int, it is short for integer. Here unlike the print() you will not put the integer inside the double quotes but you will need to declare a variable to hold your input.
+
+for example:
+
+age = 18
+print(age) ---> we use print() keyword to print the age.
+
+output: 18
+
+noticed how we declared a variable called age to hold the number 18. In declaring variables you must be specific on how you are going to use it. "
+keyword = "int"
+language = "python"
+category = "Easy"
 metadata/_custom_type_script = "uid://c8mblthys4abt"

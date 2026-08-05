@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://dg6oyycr2rxc8"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_kwcdg"]
+
+[resource]
+script = ExtResource("1_kwcdg")
+question_name = "int code"
+question = "In this exercise you should declare the current year in the keyword int. Use the variable year to hold the current year."
+answer_long = "year = 2026"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

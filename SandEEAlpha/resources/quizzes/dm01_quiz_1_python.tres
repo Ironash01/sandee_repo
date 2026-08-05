@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://c3cbnlvs7e62j"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_840mi"]
+
+[resource]
+script = ExtResource("1_840mi")
+question = "In this quest, you need to print \"Hello world, this is my first Python code.\""
+answer_long = "print(\"Hello world, this is my first Python code.\")"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"
