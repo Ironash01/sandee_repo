@@ -13,7 +13,7 @@ class_name DungeonMissionData
 #                          the exit to open and the dungeon to be cleared.
 
 @export var mission_name: String = ""            # shown in the mission list
-@export var mission_description: String = ""
+@export_multiline var mission_description: String = ""
 @export var entry_resource_file: String = ""     # file name, e.g. "entry_1_lua.tres"
 @export var quiz_resource_files: Array[String] = []  # e.g. ["quiz_1_lua.tres", "quiz_2_lua.tres"]
 @export var dungeon_index: int = 1               # matches the mission's dungeon_index in Global.missions

@@ -8,7 +8,7 @@ class_name KnowledgeEntry
 # encyclopedia (Global.learn_entry) and its keyword becomes unlocked.
 
 @export var entry_name: String = ""          # human label, e.g. "print()"
-@export var description: String = ""         # the Desc / teaching text
+@export_multiline var description: String = ""  # the Desc / teaching text
 @export var keyword: String = ""             # unlocks use of this concept in the Lua editor
 @export_enum("lua", "python") var language: String = "lua"
 @export var category: String = ""            # optional grouping shown in the encyclopedia

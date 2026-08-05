@@ -26,10 +26,10 @@ enum Shape { SHORT = 0, LONG = 1 }
 @export var shape: Shape = Shape.LONG
 
 @export var question_name: String = ""       # short id, e.g. "print basics"
-@export var question: String = ""            # the actual question text
+@export_multiline var question: String = ""  # the actual question text
 @export var question_field: String = ""      # reference to the KnowledgeEntry FILE NAME this
                                              # question verifies, e.g. "entry_1_lua.tres"
-@export var answer_long: String = ""         # the typed/enumeration answer
+@export_multiline var answer_long: String = ""  # the typed/enumeration answer
 @export var answer_short_a: String = ""
 @export var answer_short_b: String = ""
 @export var answer_short_c: String = ""
