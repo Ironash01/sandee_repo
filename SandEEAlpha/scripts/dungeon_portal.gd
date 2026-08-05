@@ -1,32 +1,21 @@
 extends Node2D
-# ── Dungeon Portal ────────────────────────────────────────────────
-# Placed in the world by a "Dungeon Spawner" item.
-# When the player walks near and left-clicks, it loads the assigned
-# dungeon scene.  The dungeon index is set by setup() when placed.
+# ── Dungeon Portal (world entrance) ─────────────────────────────────
+# Spawned by world.gd when the player accepts a dungeon mission (see
+# world.gd's _spawn_dungeon_entrance) — NOT placed by the player anymore
+# (the old "Dungeon Spawner" placeable-item flow was removed).
+# When the player walks near and left-clicks, it shows a confirm dialog
+# that dispatches to Global.game_node.enter_dungeon(dungeon_index) — the
+# same parent-scene pattern CavePortal uses, instead of the old
+# change_scene_to_file (which destroyed Player/UI — see game_instance.gd).
 #
-# Dungeon mapping (matches the 5 difficulty-themed dungeons):
-#   1 → dungeon1.tscn  (Easy   — Print, Variables, Booleans)
-#   2 → dungeon2.tscn  (Easy   — Type Casting, Input, Concat)
-#   3 → dungeon3.tscn  (Medium — If/Else, Logic Ops, Math, Strings)
-#   4 → dungeon4.tscn  (Hard   — Loops, Functions, Random, Exception)
-#   5 → dungeon5.tscn  (Hard   — Iterators, Classes, Inheritance, Dates)
-
-const DUNGEON_SCENES: Array = [
-	"",                                   # [0] unused — index from 1
-	"res://scenes/dungeons/dungeon1.tscn",
-	"res://scenes/dungeons/dungeon2.tscn",
-	"res://scenes/dungeons/dungeon3.tscn",
-	"res://scenes/dungeons/dungeon4.tscn",
-	"res://scenes/dungeons/dungeon5.tscn",
-]
-
+# Dungeon mapping (matches the currently-shipped missions, backed by
+# DungeonMissionData .tres files):
+#   1 → Print, Variables, Booleans
+#   2 → Type Casting, Input, Concat
 const DUNGEON_NAMES: Array = [
 	"",
 	"Dungeon I  — The Print Room",
 	"Dungeon II — The Variable Vault",
-	"Dungeon III — Logic Labyrinth",
-	"Dungeon IV — The Loop Forge",
-	"Dungeon V  — The Class Citadel",
 ]
 
 # ── Theme ─────────────────────────────────────────────────────────
@@ -39,27 +28,12 @@ const C_CANCEL  := Color(0.40, 0.20, 0.20, 1.00)
 const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.55)
 
 # ── State ─────────────────────────────────────────────────────────
-var dungeon_index:   int     = 1      # set by setup()
-var _player_nearby:  bool    = false
-var _world_cell:     Vector2i = Vector2i(-99999, -99999)
-var _world_ref:      Node    = null
+var dungeon_index: int = 1      # set by world.gd at spawn
+var _player_nearby:  bool = false
 var _confirm_ui:     Control = null
 
 @onready var _sprite:   Sprite2D = $Sprite2D
 @onready var _interact: Area2D   = $InteractArea
-
-# ── Called by world.gd when placed ───────────────────────────────
-func setup(data: ItemData) -> void:
-	if _sprite != null:
-		var tex: Texture2D = data.placeable_sprite if data.placeable_sprite != null else data.icon
-		_sprite.texture = tex
-	# Read which dungeon this portal leads to from the item meta
-	if data.has_meta("dungeon_index"):
-		dungeon_index = int(data.get_meta("dungeon_index"))
-
-func set_world_cell(cell: Vector2i, world: Node) -> void:
-	_world_cell = cell
-	_world_ref  = world
 
 # ── Ready ─────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -70,7 +44,7 @@ func _ready() -> void:
 
 # ── Input ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
-	if not _player_nearby or Global.block_mode:
+	if not _player_nearby or Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if _confirm_ui != null and _confirm_ui.visible:
 		return
@@ -81,13 +55,20 @@ func _input(event: InputEvent) -> void:
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = true
+		# Walk-in also opens the confirm (CavePortal-style) — a left-click can
+		# get swallowed by a nearby tree's chop input (tree.gd consumes it
+		# with set_input_as_handled() BEFORE this portal's _input runs), so
+		# clicking alone is not a reliable way to enter a forest-spawned portal.
+		if _confirm_ui != null and not _confirm_ui.visible \
+				and not Global.any_ui_open() and not Global.pause_menu_open:
+			_show_confirm()
 
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = false
-		if _confirm_ui != null:
+		if _confirm_ui != null and _confirm_ui.visible:
 			_confirm_ui.visible = false
-			get_tree().paused   = false
+			Global.close_ui()
 
 # ── Confirm UI ────────────────────────────────────────────────────
 func _build_confirm_ui() -> void:
@@ -189,20 +170,18 @@ func _build_confirm_ui() -> void:
 func _show_confirm() -> void:
 	if _confirm_ui != null:
 		_confirm_ui.visible = true
-		get_tree().paused   = true
+		Global.open_ui()
 
 func _cancel() -> void:
 	if _confirm_ui != null:
 		_confirm_ui.visible = false
-		get_tree().paused   = false
+		Global.close_ui()
 
 func _enter_dungeon() -> void:
 	if _confirm_ui != null:
 		_confirm_ui.visible = false
-		get_tree().paused   = false
-	var idx: int = clamp(dungeon_index, 1, DUNGEON_SCENES.size() - 1)
-	var path: String = DUNGEON_SCENES[idx]
-	if ResourceLoader.exists(path):
-		get_tree().change_scene_to_file(path)
+		Global.close_ui()
+	if is_instance_valid(Global.game_node) and Global.game_node.has_method("enter_dungeon"):
+		Global.game_node.call("enter_dungeon", dungeon_index)
 	else:
-		push_error("DungeonPortal: scene not found: " + path)
+		push_error("DungeonPortal: game node has no enter_dungeon(%d)" % dungeon_index)

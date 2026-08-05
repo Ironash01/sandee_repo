@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://dwf80aut4tvt"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_il24m"]
+[ext_resource type="Texture2D" uid="uid://bbyd64bolq8gy" path="res://sprites/dungeon/SandEE_alpha_dungeontilesets.png" id="1_lsyc0"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_s6pc4"]
+atlas = ExtResource("1_lsyc0")
+region = Rect2(352, 128, 32, 32)
+
+[resource]
+script = ExtResource("1_il24m")
+item_name = "Dungeon Quiz Altar"
+item_type = "block"
+is_dev_item = true
+icon = SubResource("AtlasTexture_s6pc4")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

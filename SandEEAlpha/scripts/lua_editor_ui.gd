@@ -20,6 +20,7 @@ var _run_btn:   Button
 var _stop_btn:  Button
 var _body:      Control   # code + output view
 var _encycl:    Control   # encyclopedia view
+var _knowledge_box: VBoxContainer   # unlocked dungeon-knowledge entries
 var _lua_state: Node
 var _running:   bool = false
 
@@ -30,6 +31,7 @@ func _ready() -> void:
 	_build()
 	call_deferred("_find_lua_state")
 	Global.ui_scale_changed.connect(_on_ui_scale)
+	Global.knowledge_updated.connect(_refresh_knowledge_section)
 
 func _on_ui_scale(_s: float) -> void:
 	var saved_code: String = _code_edit.text if _code_edit != null else ""
@@ -275,7 +277,32 @@ func _build_encyclopedia(s: float) -> Control:
 	_enc_entry(list, "print(val)",
 		"Print a value to the output panel. Accepts strings, numbers, and booleans. Output stays visible while the panel is open.", s)
 
+	_divider(list)
+
+	_enc_section(list, "DUNGEON KNOWLEDGE (unlocked)", s)
+	_knowledge_box = VBoxContainer.new()
+	_knowledge_box.add_theme_constant_override("separation", i(14, s))
+	list.add_child(_knowledge_box)
+	_refresh_knowledge_section()
+
 	return root
+
+func _refresh_knowledge_section() -> void:
+	if _knowledge_box == null:
+		return
+	for child in _knowledge_box.get_children().duplicate():
+		child.free()
+	var entries := Global.all_learned_entries()
+	if entries.is_empty():
+		var none := Label.new()
+		none.text = "None yet — find a dungeon knowledge altar to unlock concepts here."
+		none.add_theme_font_size_override("font_size", i(12, Global.ui_scale))
+		none.add_theme_color_override("font_color", C_MUTED)
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_knowledge_box.add_child(none)
+		return
+	for e in entries:
+		_enc_entry(_knowledge_box, e.entry_name, e.description, Global.ui_scale)
 
 func _enc_section(parent: Node, text: String, s: float) -> void:
 	var lbl := Label.new()

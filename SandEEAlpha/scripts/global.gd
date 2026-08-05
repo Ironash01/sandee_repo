@@ -141,11 +141,177 @@ var is_daytime: bool = true
 var missions: Array = []
 signal mission_updated
 signal mission_completed(mission_id: String)
+# Only one mission can be accepted at a time — the id of the currently
+# accepted mission, "" when none. Accepting a mission also emits
+# mission_accepted(), which world.gd uses to spawn the dungeon entrance.
+var accepted_mission_id: String = ""
+signal mission_accepted(mission_id: String)
+
+# ── Knowledge / quiz / dungeon-mission registries ───────────────────────
+# Data-driven dungeon content lives in three resource folders and is loaded
+# once at startup:
+#   res://resources/entries/        KnowledgeEntry (encyclopedia + keyword)
+#   res://resources/quizzes/        QuizQuestion   (quiz altar questions)
+#   res://resources/dungeon_missions/  DungeonMissionData (glues entry→quizzes)
+# A dungeon mission references the others by FILE NAME (e.g.
+# "entry_1_lua.tres") so the mission author never needs to build node graphs
+# in the editor — just drop a .tres in the right folder and reference it.
+const KNOWLEDGE_DIR: String       = "res://resources/entries/"
+const QUIZ_DIR:      String       = "res://resources/quizzes/"
+const DUNGEON_MISSION_DIR: String = "res://resources/dungeon_missions/"
+
+var knowledge_entries: Dictionary = {}  # entry base name -> KnowledgeEntry
+var quiz_questions:    Dictionary = {}  # quiz base name -> QuizQuestion
+var dungeon_missions:  Dictionary = {}  # dungeon_index -> DungeonMissionData
+
+# What the player has actually learned. learned_entries keyed by entry base
+# name (drives the encyclopedia view); learned_keywords keyed by the entry's
+# keyword string (drives unlocking the concept in the Lua editor later).
+var learned_entries:  Dictionary = {}  # entry base name -> true
+var learned_keywords: Dictionary = {}  # keyword -> entry base name
+
+signal knowledge_updated
+
+# ── Dungeon runtime state ─────────────────────────────────────────────
+# cleared_dungeons: a dungeon is worth TWO stars — one for clearing the
+# dungeon (quiz altar all-correct, recorded here) and one for completing
+# its mission (Global.complete_mission, which fires right after). Both are
+# counted by the mission UI's star totals.
+# dungeon_seeds: rolled ONCE, the first time the player accepts that
+# dungeon's mission, then persisted — re-entering regenerates the exact
+# same layout (DungeonGenerator is deterministic from its seed).
+var cleared_dungeons: Dictionary = {}  # dungeon_index -> true
+var dungeon_seeds:    Dictionary = {}  # dungeon_index -> int
+signal dungeon_cleared(dungeon_index: int)
+
+func load_knowledge_data() -> void:
+	knowledge_entries.clear()
+	quiz_questions.clear()
+	dungeon_missions.clear()
+	_load_resource_dir(KNOWLEDGE_DIR, knowledge_entries)
+	_load_resource_dir(QUIZ_DIR,      quiz_questions)
+	var mission_lookup: Dictionary = {}
+	_load_resource_dir(DUNGEON_MISSION_DIR, mission_lookup)
+	for key in mission_lookup:
+		var m: DungeonMissionData = mission_lookup[key] as DungeonMissionData
+		if m != null:
+			dungeon_missions[m.dungeon_index] = m
+
+func _load_resource_dir(dir_path: String, into: Dictionary) -> void:
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		push_warning("Global: cannot open resource folder %s" % dir_path)
+		return
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while fname != "":
+		if not dir.current_is_dir() and fname.ends_with(".tres"):
+			var res: Resource = load(dir_path + fname)
+			if res != null:
+				into[fname.get_basename()] = res
+			else:
+				push_warning("Global: failed to load %s%s" % [dir_path, fname])
+		fname = dir.get_next()
+	dir.list_dir_end()
+
+func get_knowledge_entry_file(fname: String) -> KnowledgeEntry:
+	return knowledge_entries.get(fname.get_basename()) as KnowledgeEntry
+
+func get_quiz_file(fname: String) -> QuizQuestion:
+	return quiz_questions.get(fname.get_basename()) as QuizQuestion
+
+func get_dungeon_mission_for_index(idx: int) -> DungeonMissionData:
+	return dungeon_missions.get(idx) as DungeonMissionData
+
+func get_dungeon_mission_by_file(fname: String) -> DungeonMissionData:
+	for idx in dungeon_missions:
+		var m: DungeonMissionData = dungeon_missions[idx] as DungeonMissionData
+		if m != null and m.id() == fname.get_basename():
+			return m
+	return null
+
+# Dungeon seeds are rolled the first time the player accepts the mission
+# (world.gd calls this from _spawn_dungeon_entrance); kept here so the
+# layout survives re-entry and save/load.
+func get_or_create_dungeon_seed(dungeon_index: int) -> int:
+	if dungeon_seeds.has(dungeon_index):
+		return int(dungeon_seeds[dungeon_index])
+	var seed := randi()
+	dungeon_seeds[dungeon_index] = seed
+	return seed
+
+# Star #1 of a dungeon's two: the quiz altar was cleared (called right before
+# complete_mission fires for star #2). Idempotent so re-clears never double
+# count, and it drives the mission UI popup via dungeon_cleared.
+func record_dungeon_clear(dungeon_index: int) -> void:
+	if cleared_dungeons.has(dungeon_index):
+		return
+	cleared_dungeons[dungeon_index] = true
+	dungeon_cleared.emit(dungeon_index)
+	mission_updated.emit()  # star totals change — refresh the mission UI
+
+func is_dungeon_cleared(dungeon_index: int) -> bool:
+	return cleared_dungeons.has(dungeon_index)
+
+# Every dungeon is worth one clear-star in addition to its mission star, so
+# the mission UI's star total = mission count + dungeon count.
+func clearable_dungeon_count() -> int:
+	return dungeon_missions.size()
+
+# Reconstruct keyword → entry mapping from the learned entries each load,
+# so it always matches whatever entry resources currently exist.
+func _rebuild_learned_keywords() -> void:
+	learned_keywords.clear()
+	for id in learned_entries:
+		var e: KnowledgeEntry = knowledge_entries.get(id) as KnowledgeEntry
+		if e != null and not e.keyword.is_empty():
+			learned_keywords[e.keyword] = id
+
+# Called by the knowledge altar. Records the concept in the encyclopedia and
+# unlocks its keyword (the Lua-editor enforcement itself is a later polish).
+func learn_entry(entry: KnowledgeEntry) -> void:
+	if entry == null:
+		return
+	if learned_entries.has(entry.id()):
+		return
+	learned_entries[entry.id()] = true
+	if not entry.keyword.is_empty():
+		learned_keywords[entry.keyword] = entry.id()
+	knowledge_updated.emit()
+
+func has_learned_entry(fname: String) -> bool:
+	return learned_entries.has(fname.get_basename())
+
+func has_keyword_unlocked(keyword: String) -> bool:
+	return learned_keywords.has(keyword)
+
+func learned_entry_count() -> int:
+	return learned_entries.size()
+
+# Resolve an unlocked entry back to its resource for the encyclopedia view.
+func all_learned_entries() -> Array[KnowledgeEntry]:
+	var out: Array[KnowledgeEntry] = []
+	for id in learned_entries:
+		var e: KnowledgeEntry = knowledge_entries.get(id) as KnowledgeEntry
+		if e != null:
+			out.append(e)
+	return out
+
+# Grant an item by resource path (used for the Lua Core reward). Returns true
+# if it landed in the inventory. Rejects dev items like every other path.
+func grant_item(item_path: String, quantity: int = 1) -> bool:
+	if item_path.is_empty() or not ResourceLoader.exists(item_path):
+		push_warning("Global: reward item not found: %s" % item_path)
+		return false
+	var data: ItemData = load(item_path) as ItemData
+	if data == null or data.is_dev_item:
+		return false
+	return add_item({"data": data, "quantity": maxi(quantity, 1)})
 
 # ── Player / world refs ───────────────────────────────────────────
 var player_node: Node = null
 var world_node:  Node = null
-var game_node:   Node = null  # game_instance.gd — CavePortal calls enter_cave()/exit_cave() on this
+var game_node:   Node = null  # game_instance.gd — CavePortal calls enter_cave()/exit_cave(), DungeonPortal calls enter_dungeon()
 
 @onready var inventory_slot_scene: PackedScene = preload("res://scenes/ui/InventorySlot.tscn")
 
@@ -153,6 +319,8 @@ func _ready() -> void:
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
 	_init_missions()
+	load_knowledge_data()
+	_append_dungeon_missions()
 
 # ── Centralized world debug/build-mode shortcuts ───────────────────────
 # Ctrl+Shift+H/C/T and the block-mode Ctrl toggle used to be hand-wired
@@ -197,10 +365,53 @@ func _init_missions() -> void:
 		{"id": "craft_item",       "title": "Craft your first item", "completed": false},
 	]
 
+# Dungeon missions are NOT hardcoded — one is created per DungeonMissionData
+# .tres file actually present in resources/dungeon_missions/, so the mission
+# list always matches the shipped dungeon content. Called after
+# load_knowledge_data() fills the dungeon_missions registry.
+func _append_dungeon_missions() -> void:
+	const DUNGEON_ROMAN: Array = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+	var indexes: Array = dungeon_missions.keys()
+	indexes.sort()
+	for idx in indexes:
+		var m: DungeonMissionData = dungeon_missions[idx] as DungeonMissionData
+		if m == null:
+			continue
+		var roman: String = DUNGEON_ROMAN[idx] if idx < DUNGEON_ROMAN.size() else str(idx)
+		missions.append({
+			"id": "dungeon_%d" % idx,
+			"title": "Dungeon %s — %s" % [roman, m.mission_name],
+			"completed": false,
+			"dungeon_index": idx,
+		})
+
+func accept_mission(id: String) -> void:
+	if accepted_mission_id == id:
+		return
+	accepted_mission_id = id
+	mission_updated.emit()
+	mission_accepted.emit(id)
+
+func get_accepted_mission() -> Dictionary:
+	for m in missions:
+		if m["id"] == accepted_mission_id:
+			return m
+	return {}
+
+# dungeon_index of the currently accepted dungeon mission, or 0 when the
+# accepted mission isn't a dungeon (drives the mission guide arrow).
+func accepted_dungeon_index() -> int:
+	for m in missions:
+		if m["id"] == accepted_mission_id and m.has("dungeon_index"):
+			return int(m["dungeon_index"])
+	return 0
+
 func complete_mission(id: String) -> void:
 	for m in missions:
 		if m["id"] == id and not m["completed"]:
 			m["completed"] = true
+			if accepted_mission_id == id:
+				accepted_mission_id = ""
 			mission_updated.emit()
 			mission_completed.emit(id)
 			return
@@ -208,6 +419,8 @@ func complete_mission(id: String) -> void:
 func reset_missions() -> void:
 	for m in missions:
 		m["completed"] = false
+	accepted_mission_id = ""
+	cleared_dungeons.clear()
 	mission_updated.emit()
 
 # ── Add item ──────────────────────────────────────────────────────
@@ -411,6 +624,17 @@ func save_game(slot: int) -> void:
 	for m in missions:
 		missions_save.append({"id": m["id"], "completed": m["completed"]})
 	save_data["missions"] = missions_save
+	save_data["accepted_mission_id"] = accepted_mission_id
+	save_data["learned_entries"]  = learned_entries.keys()
+	save_data["learned_keywords"] = learned_keywords.keys()
+	var cleared_save: Array = []
+	for idx in cleared_dungeons:
+		cleared_save.append(int(idx))
+	save_data["cleared_dungeons"] = cleared_save
+	var seeds_save: Array = []
+	for idx in dungeon_seeds:
+		seeds_save.append({"index": int(idx), "seed": int(dungeon_seeds[idx])})
+	save_data["dungeon_seeds"] = seeds_save
 	var f := FileAccess.open("user://save_slot_%d.json" % slot, FileAccess.WRITE)
 	if f != null:
 		f.store_string(JSON.stringify(save_data))
@@ -472,5 +696,21 @@ func load_game(slot: int) -> void:
 					m["completed"] = bool(entry.get("completed", false))
 					break
 		mission_updated.emit()
+	if data.has("accepted_mission_id"):
+		accepted_mission_id = str(data["accepted_mission_id"])
+	if data.has("learned_entries") and data["learned_entries"] is Array:
+		for id in (data["learned_entries"] as Array):
+			if not learned_entries.has(id):
+				learned_entries[id] = true
+	_rebuild_learned_keywords()
+	knowledge_updated.emit()
+	if data.has("cleared_dungeons") and data["cleared_dungeons"] is Array:
+		for idx in (data["cleared_dungeons"] as Array):
+			if not cleared_dungeons.has(int(idx)):
+				cleared_dungeons[int(idx)] = true
+	if data.has("dungeon_seeds") and data["dungeon_seeds"] is Array:
+		for entry in (data["dungeon_seeds"] as Array):
+			if entry is Dictionary:
+				dungeon_seeds[int(entry["index"])] = int(entry["seed"])
 	Hotbar_updated.emit()
 	Inventory_updated.emit()

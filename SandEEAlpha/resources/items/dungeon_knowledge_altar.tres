@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://bobm6n6hd06fp"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_cn8i7"]
+[ext_resource type="Texture2D" uid="uid://bbyd64bolq8gy" path="res://sprites/dungeon/SandEE_alpha_dungeontilesets.png" id="1_n18n3"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gke6v"]
+atlas = ExtResource("1_n18n3")
+region = Rect2(288, 128, 32, 32)
+
+[resource]
+script = ExtResource("1_cn8i7")
+item_name = "Dungeon Knowledge Altar"
+is_dev_item = true
+icon = SubResource("AtlasTexture_gke6v")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

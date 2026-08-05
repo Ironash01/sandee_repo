@@ -13,6 +13,7 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 var _loading_screen: CanvasLayer = null
 var _loading_label:  Label       = null
 var _cave_world:      CaveWorld  = null
+var _dungeon_world:   DungeonWorld = null
 
 func _ready() -> void:
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -94,12 +95,13 @@ func _on_generation_complete() -> void:
 # Swaps $World out for a freshly generated CaveWorld rather than a full
 # change_scene_to_file — Player/camera/Hotbar/PauseMenu all live as $World's
 # siblings here in Game, so a full scene change would destroy them (this is
-# also why the pre-existing Dungeon Portal system, which does use
-# change_scene_to_file, doesn't actually work today — dungeon1-5.tscn are
-# still empty stub scenes). The overworld $World is only removed from the
-# tree, never freed, so nothing about it needs to regenerate on return.
+# also why the old Dungeon Portal system, which did use change_scene_to_file
+# against the legacy dungeon1-5.tscn scenes, never worked — the legacy scenes
+# are gone now, replaced by code-generated DungeonWorld). The overworld
+# $World is only removed from the tree, never freed, so nothing about it
+# needs to regenerate on return.
 func enter_cave(portal: CavePortal) -> void:
-	if _cave_world != null:
+	if _cave_world != null or _dungeon_world != null:
 		return
 	var return_position: Vector2 = _player.global_position
 	remove_child(_world)
@@ -125,6 +127,53 @@ func exit_cave() -> void:
 	move_child(_world, 0)
 	Global.world_node       = _world
 	_player.global_position = return_position
+
+# ── Dungeon entry (mission-accept portal) ─────────────────────────────────
+# dungeon_portal.gd dispatches here with the dungeon's index (matching
+# Global.missions dungeon_index). Same swap-out-$World pattern as
+# enter_cave — the overworld stays alive off-tree, and the dungeon is its own
+# TileMapLayer world (DungeonWorld) built in code from the mission's
+# DungeonMissionData. The layout generates from a seed rolled once on the
+# first mission accept (Global.get_or_create_dungeon_seed), so re-entering
+# always reproduces the same dungeon.
+func enter_dungeon(dungeon_index: int) -> void:
+	if _cave_world != null or _dungeon_world != null:
+		return
+	var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(dungeon_index)
+	if mission == null:
+		push_warning("enter_dungeon: no DungeonMissionData for index %d" % dungeon_index)
+		return
+	var return_position: Vector2 = _player.global_position
+	remove_child(_world)
+
+	_dungeon_world = DungeonWorld.new()
+	_dungeon_world.name = "World"
+	add_child(_dungeon_world)
+	move_child(_dungeon_world, 0)
+	_dungeon_world.setup(dungeon_index, mission,
+		Global.get_or_create_dungeon_seed(dungeon_index), _world, return_position)
+
+	Global.world_node       = _dungeon_world
+	_player.global_position = _dungeon_world.get_player_spawn_pos()
+
+func exit_dungeon() -> void:
+	if _dungeon_world == null:
+		return
+	var return_position: Vector2 = _dungeon_world.overworld_return_position
+	remove_child(_dungeon_world)
+	_dungeon_world.queue_free()
+	_dungeon_world = null
+
+	add_child(_world)
+	move_child(_world, 0)
+	Global.world_node       = _world
+	_player.global_position = return_position
+
+	# Persist the clear right away — entrance removal + reward + stars all
+	# need to survive a quit that never reaches the 5-minute autosave. The
+	# overworld is back in the tree now, so the save captures real world data.
+	if Global.active_save_slot > 0:
+		Global.save_game(Global.active_save_slot)
 
 # ── Autosave ──────────────────────────────────────────────────────────
 func _add_mission_ui() -> void:

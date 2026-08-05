@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://brysvidb8cugr"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_6beel"]
+[ext_resource type="Texture2D" uid="uid://bbyd64bolq8gy" path="res://sprites/dungeon/SandEE_alpha_dungeontilesets.png" id="1_uixp6"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_l2wp7"]
+atlas = ExtResource("1_uixp6")
+region = Rect2(128, 0, 32, 32)
+
+[resource]
+script = ExtResource("1_6beel")
+item_name = "Dungeon Wall TOPRIGHT"
+is_dev_item = true
+icon = SubResource("AtlasTexture_l2wp7")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

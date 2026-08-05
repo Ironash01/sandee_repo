@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://bvgmi10kb28ed"]
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://dgqogn7h5ap82"]
 
 [ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_ds1"]
 [ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="2_ds1"]

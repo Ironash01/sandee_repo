@@ -82,6 +82,7 @@ func _ready() -> void:
 	# Offset tuned to sit under the feet — PlayerCol's collision box
 	# (position.y 6.5, half-height 16.5) bottoms out around y=23.
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 14.0), Vector2(0.8, 0.4), 0.35))
+	add_child(MissionGuideArrow.new())
 	sprite.play("idle_south")
 	Global.request_close_all_ui.connect(_on_close_all_ui)
 	if Global.has_pending_pos:
@@ -404,6 +405,24 @@ func _give_debug_items() -> void:
 		if data != null:
 			Global.add_item({"quantity": 10, "data": data})
 
+# Debug (Ctrl+Shift+L): teleport to the accepted dungeon's entrance portal.
+# Reuses the guide arrow's world lookup, so it's a no-op with a warning when
+# no dungeon mission is accepted or its entrance doesn't exist yet. The 64px
+# offset drops the player just south of the portal so it doesn't overlap it.
+# NOTE: Ctrl+Shift+D is the day/night debug toggle (day_night_cycle.gd), so
+# the dungeon jump uses L instead.
+func _debug_teleport_to_dungeon() -> void:
+	var world := _get_world_node()
+	if world == null or not world.has_method("get_dungeon_guide_target"):
+		push_warning("DebugTeleport: no dungeon entrance (accept a dungeon mission first)")
+		return
+	var target: Vector2 = world.call("get_dungeon_guide_target") as Vector2
+	if target == Vector2.INF:
+		push_warning("DebugTeleport: no dungeon entrance (accept a dungeon mission first)")
+		return
+	global_position = target + Vector2(0.0, 64.0)
+	print("DebugTeleport: jumped to dungeon entrance at %s" % str(target))
+
 # ── UI management ─────────────────────────────────────────────────
 func _on_close_all_ui() -> void:
 	if inventory_layer.visible:
@@ -424,6 +443,11 @@ func _input(event: InputEvent) -> void:
 		Global.reset_missions()
 		_move_mission_done      = false
 		_inventory_mission_done = false
+		return
+
+	if event is InputEventKey and event.pressed \
+			and event.keycode == KEY_L and event.ctrl_pressed and event.shift_pressed:
+		_debug_teleport_to_dungeon()
 		return
 
 	# Inventory key: can always close; blocked from opening when another UI is active

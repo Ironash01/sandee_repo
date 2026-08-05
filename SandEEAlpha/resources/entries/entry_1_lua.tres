@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "print()"
+description = "The print() function writes a value to the output console. Anything between the parentheses — text in quotes, numbers, booleans — is shown on screen when the code runs."
+keyword = "print"
+language = "lua"
+category = "Basics"

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://buohjhal4xb3s"]
+
+[ext_resource type="Texture2D" uid="uid://bbyd64bolq8gy" path="res://sprites/dungeon/SandEE_alpha_dungeontilesets.png" id="1_japet"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_3s63h"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_l2wp7"]
+atlas = ExtResource("1_japet")
+region = Rect2(128, 64, 32, 32)
+
+[resource]
+script = ExtResource("2_3s63h")
+item_name = "DWALLBOTRIGHT"
+is_dev_item = true
+icon = SubResource("AtlasTexture_l2wp7")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

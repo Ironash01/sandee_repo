@@ -31,6 +31,7 @@ func _ready() -> void:
 	_build_popup()
 	Global.mission_updated.connect(_on_mission_updated)
 	Global.mission_completed.connect(_on_mission_completed)
+	Global.dungeon_cleared.connect(_on_dungeon_cleared)
 	call_deferred("_refit_compact")
 	call_deferred("_center_panels")
 
@@ -177,6 +178,17 @@ func _on_mission_completed(id: String) -> void:
 	_popup_timer.start()
 	call_deferred("_position_popup")
 
+# Dungeon-clear star (star #1 of a dungeon's two — complete_mission fires for
+# #2 right after, and this fires last so the popup carries the cleared flavor).
+func _on_dungeon_cleared(index: int) -> void:
+	for m in Global.missions:
+		if m.has("dungeon_index") and int(m["dungeon_index"]) == index:
+			_popup_title_label.text = m["title"] + " — Dungeon Cleared!"
+			break
+	_popup_panel.visible = true
+	_popup_timer.start()
+	call_deferred("_position_popup")
+
 func _hide_popup() -> void:
 	_popup_panel.visible = false
 
@@ -192,7 +204,11 @@ func _stars_text() -> String:
 	for m in Global.missions:
 		if m["completed"]:
 			done += 1
-	return "★  %d / %d  Stars" % [done, Global.missions.size()]
+	# Dungeons are worth two stars: one for clearing the dungeon (quiz altar)
+	# and one for completing its mission.
+	done += Global.cleared_dungeons.size()
+	var total: int = Global.missions.size() + Global.clearable_dungeon_count()
+	return "★  %d / %d  Stars" % [done, total]
 
 func _rebuild_list_rows() -> void:
 	for child in _list_rows_vbox.get_children().duplicate():
@@ -203,10 +219,17 @@ func _rebuild_list_rows() -> void:
 		_list_rows_vbox.add_child(row)
 
 		var star := Label.new()
-		star.text  = "★" if m["completed"] else "☆"
+		# Dungeon missions earn two stars (dungeon clear + mission complete);
+		# every other mission earns one.
+		var d_idx: int = int(m.get("dungeon_index", 0))
+		var cleared: bool = d_idx > 0 and Global.is_dungeon_cleared(d_idx)
+		if d_idx > 0:
+			star.text = ("★" if m["completed"] else "☆") + ("★" if cleared else "☆")
+		else:
+			star.text = "★" if m["completed"] else "☆"
 		star.add_theme_font_size_override("font_size", 18)
 		star.add_theme_color_override("font_color",
-				C_STAR if m["completed"] else C_MUTED)
+				C_STAR if (m["completed"] or cleared) else C_MUTED)
 		star.custom_minimum_size = Vector2(22, 0)
 		row.add_child(star)
 
@@ -217,6 +240,21 @@ func _rebuild_list_rows() -> void:
 				C_DONE if m["completed"] else C_MUTED)
 		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(lbl)
+
+		# Accept button — only one mission can be accepted at a time
+		# (Global.accept_mission swaps the accepted id). Completed missions
+		# don't need accepting anymore.
+		if not m["completed"]:
+			var accept_btn := Button.new()
+			accept_btn.custom_minimum_size = Vector2(96, 0)
+			accept_btn.add_theme_font_size_override("font_size", 12)
+			if m["id"] == Global.accepted_mission_id:
+				accept_btn.text    = "Accepted ✓"
+				accept_btn.disabled = true
+			else:
+				accept_btn.text = "Accept"
+				accept_btn.pressed.connect(Global.accept_mission.bind(m["id"]))
+			row.add_child(accept_btn)
 
 	_list_stars_label.text = _stars_text()
 	call_deferred("_center_panels")

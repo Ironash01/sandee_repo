@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://dbttgoithawyg"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+shape = 0
+question_name = "print basics"
+question = "What does print() write to the output console?"
+question_field = "entry_1_lua.tres"
+answer_long = "the value passed inside its parentheses"
+answer_short_a = "Nothing at all"
+answer_short_b = "The value passed inside its parentheses"
+answer_short_c = "A random number"
+answer_short_d = "Only text, never numbers"
+correct_short_index = 1

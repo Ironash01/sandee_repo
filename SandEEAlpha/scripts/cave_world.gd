@@ -36,6 +36,10 @@ const PLACE_RADIUS_TILES:       int = 6     # matches world.gd's own constant
 const INTERACT_RADIUS_PX:       float       = 64.0
 const ITEM_DROP_SCENE:          PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 
+# Thickness (in tiles) of the solid stone band painted around the generated
+# cave grid — matches dungeon_world.gd's SURROUND_BAND_TILES.
+const SURROUND_BAND_TILES: int = 128
+
 # Wall/ore tile type -> the ItemData that renders it, drops when mined, and
 # supplies block_level/min_pickaxe_level for the mining duration formula
 # (same formula placeable_block.gd already uses for placed blocks).
@@ -788,6 +792,27 @@ func _paint_tiles() -> void:
 		for y in range(generator.size):
 			var grid_pos := Vector2i(x, y)
 			_paint_cell(_grid_to_cell(grid_pos), generator.grid[x][y], grid_pos)
+	_paint_surrounding_walls()
+
+# Fills the void around the generated cave with a solid band of stone walls —
+# the cave grid is fully populated, but the TileMapLayer beyond its border was
+# empty, so the map edge showed through as black void. A band of stone on all
+# four sides closes that off; the generator already treats out-of-bounds as
+# solid (see _cell_is_wall), so this is purely visual. Thickness matches the
+# dungeon world's SURROUND_BAND_TILES.
+func _paint_surrounding_walls() -> void:
+	var cell: Dictionary = _wall_cells.get(CaveGenerator.Tile.STONE, {})
+	if cell.is_empty():
+		return
+	var half: int = generator.size / 2
+	var band: int = SURROUND_BAND_TILES
+	var x0 := -(half + band)
+	var x1 := half + band
+	for cx in range(x0, x1):
+		for cy in range(x0, x1):
+			if cx >= -half and cx < half and cy >= -half and cy < half:
+				continue  # inside the generated grid — already painted
+			_tilemap.set_cell(Vector2i(cx, cy), cell["source"], cell["coord"])
 
 func _paint_cell(cell_pos: Vector2i, tile_type: int, grid_pos: Vector2i) -> void:
 	var cell: Dictionary

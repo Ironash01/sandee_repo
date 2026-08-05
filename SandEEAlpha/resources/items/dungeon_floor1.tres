@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://b1k502ufcxcb1"]
+
+[ext_resource type="Texture2D" uid="uid://bbyd64bolq8gy" path="res://sprites/dungeon/SandEE_alpha_dungeontilesets.png" id="1_ddd5d"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_xlpm1"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_aoxdk"]
+atlas = ExtResource("1_ddd5d")
+region = Rect2(192, 32, 32, 31)
+
+[resource]
+script = ExtResource("1_xlpm1")
+item_name = "Dungeon Floor 1"
+item_type = "block"
+is_dev_item = true
+icon = SubResource("AtlasTexture_aoxdk")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

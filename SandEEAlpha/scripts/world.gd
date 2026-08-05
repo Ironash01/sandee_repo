@@ -99,6 +99,20 @@ const CAVE_ENTRANCE_MIN_SEPARATION: float = 100.0  # no two caves closer than th
 var _cave_claimed_chunks: Dictionary = {}   # chunk coord (Vector2i) -> true
 var _cave_entrance_tiles: Array      = []   # placed entrance tiles, for the min-separation check
 
+# ── Dungeon entrances (spawned on mission accept) ──────────────────────
+# Unlike caves (rolled during world-gen), a dungeon entrance spawns LATER —
+# the first time the player accepts a dungeon mission (see
+# _on_mission_accepted). Its chunk must satisfy every one of:
+#   a. no player-placed blocks in it
+#   b. not a cave-claimed chunk
+#   c. not the chunk the player is currently standing in
+#   d. not within DUNGEON_SPAWN_MIN_DIST_TILES tiles of world spawn
+const DUNGEON_PORTAL_SCENE: PackedScene = preload("res://scenes/objects/DungeonPortal.tscn")
+const DUNGEON_SPAWN_MIN_DIST_TILES: float = 200.0   # tiles (blocks) from world spawn
+const DUNGEON_INVALID_TILE: Vector2i = Vector2i(1 << 20, 1 << 20)  # sentinel, outside any map bounds
+var _dungeon_entrance_tiles: Dictionary = {}  # dungeon_index -> Vector2i tile
+var _dungeon_portal_nodes:   Dictionary = {}  # dungeon_index -> spawned DungeonPortal (so a cleared dungeon's entrance can be removed)
+
 # Trees beyond this radius have their Area2D monitoring disabled to avoid
 # O(n²) physics overhead. Must be larger than InteractArea radius (48px).
 # NOTE: grass deliberately does NOT use this per-node Area2D pattern — see
@@ -227,6 +241,7 @@ func _ready() -> void:
 	_setup_glow_environment()
 	Global.hotbar_selection_changed.connect(_on_hotbar_changed)
 	Global.Hotbar_updated.connect(_on_hotbar_changed)
+	Global.mission_accepted.connect(_on_mission_accepted)
 	# Set world reference immediately so game_instance can connect signals.
 	Global.world_node = self
 	# Two-step deferred chain: step 1 runs this frame's MessageQueue flush,
@@ -385,6 +400,12 @@ func _deferred_foliage() -> void:
 	if not Global.pending_world_data.is_empty():
 		apply_world_save_data(Global.pending_world_data)
 		Global.pending_world_data.clear()
+	# Repair the state where a dungeon mission is accepted but its entrance
+	# never got recorded — e.g. an old save from before the spawner's all-ocean
+	# chunk fix, or a spawn interrupted by a quit. Re-accepting isn't possible
+	# once the mission UI disables that mission's Accept button, so reconcile
+	# here instead: if the accepted dungeon has no entrance, spawn one now.
+	_ensure_accepted_dungeon_entrance()
 	_start_interaction_updater()
 	_start_despawn_timer()
 	_start_outer_spawn_timer()
@@ -1761,6 +1782,140 @@ func teleport_to_nearest_cave() -> void:
 	var target: Vector2 = ground_layer.to_global(ground_layer.map_to_local(best_tile + Vector2i(0, 1)))
 	p.global_position = target
 
+# ── Dungeon entrance spawning (mission-accept driven) ───────────────────
+# Called when Global.mission_accepted fires. Only dungeon missions (those
+# with a dungeon_index in Global.missions) spawn an entrance; each dungeon
+# spawns at most one, so re-accepting / repeated calls never duplicate it.
+func _on_mission_accepted(mission_id: String) -> void:
+	for m in Global.missions:
+		if m["id"] == mission_id and m.has("dungeon_index"):
+			_spawn_dungeon_entrance(int(m["dungeon_index"]))
+			return
+
+# Spawns the entrance for the currently accepted dungeon mission if it's
+# missing (see the call in _deferred_foliage for why reconciliation is needed).
+func _ensure_accepted_dungeon_entrance() -> void:
+	var idx: int = Global.accepted_dungeon_index()
+	if idx <= 0 or Global.is_dungeon_cleared(idx):
+		return
+	if _dungeon_entrance_tiles.has(idx):
+		return
+	_spawn_dungeon_entrance(idx)
+
+func _spawn_dungeon_entrance(dungeon_index: int) -> void:
+	if _dungeon_entrance_tiles.has(dungeon_index):
+		return
+	var player: Node2D = _get_player()
+	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(player.global_position)) \
+		if player != null else Vector2i.ZERO
+
+	# Collect every eligible chunk, then pick one at random — a fixed number
+	# of random attempts could keep missing valid chunks on tighter maps.
+	var developed_chunks: Dictionary = {}
+	for cell in _placed_blocks:
+		developed_chunks[_tile_to_chunk(cell as Vector2i)] = true
+
+	var valid: Array[Vector2i] = []
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if _is_valid_dungeon_chunk(chunk, player_tile, developed_chunks):
+				valid.append(chunk)
+	if valid.is_empty():
+		push_warning("DungeonSpawner: no valid chunk found for dungeon %d" % dungeon_index)
+		return
+
+	# A single random pick can land on an all-ocean chunk (the corner chunks
+	# routinely are), and _random_land_tile_in_chunk then finds nothing — so
+	# walk the list from a random start until one chunk yields a usable tile.
+	var start: int = rng.randi_range(0, valid.size() - 1)
+	for i in range(valid.size()):
+		var chunk: Vector2i = valid[(start + i) % valid.size()]
+		var tile:  Vector2i = _random_land_tile_in_chunk(chunk)
+		if tile == DUNGEON_INVALID_TILE:
+			continue
+		_dungeon_entrance_tiles[dungeon_index] = tile
+		# The layout's seed is rolled HERE — the first time the player accepts
+		# the mission — then persisted in Global, so the dungeon is "generated"
+		# once and re-entering always reproduces the same layout.
+		Global.get_or_create_dungeon_seed(dungeon_index)
+		_spawn_dungeon_portal_at(tile, dungeon_index)
+		return
+
+	push_warning("DungeonSpawner: no land tile found in any valid chunk for dungeon %d" % dungeon_index)
+
+# Every constraint of where a dungeon entrance may NOT occupy a chunk:
+#   a. no player-placed blocks anywhere in it
+#   b. not a cave-claimed chunk
+#   c. not the chunk the player is currently standing in
+#   d. not within DUNGEON_SPAWN_MIN_DIST_TILES tiles of world spawn
+func _is_valid_dungeon_chunk(chunk: Vector2i, player_tile: Vector2i, developed_chunks: Dictionary) -> bool:
+	if _cave_claimed_chunks.has(chunk):
+		return false
+	if _tile_to_chunk(player_tile) == chunk:
+		return false
+	if developed_chunks.has(chunk):
+		return false
+	if _chunk_min_corner_dist(chunk, _world_spawn_pos()) < DUNGEON_SPAWN_MIN_DIST_TILES * TILE_SIZE:
+		return false
+	return true
+
+# Land tile inside a chunk (rejecting water, trees and placed blocks — a
+# portal can't sit on any of those; _cell_biome_type() == -1 is water).
+# Scans the whole 25x25 chunk once and returns a random usable tile, instead
+# of a fixed number of random attempts that can whiff on a partially-land
+# chunk. An ENTIRELY water chunk still fails (DUNGEON_INVALID_TILE) — the
+# caller then falls through to the next valid chunk.
+func _random_land_tile_in_chunk(chunk: Vector2i) -> Vector2i:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+	var candidates: Array[Vector2i] = []
+	for dx in range(CHUNK_SIZE):
+		for dy in range(CHUNK_SIZE):
+			var tile: Vector2i = tl + Vector2i(dx, dy)
+			if _cell_biome_type(tile) == -1:
+				continue
+			if _placed_blocks.has(tile) or _is_tree_occupied(tile):
+				continue
+			candidates.append(tile)
+	if candidates.is_empty():
+		return DUNGEON_INVALID_TILE
+	return candidates[rng.randi_range(0, candidates.size() - 1)]
+
+func _spawn_dungeon_portal_at(tile: Vector2i, dungeon_index: int) -> void:
+	var portal: Node2D = DUNGEON_PORTAL_SCENE.instantiate() as Node2D
+	if portal == null:
+		return
+	portal.set("dungeon_index", dungeon_index)
+	_dungeon_portal_nodes[dungeon_index] = portal
+	add_child(portal)
+	portal.global_position = ground_layer.to_global(ground_layer.map_to_local(tile))
+
+# Called by DungeonWorld when its quiz altar is cleared — the dungeon is
+# "gone from the map": free the entrance portal and forget its tile. Safe to
+# call while the overworld is off-tree (in-dungeon): the portal is a child of
+# this node and queue_free() works on off-tree nodes.
+func remove_dungeon_entrance(dungeon_index: int) -> void:
+	if _dungeon_portal_nodes.has(dungeon_index):
+		var portal: Node = _dungeon_portal_nodes[dungeon_index]
+		if is_instance_valid(portal):
+			portal.queue_free()
+		_dungeon_portal_nodes.erase(dungeon_index)
+	_dungeon_entrance_tiles.erase(dungeon_index)
+
+# World position the mission guide arrow points at — the accepted dungeon's
+# entrance portal. Vector2.INF means "no active target" (the arrow hides):
+# no dungeon mission accepted, the entrance was removed (dungeon cleared),
+# or this is called while inside a cave/dungeon (those worlds don't have this
+# method, and the arrow's has_method() guard handles that).
+func get_dungeon_guide_target() -> Vector2:
+	var idx: int = Global.accepted_dungeon_index()
+	if idx <= 0 or not _dungeon_entrance_tiles.has(idx) or Global.is_dungeon_cleared(idx):
+		return Vector2.INF
+	var tile: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i
+	return ground_layer.to_global(ground_layer.map_to_local(tile))
+
 # ── Tree removal tracking ────────────────────────────────────────────
 func notify_tree_removed(tree: Node2D) -> void:
 	_removed_trees.append({"x": tree.global_position.x, "y": tree.global_position.y})
@@ -1781,7 +1936,11 @@ func get_world_save_data() -> Dictionary:
 		"placed_blocks": [],
 		"removed_trees": _removed_trees.duplicate(),
 		"mobs":          _collect_preserved_mobs(),
+		"dungeon_entrances": [],
 	}
+	for idx in _dungeon_entrance_tiles:
+		var t: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i
+		data["dungeon_entrances"].append({"index": int(idx), "x": t.x, "y": t.y})
 	for cell in _placed_blocks:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
 		var node: Node        = entry["node"] as Node
@@ -1832,6 +1991,17 @@ func apply_world_save_data(data: Dictionary) -> void:
 					break
 	if data.has("mobs") and data["mobs"] is Array:
 		_restore_mobs(data["mobs"] as Array)
+	if data.has("dungeon_entrances") and data["dungeon_entrances"] is Array:
+		for entry in (data["dungeon_entrances"] as Array):
+			if not (entry is Dictionary):
+				continue
+			var de: Dictionary = entry as Dictionary
+			var idx: int  = int(de.get("index", 1))
+			var tile := Vector2i(int(de.get("x", 0)), int(de.get("y", 0)))
+			if _dungeon_entrance_tiles.has(idx):
+				continue
+			_dungeon_entrance_tiles[idx] = tile
+			_spawn_dungeon_portal_at(tile, idx)
 	if not data.has("placed_blocks"):
 		return
 	for block_data in (data["placed_blocks"] as Array):
