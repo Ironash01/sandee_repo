@@ -4,4 +4,17 @@
 
 [resource]
 script = ExtResource("1_ufi6a")
+shape = 0
+question_name = "Division"
+question = "In this excercise you will need to look for the right symbol for the division operator to complete the code.
+
+num1 = 24
+num2 = 12
+quo = 24 _ 12
+output: 2"
+answer_short_a = "+"
+answer_short_b = "-"
+answer_short_c = "/"
+answer_short_d = "*"
+correct_short_index = 2
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

@@ -5,6 +5,7 @@
 [resource]
 script = ExtResource("1_mdh43")
 mission_name = "Spidey's strings"
-mission_description = "In this dungeon you will know how to use strings"
+mission_description = "In this dungeon you will know how to use strings in Pytthon."
 entry_resource_file = "entry_6_python.tres"
+dungeon_index = 6
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

@@ -4,4 +4,12 @@
 
 [resource]
 script = ExtResource("1_npklg")
+shape = 0
+question_name = "Division"
+question = "What is the right syntax from the arithmetic operation division?"
+answer_short_a = "quo = 1 + 1"
+answer_short_b = "quo = 1 / 1"
+answer_short_c = "quo = 1 * 1"
+answer_short_d = "quo = 1 % 1"
+correct_short_index = 1
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

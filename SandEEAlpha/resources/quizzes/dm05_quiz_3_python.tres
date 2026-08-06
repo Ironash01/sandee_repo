@@ -4,6 +4,7 @@
 
 [resource]
 script = ExtResource("1_hxqph")
+shape = 0
 question_name = "Let's Subtract"
 question = "Identify what arithmetic operator is used in this code.
 
