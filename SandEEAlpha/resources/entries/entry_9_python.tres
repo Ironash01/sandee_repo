@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://b04408icoifcs"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_po8qd"]
+
+[resource]
+script = ExtResource("1_po8qd")
+metadata/_custom_type_script = "uid://c8mblthys4abt"

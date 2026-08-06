@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://cd01ufxxpqw57"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_a7j22"]
+
+[resource]
+script = ExtResource("1_a7j22")
+metadata/_custom_type_script = "uid://by1htqkv82o6h"
