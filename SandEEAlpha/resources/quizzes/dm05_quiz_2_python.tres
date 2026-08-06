@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://bfb0cet88yibt"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_houyf"]
+
+[resource]
+script = ExtResource("1_houyf")
+question_name = "Let's Add"
+question = "In this exercise you shall identify and code what are the numbers that are needed to be added based on the statement below. You will declare a variable called sum that holds all the vales. NOTE: The answer in this question is not the total sum of the added numbers.
+
+I have 56 hotwheels cars, 10 tomica cars, and 15 majorette cars. I wonder how many cars i have?
+
+How are we going to code this using the addition operation?"
+answer_long = "sum = 56 + 10 + 15"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

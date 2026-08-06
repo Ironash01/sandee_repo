@@ -4,4 +4,14 @@
 
 [resource]
 script = ExtResource("1_5hh4y")
+shape = 0
+question_name = "Floating question 1"
+question = "What would be the output of the following code?
+
+temp = 40.5"
+answer_short_a = "temp"
+answer_short_b = "40"
+answer_short_c = "="
+answer_short_d = "40.5"
+correct_short_index = 3
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

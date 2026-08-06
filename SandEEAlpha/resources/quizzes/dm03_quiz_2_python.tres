@@ -4,4 +4,9 @@
 
 [resource]
 script = ExtResource("1_850ok")
+question_name = "Floating point question 2"
+question = "In this exercise you shall identify what is the float and you shold store it the variable named price.
+
+A simple shirt from the local supermarket cost at 299.75."
+answer_long = "price = 299.75"
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

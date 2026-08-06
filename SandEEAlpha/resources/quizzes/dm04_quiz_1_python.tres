@@ -4,4 +4,15 @@
 
 [resource]
 script = ExtResource("1_uv4ow")
+shape = 0
+question_name = "Boolean is it or it isn't?"
+question = "What would be the output of this code?
+
+is_rainy = true
+print(is_rainy)"
+answer_short_a = "is_rainy"
+answer_short_b = "true"
+answer_short_c = "false"
+answer_short_d = "is_sunny"
+correct_short_index = 1
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

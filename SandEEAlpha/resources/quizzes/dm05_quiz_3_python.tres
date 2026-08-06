@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://2nqemghk0ddu"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_hxqph"]
+
+[resource]
+script = ExtResource("1_hxqph")
+question_name = "Let's Subtract"
+question = "Identify what arithmetic operator is used in this code.
+
+difference = 500 - 123 - 90
+print(difference)"
+answer_short_a = "+"
+answer_short_b = "/"
+answer_short_c = "-"
+answer_short_d = "%"
+correct_short_index = 2
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"
