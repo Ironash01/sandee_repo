@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://onggib8brt3p"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_6r2lr"]
+
+[resource]
+script = ExtResource("1_6r2lr")
+entry_name = "Concatenation"
+description = "Concatenation joins character strings or data together in a single line. To concatenate, use double dots in-between strings or values. 
+print(\"butter\" .. \"fly\") -- prints 'butterfly'
+
+You can also concatenate numbers to combine them. However, numbers will be converted into string.
+print(6 .. 7) -- outputs '67'"
+keyword = ".."
+category = "Basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

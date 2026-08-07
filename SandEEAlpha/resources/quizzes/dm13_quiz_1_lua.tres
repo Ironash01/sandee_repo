@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://cqt2k62msxenj"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_2brlp"]
+
+[resource]
+script = ExtResource("1_2brlp")
+shape = 0
+question_name = "Numbers"
+question = "How are numbers defined?"
+question_field = "entry_4_lua.tres"
+answer_short_a = "Numbers itself"
+answer_short_b = "Numbers with quotation marks"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

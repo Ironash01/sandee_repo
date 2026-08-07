@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://cphxab4m0btjf"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_muhtf"]
+
+[resource]
+script = ExtResource("1_muhtf")
+mission_name = "Concatenation Room"
+mission_description = "This mission utilizes an operation called concatenation."
+entry_resource_file = "entry_3_lua.tres"
+quiz_resource_files = Array[String](["dm12_quiz_1_lua.tres", "dm12_quiz_2_lua.tres", "dm12_quiz_3_lua.tres"])
+dungeon_index = 12
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

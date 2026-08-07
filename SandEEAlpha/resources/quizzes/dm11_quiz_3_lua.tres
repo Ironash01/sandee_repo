@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://dnq4cljebp34q"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_ohhxy"]
+
+[resource]
+script = ExtResource("1_ohhxy")
+question = "True or False: Is it possible to use a number to name a variable if it is preceded by an underscore? (ex: _123 = 123)"
+question_field = "entry_2_lua.tres"
+answer_short_a = "True"
+answer_short_b = "False"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

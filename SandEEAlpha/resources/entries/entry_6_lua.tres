@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://bvdewkdc66iib"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_tldhi"]
+
+[resource]
+script = ExtResource("1_tldhi")
+entry_name = "Lua Data Types"
+description = "Lua Data Types generally include number, string, boolean, nil, userdata, fucntion, thread, and table. To get the data type of a variable, use the type() function. 
+print(type(\"Hello World\")) -- prints string
+
+The value of nil is always 'nil'
+The value of a string are alphanumeric characters enclosed with quotation marks (\"\").
+The value of a boolean is either 'true' or 'false' (note that in Lua, true and false always start with a lowercase Letter.)
+"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

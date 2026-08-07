@@ -28,7 +28,7 @@ enum Shape { SHORT = 0, LONG = 1 }
 @export var question_name: String = ""       # short id, e.g. "print basics"
 @export_multiline var question: String = ""  # the actual question text
 @export var question_field: String = ""      # reference to the KnowledgeEntry FILE NAME this
-                                             # question verifies, e.g. "entry_1_lua.tres"
+											 # question verifies, e.g. "entry_1_lua.tres"
 @export_multiline var answer_long: String = ""  # the typed/enumeration answer
 @export var answer_short_a: String = ""
 @export var answer_short_b: String = ""

@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://i6t27u30txbl"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_p1gly"]
+
+[resource]
+script = ExtResource("1_p1gly")
+entry_name = "Numbers and Strings"
+description = "Numbers and Strings are common data types. Numbers are already obvious, while Strings use quotation marks. Using quotation marks on a number however turns it into string.
+age = 20 -- number
+name = \"Davis\" - string
+"
+keyword = "Number, String"
+category = "Basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

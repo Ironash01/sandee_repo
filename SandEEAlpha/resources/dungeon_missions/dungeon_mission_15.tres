@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b6doa3ml7qpsp"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_0go7w"]
+
+[resource]
+script = ExtResource("1_0go7w")
+mission_name = "Lua Data Types Room"
+mission_description = "This room explores general details about Lua's Data Types."
+entry_resource_file = "entry_6_lua.tres"
+quiz_resource_files = Array[String](["dm15_quiz_1.tres", "dm15_quiz_2.tres", "dm15_quiz_3.tres"])
+dungeon_index = 15
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

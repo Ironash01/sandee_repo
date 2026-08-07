@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://b3i5oqroe0bk6"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_cooqr"]
+
+[resource]
+script = ExtResource("1_cooqr")
+shape = 0
+question_name = "String"
+question = "How are strings defined?"
+question_field = "entry_4_lua.tres"
+answer_short_a = "Alphanumerical only"
+answer_short_b = "Alphanumerical with quotation marks"
+correct_short_index = 1
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

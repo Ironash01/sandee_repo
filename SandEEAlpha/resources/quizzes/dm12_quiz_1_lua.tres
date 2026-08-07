@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://clxvn0mgd7qa5"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_a7yr8"]
+
+[resource]
+script = ExtResource("1_a7yr8")
+shape = 0
+question_name = "Concatenation"
+question = "How do you use concatenation? 
+"
+question_field = "entry_3_lua.tres"
+answer_short_a = "Underscore (_)"
+answer_short_b = "Plus Sign (+)"
+answer_short_c = "Semi-Colon (;)"
+answer_short_d = "Double Dots (..)"
+correct_short_index = 3
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

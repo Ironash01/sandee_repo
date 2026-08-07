@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://skb2e6xo8udt"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_jmoop"]
+
+[resource]
+script = ExtResource("1_jmoop")
+entry_name = "Lexical and Syntax Conventions"
+description = "You can create identifiers using a string of letters, numbers, and underscores. However, you cannot create an identifier that starts with a number.
+
+These examples would not work since they start with a number: 
+67 = 123 -- syntax error
+123abc = \"This variable won’t work\" -- syntax error
+
+
+"
+keyword = "Identifier"
+category = "Basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

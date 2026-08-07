@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://c67mmjp5ua6np"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_2kjaa"]
+
+[resource]
+script = ExtResource("1_2kjaa")
+question_name = "Concatenation"
+question = "Concatenate the strings \"water\" and \"fall\" together to print the string \"waterfall\". Don't forget to use quotation marks for strings."
+question_field = "entry_3_lua.tres"
+answer_long = "print(\"water\" .. \"fall\")"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

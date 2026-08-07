@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://bdy5ms0s5spfu"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_t5afd"]
+
+[resource]
+script = ExtResource("1_t5afd")
+shape = 0
+question_name = "Identifier"
+question = "True or False: Is it possible to use numbers as an identifier? (ex: 65apple = 65)"
+question_field = "entry_2_lua.tres"
+answer_short_a = "True"
+answer_short_b = "False"
+correct_short_index = 1
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

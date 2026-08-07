@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://dd64nhv2sgp4o"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_rqnpw"]
+
+[resource]
+script = ExtResource("1_rqnpw")
+shape = 0
+question_name = "Booleans"
+question = "What are Boolean's possible values?"
+question_field = "entry_5_lua.tres"
+answer_short_a = "yes or no"
+answer_short_b = "pos or neg"
+answer_short_c = "true or false"
+answer_short_d = "True or False"
+correct_short_index = 2
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

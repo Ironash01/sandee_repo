@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://bis8mufemlhbj"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_xhy54"]
+
+[resource]
+script = ExtResource("1_xhy54")
+shape = 0
+question_name = "Numbers and Strings"
+question = "What is the data type of this variable? 
+a = \"Apple\""
+question_field = "entry_4_lua.tres"
+answer_short_a = "Number"
+answer_short_b = "String"
+correct_short_index = 1
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

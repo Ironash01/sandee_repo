@@ -7,4 +7,4 @@ script = ExtResource("1_script")
 mission_name = "The Print Room"
 mission_description = "Learn what print() does, then prove it at the quiz altar to claim your Lua Core."
 entry_resource_file = "entry_1_lua.tres"
-quiz_resource_files = Array[String](["dm01_quiz_1_lua.tres", "dm01_quiz_2_lua.tres", "dm01_quiz_3_lua.tres", ""])
+quiz_resource_files = Array[String](["dm01_quiz_1_lua.tres", "dm01_quiz_2_lua.tres", "dm01_quiz_3_lua.tres"])

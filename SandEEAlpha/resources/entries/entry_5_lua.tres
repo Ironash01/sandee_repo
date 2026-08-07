@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://xvrqfo8o56db"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_sc7db"]
+
+[resource]
+script = ExtResource("1_sc7db")
+entry_name = "Boolean"
+description = "Booleans have two values: true and false. Note that true and false are in Lua starts lower case rather than Python which starts with a capital letter. Booleans can be used for conditions that check for true or false."
+keyword = "true or false"
+category = "Basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

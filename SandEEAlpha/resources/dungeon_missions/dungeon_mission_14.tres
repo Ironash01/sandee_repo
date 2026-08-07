@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://bvmdpm38agv7c"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_w46nt"]
+
+[resource]
+script = ExtResource("1_w46nt")
+mission_name = "Boolean Room"
+mission_description = "Learn about Booleans, which are a data type with two values: true and false."
+entry_resource_file = "entry_5_lua.tres"
+quiz_resource_files = Array[String](["dm14_quiz_1_lua.tres", "dm14_quiz_2_lua.tres", "dm14_quiz_3_lua.tres"])
+dungeon_index = 14
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

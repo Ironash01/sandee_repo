@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://blu4js7cx1ens"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_na2us"]
+
+[resource]
+script = ExtResource("1_na2us")
+shape = 0
+question_name = "Identifier"
+question = "True or False: 
+Are underscores allowed in naming a variable? (ex. _number5 = 5)"
+question_field = "entry_2_lua.tres"
+answer_short_a = "True"
+answer_short_b = "False"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"
