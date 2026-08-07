@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://crbn0hoqjyfh2"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_vgxdi"]
+
+[resource]
+script = ExtResource("1_vgxdi")
+entry_name = "float"
+description = "In Python we declare the keyword float if we want to store numbers that are not whole or decimal numbers.
+
+for example:
+
+price = 12.5
+print(price)
+
+output: 12.5
+
+here is another example.
+
+temp = 37.5
+print(temp)
+
+output: 37.5
+
+Note: Using the keyword float and declaring a whole number will result to an error."
+keyword = "float"
+language = "python"
+category = "Easy"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

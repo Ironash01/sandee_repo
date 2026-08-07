@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://b51g5tqfr4nk7"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_al3lc"]
+
+[resource]
+script = ExtResource("1_al3lc")
+shape = 0
+question_name = "print bool"
+question = "What would be the output of this code.
+
+print(\"This is my first python code\")"
+question_field = "entry_1_lua.tres"
+answer_short_a = "print"
+answer_short_b = "This is my first python code"
+answer_short_c = "print()"
+answer_short_d = "\"This is my first python code\""
+correct_short_index = 1

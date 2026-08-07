@@ -1,11 +1,19 @@
-[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://coe00hnkpkvv7"]
 
-[ext_resource type="Script" path="res://resources/entries/entry_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
 
 [resource]
 script = ExtResource("1_script")
 entry_name = "print()"
-description = "In Python, print() sends a value to the output console. Text must be wrapped in quotes, and multiple values can be printed at once by separating them with commas."
+description = "In Python, print() sends a value to the output console. Text must be wrapped in quotes, and multiple values can be printed at once by separating them with commas.
+
+to declare print in python do the following:
+
+print(\"Hello World\")
+
+In python we have to put those words that we want print inside that parenthesis and inside the double quotes, if we fail to do that then it will cause an error.
+
+Using print() and print(\"\") are 2 different types of printing. using the print() we are printing a keyword or a variable. While using print(\"\") we are printing the word inside the double quotation."
 keyword = "print"
 language = "python"
-category = "Basics"
+category = "Easy"
