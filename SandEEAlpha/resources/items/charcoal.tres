@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://dpioif6qb8y1x"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_ckhg8"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_k1in3"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_yw8qs"]
+atlas = ExtResource("1_ckhg8")
+region = Rect2(32, 32, 32, 32)
+
+[resource]
+script = ExtResource("1_k1in3")
+item_name = "Charcoal"
+description = "You burnt the wood you chopped, can be used for torches."
+item_type = "block"
+icon = SubResource("AtlasTexture_yw8qs")
+block_level = 5
+is_fuel = true
+fuel_level = 2
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="GeneratedStructure" format=3 uid="uid://ph1vei8dql62"]
+
+[ext_resource type="Script" uid="uid://cygs5xp1pgiv6" path="res://resources/structures/generated_structure.gd" id="1_struc"]
+[ext_resource type="Texture2D" uid="uid://bbyd64bolq8gy" path="res://sprites/dungeon/SandEE_alpha_dungeontilesets.png" id="2_gxs7h"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_go35s"]
+atlas = ExtResource("2_gxs7h")
+region = Rect2(0, 160, 96, 64)
+
+[resource]
+script = ExtResource("1_struc")
+name = "Dungeon entrance"
+sprite = SubResource("AtlasTexture_go35s")
+type = "dungeon entrances"
+tile_width = 3
+tile_height = 2

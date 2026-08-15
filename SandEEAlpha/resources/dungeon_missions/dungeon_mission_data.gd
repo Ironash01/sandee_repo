@@ -11,6 +11,13 @@ class_name DungeonMissionData
 #   quiz_resource_files  → QuizQuestion files presented by the quiz altar in
 #                          the final room. All must be answered correctly for
 #                          the exit to open and the dungeon to be cleared.
+#   size_modifier        → dropdown dungeon grid tier: 64x64, 128x128 or 256x256.
+#   altar_amount         → altar/checkpoint rooms to generate (the entry altar's
+#                          room is always the first one; the rest are spawned as
+#                          bonus rooms until the quiz room, which is always last).
+#   chest_amount         → loot chest rooms to generate.
+# The generator derives the ROOM COUNT only from altar_amount + chest_amount;
+# the grid SIZE comes only from size_modifier (the dropdown).
 
 @export var mission_name: String = ""            # shown in the mission list
 @export_multiline var mission_description: String = ""
@@ -18,6 +25,9 @@ class_name DungeonMissionData
 @export var quiz_resource_files: Array[String] = []  # e.g. ["quiz_1_lua.tres", "quiz_2_lua.tres"]
 @export var dungeon_index: int = 1               # matches the mission's dungeon_index in Global.missions
 @export var reward_item_path: String = "res://resources/items/lua_core.tres"
+@export_enum("64x64", "128x128", "256x256") var size_modifier: int = 1
+@export_range(1, 8, 1) var altar_amount: int = 1
+@export_range(0, 16, 1) var chest_amount: int = 2
 
 # Base file name used as the stable id.
 func id() -> String:

@@ -18,6 +18,11 @@ const WOOD_DATA:   ItemData    = preload("res://resources/items/wood.tres")
 # matches how the block break bar sits close to the sprite's base.
 const BREAK_BAR_Y_OFFSET: float = 10.0
 
+# Choppable region: a vertical band this tall above the tree's visual base
+# (i.e. the TRUNK). The canopy/leaves above it can't be chopped — if the
+# cursor drifts up onto the leaves mid-chop, the break cancels.
+const TRUNK_HOVER_HEIGHT: float = 40.0
+
 var _player_nearby: bool = false
 var _hovered:       bool = false
 
@@ -57,12 +62,21 @@ func _update_hover() -> void:
 		_hovered = false
 		return
 	var mouse_local: Vector2 = to_local(get_global_mouse_position())
-	# Hover box matches the sprite's actual frame bounds, centred on the sprite
-	# position offset (sprite.position.y = -(texture_height/2) set at spawn time).
+	# Hover box matches the sprite's actual frame bounds, centred on the
+	# sprite's VISUAL centre. The canopy is drawn upward via Sprite2D.offset
+	# (sprite.position stays at the trunk base so the y-sort anchors there),
+	# so the on-screen centre is position + offset.
+	var visual_center: Vector2 = _sprite.position + _sprite.offset
 	var half_w: float = (_sprite.texture.get_width()  / float(maxi(_sprite.hframes, 1))) * 0.5
 	var half_h: float = (_sprite.texture.get_height() / float(maxi(_sprite.vframes, 1))) * 0.5
-	_hovered = abs(mouse_local.x - _sprite.position.x) <= half_w \
-		   and abs(mouse_local.y - _sprite.position.y) <= half_h \
+	# Only the TRUNK (the band just above the visual base) is choppable — the
+	# leaves/canopy above it don't count. Moving the cursor up onto the leaves
+	# mid-chop makes _hovered false so _process cancels the break.
+	var bottom: float = visual_center.y + half_h
+	var in_trunk: bool = mouse_local.y >= bottom - TRUNK_HOVER_HEIGHT \
+		and mouse_local.y <= bottom
+	_hovered = abs(mouse_local.x - visual_center.x) <= half_w \
+		   and in_trunk \
 		   and not Global.block_mode
 
 func _draw() -> void:

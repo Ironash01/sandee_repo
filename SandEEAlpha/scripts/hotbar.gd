@@ -30,6 +30,7 @@ var _build_label: Label = null
 # ── Pickup popup ──────────────────────────────────────────────────
 var _popup_label: Label       = null
 var _hover_label: Label       = null
+var _item_tip_label: Label    = null
 var _popup_tween:  Tween       = null
 var _popup_timer:  float       = 0.0
 const POPUP_DURATION := 1.8
@@ -79,6 +80,12 @@ func _ready() -> void:
 		label.visible      = false
 		child.add_child(label)
 
+		# Item-description tooltip on hover — read the slot's own index (the
+		# loop counter is already incremented past it by this point).
+		var this_idx: int = int(child.get("slot_index"))
+		child.mouse_entered.connect(_on_slot_mouse_entered.bind(this_idx))
+		child.mouse_exited.connect(_on_slot_mouse_exited)
+
 	# ── Build Mode Label (above HBoxContainer) ────────────────────
 	var canvas: CanvasLayer = $CanvasLayer as CanvasLayer
 	_build_label = Label.new()
@@ -127,6 +134,20 @@ func _ready() -> void:
 	_hover_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	_hover_label.visible = false
 	canvas.add_child(_hover_label)
+
+	# ── Item-description tooltip (bottom-left, above the block label) ──
+	# Shown while hovering a hotbar slot with an item. Separate from
+	# _hover_label so the block-aim label isn't clobbered.
+	_item_tip_label = Label.new()
+	_item_tip_label.name = "ItemTipLabel"
+	_item_tip_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.8, 1.0))
+	_item_tip_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_item_tip_label.add_theme_constant_override("shadow_offset_x", 1)
+	_item_tip_label.add_theme_constant_override("shadow_offset_y", 1)
+	_item_tip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_item_tip_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_item_tip_label.visible = false
+	canvas.add_child(_item_tip_label)
 
 	_build_stat_bars(canvas)
 	_apply_label_scale()
@@ -246,6 +267,12 @@ func _apply_label_scale() -> void:
 		_hover_label.offset_top    = int(-44 * s)
 		_hover_label.offset_right  = int(320 * s)
 		_hover_label.offset_bottom = int(-12 * s)
+	if _item_tip_label != null:
+		_item_tip_label.add_theme_font_size_override("font_size", int(12 * s))
+		_item_tip_label.offset_left   = int(14 * s)
+		_item_tip_label.offset_top    = int(-72 * s)
+		_item_tip_label.offset_right  = int(320 * s)
+		_item_tip_label.offset_bottom = int(-48 * s)
 	if _stuck_label != null:
 		_stuck_label.add_theme_font_size_override("font_size", fs_stuck)
 		_stuck_label.offset_top    = int(24 * s)
@@ -259,6 +286,31 @@ func _on_hover_label_changed(text: String) -> void:
 		return
 	_hover_label.text    = text
 	_hover_label.visible = text != ""
+
+# ── Item-description tooltip (hotbar hover) ────────────────────────
+func _on_slot_mouse_entered(slot_idx: int) -> void:
+	if slot_idx < 0 or slot_idx >= Global.Hotbar.size():
+		return
+	var item: Variant = Global.Hotbar[slot_idx]
+	if item == null:
+		_show_item_tip("")
+		return
+	var data: ItemData = (item as Dictionary)["data"] as ItemData
+	# Prefer the real description; fall back to "Name [type]" so items
+	# without a description still give hover feedback.
+	var text: String = data.description
+	if text == "":
+		text = "%s [%s]" % [data.item_name, data.item_type.capitalize()]
+	_show_item_tip(text)
+
+func _on_slot_mouse_exited() -> void:
+	_show_item_tip("")
+
+func _show_item_tip(text: String) -> void:
+	if _item_tip_label == null:
+		return
+	_item_tip_label.text    = text
+	_item_tip_label.visible = text != ""
 
 # ── Stat bar builders ─────────────────────────────────────────────
 func _build_stat_bars(canvas: CanvasLayer) -> void:

@@ -148,7 +148,10 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 	overworld_return_position = return_position
 
 	generator = DungeonGenerator.new()
-	generator.generate(seed_value)
+	if _mission != null:
+		generator.generate(seed_value, _mission.size_modifier, _mission.altar_amount, _mission.chest_amount)
+	else:
+		generator.generate(seed_value)
 
 	_tilemap = TileMapLayer.new()
 	_tilemap.name     = "DungeonTiles"

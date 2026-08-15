@@ -4,6 +4,7 @@
 
 [resource]
 script = ExtResource("1_840mi")
+question_name = "Print question"
 question = "In this quest, you need to print \"Hello world, this is my first Python code.\""
 answer_long = "print(\"Hello world, this is my first Python code.\")"
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

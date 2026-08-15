@@ -302,6 +302,11 @@ func _on_back() -> void:
 	_pause_center.visible    = true
 
 func _on_quit() -> void:
+	# Leave any active cave/pixie cave/dungeon first so the cave's node tree is
+	# torn down cleanly and the overworld is restored — otherwise change_scene
+	# freeing the cave mid-pause can hang (quit-to-menu inside caves).
+	if Global.game_node != null and Global.game_node.has_method("cleanup_for_menu"):
+		Global.game_node.call("cleanup_for_menu")
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
 	Global.pause_menu_open = false

@@ -5,6 +5,10 @@ const C_BORDER := Color(0.22, 0.32, 0.58, 1.00)
 const C_TITLE  := Color(0.80, 0.90, 1.00, 1.00)
 const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 
+# preload (not class_name) so the debug chat console can be built even before
+# the editor has re-scanned/registered the new script's class.
+const CHAT_CONSOLE_SCRIPT: Script = preload("res://scripts/chat_console.gd")
+
 @onready var pause_menu: Control         = $CanvasLayer/PauseMenu
 @onready var pause_btn:  Button          = $CanvasLayer/PauseButton
 @onready var _world:     Node2D          = $World  # the overworld — kept alive off-tree while in a cave, never freed
@@ -12,7 +16,9 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 
 var _loading_screen: CanvasLayer = null
 var _loading_label:  Label       = null
+var _death_overlay:  ColorRect   = null
 var _cave_world:      CaveWorld  = null
+var _pixie_cave_world: PixieCaveWorld = null
 var _dungeon_world:   DungeonWorld = null
 
 func _ready() -> void:
@@ -26,6 +32,13 @@ func _ready() -> void:
 	_start_autosave()
 	_add_mission_ui()
 
+	# Debug chat console (upper-left log + command input). Built in code and
+	# added under the UI CanvasLayer, so it layers above the world like the
+	# pause button/hotbar and inherits the layer's PROCESS_MODE_ALWAYS.
+	$CanvasLayer.add_child(CHAT_CONSOLE_SCRIPT.new())
+
+	_setup_death_overlay()
+
 	# Freeze the player until the world is fully generated.
 	_player.process_mode = Node.PROCESS_MODE_DISABLED
 	_player.visible      = false
@@ -37,6 +50,26 @@ func _ready() -> void:
 	# so signals are safe to connect here before that deferred work fires.
 	_world.generation_status_changed.connect(_on_generation_status)
 	_world.generation_complete.connect(_on_generation_complete)
+
+# ── Death dim overlay ──────────────────────────────────────────────
+# A full-screen black overlay that fades in when the player dies (Global's
+# _handle_player_death emits player_died, teleports to spawn, restores HP),
+# then fades back out.
+func _setup_death_overlay() -> void:
+	_death_overlay = ColorRect.new()
+	_death_overlay.color = Color(0, 0, 0, 0)
+	_death_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_death_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	$CanvasLayer.add_child(_death_overlay)
+	Global.player_died.connect(_on_player_died)
+
+func _on_player_died() -> void:
+	if _death_overlay == null:
+		return
+	var tween := create_tween()
+	tween.tween_property(_death_overlay, "color:a", 0.75, 0.4)
+	tween.tween_interval(0.9)
+	tween.tween_property(_death_overlay, "color:a", 0.0, 1.2)
 
 # ── Loading screen ────────────────────────────────────────────────────
 func _show_loading_screen() -> void:
@@ -96,15 +129,28 @@ func _on_generation_complete() -> void:
 # change_scene_to_file — Player/camera/Hotbar/PauseMenu all live as $World's
 # siblings here in Game, so a full scene change would destroy them (this is
 # also why the old Dungeon Portal system, which did use change_scene_to_file
-# against the legacy dungeon1-5.tscn scenes, never worked — the legacy scenes
+# against the legacy dungeon scenes, never worked — the legacy scenes
 # are gone now, replaced by code-generated DungeonWorld). The overworld
 # $World is only removed from the tree, never freed, so nothing about it
 # needs to regenerate on return.
 func enter_cave(portal: CavePortal) -> void:
-	if _cave_world != null or _dungeon_world != null:
+	if _cave_world != null or _pixie_cave_world != null or _dungeon_world != null:
 		return
 	var return_position: Vector2 = _player.global_position
 	remove_child(_world)
+
+	# "pixie" entrances generate a PixieCaveWorld (128x64 dungeon-like, crystal
+	# ores); everything else is a regular CaveWorld. Both are code-built and
+	# swapped in for $World the same way — the overworld stays alive off-tree.
+	if portal.cave_type == "pixie":
+		_pixie_cave_world = PixieCaveWorld.new()
+		_pixie_cave_world.name = "World"
+		add_child(_pixie_cave_world)
+		move_child(_pixie_cave_world, 0)
+		_pixie_cave_world.setup(portal.cave_seed, return_position)
+		Global.world_node       = _pixie_cave_world
+		_player.global_position = _pixie_cave_world.get_player_spawn_position()
+		return
 
 	_cave_world = CaveWorld.new()
 	_cave_world.name = "World"
@@ -116,6 +162,18 @@ func enter_cave(portal: CavePortal) -> void:
 	_player.global_position = _cave_world.get_player_spawn_position()
 
 func exit_cave() -> void:
+	# A pixie cave exits the same way a regular cave does — swap the overworld
+	# back in and free the cave world. Handle whichever kind is currently live.
+	if _pixie_cave_world != null:
+		var p_return: Vector2 = _pixie_cave_world.overworld_return_position
+		remove_child(_pixie_cave_world)
+		_pixie_cave_world.queue_free()
+		_pixie_cave_world = null
+		add_child(_world)
+		move_child(_world, 0)
+		Global.world_node       = _world
+		_player.global_position = p_return
+		return
 	if _cave_world == null:
 		return
 	var return_position: Vector2 = _cave_world.overworld_return_position
@@ -137,7 +195,7 @@ func exit_cave() -> void:
 # first mission accept (Global.get_or_create_dungeon_seed), so re-entering
 # always reproduces the same dungeon.
 func enter_dungeon(dungeon_index: int) -> void:
-	if _cave_world != null or _dungeon_world != null:
+	if _cave_world != null or _pixie_cave_world != null or _dungeon_world != null:
 		return
 	var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(dungeon_index)
 	if mission == null:
@@ -175,6 +233,30 @@ func exit_dungeon() -> void:
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
 
+# Cleanly leave any active cave/pixie cave/dungeon before quitting to the main
+# menu. Tearing the complex cave node tree down through the normal exit path —
+# instead of letting change_scene free it abruptly mid-pause (while the
+# overworld sits orphaned off-tree) — avoids the "quit to menu inside caves
+# freezes" hang. Also restores the player to the entrance before the save.
+func cleanup_for_menu() -> void:
+	if _pixie_cave_world != null or _cave_world != null:
+		exit_cave()
+	elif _dungeon_world != null:
+		exit_dungeon()
+
+# Death respawn: leave any active cave/pixie cave/dungeon (so the overworld is
+# restored and the player isn't stuck inside the structure), then return the
+# OVERWORLD's world-spawn point. Dying anywhere — cave, dungeon, or overworld —
+# always puts the player back at the true world spawn.
+func get_world_spawn_position() -> Vector2:
+	if _pixie_cave_world != null or _cave_world != null:
+		exit_cave()
+	elif _dungeon_world != null:
+		exit_dungeon()
+	if _world != null and _world.has_method("_world_spawn_pos"):
+		return _world.call("_world_spawn_pos") as Vector2
+	return Vector2.ZERO
+
 # ── Autosave ──────────────────────────────────────────────────────────
 func _add_mission_ui() -> void:
 	var ui: Control = load("res://scripts/mission_ui.gd").new() as Control
@@ -190,6 +272,34 @@ func _start_autosave() -> void:
 func _on_autosave() -> void:
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
+
+# What a save should persist: the player's spawn position + the OVERWORLD's
+# world data. When the player saves while inside a cave/pixie cave/dungeon,
+# their live position is in structure coordinates that don't exist on the
+# overworld — so instead we save the overworld's data and the structure's
+# overworld_return_position (where the player stood when they entered, i.e.
+# right outside the entrance). On "Continue" the game loads the overworld and
+# spawns them just outside the structure's entrance.
+func get_overworld_save_context() -> Dictionary:
+	var active_structure: Node2D = null
+	if _cave_world != null:
+		active_structure = _cave_world
+	elif _pixie_cave_world != null:
+		active_structure = _pixie_cave_world
+	elif _dungeon_world != null:
+		active_structure = _dungeon_world
+	var world_data: Dictionary = {}
+	if _world != null and _world.has_method("get_world_save_data"):
+		world_data = _world.call("get_world_save_data")
+	if active_structure != null:
+		return {
+			"player_pos": active_structure.overworld_return_position,
+			"world_data": world_data,
+		}
+	return {
+		"player_pos": _player.global_position,
+		"world_data": world_data,
+	}
 
 # ── Pause button styling ──────────────────────────────────────────────
 func _style_pause_button() -> void:

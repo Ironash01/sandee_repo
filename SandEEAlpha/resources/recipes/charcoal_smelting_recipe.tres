@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="SmeltingRecipe" format=3 uid="uid://ct8eolj7j64lj"]
+
+[ext_resource type="Script" uid="uid://d05p8favd5svx" path="res://resources/recipes/smelting_recipe.gd" id="1_00cxx"]
+[ext_resource type="Resource" uid="uid://6bk4sjwa0vjn" path="res://resources/items/wood.tres" id="1_5t5t2"]
+[ext_resource type="Resource" uid="uid://dpioif6qb8y1x" path="res://resources/items/charcoal.tres" id="2_7tjnt"]
+
+[resource]
+script = ExtResource("1_00cxx")
+input_item = ExtResource("1_5t5t2")
+output_item = ExtResource("2_7tjnt")
+smelt_time = 5.0
+fuel_level_required = 1

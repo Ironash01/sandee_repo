@@ -24,6 +24,7 @@ var _storm_blend: float = 0.0
 var _sky_gradient: Gradient
 
 func _ready() -> void:
+	Global.day_night_cycle = self
 	_sky_gradient = Gradient.new()
 	_sky_gradient.offsets = PackedFloat32Array([0.0, 0.25, 0.5, 0.75, 1.0])
 	_sky_gradient.colors  = PackedColorArray([
@@ -33,25 +34,30 @@ func _ready() -> void:
 		Color(0.15, 0.17, 0.32), # midnight
 		Color(0.95, 0.75, 0.60), # sunrise (wraps back to offset 0.0)
 	])
+	# Restore the saved time of day (set by Global.load_game) instead of always
+	# starting at noon — mirrors Global's pending_player_pos/pending_world_data
+	# pattern. _was_daytime is set to match so the first _update_day_state()
+	# doesn't spuriously emit a day/night crossing on the load frame.
+	if Global.pending_time_of_day >= 0.0:
+		time_of_day = fmod(Global.pending_time_of_day, 1.0)
+		Global.pending_time_of_day = -1.0
+	_was_daytime = is_daytime()
+	Global.time_of_day = time_of_day
 	color = _sky_gradient.sample(time_of_day)
 
 func _process(delta: float) -> void:
 	time_of_day = fmod(time_of_day + delta / CYCLE_LENGTH, 1.0)
+	Global.time_of_day = time_of_day
 	_update_color(delta)
 	_update_day_state()
-
-func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo \
-			and event.keycode == KEY_D and event.ctrl_pressed and event.shift_pressed:
-		_debug_toggle_period()
 
 func is_daytime() -> bool:
 	return time_of_day < 0.5
 
-# Debug shortcut (Ctrl+Shift+D) — instantly snaps to the opposite period's
+# Debug command (/daynight) — instantly snaps to the opposite period's
 # midpoint (noon / midnight) instead of just flipping by 0.5, so the jump is
 # always to the strongest, most visually obvious point of that period.
-func _debug_toggle_period() -> void:
+func toggle_period() -> void:
 	time_of_day = 0.75 if is_daytime() else 0.25
 	_update_color(0.0)
 	_update_day_state()

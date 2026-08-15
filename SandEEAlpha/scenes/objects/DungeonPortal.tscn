@@ -1,20 +1,12 @@
-[gd_scene load_steps=3 format=3 uid="uid://dungeon_portal_scene"]
+[gd_scene load_steps=2 format=3 uid="uid://dungeon_portal_scene"]
 
 [ext_resource type="Script" path="res://scripts/dungeon_portal.gd" id="1_portal"]
-[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="2_atlas"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_portal"]
 radius = 64.0
 
-[sub_resource type="AtlasTexture" id="AtlasTexture_portal"]
-atlas = ExtResource("2_atlas")
-region = Rect2(64, 192, 32, 32)
-
 [node name="DungeonPortal" type="Node2D"]
 script = ExtResource("1_portal")
-
-[node name="Sprite2D" type="Sprite2D" parent="."]
-texture = SubResource("AtlasTexture_portal")
 
 [node name="InteractArea" type="Area2D" parent="."]
 collision_layer = 0

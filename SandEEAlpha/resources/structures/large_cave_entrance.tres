@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="GeneratedStructure" format=3 uid="uid://ba177bi1fsbax"]
+
+[ext_resource type="Script" uid="uid://cygs5xp1pgiv6" path="res://resources/structures/generated_structure.gd" id="1_j01g2"]
+[ext_resource type="Texture2D" uid="uid://bni6ecabsoo5c" path="res://sprites/cave/large_cave_entrance.png" id="2_cave"]
+
+[resource]
+script = ExtResource("1_j01g2")
+name = "Large Cave Entrance"
+sprite = ExtResource("2_cave")
+type = "cave1"
+tile_width = 11
+tile_height = 8
+door_rect = Rect2i(3, 7, 3, 1)
+metadata/_custom_type_script = "uid://cygs5xp1pgiv6"

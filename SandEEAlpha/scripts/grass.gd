@@ -149,18 +149,33 @@ static func get_grass_material() -> ShaderMaterial:
 
 var _tile: Vector2i = Vector2i.ZERO
 
+# Set on the block-placement path only — lets world.gd's save/load serialize
+# a player-placed grass tuft like any other placed block (node.get("item_data")).
+# Null for world-gen tufts, which aren't tracked in _placed_blocks at all.
+var item_data: ItemData = null
+
 # Called by world.gd right after instantiating this scene and add_child-ing
-# it. ground_anchor is this tuft's true ground-contact point (a tile's
-# bottom edge + BASE_EXTRA_OFFSET_PX) — see world.gd's _spawn_grass_at for
-# how it's computed from a tile coordinate. tile is that same tile
-# coordinate, kept so cutting can tell World which tile to free up.
-func setup(rng: RandomNumberGenerator, ground_anchor: Vector2, tile: Vector2i) -> void:
+# it. Two call paths share this entry point:
+#   • World-gen fill:   setup(ground_anchor: Vector2, tile: Vector2i)
+#   • Block placement:  setup(item_data: ItemData) — from place_block()
+#     (world.gd / cave_world.gd), which anchors the node itself at a tile
+#     center and runs _fix_sprite_offset() for the standard bottom-center
+#     block anchor. The tuft keeps its 6-frame look variety + sway shader,
+#     with frame/flip picked from the cell once the caller's position lands.
+func setup(ground_anchor: Variant, tile: Vector2i = Vector2i.ZERO) -> void:
+	if ground_anchor is ItemData:
+		_setup_placed_block(ground_anchor as ItemData)
+		return
+	_setup_world_tuft(ground_anchor as Vector2, tile)
+
+func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 	_tile = tile
 	var frames: Array = get_grass_frames()
-	_sprite.texture  = frames[rng.randi_range(0, frames.size() - 1)] as Texture2D
+	var h: int = int(tile.x) * 374761393 ^ int(tile.y) * 668265263
+	_sprite.texture  = frames[absi(h) % frames.size()] as Texture2D
 	_sprite.material = get_grass_material()
 	_sprite.scale    = Vector2(FILL_SCALE, FILL_SCALE)
-	_sprite.flip_h   = rng.randf() < 0.5
+	_sprite.flip_h   = absi(h >> 8) % 2 == 1
 
 	# Base-anchored like a tree's trunk, not center-anchored: Sprite2D is
 	# centered by default, which put half the tuft's height (the roots)
@@ -186,6 +201,32 @@ func setup(rng: RandomNumberGenerator, ground_anchor: Vector2, tile: Vector2i) -
 	# One-time write (not per-frame) so the shared shader's ruffle falloff is
 	# measured from this tuft's ground anchor — see grass_sway.gdshader.
 	_sprite.set_instance_shader_parameter("root_pos", ground_anchor)
+
+# Block-placement path (place_block in world.gd/cave_world.gd). The caller
+# anchors this node at the tile center and runs _fix_sprite_offset() for the
+# standard bottom-center block anchor, so no world-tuft anchoring happens
+# here. The 6-frame look variety + sway shader are kept, with frame/flip
+# derived from the cell (deferred until after this frame, once the caller
+# has set our position) so placed grass reads the same as world grass and
+# stays deterministic per cell.
+func _setup_placed_block(data: ItemData) -> void:
+	item_data = data
+	_tile = Vector2i.ZERO
+	_sprite.texture  = get_grass_frames()[0] as Texture2D
+	_sprite.material = get_grass_material()
+	_sprite.scale    = Vector2(FILL_SCALE, FILL_SCALE)
+	call_deferred("_finish_placed_block")
+
+func _finish_placed_block() -> void:
+	if not is_instance_valid(_sprite):
+		return
+	var cell := Vector2i(floori(global_position.x / TILE_SIZE), floori(global_position.y / TILE_SIZE))
+	var h: int = int(cell.x) * 374761393 ^ int(cell.y) * 668265263
+	var frames: Array = get_grass_frames()
+	_sprite.texture = frames[absi(h) % frames.size()] as Texture2D
+	_sprite.flip_h  = absi(h >> 8) % 2 == 1
+	_sprite.set_instance_shader_parameter("root_pos", global_position + Vector2(0.0, _sprite.position.y))
+	z_index = int(global_position.y / TILE_SIZE)
 
 # ── Cutting surface (driven externally by world.gd) ───────────────────
 func cut() -> void:

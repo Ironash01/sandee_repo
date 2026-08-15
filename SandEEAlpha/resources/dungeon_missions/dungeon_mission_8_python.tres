@@ -4,4 +4,6 @@
 
 [resource]
 script = ExtResource("1_3np7v")
+dungeon_index = 8
+chest_amount = 0
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

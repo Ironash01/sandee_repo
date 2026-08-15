@@ -37,7 +37,10 @@ const FORCED_PLAINS_RADIUS: float = 128
 
 # For Foliage Gen
 const FOLIAGE_SPACING:    float = 16   # was 8 — wider spacing = ~4x fewer base points
-const SPAWN_CLEAR_TILES:  int   = 8
+# Radius (tiles) around world spawn kept clear of natural stuff (trees, grass,
+# forest centers) so the player is never trapped right after spawning. Sized to
+# a full spawn CHUNK (CHUNK_SIZE) so the whole spawn chunk stays open.
+const SPAWN_CLEAR_TILES:  int   = 25
 const REJECTION_THRESHOLD: int  = 30
 
 # For Grass Gen — dense per-chunk fill (see _fill_chunk_grass), not a sparse
@@ -91,6 +94,15 @@ const CAVE_ENTRANCE_CHANCE:         float = 0.25   # per eligible chunk
 const CAVE_ENTRANCE_MIN_SPAWN_DIST: float = 200.0  # no caves closer than this to world spawn
 const CAVE_ENTRANCE_MIN_SEPARATION: float = 100.0  # no two caves closer than this to each other
 
+# Pixie-cave entrances — one-shot per chunk, three rules (see
+# _spawn_pixie_cave_entrances): the chunk must NOT already hold a large
+# (regular) cave, must be solid land not near the ocean, and the chosen tile
+# must be > PIXIE_CAVE_SPAWN_MIN_DIST from world spawn. Rarer than regular
+# caves by default; enter a PixieCaveWorld (portal.cave_type = "pixie").
+const PIXIE_CAVE_ENTRANCE_CHANCE:          float = 1.0  # TEMP: 100% for testing, reduce to 0.08 for release
+const PIXIE_CAVE_SPAWN_MIN_DIST:           float = 100.0  # not within 100 blocks of world spawn
+const PIXIE_CAVE_ENTRANCE_MIN_SEPARATION: float = 150.0  # keep pixie entrances apart from each other AND from regular caves
+
 # Chunks a cave entrance claims are excluded from every other one-shot
 # generation pass (trees/forests, grass fill, wolves) — see
 # _is_chunk_cave_claimed(). Populated by _spawn_cave_entrances(), which must
@@ -98,6 +110,32 @@ const CAVE_ENTRANCE_MIN_SEPARATION: float = 100.0  # no two caves closer than th
 # where these are all queued via call_deferred()).
 var _cave_claimed_chunks: Dictionary = {}   # chunk coord (Vector2i) -> true
 var _cave_entrance_tiles: Array      = []   # placed entrance tiles, for the min-separation check
+var _pixie_cave_entrance_tiles: Array = []   # placed pixie-entrance tiles, for the min-separation check
+var _cave_entrance_pool:  Array      = []   # cached GeneratedStructure resources with type == cave1/cave2/cave3
+var _pixie_cave_entrance_pool: Array = []   # cached GeneratedStructure resources with type == "pixie cave"
+var _cave_entrance_cells: Dictionary = {}   # cell (Vector2i) -> true — every footprint cell of every live entrance
+var _cave_entrance_nodes: Dictionary = {}   # entrance tile -> Node2D root of the painted entrance sprite+collision
+var _cave_base_ground_src: int      = -1    # lazily-registered cave_base.png ground tile (see _get_cave_base_ground_src)
+var _cave_base_ground_tex: Texture2D = null
+
+# ── Overworld structures (GeneratedStructure resources) ─────────────
+# Hand-drawn structure tiles are rolled once per eligible chunk at
+# world-gen (see _spawn_overworld_structures), sitting between caves and
+# natural stuff in the chunk-priority order: caves claim first, then
+# structures, then trees/grass/wolves fill whatever's left. Dungeons spawn
+# later (on mission accept) and simply exclude cave- AND structure-claimed
+# chunks. All of these skip all-ocean chunks entirely — see
+# _is_chunk_all_ocean(). Resources are auto-loaded from STRUCTURES_DIR,
+# filtered to spawn_world == "overworld".
+const STRUCTURES_DIR: String = "res://resources/structures/"
+const STRUCTURE_CHANCE:         float = 0.15   # per eligible chunk
+const STRUCTURE_MIN_SPAWN_DIST: float = 100.0  # no structures closer than this to world spawn
+const STRUCTURE_MIN_SEPARATION: float = 20.0   # no two structure anchors closer than this
+
+var _structure_claimed_chunks: Dictionary = {}   # chunk coord (Vector2i) -> true
+var _structure_anchor_tiles:   Array      = []   # top-left tiles, for the min-separation check
+var _located_structures:        Array      = []   # [{"name": String, "tile": Vector2i}, ...] — every placed structure/entrance, for /locate
+var _structure_sources:        Dictionary = {}   # GeneratedStructure -> source id in the Structures TileSet
 
 # ── Dungeon entrances (spawned on mission accept) ──────────────────────
 # Unlike caves (rolled during world-gen), a dungeon entrance spawns LATER —
@@ -112,6 +150,10 @@ const DUNGEON_SPAWN_MIN_DIST_TILES: float = 200.0   # tiles (blocks) from world 
 const DUNGEON_INVALID_TILE: Vector2i = Vector2i(1 << 20, 1 << 20)  # sentinel, outside any map bounds
 var _dungeon_entrance_tiles: Dictionary = {}  # dungeon_index -> Vector2i tile
 var _dungeon_portal_nodes:   Dictionary = {}  # dungeon_index -> spawned DungeonPortal (so a cleared dungeon's entrance can be removed)
+var _dungeon_entrance_pool:   Array = []    # cached GeneratedStructure resources with type == "dungeon entrances"
+var _dungeon_entrance_structure_cells: Dictionary = {}  # dungeon_index -> Array[Vector2i] cells painted for the entrance
+var _dungeon_entrance_nodes:  Dictionary = {}   # dungeon_index -> Node2D root of the painted entrance sprite+collision
+var _dungeon_entrance_cells:  Dictionary = {}   # cell (Vector2i) -> true — every footprint cell of every live entrance
 
 # Trees beyond this radius have their Area2D monitoring disabled to avoid
 # O(n²) physics overhead. Must be larger than InteractArea radius (48px).
@@ -161,6 +203,16 @@ var MOB_SPAWN_POOL: Array = [
 
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
+# Grass has its own RNG stream, seeded deterministically from `random_seed`.
+# The grass fill runs in the BACKGROUND (a coroutine that yields every
+# GRASS_CHUNKS_PER_FRAME chunks) and can skip tufts based on the player's
+# live position (_spawn_grass_at's player-tile guard) — sharing the main rng
+# would let those runtime conditions shift the stream for every tuft spawned
+# afterwards, making grass look different on every restart. Keeping grass off
+# the main stream (and deriving each tuft's look from its tile, see
+# GrassTuft.setup) makes placements AND appearance constant for a given seed.
+var _grass_rng: RandomNumberGenerator = RandomNumberGenerator.new()
+
 var humidity:    FastNoiseLite = FastNoiseLite.new()
 var temperature: FastNoiseLite = FastNoiseLite.new()
 var altitude:    FastNoiseLite = FastNoiseLite.new()
@@ -168,6 +220,7 @@ var altitude:    FastNoiseLite = FastNoiseLite.new()
 @onready var water_layer:    TileMapLayer = $Water
 @onready var ground_layer:   TileMapLayer = $Ground
 @onready var editable_layer: TileMapLayer = $Editable
+@onready var structures_layer: TileMapLayer = $Structures
 
 signal generation_complete
 signal generation_status_changed(status: String)
@@ -189,6 +242,12 @@ var ghost_sprite:    Sprite2D = null
 var ghost_last_type: String   = ""
 var _grid_overlay:      Node2D = null
 var _cursor_highlight:  Node2D = null
+var _cursor_is_block:   bool   = false   # cursor highlight is on a hovered placed block (yellow outline)
+var _hovered_block:     Node   = null    # the single placed block under the cursor within 1 tile of the player
+
+# Highlight range: the block under the cursor must be within 1 tile of the
+# player for the yellow highlight to show.
+const HOVER_PLAYER_RADIUS_PX: float = 32.0
 var _placed_blocks:     Dictionary = {}
 
 # Tiles blocked from placement because a tree's 3x3 footprint covers them.
@@ -228,6 +287,7 @@ func _ready() -> void:
 	ground_layer.z_index = -300
 	water_layer.z_index  = -300
 	rng.set_seed(random_seed)
+	_grass_rng.set_seed(random_seed ^ 0x9E3779B9)  # independent stream, still deterministic
 	_set_up_noise(humidity,    0.003)
 	_set_up_noise(temperature, 0.002)
 	_set_up_noise(altitude,    0.005)
@@ -275,8 +335,11 @@ func _destroy_hovered_block() -> void:
 	var best_dist: float   = INTERACT_RADIUS_PX
 	for cell in _placed_blocks:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
-		var node: Node2D      = entry["node"] as Node2D
-		if not is_instance_valid(node):
+		var node_ref: Variant = entry["node"]
+		if not is_instance_valid(node_ref):
+			continue
+		var node: Node2D = node_ref as Node2D
+		if node == null:
 			continue
 		var dist: float = mouse_pos.distance_to(node.global_position)
 		if dist < best_dist:
@@ -287,15 +350,17 @@ func _destroy_hovered_block() -> void:
 	# Consume the event so the block's own _input doesn't also fire.
 	get_viewport().set_input_as_handled()
 	var entry: Dictionary = _placed_blocks[best_cell] as Dictionary
-	var node: Node        = entry["node"] as Node
-	if is_instance_valid(node):
-		var idata: ItemData = node.get("item_data") as ItemData
-		if idata != null:
-			var drop: Node = ITEM_DROP_SCENE.instantiate()
-			drop.call("set_item_data", idata)
-			add_child(drop)
-			drop.global_position = node.global_position + Vector2(0, -16)
-		node.queue_free()
+	var node_ref2: Variant = entry["node"]
+	if is_instance_valid(node_ref2):
+		var node: Node = node_ref2 as Node
+		if node != null:
+			var idata: ItemData = node.get("item_data") as ItemData
+			if idata != null:
+				var drop: Node = ITEM_DROP_SCENE.instantiate()
+				drop.call("set_item_data", idata)
+				add_child(drop)
+				drop.global_position = node.global_position + Vector2(0, -16)
+			node.queue_free()
 	_placed_blocks.erase(best_cell)
 
 # ── Grass cutting (sword-only, instant, facing-based) ──────────────────
@@ -337,9 +402,13 @@ func _try_cut_grass_with_sword() -> void:
 	var d: Vector2i = GRASS_CUT_DIR_VECTORS.get(p.call("get_facing_dir"), Vector2i(0, 1)) as Vector2i
 	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(p.global_position))
 	var center:      Vector2i = player_tile + d
-	var width_axis:  Vector2i = Vector2i(-d.y, d.x)
 	var cut_any: bool = false
-	for tile in [center - width_axis, center, center + width_axis]:
+	# Vertical slash column centered on the tile in front of the player —
+	# grows one tile up AND one tile down every 3 sword levels (capped at
+	# 2 tiles each side; see ItemData.sword_slash_radius).
+	var radius: int = data.sword_slash_radius()
+	for r in range(-radius, radius + 1):
+		var tile: Vector2i = center + Vector2i(0, r)
 		var tuft: GrassTuft = _grass_occupied_tiles.get(tile) as GrassTuft
 		if tuft != null and is_instance_valid(tuft):
 			tuft.cut()
@@ -384,7 +453,16 @@ func _begin_generation() -> void:
 	# Cave entrances must claim their chunks BEFORE wolves/trees/grass are
 	# placed — those all check _is_chunk_cave_claimed() and skip claimed
 	# chunks entirely, which only works if the claims already exist.
+	# Structures sit in the middle of that priority order (cave > structures
+	# > natural): they must run AFTER caves (so they skip cave chunks) but
+	# BEFORE wolves/trees/grass (so natural stuff skips their chunks).
 	_spawn_cave_entrances.call_deferred()
+	# Pixie caves claim chunks just like regular caves (natural stuff skips
+	# claimed chunks), so this runs right after _spawn_cave_entrances and
+	# BEFORE structures/wolves/foliage. Must come after regular caves so the
+	# three spawn rules can see which chunks already hold a large cave.
+	_spawn_pixie_cave_entrances.call_deferred()
+	_spawn_overworld_structures.call_deferred()
 	_spawn_wolves.call_deferred()
 	_deferred_foliage.call_deferred()
 
@@ -682,7 +760,7 @@ func _on_grid_draw() -> void:
 # ── Chunk border debug overlay ────────────────────────────────────────
 func _setup_chunk_border_overlay() -> void:
 	_chunk_border_overlay = Node2D.new()
-	_chunk_border_overlay.z_index = 400
+	_chunk_border_overlay.z_index = PLACEMENT_GUIDE_Z_INDEX
 	_chunk_border_overlay.visible = false
 	add_child(_chunk_border_overlay)
 	_chunk_border_overlay.draw.connect(_on_chunk_border_draw)
@@ -703,7 +781,7 @@ func _on_chunk_border_draw() -> void:
 # ── Hitbox debug overlay ─────────────────────────────────────────────
 func _setup_hitbox_overlay() -> void:
 	_hitbox_overlay = Node2D.new()
-	# Above PLACEMENT_GUIDE_Z_INDEX (2000, used by the block-placement grid,
+	# Above PLACEMENT_GUIDE_Z_INDEX (used by the block-placement grid,
 	# ghost preview, and cursor highlight) so hitboxes always render on top
 	# of those instead of being hidden underneath while in block mode.
 	_hitbox_overlay.z_index = PLACEMENT_GUIDE_Z_INDEX + 100
@@ -763,8 +841,13 @@ func _on_hitbox_draw() -> void:
 		if is_instance_valid(mob) and view_rect.has_point((mob as Node2D).global_position):
 			Global.draw_body_hitboxes(_hitbox_overlay, mob as Node, HITBOX_MOB_COLOR)
 	for entry in _placed_blocks.values():
-		var node: Node = (entry as Dictionary)["node"] as Node
-		if is_instance_valid(node) and view_rect.has_point((node as Node2D).global_position):
+		var node_ref: Variant = (entry as Dictionary)["node"]
+		if not is_instance_valid(node_ref):
+			continue
+		var node: Node = node_ref as Node
+		if node == null:
+			continue
+		if view_rect.has_point((node as Node2D).global_position):
 			Global.draw_body_hitboxes(_hitbox_overlay, node, HITBOX_BLOCK_COLOR)
 	# Grass tufts do have a real collision shape now (see grass.gd/Grass.tscn),
 	# but this marker shows tile OCCUPANCY (_grass_occupied_tiles), which is
@@ -807,9 +890,15 @@ func _setup_cursor_highlight() -> void:
 	_cursor_highlight.visible = false
 	_cursor_highlight.draw.connect(func() -> void:
 		var half: float = TILE_SIZE * 0.5
-		_cursor_highlight.draw_rect(
-			Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
-			Color(1.0, 1.0, 1.0, 0.28), true)
+		if _cursor_is_block:
+			# Yellow outline on the single block currently under the cursor.
+			_cursor_highlight.draw_rect(
+				Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
+				Color(1.0, 0.9, 0.2, 0.95), false, 3.0)
+		else:
+			_cursor_highlight.draw_rect(
+				Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
+				Color(1.0, 1.0, 1.0, 0.28), true)
 	)
 	add_child(_cursor_highlight)
 	_cursor_highlight.queue_redraw()
@@ -819,27 +908,51 @@ func _update_cursor_highlight() -> void:
 		if _cursor_highlight != null:
 			_cursor_highlight.visible = false
 		return
-	var mouse_local: Vector2  = ground_layer.get_local_mouse_position()
-	var cell:        Vector2i = ground_layer.local_to_map(mouse_local)
-	var snapped:     Vector2  = ground_layer.map_to_local(cell)
-	_cursor_highlight.global_position = ground_layer.to_global(snapped)
+	if _hovered_block != null and is_instance_valid(_hovered_block):
+		# Yellow highlight follows the single block under the cursor (within 1
+		# tile of the player).
+		_cursor_is_block = true
+		_cursor_highlight.global_position = (_hovered_block as Node2D).global_position
+	else:
+		_cursor_is_block = false
+		var mouse_local: Vector2  = ground_layer.get_local_mouse_position()
+		var cell:        Vector2i = ground_layer.local_to_map(mouse_local)
+		var snapped:     Vector2  = ground_layer.map_to_local(cell)
+		_cursor_highlight.global_position = ground_layer.to_global(snapped)
+	_cursor_highlight.queue_redraw()
 	_cursor_highlight.visible = true
 
 func _update_hover() -> void:
 	if Global.block_mode:
+		_hovered_block = null
 		Global.set_hover("")
 		return
 	var mouse_pos: Vector2 = get_global_mouse_position()
+	var player: Node2D = _get_player()
 	var best_name: String  = ""
-	var best_dist: float   = INTERACT_RADIUS_PX
+	var best_name_dist: float = INTERACT_RADIUS_PX
+	var hover: Node = null
+	var hover_dist: float = HOVER_PLAYER_RADIUS_PX  # 1 tile from the player
 	for entry in _placed_blocks.values():
-		var node: Node2D = (entry as Dictionary)["node"] as Node2D
-		if not is_instance_valid(node):
+		var node_ref: Variant = (entry as Dictionary)["node"]
+		if not is_instance_valid(node_ref):
 			continue
-		var dist: float = mouse_pos.distance_to(node.global_position)
-		if dist < best_dist:
-			best_dist = dist
+		var node: Node2D = node_ref as Node2D
+		if node == null:
+			continue
+		var node_pos: Vector2 = node.global_position
+		var name_dist: float = mouse_pos.distance_to(node_pos)
+		if name_dist < best_name_dist:
+			best_name_dist = name_dist
 			best_name = (entry as Dictionary)["name"]
+		# Yellow-highlight only the block under the cursor AND within 1 tile of
+		# the player (single block at a time).
+		if name_dist <= TILE_SIZE and player != null:
+			var player_dist: float = player.global_position.distance_to(node_pos)
+			if player_dist <= HOVER_PLAYER_RADIUS_PX and player_dist < hover_dist:
+				hover_dist = player_dist
+				hover = node
+	_hovered_block = hover
 	Global.set_hover(best_name)
 
 func _is_placeable_item(item) -> bool:
@@ -868,7 +981,8 @@ func _update_ghost() -> void:
 		return
 	ghost.visible = true
 	var occupied:    bool = _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1 \
-		or _is_tree_occupied(cell)
+		or _is_tree_occupied(cell) or _grass_occupied_tiles.has(cell) \
+		or _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell)
 	var on_water:    bool = water_layer.get_cell_source_id(cell) != -1
 	var player_here: bool = _cell_blocked_by_player(cell)
 	ghost_sprite.modulate = Color(1.0, 0.3, 0.3, 0.5) if (occupied or on_water or player_here) \
@@ -899,7 +1013,13 @@ func place_block() -> void:
 		return
 	if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
 		return
+	# Natural grass tufts own their tile just like placed blocks do — no
+	# stacking blocks on top of uncut grass.
+	if _grass_occupied_tiles.has(cell):
+		return
 	if _is_tree_occupied(cell):
+		return
+	if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
 		return
 	if water_layer.get_cell_source_id(cell) != -1:
 		return
@@ -940,6 +1060,47 @@ func place_block() -> void:
 
 func unregister_block(cell: Vector2i) -> void:
 	_placed_blocks.erase(cell)
+
+# Returns a world position on a nearby open tile (no water, tree, grass,
+# placed block, painted cell, or dungeon/cave entrance), spiraling outward
+# from `pos` up to `max_radius` tiles. Used by the player's stuck-unstuck
+# teleport (player.gd) so it never dumps the player onto an obstacle or
+# into a transition trigger. Returns Vector2.INF when nothing open is found.
+func find_open_spot_near(pos: Vector2, max_radius: int) -> Vector2:
+	var center_cell: Vector2i = ground_layer.local_to_map(ground_layer.to_local(pos))
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	for r in range(1, max_radius + 1):
+		for dx in range(-r, r + 1):
+			for dy in range(-r, r + 1):
+				if maxi(absi(dx), absi(dy)) != r:
+					continue
+				var cell := center_cell + Vector2i(dx, dy)
+				if not _is_open_for_player(cell, half_w, half_h):
+					continue
+				if _cave_entrance_cells.has(cell) or _dungeon_entrance_tiles.values().has(cell):
+					continue
+				return ground_layer.to_global(ground_layer.map_to_local(cell))
+	return Vector2.INF
+
+func _is_open_for_player(cell: Vector2i, half_w: int, half_h: int) -> bool:
+	if absi(cell.x) >= half_w or absi(cell.y) >= half_h:
+		return false
+	if water_layer.get_cell_source_id(cell) != -1:
+		return false
+	if editable_layer.get_cell_source_id(cell) != -1:
+		return false
+	if structures_layer.get_cell_source_id(cell) != -1:
+		return false
+	if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
+		return false
+	if _is_tree_occupied(cell):
+		return false
+	if _grass_occupied_tiles.has(cell):
+		return false
+	if _placed_blocks.has(cell):
+		return false
+	return true
 
 func _is_cell_in_place_radius(cell: Vector2i) -> bool:
 	var p: Node2D = _get_player()
@@ -994,9 +1155,9 @@ func spawn_player() -> void:
 # ── Experimental ground ──────────────────────────────────────────────
 # Spritesheet layout (128×64 px, 4 cols × 2 rows of 32×32):
 #   Row 0, cols 0-3  → four plains / grass variants
-#   Row 1, col 0     → snow (light grey)
-#   Row 1, col 1     → desert (tan / sand)
-#   Row 1, cols 2-3  → ocean-coloured tiles (not assigned to any biome)
+#   Row 1, cols 0-1  → snow (light grey, two variants)
+#   Row 1, col 2     → desert (tan / sand)
+#   Row 1, col 3     → ocean-coloured tile (not assigned to any biome)
 func _apply_experimental_ground() -> void:
 	var tex := load("res://sprites/ground/EXPERIMENTALGROUND.webp") as Texture2D
 	if tex == null:
@@ -1030,8 +1191,8 @@ func _cell_biome_type(tile_coord: Vector2i) -> int:
 	if src == _exp_ground_src:
 		if a.y == 0: return 0
 		if a.y == 1:
-			if a.x == 0: return 2  # snow
-			if a.x == 1: return 1  # desert
+			if a.x == 0 or a.x == 1: return 2  # snow (+ variant)
+			if a.x == 2: return 1              # desert
 		return -1
 	if a == Vector2i(0, 0): return 0
 	if a == Vector2i(1, 0): return 1
@@ -1056,9 +1217,9 @@ func _generate_terrain() -> void:
 	var desert_cols: Array[int] = []
 	var snow_cols:   Array[int] = []
 	if use_experimental_ground and _exp_ground_src != -1 and _exp_ground_rows >= 2:
-		# Col 0 = snow, col 1 = desert; cols 2-3 are ocean-coloured — skip them.
+		# Row 1: cols 0-1 = snow variants, col 2 = desert; col 3 is ocean — skip it.
 		snow_cols.append(0)
-		desert_cols.append(1 if _exp_ground_cols >= 2 else 0)
+		desert_cols.append(2 if _exp_ground_cols >= 3 else 1 if _exp_ground_cols >= 2 else 0)
 
 	var use_exp: bool = use_experimental_ground and _exp_ground_src != -1
 	for x in width:
@@ -1162,6 +1323,10 @@ func _is_valid_grass_tile(tile: Vector2i) -> bool:
 		return false
 	if editable_layer.get_cell_source_id(tile) != -1:
 		return false
+	if structures_layer.get_cell_source_id(tile) != -1:
+		return false
+	if _cave_entrance_cells.has(tile) or _dungeon_entrance_cells.has(tile):
+		return false
 	if water_layer.get_cell_source_id(tile) != -1:
 		return false
 	return true
@@ -1204,7 +1369,10 @@ func _spawn_grass_at(tile: Vector2i) -> void:
 	if tuft == null:
 		return
 	add_child(tuft)
-	tuft.setup(rng, ground_anchor, tile)
+	# Appearance derives from the tile itself (see GrassTuft.setup), never the
+	# sequential rng — so a tuft skipped here (e.g. under the player) can't
+	# shift how every later tuft looks across restarts.
+	tuft.setup(ground_anchor, tile)
 
 	# Stores the tuft node itself (not just a bool) — _try_cut_grass_with_sword
 	# needs the actual node to drive the cut, and every other read site
@@ -1216,7 +1384,7 @@ func _spawn_grass_at(tile: Vector2i) -> void:
 # would break world-gen determinism from `random_seed`).
 func _shuffle_tiles(arr: Array) -> void:
 	for i in range(arr.size() - 1, 0, -1):
-		var j: int = rng.randi_range(0, i)
+		var j: int = _grass_rng.randi_range(0, i)
 		var tmp: Vector2i = arr[i]
 		arr[i] = arr[j]
 		arr[j] = tmp
@@ -1237,7 +1405,7 @@ func _shuffle_tiles(arr: Array) -> void:
 func _cluster_tiles(arr: Array, target: int) -> void:
 	if arr.is_empty() or target <= 0:
 		return
-	var seed_tile: Vector2i = arr[rng.randi_range(0, arr.size() - 1)] as Vector2i
+	var seed_tile: Vector2i = arr[_grass_rng.randi_range(0, arr.size() - 1)] as Vector2i
 	var eligible_set: Dictionary = {}
 	for t in arr:
 		eligible_set[t] = true
@@ -1248,7 +1416,7 @@ func _cluster_tiles(arr: Array, target: int) -> void:
 	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
 	while cluster.size() < target and not frontier.is_empty():
-		var f_idx: int = rng.randi_range(0, frontier.size() - 1)
+		var f_idx: int = _grass_rng.randi_range(0, frontier.size() - 1)
 		var from_tile: Vector2i = frontier[f_idx] as Vector2i
 		_shuffle_tiles(dirs)
 		var grew: bool = false
@@ -1284,6 +1452,8 @@ func _cluster_tiles(arr: Array, target: int) -> void:
 func _fill_chunk_grass(chunk: Vector2i) -> void:
 	if _cave_claimed_chunks.has(chunk):
 		return
+	if _structure_claimed_chunks.has(chunk):
+		return
 	var half_w: int = width  / 2
 	var half_h: int = height / 2
 	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
@@ -1293,15 +1463,19 @@ func _fill_chunk_grass(chunk: Vector2i) -> void:
 	for dx in range(CHUNK_SIZE):
 		for dy in range(CHUNK_SIZE):
 			var tile: Vector2i = tl + Vector2i(dx, dy)
+			# Keep the world-spawn chunk clear so grass can't trap the player
+			# right after spawning (grass is solid and must be cut).
+			if tile.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
+				continue
 			if _is_valid_grass_tile(tile):
 				eligible.append(tile)
 	if eligible.is_empty():
 		return
 
-	var coverage: float = rng.randf_range(GRASS_CHUNK_COVERAGE_MIN, GRASS_CHUNK_COVERAGE_MAX)
+	var coverage: float = _grass_rng.randf_range(GRASS_CHUNK_COVERAGE_MIN, GRASS_CHUNK_COVERAGE_MAX)
 	var target:   int   = mini(ceili(eligible.size() * coverage), eligible.size())
 
-	if rng.randf() < GRASS_GROUPED_CHANCE:
+	if _grass_rng.randf() < GRASS_GROUPED_CHANCE:
 		_cluster_tiles(eligible, target)
 	else:
 		_shuffle_tiles(eligible)
@@ -1408,6 +1582,8 @@ func _place_foliage() -> void:
 			continue
 		if _is_chunk_cave_claimed(tile_coord):
 			continue
+		if _is_chunk_structure_claimed(tile_coord):
+			continue
 		_mark_tree_tile(tile_coord, occupied_tiles)
 
 		var local_pos: Vector2 = ground_layer.map_to_local(tile_coord)
@@ -1450,6 +1626,8 @@ func _generate_forest_centers() -> Array[Vector2i]:
 			continue
 		if _is_chunk_cave_claimed(tile):
 			continue
+		if _is_chunk_structure_claimed(tile):
+			continue
 
 		var too_close: bool = false
 		for c: Vector2i in centers:
@@ -1486,6 +1664,8 @@ func _spawn_dense_forest(center: Vector2i, occupied_tiles: Dictionary) -> void:
 				continue
 			if _is_chunk_cave_claimed(tile):
 				continue
+			if _is_chunk_structure_claimed(tile):
+				continue
 			var prob: float = lerp(LARGE_FOREST_D_CENTER, LARGE_FOREST_D_EDGE,
 				sqrt(dist_sq) / float(radius))
 			if rng.randf() > prob:
@@ -1515,7 +1695,14 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 		sprite.vframes  = 1
 		sprite.frame    = 0
 		if sprite.texture != null:
-			sprite.position.y = -(sprite.texture.get_height() * 0.5)
+			# Y-sort origin is the tree's TRUNK BASE, never the canopy. The
+			# canopy texture is drawn upward with Sprite2D.offset — a draw-only
+			# shift that does NOT move the sprite node — so the sprite's
+			# transform (and therefore its y-sort position) stays anchored at
+			# the trunk. Offsetting the node itself (sprite.position.y) would
+			# make every tree sort ~half its height too far north.
+			sprite.position = Vector2.ZERO
+			sprite.offset = Vector2(0.0, -(sprite.texture.get_height() * 0.5))
 			frame_w = sprite.texture.get_width()  / float(maxi(sprite.hframes, 1))
 			frame_h = sprite.texture.get_height() / float(maxi(sprite.vframes, 1))
 
@@ -1540,12 +1727,13 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	tree.set("tree_type", tree_type_val)
 	add_child(tree)
 	tree.scale         = Vector2(1.15, 1.15)
-	# world_pos is the tile's center; the sprite's own -(height/2) offset means
-	# the tree's local origin (this anchor point) IS the trunk's visual base
-	# regardless of tree.scale, so +half a tile lands it exactly on the tile's
-	# bottom grid line. TREE_BASE_EXTRA_OFFSET_PX is an extra empirical nudge
-	# on top of that — the source art may have a little transparent padding
-	# under the trunk that the exact math can't account for.
+	# world_pos is the tile's center; the sprite's draw-only offset (Sprite2D.offset,
+	# which shifts the texture but not the node transform) means the tree's local
+	# origin (this anchor point) IS the trunk's visual base regardless of
+	# tree.scale, so +half a tile lands it exactly on the tile's bottom grid
+	# line. TREE_BASE_EXTRA_OFFSET_PX is an extra empirical nudge on top of that
+	# — the source art may have a little transparent padding under the trunk
+	# that the exact math can't account for.
 	tree.global_position = world_pos + Vector2(0.0, TILE_SIZE * 0.5 + TREE_BASE_EXTRA_OFFSET_PX)
 	tree.z_index = int(tree.global_position.y / TILE_SIZE)
 
@@ -1575,6 +1763,8 @@ func _spawn_scattered_group(origin: Vector2i, tree_type_val: int, extra: int, oc
 		if ground_layer.get_cell_source_id(tile) == -1:
 			continue
 		if _is_chunk_cave_claimed(tile):
+			continue
+		if _is_chunk_structure_claimed(tile):
 			continue
 		var scatter_biome: int = _cell_biome_type(tile)
 		if tree_type_val == 0 and scatter_biome != 0:
@@ -1675,6 +1865,8 @@ func _spawn_wolves() -> void:
 				continue
 			if _is_chunk_cave_claimed(cell):
 				continue
+			if _is_chunk_structure_claimed(cell):
+				continue
 			all_plains.append(cell)
 			if yi < topmost_y:
 				topmost_y = yi
@@ -1718,7 +1910,8 @@ func _spawn_wolf_at(tile: Vector2i) -> void:
 
 # ── Cave entrance spawning ────────────────────────────────────────────
 # One-shot, same timing as _spawn_wolves — a single roll per chunk, any land
-# biome (Water excluded via _cell_biome_type() == -1). Excluded entirely
+# biome (Water excluded via _cell_biome_type() == -1; all-ocean chunks are
+# skipped outright via _is_chunk_all_ocean()). Excluded entirely
 # within CAVE_ENTRANCE_MIN_SPAWN_DIST of world spawn, and any roll landing
 # within CAVE_ENTRANCE_MIN_SEPARATION of an already-placed entrance is
 # dropped. Each entrance gets its own fixed seed here (via the world's own
@@ -1731,6 +1924,9 @@ func _spawn_cave_entrances() -> void:
 	var half_h: int = height / 2
 	for cx in range(_chunk_cols):
 		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if not _is_chunk_valid_for_structure(chunk):
+				continue
 			if rng.randf() >= CAVE_ENTRANCE_CHANCE:
 				continue
 			var tl: Vector2i = Vector2i(cx * CHUNK_SIZE - half_w, cy * CHUNK_SIZE - half_h)
@@ -1746,21 +1942,768 @@ func _spawn_cave_entrances() -> void:
 					break
 			if too_close:
 				continue
-			_cave_claimed_chunks[Vector2i(cx, cy)] = true
+			_cave_claimed_chunks[chunk] = true
 			_cave_entrance_tiles.append(tile)
 			_spawn_cave_entrance_at(tile)
 
 func _is_chunk_cave_claimed(tile: Vector2i) -> bool:
 	return _cave_claimed_chunks.has(_tile_to_chunk(tile))
 
+func _is_chunk_structure_claimed(tile: Vector2i) -> bool:
+	return _structure_claimed_chunks.has(_tile_to_chunk(tile))
+
+# True when EVERY tile in the chunk is water (_cell_biome_type() == -1).
+# Ocean chunks are excluded from every one-shot generation pass — dungeons,
+# caves, structures and natural stuff all skip them (a single land check on
+# one tile isn't enough; a chunk can be water on the sampled tile but mostly
+# land, or the reverse).
+func _is_chunk_all_ocean(chunk: Vector2i) -> bool:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+	for dx in range(CHUNK_SIZE):
+		for dy in range(CHUNK_SIZE):
+			if _cell_biome_type(tl + Vector2i(dx, dy)) != -1:
+				return false
+	return true
+
+# True when the chunk has water anywhere inside it OR in a `margin`-tile ring
+# around it. Coastline/edge chunks are marked invalid for generated
+# structures so an entrance (the cave structure is 11x8 tiles) never straddles
+# the shore or leaves a structure hanging over the water — a structure needs a
+# chunk with enough solid land around it. Out-of-bounds tiles read as water
+# (_cell_biome_type() == -1), so world-edge chunks are excluded too.
+func _is_chunk_near_ocean(chunk: Vector2i, margin: int = 1) -> bool:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+	for dx in range(-margin, CHUNK_SIZE + margin):
+		for dy in range(-margin, CHUNK_SIZE + margin):
+			if _cell_biome_type(tl + Vector2i(dx, dy)) == -1:
+				return true
+	return false
+
+# Combined gate used by every generated-structure spawner (caves, structures,
+# dungeons): the chunk must be solid land with room to spare, never touching
+# the ocean.
+func _is_chunk_valid_for_structure(chunk: Vector2i) -> bool:
+	return not _is_chunk_all_ocean(chunk) and not _is_chunk_near_ocean(chunk)
+
 func _spawn_cave_entrance_at(tile: Vector2i) -> void:
-	var local_pos: Vector2 = ground_layer.map_to_local(tile)
-	var world_pos: Vector2 = ground_layer.to_global(local_pos)
 	var portal := CavePortal.new()
 	portal.mode      = CavePortal.Mode.ENTER
 	portal.cave_seed = rng.randi()
+
+	if _cave_entrance_pool.is_empty():
+		_cave_entrance_pool = _load_cave_entrance_structures()
+
+	var placed: Dictionary = {}
+	if not _cave_entrance_pool.is_empty():
+		var s := _cave_entrance_pool[_cave_entrance_tiles.size() % _cave_entrance_pool.size()] as GeneratedStructure
+		placed = _place_cave_entrance_structure(s, tile)
+
 	add_child(portal)
-	portal.global_position = world_pos
+	if placed.is_empty():
+		# No structure could be placed (missing resource / no free footprint) —
+		# fall back to the old single-tile marker so the cave stays reachable.
+		portal.global_position = ground_layer.to_global(ground_layer.map_to_local(tile))
+		return
+	portal.global_position = ground_layer.to_global(ground_layer.map_to_local(placed["door_tile"] as Vector2i))
+	portal.set_interact_rect(placed["world_rect"] as Rect2)
+	portal.set_door_rect(placed["door_rect"] as Rect2)
+	portal.set_highlight_cells(placed["highlight_cells"] as Array[Rect2])
+	_cave_entrance_nodes[tile] = placed["root"]
+
+# ── Pixie-cave entrance spawn (one-shot, same timing as regular caves) ──
+# One attempt per chunk subject to three rules (per the spec):
+#   1. the chunk must NOT already hold a large (regular) cave entrance
+#      (checked against _cave_claimed_chunks, which regular caves filled
+#      in the pass that runs just before this one);
+#   2. the chunk must be solid land not touching the ocean
+#      (_is_chunk_valid_for_structure — same gate every structure spawner
+#      uses, so a pixie entrance never straddles the shore);
+#   3. the chosen tile must be > PIXIE_CAVE_SPAWN_MIN_DIST from world spawn.
+# Plus a min-separation from ALL existing entrances (regular AND pixie) so a
+# pixie portal never lands on top of a regular cave mouth or another pixie.
+# The chunk is then claimed in the SAME _cave_claimed_chunks dict regular
+# caves use, so structures/trees/grass/wolves skip it just like a cave chunk.
+func _spawn_pixie_cave_entrances() -> void:
+	if _pixie_cave_entrance_pool.is_empty():
+		_pixie_cave_entrance_pool = _load_pixie_cave_entrance_structures()
+	if _pixie_cave_entrance_pool.is_empty():
+		return  # no pixie_cave_entrance.tres authored yet — nothing to spawn
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			# Rule 2: solid land, not near ocean.
+			if not _is_chunk_valid_for_structure(chunk):
+				continue
+			# Rule 1: chunk must not already hold a large (regular) cave.
+			if _cave_claimed_chunks.has(chunk):
+				continue
+			if rng.randf() >= PIXIE_CAVE_ENTRANCE_CHANCE:
+				continue
+			var tl: Vector2i = Vector2i(cx * CHUNK_SIZE - half_w, cy * CHUNK_SIZE - half_h)
+			var tile: Vector2i = tl + Vector2i(rng.randi_range(0, CHUNK_SIZE - 1), rng.randi_range(0, CHUNK_SIZE - 1))
+			# Land tile (the chunk gate already excludes all-ocean chunks, but
+			# the sampled tile could still be water — skip those too).
+			if _cell_biome_type(tile) == -1:
+				continue
+			# Rule 3: not within 100 blocks of the world spawn point (tile 0,0).
+			if tile.distance_to(Vector2i.ZERO) < PIXIE_CAVE_SPAWN_MIN_DIST:
+				continue
+			# Min-separation from every existing entrance (regular + pixie).
+			var too_close: bool = false
+			for placed in _cave_entrance_tiles:
+				if tile.distance_to(placed as Vector2i) < PIXIE_CAVE_ENTRANCE_MIN_SEPARATION:
+					too_close = true
+					break
+			if not too_close:
+				for placed in _pixie_cave_entrance_tiles:
+					if tile.distance_to(placed as Vector2i) < PIXIE_CAVE_ENTRANCE_MIN_SEPARATION:
+						too_close = true
+						break
+			if too_close:
+				continue
+			# Claim the chunk so the later structure/natural passes skip it.
+			_cave_claimed_chunks[chunk] = true
+			_pixie_cave_entrance_tiles.append(tile)
+			_spawn_pixie_cave_entrance_at(tile)
+
+# Mirrors _spawn_cave_entrance_at, but uses the pixie pool and flags the
+# portal as a pixie cave (portal.cave_type = "pixie" — what game_instance.gd's
+# enter_cave dispatches on to build a PixieCaveWorld). Shares
+# _cave_entrance_cells / _cave_entrance_nodes with regular caves so the
+# overlap/nearest-cave logic doesn't need a parallel pixie version.
+func _spawn_pixie_cave_entrance_at(tile: Vector2i) -> void:
+	var portal := CavePortal.new()
+	portal.mode      = CavePortal.Mode.ENTER
+	portal.cave_seed = rng.randi()
+	portal.cave_type = "pixie"
+
+	var placed: Dictionary = {}
+	if not _pixie_cave_entrance_pool.is_empty():
+		var s := _pixie_cave_entrance_pool[_pixie_cave_entrance_tiles.size() % _pixie_cave_entrance_pool.size()] as GeneratedStructure
+		placed = _place_cave_entrance_structure(s, tile)
+
+	add_child(portal)
+	if placed.is_empty():
+		portal.global_position = ground_layer.to_global(ground_layer.map_to_local(tile))
+		return
+	portal.global_position = ground_layer.to_global(ground_layer.map_to_local(placed["door_tile"] as Vector2i))
+	portal.set_interact_rect(placed["world_rect"] as Rect2)
+	portal.set_door_rect(placed["door_rect"] as Rect2)
+	portal.set_highlight_cells(placed["highlight_cells"] as Array[Rect2])
+	_cave_entrance_nodes[tile] = placed["root"]
+
+# ── Cave entrance structures ─────────────────────────────────────────
+# The overworld cave entrances are painted as per-cell Sprite2D nodes instead
+# of the Structures TileMapLayer — the layer is ONE canvas item pinned at
+# World's origin (y=0), so it can never y-sort against the player (same
+# reason the dungeon entrance uses _spawn_dungeon_entrance_nodes). Each cell
+# sprite anchors at its own tile center and gets the same quantized
+# z_index = int(y / TILE_SIZE) the player uses, so each row sorts correctly
+# (player walks behind the rock above, in front of the rock below).
+#
+# Collision is added ONLY on present pixels: every cell's solid area is
+# shrunk to the bounding box of its opaque pixels (see _cell_solid_rects /
+# _opaque_bbox_in_image), and fully-transparent cells get no body at all — so
+# the player slides along the rock's actual shape instead of hitting invisible
+# full-tile boxes. The entrance's door cells (door_rect) anchor the structure
+# to the requested tile but stay solid like the rest of the rock: entry is a
+# click + confirm, not a physical walk-through.
+#
+# Returns {"door_tile", "world_rect", "door_rect", "highlight_cells", "root"};
+# empty when no valid footprint was found within the search radius.
+func _place_cave_entrance_structure(s: GeneratedStructure, portal_tile: Vector2i) -> Dictionary:
+	var door_cell: Vector2i = s.door_center_cell()
+	var ideal_anchor: Vector2i = portal_tile - door_cell
+	# Anchor candidates walk a 5x5 search around the ideal anchor (door dead
+	# center of the portal tile) so water/trees in the footprint can't veto the
+	# whole entrance. Offsets are tried nearest-first.
+	var offsets: Array[Vector2i] = []
+	for dy in range(-2, 3):
+		for dx in range(-2, 3):
+			offsets.append(Vector2i(dx, dy))
+	offsets.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.length_squared() < b.length_squared())
+	for offset in offsets:
+		var anchor: Vector2i = ideal_anchor + offset
+		if not _structure_footprint_valid(s, anchor, Vector2i(-1, -1)):
+			continue
+		var result := _spawn_cave_entrance_nodes(s, anchor)
+		for cell in result["cells"]:
+			_cave_entrance_cells[cell as Vector2i] = true
+		_claim_structure_chunks(s, anchor)
+		# Ground the rock: replace the neighbouring ground tiles around its
+		# base with the cave_base tile (see _paint_cave_base_ground), so the
+		# cave doesn't end at a hard grass line.
+		_paint_cave_base_ground(s, anchor)
+		var world_tl: Vector2 = ground_layer.to_global(ground_layer.map_to_local(anchor)) \
+			- Vector2(TILE_SIZE / 2.0, TILE_SIZE / 2.0)
+		# The structure's painted footprint, not the full tile grid: a sprite
+		# that isn't an exact multiple of TILE_PX (342px cave sprite vs 352px
+		# claimed) would leave the highlight/click box sticking past the rock.
+		var sprite_w: int = mini(s.sprite.get_width(), s.tile_width * TILE_SIZE)
+		var sprite_h: int = mini(s.sprite.get_height(), s.tile_height * TILE_SIZE)
+		# World rect of the entrance opening itself (the dark door_rect cells on
+		# the structure grid) — the portal highlights just this, not the rock.
+		# A structure without a door_rect (-1,-1) gets a zero rect, which makes
+		# the portal fall back to highlighting the whole structure.
+		var door_rect_world := Rect2()
+		if s.door_rect.position.x >= 0:
+			var door_world_tl: Vector2 = ground_layer.to_global(
+				ground_layer.map_to_local(anchor + s.door_rect.position)) - Vector2(TILE_SIZE / 2.0, TILE_SIZE / 2.0)
+			door_rect_world = Rect2(door_world_tl, Vector2(s.door_rect.size) * TILE_SIZE)
+		# Optional hand-painted highlight: every cell marked on the structure's
+		# highlight_mask (a tile_width x tile_height pixel grid) gets its own
+		# world rect. Empty when no mask is set — the portal then uses door_rect.
+		var highlight_cells: Array[Rect2] = []
+		var mask: Texture2D = s.highlight_mask
+		if mask != null:
+			var mask_img := mask.get_image()
+			if mask_img == null:
+				push_warning("World: highlight_mask has no image — falling back to door_rect for %s" % s.name)
+			elif mask_img.get_width() != s.tile_width or mask_img.get_height() != s.tile_height:
+				push_warning("World: highlight_mask size %dx%d doesn't match %s grid %dx%d — falling back to door_rect" % [
+					mask_img.get_width(), mask_img.get_height(), s.name, s.tile_width, s.tile_height])
+			else:
+				for my in range(mask_img.get_height()):
+					for mx in range(mask_img.get_width()):
+						if mask_img.get_pixel(mx, my).a <= 0.5:
+							continue
+						var cell: Vector2i = anchor + Vector2i(mx, my)
+						var cell_tl: Vector2 = ground_layer.to_global(ground_layer.map_to_local(cell)) \
+							- Vector2(TILE_SIZE / 2.0, TILE_SIZE / 2.0)
+						highlight_cells.append(Rect2(cell_tl, Vector2(TILE_SIZE, TILE_SIZE)))
+		_located_structures.append({"name": s.name, "tile": portal_tile})
+		return {
+			"door_tile": anchor + door_cell,
+			"world_rect": Rect2(world_tl, Vector2(sprite_w, sprite_h)),
+			"door_rect": door_rect_world,
+			"highlight_cells": highlight_cells,
+			"root": result["root"],
+		}
+	push_warning("World: no free footprint for cave entrance at %s — portal still spawned" % str(portal_tile))
+	return {}
+
+func _spawn_cave_entrance_nodes(s: GeneratedStructure, anchor: Vector2i) -> Dictionary:
+	var root := Node2D.new()
+	root.name = "CaveEntrance"
+	add_child(root)
+
+	# The structure sprite may be an AtlasTexture region into a shared sheet;
+	# the per-cell AtlasTextures must unwrap it to the BASE texture + the
+	# region origin so each cell's region lands on the right pixels (see
+	# cave_world.gd's _add_icon_source for the same unwrap pattern).
+	var base_tex: Texture2D   = s.sprite
+	var base_origin: Vector2i = Vector2i.ZERO
+	var sprite_atlas := s.sprite as AtlasTexture
+	if sprite_atlas != null:
+		base_tex    = sprite_atlas.atlas
+		base_origin = Vector2i(sprite_atlas.region.position.round())
+
+	var tex_w: int = base_tex.get_width()
+	var tex_h: int = base_tex.get_height()
+	var solid_rects: Dictionary = _cell_solid_rects(s)
+
+	var cells: Array = []
+	for y in range(s.tile_height):
+		for x in range(s.tile_width):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			var region_origin: Vector2i = base_origin + Vector2i(x * GeneratedStructure.TILE_PX, y * GeneratedStructure.TILE_PX)
+			var region := Rect2i(region_origin, Vector2i(GeneratedStructure.TILE_PX, GeneratedStructure.TILE_PX))
+			# The sprite isn't guaranteed to be an exact multiple of TILE_PX —
+			# clamp the last column/row to the texture's real bounds.
+			region.size.x = mini(region.size.x, tex_w - region_origin.x)
+			region.size.y = mini(region.size.y, tex_h - region_origin.y)
+			if region.size.x <= 0 or region.size.y <= 0:
+				continue
+
+			var cell_tex := AtlasTexture.new()
+			cell_tex.atlas  = base_tex
+			cell_tex.region = Rect2(region)
+			var sprite := Sprite2D.new()
+			sprite.texture = cell_tex
+			root.add_child(sprite)
+			sprite.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
+			# A partial edge cell (the sprite isn't an exact multiple of
+			# TILE_PX, e.g. the cave sprite is 342px wide = 10 full columns +
+			# a 22px last one) is drawn FLUSH with the tile's top-left instead
+			# of centered on the tile. Centered, the clipped column floats
+			# mid-tile and leaves a see-through slit between it and the
+			# neighbouring cell (and its collision drifts off the rock).
+			if region.size.x < GeneratedStructure.TILE_PX:
+				sprite.global_position.x -= (GeneratedStructure.TILE_PX - region.size.x) / 2.0
+			if region.size.y < GeneratedStructure.TILE_PX:
+				sprite.global_position.y -= (GeneratedStructure.TILE_PX - region.size.y) / 2.0
+			sprite.z_index         = int(sprite.global_position.y / TILE_SIZE)
+
+			cells.append(cell)
+
+			# Collision only on present pixels — the cell's opaque-pixel
+			# bounding box (empty cells get none at all).
+			var solid: Rect2i = solid_rects.get(Vector2i(x, y), Rect2i(Vector2i.ZERO, Vector2i.ZERO)) as Rect2i
+			if solid.size == Vector2i.ZERO:
+				continue
+			var body := StaticBody2D.new()
+			body.collision_layer = 1
+			body.collision_mask  = 1
+			var shape := CollisionShape2D.new()
+			var rect := RectangleShape2D.new()
+			rect.size = Vector2(solid.size)
+			shape.shape = rect
+			body.add_child(shape)
+			root.add_child(body)
+			var cell_world: Vector2 = ground_layer.to_global(ground_layer.map_to_local(cell))
+			var solid_offset: Vector2 = Vector2(solid.position) - Vector2(GeneratedStructure.TILE_PX / 2.0, GeneratedStructure.TILE_PX / 2.0)
+			body.global_position = cell_world + solid_offset
+
+	return {"cells": cells, "root": root}
+
+# ── Cave base ground ring ─────────────────────────────────────────────
+# The rock's bottom row meets the ground at a hard grass edge — replace the
+# ground tiles immediately around the base (a U-ring: the row below the
+# structure plus the single cells flanking its bottom row) with the cave_base
+# tile (cave_base.png), so the cave reads as planted in dark soil rather than
+# dropped on bright grass. Water cells are skipped so a cave hugging the
+# shore doesn't paint over the ocean.
+func _paint_cave_base_ground(s: GeneratedStructure, anchor: Vector2i) -> void:
+	var src: int = _get_cave_base_ground_src()
+	if src == -1:
+		return
+	var ring: Array[Vector2i] = [
+		Vector2i(anchor.x - 1, anchor.y + s.tile_height - 1),
+		Vector2i(anchor.x + s.tile_width, anchor.y + s.tile_height - 1),
+	]
+	for x in range(anchor.x - 1, anchor.x + s.tile_width + 1):
+		ring.append(Vector2i(x, anchor.y + s.tile_height))
+	for cell in ring:
+		if water_layer.get_cell_source_id(cell) != -1:
+			continue
+		ground_layer.set_cell(cell, src, Vector2i.ZERO)
+
+# Registers (once, lazily) the cave_base.png tile as a ground-tile source.
+# Returns the tile source id, or -1 when the texture is missing.
+func _get_cave_base_ground_src() -> int:
+	if _cave_base_ground_src != -1:
+		return _cave_base_ground_src
+	var tex := load("res://sprites/cave/cave_base.png") as Texture2D
+	if tex == null:
+		return -1
+	_cave_base_ground_tex = tex
+	var src := TileSetAtlasSource.new()
+	src.texture             = _cave_base_ground_tex
+	src.texture_region_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	src.create_tile(Vector2i.ZERO)
+	_cave_base_ground_src = ground_layer.tile_set.add_source(src)
+	return _cave_base_ground_src
+
+# ── Cave structure pixel collision ────────────────────────────────────
+# The sprite's opaque pixels are scanned ONCE per structure (cached — every
+# cave entrance shares the same resource instance) and each cell maps to the
+# local bounding box of its solid pixels, or is absent when the cell has no
+# pixels at all.
+static var _cave_structure_bbox_cache: Dictionary = {}  # GeneratedStructure -> {Vector2i cell: Rect2i}
+
+static func _cell_solid_rects(s: GeneratedStructure) -> Dictionary:
+	if _cave_structure_bbox_cache.has(s):
+		return _cave_structure_bbox_cache[s] as Dictionary
+	var solid: Dictionary = {}
+	var base_tex: Texture2D   = s.sprite
+	var base_origin: Vector2i = Vector2i.ZERO
+	var sprite_atlas := s.sprite as AtlasTexture
+	if sprite_atlas != null:
+		base_tex    = sprite_atlas.atlas
+		base_origin = Vector2i(sprite_atlas.region.position.round())
+	if base_tex != null:
+		var img: Image = base_tex.get_image()
+		if img != null:
+			img.convert(Image.FORMAT_RGBA8)
+			var tex_w: int = img.get_width()
+			var tex_h: int = img.get_height()
+			var data: PackedByteArray = img.get_data()
+			for y in range(s.tile_height):
+				for x in range(s.tile_width):
+					var region := Rect2i(
+						base_origin + Vector2i(x * GeneratedStructure.TILE_PX, y * GeneratedStructure.TILE_PX),
+						Vector2i(GeneratedStructure.TILE_PX, GeneratedStructure.TILE_PX))
+					region.size.x = mini(region.size.x, tex_w - region.position.x)
+					region.size.y = mini(region.size.y, tex_h - region.position.y)
+					var bbox := _opaque_bbox_in_image(data, tex_w, region)
+					if bbox.size != Vector2i.ZERO:
+						solid[Vector2i(x, y)] = bbox
+	_cave_structure_bbox_cache[s] = solid
+	return solid
+
+# Local bounding box (relative to the cell's region) of pixels with alpha
+# > 0.1 in a packed RGBA8 image. Zero size when the cell has no pixels.
+static func _opaque_bbox_in_image(data: PackedByteArray, tex_w: int, region: Rect2i) -> Rect2i:
+	var minp := Vector2i(region.end.x, region.end.y)
+	var maxp := Vector2i(region.position.x - 1, region.position.y - 1)
+	for y in range(region.position.y, region.end.y):
+		var row_base: int = y * tex_w
+		for x in range(region.position.x, region.end.x):
+			if data[(row_base + x) * 4 + 3] > 25:
+				if x < minp.x: minp.x = x
+				if y < minp.y: minp.y = y
+				if x > maxp.x: maxp.x = x
+				if y > maxp.y: maxp.y = y
+	if maxp.x < minp.x:
+		return Rect2i(Vector2i.ZERO, Vector2i.ZERO)
+	return Rect2i(minp - region.position, maxp - minp + Vector2i.ONE)
+
+# ── Overworld structure spawning ──────────────────────────────────────
+# Second in the chunk-priority order (dungeon > cave > structures > natural
+# stuff): runs AFTER _spawn_cave_entrances() so cave-claimed chunks are
+# already excluded, and BEFORE _spawn_wolves/_deferred_foliage so trees and
+# grass skip the chunks a structure claims. All-ocean chunks are skipped.
+# Runs on the seeded world rng (iterating chunks in order, no shuffle) so a
+# given world seed reproduces the same structures.
+func _spawn_overworld_structures() -> void:
+	var structures: Array = _load_overworld_structures()
+	if structures.is_empty():
+		return
+	_prepare_structure_tileset(structures)
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var spawned: int = 0
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if _structure_claimed_chunks.has(chunk):
+				continue
+			if not _is_chunk_valid_for_structure(chunk):
+				continue
+			if _cave_claimed_chunks.has(chunk):
+				continue
+			if rng.randf() >= STRUCTURE_CHANCE:
+				continue
+			var s := structures[rng.randi_range(0, structures.size() - 1)] as GeneratedStructure
+			var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+			for _attempt in range(60):
+				var anchor: Vector2i = tl + Vector2i(rng.randi_range(0, CHUNK_SIZE - 1), rng.randi_range(0, CHUNK_SIZE - 1))
+				if not _can_place_structure(s, anchor):
+					continue
+				_spawn_structure(s, anchor)
+				spawned += 1
+				break
+	print("[STRUCTURES] placed %d overworld structures" % spawned)
+
+# Load every GeneratedStructure .tres in STRUCTURES_DIR flagged to spawn in
+# the overworld. Adding a new .tres to that folder is all it takes to put a
+# structure into the pool — no per-resource wiring in code.
+# NOTE: type == "dungeon entrances" AND the cave entrance types (cave1-3,
+# pixie cave) are deliberately excluded from this random pool — those are only
+# ever placed as the entrance of a dungeon mission / cave entrance (see
+# _place_dungeon_entrance_structure / _spawn_cave_entrance_at), never scattered.
+func _load_overworld_structures() -> Array:
+	var out: Array = []
+	for res in _scan_structure_dir():
+		var s := res as GeneratedStructure
+		if s.spawn_world == "overworld" and not _is_entrance_structure_type(s.type):
+			out.append(s)
+	return out
+
+# Every GeneratedStructure with type == "dungeon entrances" (and spawn_world
+# == "overworld") — the visual entrance used by EVERY dungeon mission. One
+# per mission is picked round-robin from this pool by dungeon_index, so
+# adding more .tres of this type gives later dungeons their own look.
+func _load_dungeon_entrance_structures() -> Array:
+	var out: Array = []
+	for res in _scan_structure_dir():
+		var s := res as GeneratedStructure
+		if s.spawn_world == "overworld" and s.type == "dungeon entrances":
+			out.append(s)
+	return out
+
+# Every GeneratedStructure with a cave entrance type (cave1/cave2/cave3 —
+# NOT pixie cave, which has its own pool/loader) — the large-cave structure
+# used by the overworld cave entrances (see _spawn_cave_entrance_at). Picked
+# round-robin per entrance.
+func _load_cave_entrance_structures() -> Array:
+	var out: Array = []
+	for res in _scan_structure_dir():
+		var s := res as GeneratedStructure
+		if s.spawn_world == "overworld" and _is_entrance_structure_type(s.type) and s.type != "pixie cave":
+			out.append(s)
+	return out
+
+# Every GeneratedStructure with type == "pixie cave" — the entrance used by
+# the pixie-cave spawn pass (see _spawn_pixie_cave_entrances, added in a later
+# task). Kept separate from the regular cave pool so normal cave entrances
+# never drop the player into a pixie cave.
+func _load_pixie_cave_entrance_structures() -> Array:
+	var out: Array = []
+	for res in _scan_structure_dir():
+		var s := res as GeneratedStructure
+		if s.spawn_world == "overworld" and s.type == "pixie cave":
+			out.append(s)
+	return out
+
+func _is_entrance_structure_type(structure_type: String) -> bool:
+	return structure_type in ["cave1", "cave2", "cave3", "pixie cave"]
+
+func _scan_structure_dir() -> Array:
+	var out: Array = []
+	var dir := DirAccess.open(STRUCTURES_DIR)
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var file_name: String = dir.get_next()
+	while file_name != "":
+		if not dir.current_is_dir() and file_name.ends_with(".tres"):
+			var res: Resource = load(STRUCTURES_DIR + file_name)
+			if res is GeneratedStructure:
+				var s := res as GeneratedStructure
+				if s.is_valid():
+					out.append(s)
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	return out
+
+# Each structure's sprite becomes a TileSetAtlasSource (32x32 cells) in the
+# Structures layer's TileSet, with a full-cell collision polygon so a
+# structure blocks the player and item repel the same way a placed block
+# does. The source id per structure is cached in _structure_sources.
+func _prepare_structure_tileset(structures: Array) -> void:
+	if structures_layer == null:
+		return
+	var ts: TileSet = structures_layer.tile_set
+	if ts == null:
+		ts = TileSet.new()
+		structures_layer.tile_set = ts
+	if ts.tile_size != Vector2i(TILE_SIZE, TILE_SIZE):
+		ts.tile_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	if ts.get_physics_layers_count() == 0:
+		ts.add_physics_layer()
+	ts.set_physics_layer_collision_layer(0, 1)
+	ts.set_physics_layer_collision_mask(0, 1)
+	for s in structures:
+		var struct := s as GeneratedStructure
+		if _structure_sources.has(struct):
+			continue
+		var src := TileSetAtlasSource.new()
+		src.texture             = struct.sprite
+		src.texture_region_size = Vector2i(TILE_SIZE, TILE_SIZE)
+		for col in range(struct.tile_width):
+			for row in range(struct.tile_height):
+				var atl := Vector2i(col, row)
+				src.create_tile(atl)
+				var td := src.get_tile_data(atl, 0)
+				if td != null:
+					td.add_collision_polygon(0)
+					td.set_collision_polygon_points(0, 0, PackedVector2Array([
+						Vector2(-16, -16), Vector2(16, -16), Vector2(16, 16), Vector2(-16, 16),
+					]))
+		_structure_sources[struct] = ts.add_source(src)
+
+# A structure can sit here only if every cell of its tile_width x tile_height
+# footprint is in-bounds, land (not water), free of trees/placed blocks/other
+# structure cells, outside STRUCTURE_MIN_SPAWN_DIST of world spawn, and not
+# within STRUCTURE_MIN_SEPARATION of another structure's anchor.
+func _can_place_structure(s: GeneratedStructure, anchor: Vector2i) -> bool:
+	if anchor.distance_to(Vector2i.ZERO) < STRUCTURE_MIN_SPAWN_DIST:
+		return false
+	if not _structure_footprint_valid(s, anchor, Vector2i(-1, -1)):
+		return false
+	for placed in _structure_anchor_tiles:
+		if anchor.distance_to(placed as Vector2i) < STRUCTURE_MIN_SEPARATION:
+			return false
+	return true
+
+func _spawn_structure(s: GeneratedStructure, anchor: Vector2i) -> void:
+	_paint_structure(s, anchor, Vector2i(-1, -1))
+	_claim_structure_chunks(s, anchor)
+	_structure_anchor_tiles.append(anchor)
+	_located_structures.append({"name": s.name, "tile": anchor})
+
+# Names of every structure resource in STRUCTURES_DIR (the /locate autocomplete
+# source) — ALL types, including cave/pixie/dungeon entrances.
+func get_available_structure_names() -> Array:
+	var names: Array = []
+	for res in _scan_structure_dir():
+		var s := res as GeneratedStructure
+		var n: String = s.name
+		if not n.is_empty() and not names.has(n):
+			names.append(n)
+	return names
+
+# Nearest placed structure/entrance whose .name matches `structure_name`
+# (case-insensitive), measured from the player. Returns Vector2.INF when none
+# exists (or none of that name was placed). Used by the /locate chat command.
+func locate_nearest_structure(structure_name: String) -> Vector2:
+	if _located_structures.is_empty():
+		return Vector2.INF
+	var query: String = structure_name.strip_edges().to_lower()
+	var player_tile := Vector2i.ZERO
+	var player: Node2D = Global.player_node as Node2D
+	if player != null:
+		player_tile = ground_layer.local_to_map(ground_layer.to_local(player.global_position))
+	var best: Vector2i = Vector2i.ZERO
+	var best_dist: float = INF
+	var found: bool = false
+	for entry in _located_structures:
+		var nm: String = str((entry as Dictionary)["name"]).to_lower()
+		if query != "" and nm != query:
+			continue
+		var tile: Vector2i = (entry as Dictionary)["tile"] as Vector2i
+		var d: float = Vector2(tile).distance_to(Vector2(player_tile))
+		if d < best_dist:
+			best_dist = d
+			best = tile
+			found = true
+	if not found:
+		return Vector2.INF
+	return ground_layer.to_global(ground_layer.map_to_local(best))
+
+# Every cell of the structure's footprint (except skip_cell — a
+# Vector2i(-1, -1) sentinel means "skip nothing") must be in-bounds, land,
+# and free of trees, placed blocks and already-painted structure cells.
+func _structure_footprint_valid(s: GeneratedStructure, anchor: Vector2i, skip_cell: Vector2i) -> bool:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	for x in range(s.tile_width):
+		for y in range(s.tile_height):
+			if Vector2i(x, y) == skip_cell:
+				continue
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			if absi(cell.x) >= half_w or absi(cell.y) >= half_h:
+				return false
+			if _cell_biome_type(cell) == -1:
+				return false
+			if _placed_blocks.has(cell) or _is_tree_occupied(cell):
+				return false
+			if structures_layer.get_cell_source_id(cell) != -1:
+				return false
+	return true
+
+# Paints every footprint cell except skip_cell (Vector2i(-1, -1) paints all)
+# onto the Structures layer. Returns the painted world cells.
+func _paint_structure(s: GeneratedStructure, anchor: Vector2i, skip_cell: Vector2i) -> Array:
+	var src_id: int = int(_structure_sources[s])
+	var painted: Array = []
+	for x in range(s.tile_width):
+		for y in range(s.tile_height):
+			if Vector2i(x, y) == skip_cell:
+				continue
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			structures_layer.set_cell(cell, src_id, Vector2i(x, y))
+			painted.append(cell)
+	return painted
+
+# Claim every chunk a structure touches so no other pass spawns under it.
+func _claim_structure_chunks(s: GeneratedStructure, anchor: Vector2i) -> void:
+	var tl_chunk: Vector2i = _tile_to_chunk(anchor)
+	var br_chunk: Vector2i = _tile_to_chunk(anchor + Vector2i(s.tile_width - 1, s.tile_height - 1))
+	for cx in range(tl_chunk.x, br_chunk.x + 1):
+		for cy in range(tl_chunk.y, br_chunk.y + 1):
+			_structure_claimed_chunks[Vector2i(cx, cy)] = true
+
+# ── Dungeon entrance structures ───────────────────────────────────────
+# Paints a dungeon entrance as per-cell Sprite2D nodes instead of the
+# Structures TileMapLayer. The layer is ONE canvas item pinned at World's
+# origin (y=0), so it can never y-sort against the player — the whole
+# sprite stayed stuck behind the player no matter which side they approach
+# from. Individual cell sprites anchor at their own tile center and get the
+# same quantized z_index = int(y / TILE_SIZE) that trees/grass/placed
+# blocks/player all use, so each cell sorts correctly against the player
+# (player walks behind the upper wall when north of it, in front of the
+# bottom wall when south of it). Every cell also gets a full-tile
+# StaticBody2D so the entrance is solid — previously the sprite had no
+# collision the player could actually hit.
+#
+# Returns the painted world cells (anchor + local cell offset).
+func _spawn_dungeon_entrance_nodes(s: GeneratedStructure, anchor: Vector2i, dungeon_index: int) -> Array:
+	var root := Node2D.new()
+	root.name = "DungeonEntrance%d" % dungeon_index
+	add_child(root)
+
+	# The structure sprite is an AtlasTexture region into a shared sheet; the
+	# per-cell AtlasTextures must unwrap it to the BASE texture + the region
+	# origin so each cell's region lands on the right pixels (see
+	# cave_world.gd's _add_icon_source for the same unwrap pattern).
+	var base_tex: Texture2D     = s.sprite
+	var base_origin: Vector2i   = Vector2i.ZERO
+	var sprite_atlas := s.sprite as AtlasTexture
+	if sprite_atlas != null:
+		base_tex    = sprite_atlas.atlas
+		base_origin = Vector2i(sprite_atlas.region.position.round())
+
+	var painted: Array = []
+	for x in range(s.tile_width):
+		for y in range(s.tile_height):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			var cell_tex := AtlasTexture.new()
+			cell_tex.atlas  = base_tex
+			cell_tex.region = Rect2(base_origin + Vector2i(x * TILE_SIZE, y * TILE_SIZE), Vector2(TILE_SIZE, TILE_SIZE))
+
+			var sprite := Sprite2D.new()
+			sprite.texture = cell_tex
+			root.add_child(sprite)
+			sprite.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
+			sprite.z_index         = int(sprite.global_position.y / TILE_SIZE)
+
+			var body := StaticBody2D.new()
+			body.collision_layer = 1
+			body.collision_mask  = 1
+			var shape := CollisionShape2D.new()
+			var rect := RectangleShape2D.new()
+			rect.size = Vector2(TILE_SIZE, TILE_SIZE)
+			shape.shape = rect
+			body.add_child(shape)
+			root.add_child(body)
+			body.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
+
+			painted.append(cell)
+	return painted
+
+# Every dungeon mission's entrance uses a GeneratedStructure of type
+# "dungeon entrances" (see _load_dungeon_entrance_structures): the structure
+# is painted around the portal tile, one per dungeon picked round-robin by
+# dungeon_index. The FULL footprint is painted — there is no empty center
+# cell; the DungeonPortal node at the center is invisible (Sprite2D removed)
+# and only supplies the walk-in Area2D + confirm dialog.
+#
+# Returns the DOOR tile (anchor + center) — the cell the structure's doorway
+# actually landed on. The caller must put the portal there so the visible
+# entrance and the real entry trigger are always the same position: the 5x5
+# search below can shift the whole picture off the requested portal tile when
+# a tree/block occupies the ideal footprint.
+func _place_dungeon_entrance_structure(portal_tile: Vector2i, dungeon_index: int) -> Vector2i:
+	if _dungeon_entrance_pool.is_empty():
+		_dungeon_entrance_pool = _load_dungeon_entrance_structures()
+	if _dungeon_entrance_pool.is_empty():
+		return DUNGEON_INVALID_TILE
+	var s := _dungeon_entrance_pool[(dungeon_index - 1) % _dungeon_entrance_pool.size()] as GeneratedStructure
+	# Paint EVERY footprint cell (the portal node is invisible, so there is
+	# no reason to keep a walkable hole in the middle of the sprite).
+	var center := Vector2i(s.tile_width / 2, s.tile_height / 2)
+	# Anchor candidates walk a 5x5 search around the ideal anchor (portal dead
+	# center of the footprint) so a tree/block in the chunk can't veto the
+	# whole entrance. Offsets are tried nearest-first so the door lands as
+	# close to the requested portal tile as possible.
+	var offsets: Array[Vector2i] = []
+	for dy in range(-2, 3):
+		for dx in range(-2, 3):
+			offsets.append(Vector2i(dx, dy))
+	offsets.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.length_squared() < b.length_squared())
+	for offset in offsets:
+		var anchor: Vector2i = portal_tile - center + offset
+		if not _structure_footprint_valid(s, anchor, Vector2i(-1, -1)):
+			continue
+		var painted := _spawn_dungeon_entrance_nodes(s, anchor, dungeon_index)
+		for cell in painted:
+			_dungeon_entrance_cells[cell as Vector2i] = true
+		_dungeon_entrance_structure_cells[dungeon_index] = painted
+		_claim_structure_chunks(s, anchor)
+		_located_structures.append({"name": s.name, "tile": anchor + center})
+		return anchor + center
+	push_warning("DungeonSpawner: no free footprint for dungeon %d entrance structure — portal still spawned" % dungeon_index)
+	return DUNGEON_INVALID_TILE
 
 # ── Debug: teleport to the nearest cave entrance (Ctrl+Shift+T) ────────
 func teleport_to_nearest_cave() -> void:
@@ -1847,10 +2790,16 @@ func _spawn_dungeon_entrance(dungeon_index: int) -> void:
 # Every constraint of where a dungeon entrance may NOT occupy a chunk:
 #   a. no player-placed blocks anywhere in it
 #   b. not a cave-claimed chunk
-#   c. not the chunk the player is currently standing in
-#   d. not within DUNGEON_SPAWN_MIN_DIST_TILES tiles of world spawn
+#   c. not a structure-claimed chunk
+#   d. not a chunk without enough solid land (all-ocean OR touches the ocean)
+#   e. not the chunk the player is currently standing in
+#   f. not within DUNGEON_SPAWN_MIN_DIST_TILES tiles of world spawn
 func _is_valid_dungeon_chunk(chunk: Vector2i, player_tile: Vector2i, developed_chunks: Dictionary) -> bool:
 	if _cave_claimed_chunks.has(chunk):
+		return false
+	if _structure_claimed_chunks.has(chunk):
+		return false
+	if not _is_chunk_valid_for_structure(chunk):
 		return false
 	if _tile_to_chunk(player_tile) == chunk:
 		return false
@@ -1860,12 +2809,13 @@ func _is_valid_dungeon_chunk(chunk: Vector2i, player_tile: Vector2i, developed_c
 		return false
 	return true
 
-# Land tile inside a chunk (rejecting water, trees and placed blocks — a
-# portal can't sit on any of those; _cell_biome_type() == -1 is water).
-# Scans the whole 25x25 chunk once and returns a random usable tile, instead
-# of a fixed number of random attempts that can whiff on a partially-land
-# chunk. An ENTIRELY water chunk still fails (DUNGEON_INVALID_TILE) — the
-# caller then falls through to the next valid chunk.
+# Land tile inside a chunk (rejecting water, trees, placed blocks and
+# structure cells — a portal can't sit on any of those;
+# _cell_biome_type() == -1 is water). Scans the whole 25x25 chunk once and
+# returns a random usable tile, instead of a fixed number of random attempts
+# that can whiff on a partially-land chunk. An ENTIRELY water chunk still
+# fails (DUNGEON_INVALID_TILE) — the caller then falls through to the next
+# valid chunk.
 func _random_land_tile_in_chunk(chunk: Vector2i) -> Vector2i:
 	var half_w: int = width  / 2
 	var half_h: int = height / 2
@@ -1875,6 +2825,8 @@ func _random_land_tile_in_chunk(chunk: Vector2i) -> Vector2i:
 		for dy in range(CHUNK_SIZE):
 			var tile: Vector2i = tl + Vector2i(dx, dy)
 			if _cell_biome_type(tile) == -1:
+				continue
+			if structures_layer.get_cell_source_id(tile) != -1:
 				continue
 			if _placed_blocks.has(tile) or _is_tree_occupied(tile):
 				continue
@@ -1890,6 +2842,14 @@ func _spawn_dungeon_portal_at(tile: Vector2i, dungeon_index: int) -> void:
 	portal.set("dungeon_index", dungeon_index)
 	_dungeon_portal_nodes[dungeon_index] = portal
 	add_child(portal)
+	# Paint the entrance structure around the tile, then move the portal onto
+	# the structure's actual door — the anchor search may shift the picture,
+	# and the trigger must sit exactly on the sprite's doorway so the guide
+	# arrow and walk-in entry line up with what the player sees.
+	var door_tile := _place_dungeon_entrance_structure(tile, dungeon_index)
+	if door_tile != DUNGEON_INVALID_TILE:
+		_dungeon_entrance_tiles[dungeon_index] = door_tile
+		tile = door_tile
 	portal.global_position = ground_layer.to_global(ground_layer.map_to_local(tile))
 
 # Called by DungeonWorld when its quiz altar is cleared — the dungeon is
@@ -1903,6 +2863,20 @@ func remove_dungeon_entrance(dungeon_index: int) -> void:
 			portal.queue_free()
 		_dungeon_portal_nodes.erase(dungeon_index)
 	_dungeon_entrance_tiles.erase(dungeon_index)
+	# Scrub the painted entrance so a cleared dungeon leaves no orphaned
+	# sprite or collision (the portal's chunk was validated structure-free
+	# when the entrance spawned, so un-claiming is safe).
+	if _dungeon_entrance_nodes.has(dungeon_index):
+		var entrance: Node = _dungeon_entrance_nodes[dungeon_index]
+		if is_instance_valid(entrance):
+			entrance.queue_free()
+		_dungeon_entrance_nodes.erase(dungeon_index)
+	if _dungeon_entrance_structure_cells.has(dungeon_index):
+		for cell in (_dungeon_entrance_structure_cells[dungeon_index] as Array):
+			var c := cell as Vector2i
+			_dungeon_entrance_cells.erase(c)
+			_structure_claimed_chunks.erase(_tile_to_chunk(c))
+		_dungeon_entrance_structure_cells.erase(dungeon_index)
 
 # World position the mission guide arrow points at — the accepted dungeon's
 # entrance portal. Vector2.INF means "no active target" (the arrow hides):
@@ -1943,8 +2917,11 @@ func get_world_save_data() -> Dictionary:
 		data["dungeon_entrances"].append({"index": int(idx), "x": t.x, "y": t.y})
 	for cell in _placed_blocks:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
-		var node: Node        = entry["node"] as Node
-		if not is_instance_valid(node):
+		var node_ref: Variant = entry["node"]
+		if not is_instance_valid(node_ref):
+			continue
+		var node: Node = node_ref as Node
+		if node == null:
 			continue
 		var idata: ItemData = node.get("item_data") as ItemData
 		if idata == null or idata.resource_path.is_empty():

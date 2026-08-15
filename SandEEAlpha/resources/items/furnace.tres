@@ -22,5 +22,6 @@ is_placeable = true
 placeable_sprite = SubResource("AtlasTexture_tg7cu")
 has_place_animation = true
 place_animation_name = "idle_furnace"
+is_craftable = true
 place_scene_path = "res://scenes/objects/ObjectItem.tscn"
 metadata/_custom_type_script = "uid://dkmo6l8qmmybm"

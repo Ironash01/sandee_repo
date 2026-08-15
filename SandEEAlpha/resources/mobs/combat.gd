@@ -6,7 +6,7 @@ class_name MobCombatData
 
 # ── AI ────────────────────────────────────────────────────────────
 ## Selects which script under scripts/AI/ drives this mob's movement/behavior.
-@export_enum("WOLF") var ai_type: String = "WOLF"
+@export_enum("WOLF", "PIXIE") var ai_type: String = "WOLF"
 
 # ── Combat ────────────────────────────────────────────────────────
 ## Mobs with damage > 1 will hit the player on proximity contact.

@@ -50,6 +50,13 @@ var _feedback:   Label = null
 var _controls:   Control = null
 var _close_btn:  Button = null
 
+# ── Compiler (Shape.COMPILER) state ────────────────────────────────
+var _code_entry:       TextEdit = null
+var _compiler_output:  RichTextLabel = null
+var _lua_state:        Node = null
+var _compiler_q:       QuizQuestion = null
+var _captured_output:  String = ""
+
 func _ready() -> void:
 	add_to_group("QuizAltar")
 	var tex := AtlasTexture.new()
@@ -101,23 +108,8 @@ func _add_glow() -> void:
 	_glow.color         = GLOW_COLOR
 	add_child(_glow)
 
-static var _glow_texture: GradientTexture2D = null
-
-static func _get_glow_texture() -> GradientTexture2D:
-	if _glow_texture != null:
-		return _glow_texture
-	var gradient := Gradient.new()
-	gradient.colors  = PackedColorArray([Color(1, 1, 1, 1), Color(1, 1, 1, 0.7), Color(1, 1, 1, 0.0)])
-	gradient.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
-	var tex := GradientTexture2D.new()
-	tex.gradient  = gradient
-	tex.fill      = GradientTexture2D.FILL_RADIAL
-	tex.fill_from = Vector2(0.5, 0.5)
-	tex.fill_to   = Vector2(1.0, 0.5)
-	tex.width     = GLOW_TEXTURE_SIZE
-	tex.height    = GLOW_TEXTURE_SIZE
-	_glow_texture = tex
-	return _glow_texture
+static func _get_glow_texture() -> Texture2D:
+	return Global.get_pixelated_light_texture(GLOW_TEXTURE_SIZE)
 
 func _fix_z_index() -> void:
 	z_index = int(global_position.y / TILE_SIZE)
@@ -173,7 +165,9 @@ func _rebuild_controls() -> void:
 	for child in _controls.get_children().duplicate():
 		child.queue_free()
 
-	if q.is_short():
+	if q.is_compiler():
+		_build_compiler_controls(q)
+	elif q.is_short():
 		var opts := q.short_answers()
 		var labels := ["A", "B", "C", "D"]
 		for i in range(opts.size()):
@@ -196,7 +190,6 @@ func _rebuild_controls() -> void:
 		_controls.add_child(submit)
 
 	_feedback.text = ""
-	_close_btn.disabled = true
 
 func _make_answer_btn(label: String, value: String, q: QuizQuestion, opt_text: String = "") -> Button:
 	var btn := Button.new()
@@ -213,6 +206,102 @@ func _make_answer_btn(label: String, value: String, q: QuizQuestion, opt_text: S
 	btn.add_theme_color_override("font_color", C_QUESTION)
 	btn.pressed.connect(func() -> void: _grade(q, value))
 	return btn
+
+# ── Compiler (Shape.COMPILER) controls ─────────────────────────────
+# A code editor (plain TextEdit, prefilled with the question's starter code)
+# plus a live output panel and a Run button. The player's program runs through
+# the game's LuaState compiler (the same interpreter the Lua robot uses); its
+# print() output is captured and compared to answer_output on completion.
+func _build_compiler_controls(q: QuizQuestion) -> void:
+	var entry := TextEdit.new()
+	entry.custom_minimum_size = Vector2(380, 110)
+	entry.placeholder_text = "-- write your %s code here\nprint(\"...\")" % q.language
+	entry.text = q.starter_code
+	entry.syntax_highlighter = null
+	entry.add_theme_font_size_override("font_size", 13)
+	_controls.add_child(entry)
+	_code_entry = entry
+
+	var out := RichTextLabel.new()
+	out.bbcode_enabled = true
+	out.custom_minimum_size = Vector2(380, 70)
+	out.scroll_following = true
+	out.add_theme_font_size_override("font_size", 13)
+	out.add_theme_color_override("default_color", C_MUTED)
+	_controls.add_child(out)
+	_compiler_output = out
+
+	var run_btn := Button.new()
+	run_btn.text = "▶  Run"
+	run_btn.custom_minimum_size = Vector2(140, 38)
+	run_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	run_btn.add_theme_font_size_override("font_size", 13)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.14, 0.34, 0.20, 1.0); sb.border_color = C_BORDER
+	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
+	run_btn.add_theme_stylebox_override("normal",  sb)
+	run_btn.add_theme_stylebox_override("hover",   sb)
+	run_btn.add_theme_stylebox_override("pressed", sb)
+	run_btn.add_theme_color_override("font_color", Color(0.70, 1.0, 0.80, 1.0))
+	run_btn.pressed.connect(func() -> void: _run_compiler(q, entry.text))
+	_controls.add_child(run_btn)
+
+func _run_compiler(q: QuizQuestion, code: String) -> void:
+	code = code.strip_edges()
+	if code.is_empty():
+		_feedback.text = "✘ Write some code first."
+		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+		return
+	# LuaState is the game's Lua compiler (the GDExtension the Lua robot uses).
+	if _lua_state == null:
+		_lua_state = LuaState.new()
+		add_child(_lua_state)
+		_lua_state.connect("signal_print", _on_quiz_print)
+		_lua_state.connect("code_executed", _on_quiz_executed)
+		_lua_state.connect("code_failed", _on_quiz_failed)
+	_compiler_q   = q
+	_captured_output = ""
+	if _compiler_output != null:
+		_compiler_output.text = ""
+	# The compiler queues print() calls and emits them from physics_process
+	# (one per frame), so the tree must be unpaused for the output to drain.
+	get_tree().paused = false
+	_lua_state.set("code", code)
+	_lua_state.call("run_code")
+
+func _on_quiz_print(text: String) -> void:
+	_captured_output += text + "\n"
+	if _compiler_output != null:
+		_compiler_output.append_text("[color=#aaddff]» %s[/color]\n" % text)
+
+func _on_quiz_executed() -> void:
+	# Code ran cleanly; wait briefly for the queued print signals to drain out
+	# of physics_process, then re-pause and grade the captured output.
+	await get_tree().create_timer(0.35).timeout
+	if _panel == null or not _panel.visible:
+		return  # quiz closed while the code was running
+	get_tree().paused = true
+	_grade_compiler(_compiler_q)
+
+func _on_quiz_failed(error: String) -> void:
+	if _panel != null and _panel.visible:
+		get_tree().paused = true
+		_feedback.text = "✘ " + error
+		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+
+func _grade_compiler(q: QuizQuestion) -> void:
+	if q == null:
+		return
+	if q.is_compiler_output_correct(_captured_output):
+		_feedback.text = "✔ Correct!"
+		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
+		_index += 1
+		await get_tree().create_timer(0.6).timeout
+		if _panel != null and _panel.visible:
+			_show_question()
+	else:
+		_feedback.text = "✘ Not quite — try again."
+		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
 
 func _grade(q: QuizQuestion, input_text: String) -> void:
 	if q.is_answer_correct(input_text):
@@ -324,6 +413,8 @@ func _build_panel() -> Control:
 	return root
 
 func _close_quiz() -> void:
+	# Closing mid-quiz leaves progress untouched; reopening (_input → _start_quiz)
+	# resets to question 1 so the player can pick up or restart at will.
 	if _panel != null:
 		_panel.visible = false
 	get_tree().paused = false

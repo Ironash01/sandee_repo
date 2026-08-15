@@ -12,6 +12,14 @@ const AI_SCRIPTS: Dictionary = {
 const ATTACK_RANGE:    float = 24.0
 const ATTACK_COOLDOWN: float = 1.0
 
+# ── Separation ─────────────────────────────────────────────────────
+# Wolves don't physically collide with each other (different physics layers),
+# so chasing ones would stack on the same pixel. A soft separation force
+# spreads wolves apart — but it does NOT repel from the player, so the player
+# can't push mobs around (they pass through instead).
+const SEPARATION_DIST:     float = 26.0
+const SEPARATION_STRENGTH: float = 40.0
+
 var _ai:               RefCounted = null
 var _attack_cooldown:  float      = 0.0
 
@@ -62,6 +70,12 @@ func _apply_despawn_zone(zone: int, elapsed: float) -> void:
 
 func _ready() -> void:
 	add_to_group("Wolf")
+	# Same quantized y-sort convention as trees/grass/placed blocks (all use
+	# z_index = int(y / 32)); without this a mob is stuck at z_index 0 and
+	# never sorts against the world — a wolf south of a tree or the player
+	# would wrongly render underneath it. The player's own z boost keeps the
+	# player on top regardless.
+	z_index = int(global_position.y / 32)
 	if _shared_frames == null:
 		_shared_frames = _build_frames()
 	_sprite.sprite_frames = _shared_frames
@@ -73,8 +87,12 @@ func _ready() -> void:
 		_ai = ai_script.new()
 
 func _physics_process(delta: float) -> void:
+	# Keep the y-sort bucket fresh as the wolf moves (trees do this once at
+	# spawn since they don't move; wolves roam).
+	z_index = int(global_position.y / 32)
 	if _ai != null:
 		velocity = _ai.call("physics_update", self, COMBAT_DATA.speed, _water_layer, delta)
+	velocity += _apply_separation()
 	if velocity != Vector2.ZERO:
 		_update_walk_anim(velocity)
 		move_and_slide()
@@ -93,8 +111,30 @@ func _try_attack_player(delta: float) -> void:
 	if global_position.distance_to(p.global_position) > ATTACK_RANGE:
 		return
 	_attack_cooldown = ATTACK_COOLDOWN
-	Global.health = maxf(0.0, Global.health - COMBAT_DATA.damage)
-	Global.health_changed.emit(Global.health, Global.max_health)
+	Global.damage_player(COMBAT_DATA.damage, global_position, facing_vector())
+
+# The direction the wolf is currently facing (its last movement direction),
+# so knockback on the player reflects which side the hit came from.
+func facing_vector() -> Vector2:
+	for d in DIRS:
+		if d["name"] == _last_dir:
+			return (d["vec"] as Vector2).normalized()
+	return Vector2.DOWN
+
+# Soft push away from nearby wolves and (gently) from the player, so a chase
+# doesn't turn into a pile-up on one pixel or right on top of the player.
+func _apply_separation() -> Vector2:
+	var force := Vector2.ZERO
+	for node in get_tree().get_nodes_in_group("Wolf"):
+		if node == self or not (node is Node2D):
+			continue
+		var d: Vector2 = global_position - (node as Node2D).global_position
+		var dist: float = d.length()
+		if dist < SEPARATION_DIST and dist > 0.001:
+			force += d / dist * (1.0 - dist / SEPARATION_DIST)
+	if force.length_squared() > 0.001:
+		return force.normalized() * SEPARATION_STRENGTH
+	return Vector2.ZERO
 
 func _play_idle(dir: String) -> void:
 	var anim := "idle_" + dir.replace("-", "_")

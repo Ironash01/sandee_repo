@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://dqn15ik0reaxr"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_fqajg"]
+[ext_resource type="Texture2D" uid="uid://bbyd64bolq8gy" path="res://sprites/dungeon/SandEE_alpha_dungeontilesets.png" id="1_gov0w"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_q5mh4"]
+atlas = ExtResource("1_gov0w")
+region = Rect2(352, 96, 32, 32)
+
+[resource]
+script = ExtResource("1_fqajg")
+item_name = "Quiz Icon"
+item_type = "block"
+icon = SubResource("AtlasTexture_q5mh4")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -8,3 +8,4 @@ mission_name = "The Python print room"
 mission_description = "Learn what print() does, then prove it at the quiz altar to claim your Lua core."
 entry_resource_file = "entry_1_python.tres"
 quiz_resource_files = Array[String](["dm01_quiz_1_python.tres", "dm01_quiz_2_python.tres", "dm01_quiz_3_python.tres"])
+size_modifier = 0

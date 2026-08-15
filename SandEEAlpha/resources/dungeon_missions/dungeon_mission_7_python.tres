@@ -7,4 +7,5 @@ script = ExtResource("1_a7j22")
 mission_name = "User Input"
 mission_description = "In this dungeon you will know how to get user inputs in Python."
 dungeon_index = 7
+chest_amount = 0
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

@@ -30,6 +30,7 @@ var _tip_name:      Label
 var _tip_type:      Label
 var _tip_effect:    Label
 var _tip_qty:       Label
+var _tip_desc:      Label
 var _active_idx:    int     = -1
 
 # ── Tab panels ────────────────────────────────────────────────────
@@ -103,7 +104,7 @@ func _rebuild() -> void:
 	var my_ver: int = _rebuild_ver
 	_slots = []; _tip_root = null; _craft_list = null; _craft_detail = null
 	_craft_cat_btns.clear(); _craft_row_btns.clear()
-	_tip_name = null; _tip_type = null; _tip_effect = null; _tip_qty = null
+	_tip_name = null; _tip_type = null; _tip_effect = null; _tip_qty = null; _tip_desc = null
 	_active_idx = -1; _selected_idx = -1
 	for child in get_children():
 		child.queue_free()
@@ -220,12 +221,13 @@ func _make_tab(label: String, active: bool, s: float, cb: Callable) -> Button:
 func _switch_tab(which: String) -> void:
 	if _inv_panel == null or _craft_panel == null:
 		return
-	var inv_active := which == "inventory"
+	var inv_active   := which == "inventory"
+	var craft_active := which == "craft"
 	_inv_panel.visible   = inv_active
-	_craft_panel.visible = not inv_active
+	_craft_panel.visible = craft_active
 	_style_tab_btn(_tab_inv_btn,   inv_active)
-	_style_tab_btn(_tab_craft_btn, not inv_active)
-	if not inv_active:
+	_style_tab_btn(_tab_craft_btn, craft_active)
+	if craft_active:
 		_active_cat   = "Materials"
 		_selected_idx = -1
 		_craft_filter_refresh()
@@ -303,6 +305,10 @@ func _build_tooltip(s: float) -> Control:
 	_tip_qty    = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_qty)
 	_tip_type   = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_type)
 	_tip_effect = _lbl("", i(11,s), C_EFFECT); vbox.add_child(_tip_effect)
+	_div(vbox)
+	_tip_desc = _lbl("", i(11,s), C_MUTED)
+	_tip_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(_tip_desc)
 	_show_tip_empty()
 	return root
 
@@ -312,6 +318,7 @@ func _show_tip_empty() -> void:
 	_tip_qty.text    = ""
 	_tip_type.text   = ""
 	_tip_effect.text = ""
+	_tip_desc.text   = ""
 
 # ── Crafting content ──────────────────────────────────────────────
 func _build_craft_content(s: float) -> Control:
@@ -546,6 +553,7 @@ func _on_slot_clicked(idx: int) -> void:
 	_tip_qty.text    = "Qty: %d / %d" % [item["quantity"], Global.MAX_STACK]
 	_tip_type.text   = data.item_type.capitalize()
 	_tip_effect.text = ("+ " + data.effect) if data.effect != "" else ""
+	_tip_desc.text   = data.description
 
 func _close() -> void:
 	get_parent().visible = false

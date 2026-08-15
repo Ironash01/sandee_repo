@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://cbm2cj1h68e1w"]
+
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_dmngq"]
+[ext_resource type="Resource" uid="uid://h6e61nnshom3" path="res://resources/items/stone.tres" id="1_v6jt6"]
+[ext_resource type="Resource" uid="uid://u4l6k3q2y6s" path="res://resources/items/furnace.tres" id="2_oulor"]
+
+[resource]
+script = ExtResource("1_dmngq")
+result_item = ExtResource("2_oulor")
+ingredient_1 = ExtResource("1_v6jt6")
+ingredient_1_quantity = 8
+category = "Blocks"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://virgtj4khbu1"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_hksxw"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_crystaldi"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_crystaldi"]
+atlas = ExtResource("1_hksxw")
+region = Rect2(96, 32, 32, 32)
+
+[resource]
+script = ExtResource("2_crystaldi")
+item_name = "Crystal Diamond Ore"
+description = "A crystallized diamond vein from the pixie caves — rarer than the gods' favour. Regrows within two hours of being mined. Glows while it waits."
+icon = SubResource("AtlasTexture_crystaldi")
+is_placeable = true
+block_level = 10
+min_pickaxe_level = 3
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

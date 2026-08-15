@@ -26,6 +26,23 @@ var _has_boat_cached: bool = false
 # Resolved once instead of walking the scene tree every physics frame.
 var _world_node_cache: Node = null
 
+# ── Stuck / anti-corner detection ──────────────────────────────────
+# If the player holds movement input but stops making real progress for
+# STUCK_TELEPORT_TIME, something is wedging them (a block/tree/grass corner).
+# First a small perpendicular repulsion tries to slide them out of the nook;
+# if that doesn't free them within the window, they're teleported to the
+# nearest open tile (see world.gd find_open_spot_near).
+const STUCK_MOVE_THRESHOLD: float = 1.0   # px of real movement that clears "stuck"
+const STUCK_TELEPORT_TIME:  float = 5.0   # sec held without moving → teleport
+const STUCK_REPEL_TIME:     float = 2.0   # sec held without moving → first nudge
+const STUCK_REPEL_INTERVAL: float = 1.0   # sec between repeated nudges while still stuck
+const STUCK_REPEL_DIST:     float = 3.0   # px per nudge
+const STUCK_TELEPORT_SEARCH: int = 6      # tile radius to spiral-search for an open spot
+
+var _stuck_time: float = 0.0
+var _last_pos:   Vector2 = Vector2.ZERO
+var _last_repel: float = -INF
+
 # ── Snowfall weather effect ───────────────────────────────────────
 # Single GPUParticles2D under the camera — follows it for free via normal
 # transform inheritance, so there's no per-frame script cost while active.
@@ -135,6 +152,12 @@ func _build_frames() -> SpriteFrames:
 
 # ── Input ─────────────────────────────────────────────────────────
 func get_input() -> void:
+	# While the chat console's input is focused, don't let WASD walk the player.
+	if Global.chat_open:
+		input_direction = Vector2.ZERO
+		velocity = Vector2.ZERO
+		_sprinting = false
+		return
 	input_direction = Input.get_vector(
 		"gameplay_left", "gameplay_right", "gameplay_up", "gameplay_down"
 	).normalized()
@@ -143,11 +166,55 @@ func get_input() -> void:
 	var storm_mult: float = SNOWSTORM_SPEED_MULT if Global.snowstorm_active else 1.0
 	velocity = input_direction * movement_speed * (SPRINT_MULTIPLIER if _sprinting else 1.0) * storm_mult
 
+# The player's origin sits at chest height — the sprite (48x48 @ 0.98 scale,
+# centered on the origin) bottoms out around +23px, same as PlayerCol's box.
+# Sorting by the origin meant a tree (anchored at its trunk base, same
+# int(y/32) bucket) that the player pressed against from the south tied with
+# the player and, being added later, drew OVER the player's head. The sort
+# key is therefore the FEET plus a half-tile tiebreak: the player now draws
+# in front of anything on its own tile whose base is north of its feet, and
+# behind everything south of that line — the correct rule for a
+# bottom-anchored sprite.
+const YSORT_FEET_OFFSET: float = 23.0   # sprite/collision bottom below the origin
+const YSORT_TIEBREAK:    float = 16.0   # half a tile — player wins ties when south of an object's base
+
+# ── Knockback (mob/projectile hits) ───────────────────────────────
+# A decaying velocity impulse applied on top of input movement. Set via
+# apply_knockback() (called by Global.damage_player); decays linearly.
+var _knockback: Vector2 = Vector2.ZERO
+const KNOCKBACK_DECAY: float = 800.0  # px/s of knockback velocity lost per second (snappy burst)
+
+func apply_knockback(direction: Vector2, strength: float) -> void:
+	_knockback = direction.normalized() * strength
+
+# Normalized Vector2 the player is currently facing (from the last movement
+# direction). Knockback pushes the player OPPOSITE this.
+func facing_vector() -> Vector2:
+	for d in DIRS:
+		if d["name"] == _last_dir:
+			return (d["vec"] as Vector2).normalized()
+	return Vector2.DOWN
+
+# ── Invincibility frames (0.3s after being hit) ─────────────────────
+var _invincible_until_ms: int = 0
+const INVINCIBILITY_MS: int = 300
+
+func is_invincible() -> bool:
+	return Time.get_ticks_msec() < _invincible_until_ms
+
+func become_invincible() -> void:
+	_invincible_until_ms = Time.get_ticks_msec() + INVINCIBILITY_MS
+
 func _physics_process(delta: float) -> void:
 	if get_tree().paused:
 		return
-	z_index = int(global_position.y / 32)
+	z_index = int((global_position.y + YSORT_FEET_OFFSET + YSORT_TIEBREAK) / 32)
 	get_input()
+	# Knockback rides on top of the player's own velocity.
+	velocity += _knockback
+	_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
+	# Red flash while in the post-hit invincibility frames.
+	sprite.modulate = Color(1.0, 0.30, 0.30, 1.0) if is_invincible() else Color.WHITE
 	if not _move_mission_done and input_direction != Vector2.ZERO:
 		_move_mission_done = true
 		Global.complete_mission("move")
@@ -161,6 +228,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_update_animation()
 	_tick_stamina(delta)
+	_tick_stuck(delta)
 
 func _tick_stamina(delta: float) -> void:
 	if _sprinting:
@@ -172,6 +240,45 @@ func _tick_stamina(delta: float) -> void:
 		if _stamina_exhausted and Global.stamina >= STAMINA_RECOVER_THRESHOLD:
 			_stamina_exhausted = false
 	Global.stamina_changed.emit(Global.stamina, Global.max_stamina)
+
+# ── Stuck / anti-corner handling ───────────────────────────────────
+func _tick_stuck(delta: float) -> void:
+	if input_direction == Vector2.ZERO:
+		_stuck_time = 0.0
+		_last_pos = global_position
+		return
+	var moved: float = global_position.distance_to(_last_pos)
+	if moved >= STUCK_MOVE_THRESHOLD:
+		_stuck_time = 0.0
+		_last_pos = global_position
+		return
+	_stuck_time += delta
+	if _stuck_time >= STUCK_TELEPORT_TIME:
+		_stuck_time = 0.0
+		_last_pos = global_position
+		_teleport_to_open_spot()
+		return
+	# Corner nudge: after holding into a wall for a bit, apply a small
+	# perpendicular repulsion so a mere nook resolves on its own. Repeats on
+	# STUCK_REPEL_INTERVAL until movement actually resumes.
+	if _stuck_time >= STUCK_REPEL_TIME and _stuck_time - _last_repel >= STUCK_REPEL_INTERVAL:
+		_last_repel = _stuck_time
+		global_position += Vector2(-input_direction.y, input_direction.x).normalized() * STUCK_REPEL_DIST
+
+# Last resort: drop the player onto the nearest open tile so they can't be
+# permanently wedged. Uses world.gd's spiral search so the landing spot is
+# guaranteed free of water/trees/grass/blocks/entrances.
+func _teleport_to_open_spot() -> void:
+	var world_node := _get_world_node()
+	if world_node == null or not world_node.has_method("find_open_spot_near"):
+		return
+	var spot: Vector2 = world_node.call("find_open_spot_near", global_position, STUCK_TELEPORT_SEARCH) as Vector2
+	if spot == Vector2.INF:
+		return
+	global_position = spot
+	_last_pos = spot
+	velocity = Vector2.ZERO
+	print("[STUCK] teleported to open spot at %s" % str(spot))
 
 # ── Boat / water helpers ──────────────────────────────────────────
 
@@ -395,6 +502,7 @@ const _DEBUG_ITEM_PATHS: Array = [
 	"res://resources/items/cpu.tres",
 	"res://resources/items/woodenaxe.tres",
 	"res://resources/items/woodensword.tres",
+	"res://resources/items/grass.tres",
 ]
 
 func _give_debug_items() -> void:
@@ -403,14 +511,15 @@ func _give_debug_items() -> void:
 			continue
 		var data: ItemData = load(path) as ItemData
 		if data != null:
-			Global.add_item({"quantity": 10, "data": data})
+			# allow_dev=true so dev-only items (e.g. the grass tuft) can be
+			# handed out here for block-mode testing — see Global.add_item.
+			Global.add_item({"quantity": 10, "data": data}, true)
 
-# Debug (Ctrl+Shift+L): teleport to the accepted dungeon's entrance portal.
-# Reuses the guide arrow's world lookup, so it's a no-op with a warning when
-# no dungeon mission is accepted or its entrance doesn't exist yet. The 64px
-# offset drops the player just south of the portal so it doesn't overlap it.
-# NOTE: Ctrl+Shift+D is the day/night debug toggle (day_night_cycle.gd), so
-# the dungeon jump uses L instead.
+# Debug (via the chat console's /dungeon command): teleport to the accepted
+# dungeon's entrance portal. Reuses the guide arrow's world lookup, so it's a
+# no-op with a warning when no dungeon mission is accepted or its entrance
+# doesn't exist yet. The 64px offset drops the player just south of the portal
+# so it doesn't overlap it.
 func _debug_teleport_to_dungeon() -> void:
 	var world := _get_world_node()
 	if world == null or not world.has_method("get_dungeon_guide_target"):
@@ -423,6 +532,13 @@ func _debug_teleport_to_dungeon() -> void:
 	global_position = target + Vector2(0.0, 64.0)
 	print("DebugTeleport: jumped to dungeon entrance at %s" % str(target))
 
+# Debug (via the chat console's /missions command): reset the tutorial mission
+# state the same way the old Shift+R shortcut did.
+func reset_debug_missions() -> void:
+	Global.reset_missions()
+	_move_mission_done      = false
+	_inventory_mission_done = false
+
 # ── UI management ─────────────────────────────────────────────────
 func _on_close_all_ui() -> void:
 	if inventory_layer.visible:
@@ -431,25 +547,6 @@ func _on_close_all_ui() -> void:
 		Global.inventory_toggled.emit(false)
 
 func _input(event: InputEvent) -> void:
-	# Debug shortcut must come before the inventory action check because
-	# Shift+E would otherwise match the "inventory" action (same key, Shift ignored by action system)
-	if event is InputEventKey and event.pressed \
-			and event.keycode == KEY_E and event.shift_pressed:
-		_give_debug_items()
-		return
-
-	if event is InputEventKey and event.pressed \
-			and event.keycode == KEY_R and event.shift_pressed:
-		Global.reset_missions()
-		_move_mission_done      = false
-		_inventory_mission_done = false
-		return
-
-	if event is InputEventKey and event.pressed \
-			and event.keycode == KEY_L and event.ctrl_pressed and event.shift_pressed:
-		_debug_teleport_to_dungeon()
-		return
-
 	# Inventory key: can always close; blocked from opening when another UI is active
 	if event.is_action_pressed("inventory"):
 		if inventory_layer.visible:
