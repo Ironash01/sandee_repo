@@ -80,31 +80,15 @@ const HITBOX_BLOCK_COLOR: Color = Color(0.15, 0.55, 1.0, 0.9)  # matches world.g
 # _build_wall_tile_image().
 const SHADOW_TEXTURE_PATH: String = "res://sprites/shadow/shadow_base.png"
 
-# ── Cave darkness / player light ────────────────────────────────────────
-# No torches yet (explicitly deferred) — a CanvasModulate darkens the whole
-# cave scene uniformly, and a PointLight2D following the player carves out
-# a visible radius around them, with a WorldEnvironment adding glow so lit
-# areas actually bloom (flat gradients alone read as basic — glow is most
-# of what makes this kind of top-down arcade lighting, e.g. Soul Knight,
-# feel atmospheric). All three are children of CaveWorld, so they're
-# created/destroyed with it automatically (queue_free() on cave exit) —
-# nothing to clean up in game_instance.gd's enter_cave()/exit_cave(). Once
-# torches exist, they slot into this same WorldEnvironment/glow setup for
-# free — it's scoped to the cave, not the player light specifically.
-const CAVE_AMBIENT_COLOR:   Color = Color(0.06, 0.06, 0.10, 1.0)  # near-black, faint cool tint
-const PLAYER_LIGHT_RADIUS_PX: float = 160.0                       # ~5 tiles
-const LIGHT_TEXTURE_SIZE:     int   = 512
-static var _light_texture: GradientTexture2D = null
-var _player_light: PointLight2D = null
-
-# Flicker gives the light some life even before a torch item exists to
-# justify it — two overlapping sine waves at different speeds read as an
-# irregular candle-ish waver rather than a single obvious pulse.
-const LIGHT_BASE_ENERGY:       float = 1.6
-const LIGHT_FLICKER_AMPLITUDE: float = 0.15
-const LIGHT_FLICKER_SPEED_A:   float = 3.1
-const LIGHT_FLICKER_SPEED_B:   float = 7.4
-var _light_flicker_time: float = 0.0
+# ── Cave darkness ───────────────────────────────────────────────────────
+# A CanvasModulate darkens the whole cave scene uniformly; light only comes
+# from light-emitting placeables the player puts down (torches etc.), whose
+# PointLight2Ds slot into the cave's WorldEnvironment glow automatically.
+# No player-following light — the darkness is ambient and torches matter.
+# Both are children of CaveWorld, so they're created/destroyed with it
+# automatically (queue_free() on cave exit) — nothing to clean up in
+# game_instance.gd's enter_cave()/exit_cave().
+const CAVE_AMBIENT_COLOR: Color = Color(0.06, 0.06, 0.10, 1.0)  # near-black, faint cool tint
 
 var generator: CaveGenerator = null
 var overworld_return_position: Vector2 = Vector2.ZERO
@@ -147,7 +131,6 @@ func _process(delta: float) -> void:
 	_update_ghost()
 	_update_cursor_highlight()
 	_update_hover()
-	_update_player_light(delta)
 
 func _input(event: InputEvent) -> void:
 	if Global.any_ui_open() or Global.pause_menu_open:
@@ -299,6 +282,12 @@ var ghost_sprite:    Sprite2D = null
 var ghost_last_type: String   = ""
 var _grid_overlay: Node2D = null
 var _cursor_highlight: Node2D = null
+var _cursor_is_block: bool   = false
+var _hovered_block:   Node   = null
+
+# Highlight range: the block under the cursor must be within 1 tile of the
+# player for the yellow highlight to show.
+const HOVER_PLAYER_RADIUS_PX: float = 32.0
 
 func _setup_ghost() -> void:
 	ghost = Node2D.new()
@@ -404,8 +393,11 @@ func _destroy_hovered_block() -> void:
 	var best_dist: float   = INTERACT_RADIUS_PX
 	for cell in _placed_blocks:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
-		var node: Node2D      = entry["node"] as Node2D
-		if not is_instance_valid(node):
+		var node_ref: Variant = entry["node"]
+		if not is_instance_valid(node_ref):
+			continue
+		var node: Node2D = node_ref as Node2D
+		if node == null:
 			continue
 		var dist: float = mouse_pos.distance_to(node.global_position)
 		if dist < best_dist:
@@ -415,15 +407,17 @@ func _destroy_hovered_block() -> void:
 		return
 	get_viewport().set_input_as_handled()
 	var entry: Dictionary = _placed_blocks[best_cell] as Dictionary
-	var node: Node = entry["node"] as Node
-	if is_instance_valid(node):
-		var idata: ItemData = node.get("item_data") as ItemData
-		if idata != null:
-			var drop: Node = ITEM_DROP_SCENE.instantiate()
-			drop.call("set_item_data", idata)
-			add_child(drop)
-			drop.global_position = node.global_position + Vector2(0, -16)
-		node.queue_free()
+	var node_ref2: Variant = entry["node"]
+	if is_instance_valid(node_ref2):
+		var node: Node = node_ref2 as Node
+		if node != null:
+			var idata: ItemData = node.get("item_data") as ItemData
+			if idata != null:
+				var drop: Node = ITEM_DROP_SCENE.instantiate()
+				drop.call("set_item_data", idata)
+				add_child(drop)
+				drop.global_position = node.global_position + Vector2(0, -16)
+			node.queue_free()
 	_placed_blocks.erase(best_cell)
 
 func _is_cell_in_place_radius(cell: Vector2i) -> bool:
@@ -504,9 +498,14 @@ func _setup_cursor_highlight() -> void:
 	_cursor_highlight.visible = false
 	_cursor_highlight.draw.connect(func() -> void:
 		var half: float = TILE_SIZE * 0.5
-		_cursor_highlight.draw_rect(
-			Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
-			Color(1.0, 1.0, 1.0, 0.28), true)
+		if _cursor_is_block:
+			_cursor_highlight.draw_rect(
+				Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
+				Color(1.0, 0.9, 0.2, 0.95), false, 3.0)
+		else:
+			_cursor_highlight.draw_rect(
+				Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
+				Color(1.0, 1.0, 1.0, 0.28), true)
 	)
 	add_child(_cursor_highlight)
 	_cursor_highlight.queue_redraw()
@@ -516,33 +515,55 @@ func _update_cursor_highlight() -> void:
 		if _cursor_highlight != null:
 			_cursor_highlight.visible = false
 		return
-	var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
-	var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
-	_cursor_highlight.position = _tilemap.map_to_local(cell)
+	if _hovered_block != null and is_instance_valid(_hovered_block):
+		_cursor_is_block = true
+		_cursor_highlight.global_position = (_hovered_block as Node2D).global_position
+	else:
+		_cursor_is_block = false
+		var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
+		var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
+		_cursor_highlight.position = _tilemap.map_to_local(cell)
+	_cursor_highlight.queue_redraw()
 	_cursor_highlight.visible = true
 
 func _update_hover() -> void:
 	if Global.block_mode:
+		_hovered_block = null
 		Global.set_hover("")
 		return
 	var mouse_pos: Vector2 = get_global_mouse_position()
+	var player: Node2D = Global.player_node as Node2D
 	var best_name: String  = ""
-	var best_dist: float   = INTERACT_RADIUS_PX
+	var best_name_dist: float = INTERACT_RADIUS_PX
+	var hover: Node = null
+	var hover_dist: float = HOVER_PLAYER_RADIUS_PX  # 1 tile from the player
 	for entry in _placed_blocks.values():
-		var node: Node2D = (entry as Dictionary)["node"] as Node2D
-		if not is_instance_valid(node):
+		var node_ref: Variant = (entry as Dictionary)["node"]
+		if not is_instance_valid(node_ref):
 			continue
-		var dist: float = mouse_pos.distance_to(node.global_position)
-		if dist < best_dist:
-			best_dist = dist
+		var node: Node2D = node_ref as Node2D
+		if node == null:
+			continue
+		var node_pos: Vector2 = node.global_position
+		var name_dist: float = mouse_pos.distance_to(node_pos)
+		if name_dist < best_name_dist:
+			best_name_dist = name_dist
 			best_name = (entry as Dictionary)["name"]
+		# Yellow-highlight only the block under the cursor AND within 1 tile of
+		# the player (single block at a time).
+		if name_dist <= TILE_SIZE and player != null:
+			var player_dist: float = player.global_position.distance_to(node_pos)
+			if player_dist <= HOVER_PLAYER_RADIUS_PX and player_dist < hover_dist:
+				hover_dist = player_dist
+				hover = node
+	_hovered_block = hover
 	Global.set_hover(best_name)
 
 # ── Chunk border debug overlay — mirrors world.gd's own, same chunk-grid
 # concept (CaveGenerator.CHUNK_SIZE = 20 instead of the overworld's 25) ────
 func _setup_chunk_border_overlay() -> void:
 	_chunk_border_overlay = Node2D.new()
-	_chunk_border_overlay.z_index = 400
+	_chunk_border_overlay.z_index = PLACEMENT_GUIDE_Z_INDEX
 	_chunk_border_overlay.visible = false
 	add_child(_chunk_border_overlay)
 	_chunk_border_overlay.draw.connect(_on_chunk_border_draw)
@@ -614,8 +635,13 @@ func _on_hitbox_draw() -> void:
 			_hitbox_overlay.draw_rect(Rect2(local - Vector2(half, half), Vector2(TILE_SIZE, TILE_SIZE)), HITBOX_WALL_COLOR, false, 2.0)
 
 	for entry in _placed_blocks.values():
-		var node: Node = (entry as Dictionary)["node"] as Node
-		if is_instance_valid(node) and view_rect.has_point((node as Node2D).global_position):
+		var node_ref: Variant = (entry as Dictionary)["node"]
+		if not is_instance_valid(node_ref):
+			continue
+		var node: Node = node_ref as Node
+		if node == null:
+			continue
+		if view_rect.has_point((node as Node2D).global_position):
 			Global.draw_body_hitboxes(_hitbox_overlay, node, HITBOX_BLOCK_COLOR)
 
 # 2 tiles north of the entrance/exit tile, not on top of it — CaveGenerator
@@ -838,7 +864,7 @@ func _spawn_exit_marker() -> void:
 	# 2 tiles away from it (see get_player_spawn_position()), not on top of it.
 	exit_portal.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(generator.entrance_tile)))
 
-# ── Cave darkness / player light ────────────────────────────────────────
+# ── Cave darkness ────────────────────────────────────────────────────────
 func _setup_darkness() -> void:
 	var ambient := CanvasModulate.new()
 	ambient.color = CAVE_AMBIENT_COLOR
@@ -846,18 +872,10 @@ func _setup_darkness() -> void:
 
 	add_child(_build_glow_environment())
 
-	_player_light = PointLight2D.new()
-	_player_light.texture       = _get_light_texture()
-	_player_light.texture_scale = (PLAYER_LIGHT_RADIUS_PX * 2.0) / float(LIGHT_TEXTURE_SIZE)
-	_player_light.energy        = LIGHT_BASE_ENERGY
-	_player_light.color         = Color(1.0, 0.93, 0.82)  # warm torch-ish tint even without a torch item yet
-	add_child(_player_light)
-	_update_player_light(0.0)
-
 # Glow is most of what separates a flat radial-gradient light from the
 # punchy, bloom-heavy look of top-down arcade games (Soul Knight etc.) —
-# scoped to CaveWorld itself (not the light specifically) so a future torch
-# item automatically blooms too once it's added, no extra wiring needed.
+# scoped to CaveWorld itself (not any one light) so every light the player
+# places in here (torches, etc.) blooms automatically, no extra wiring.
 func _build_glow_environment() -> WorldEnvironment:
 	var world_env := WorldEnvironment.new()
 	var env := Environment.new()
@@ -870,41 +888,3 @@ func _build_glow_environment() -> WorldEnvironment:
 	env.glow_blend_mode    = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	world_env.environment = env
 	return world_env
-
-func _update_player_light(delta: float) -> void:
-	if _player_light == null:
-		return
-	var player: Node2D = Global.player_node as Node2D
-	if player == null:
-		return
-	_player_light.global_position = player.global_position
-	_light_flicker_time += delta
-	var flicker: float = sin(_light_flicker_time * LIGHT_FLICKER_SPEED_A) * 0.5 \
-		+ sin(_light_flicker_time * LIGHT_FLICKER_SPEED_B) * 0.5
-	_player_light.energy = LIGHT_BASE_ENERGY + flicker * LIGHT_FLICKER_AMPLITUDE
-
-# Built once at runtime (no light-texture asset needed) — a radial gradient
-# with a bright, mostly-opaque core out to 40% radius that then falls off
-# fast to fully transparent by the edge, rather than a smooth linear fade
-# start-to-finish. Reads as a hot, defined light pool with a real edge
-# instead of a soft, indistinct glow — closer to the punchier look asked
-# for (a linear fade is most of why the first pass "paled in comparison").
-static func _get_light_texture() -> GradientTexture2D:
-	if _light_texture != null:
-		return _light_texture
-	var gradient := Gradient.new()
-	gradient.colors  = PackedColorArray([
-		Color(1, 1, 1, 1),
-		Color(1, 1, 1, 0.9),
-		Color(1, 1, 1, 0.0),
-	])
-	gradient.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
-	var tex := GradientTexture2D.new()
-	tex.gradient  = gradient
-	tex.fill      = GradientTexture2D.FILL_RADIAL
-	tex.fill_from = Vector2(0.5, 0.5)
-	tex.fill_to   = Vector2(1.0, 0.5)
-	tex.width     = LIGHT_TEXTURE_SIZE
-	tex.height    = LIGHT_TEXTURE_SIZE
-	_light_texture = tex
-	return _light_texture

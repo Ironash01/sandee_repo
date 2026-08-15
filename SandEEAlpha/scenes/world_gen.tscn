@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://ch5ppikl27a2n"]
 
 [ext_resource type="Script" uid="uid://c8rev8jtlhmr5" path="res://scripts/world.gd" id="1_rwgxs"]
-[ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="2_dnc001"]
+[ext_resource type="Script" uid="uid://digcajfpm44ja" path="res://scripts/day_night_cycle.gd" id="2_dnc001"]
 [ext_resource type="Texture2D" uid="uid://b6autn8ilocsj" path="res://sprites/tilesets/sandee+alpha_basicTileSetRevamped.png" id="2_i7141"]
 [ext_resource type="Texture2D" uid="uid://cyctj3adikrl2" path="res://sprites/tilesets/tiles - tree - 32x32.png" id="2_k0juu"]
 [ext_resource type="Texture2D" uid="uid://cwecurj4yu1cw" path="res://sprites/tilesets/tiles-earth-32x32.png" id="3_71j4m"]
@@ -916,6 +916,10 @@ sources/0 = SubResource("TileSetAtlasSource_71j4m")
 sources/1 = SubResource("TileSetAtlasSource_e3hyu")
 sources/2 = SubResource("TileSetAtlasSource_jhx03")
 
+[sub_resource type="TileSet" id="TileSet_structures"]
+tile_size = Vector2i(32, 32)
+physics_layer_0/collision_layer = 1
+
 [node name="World" type="Node2D" unique_id=98158199]
 script = ExtResource("1_rwgxs")
 width = 512
@@ -933,5 +937,9 @@ tile_set = SubResource("TileSet_71j4m")
 texture_filter = 1
 tile_set = SubResource("TileSet_qfnet")
 
-[node name="DayNightCycle" type="CanvasModulate" parent="."]
+[node name="Structures" type="TileMapLayer" parent="." unique_id=1903842042]
+texture_filter = 1
+tile_set = SubResource("TileSet_structures")
+
+[node name="DayNightCycle" type="CanvasModulate" parent="." unique_id=714150735]
 script = ExtResource("2_dnc001")

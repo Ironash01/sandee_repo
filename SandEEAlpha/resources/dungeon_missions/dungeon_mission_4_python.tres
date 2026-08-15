@@ -6,7 +6,7 @@
 script = ExtResource("1_wfcxi")
 mission_name = "What is boolean?"
 mission_description = "In this dungeon you will know how the boolean keyword works."
-entry_resource_file = "Bool"
+entry_resource_file = "entry_4_python.tres"
 quiz_resource_files = Array[String](["dm04_quiz_1_python.tres", "dm04_quiz_2_python.tres", "dm04_quiz_3_python.tres"])
 dungeon_index = 4
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

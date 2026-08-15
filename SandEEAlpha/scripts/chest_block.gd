@@ -26,6 +26,7 @@ var _world_cell:    Vector2i = Vector2i(-99999, -99999)
 var _world_ref:     Node    = null
 var _ui:            Control = null
 var _slot_buttons:  Array   = []
+var item_data:      ItemData = null
 
 @onready var _sprite:   Sprite2D = $Sprite2D
 @onready var _interact: Area2D   = $InteractArea
@@ -40,6 +41,7 @@ func _ready() -> void:
 	Global.request_close_all_ui.connect(_close_ui)
 
 func setup(data: ItemData) -> void:
+	item_data = data
 	if _sprite != null:
 		var tex: Texture2D = data.placeable_sprite if data.placeable_sprite != null else data.icon
 		_sprite.texture = tex
@@ -85,12 +87,38 @@ func _input(event: InputEvent) -> void:
 	if Global.block_mode: return
 	if not _player_nearby: return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# Hold Shift to destroy the chest (drops contents + the chest item).
+		if Input.is_key_pressed(KEY_SHIFT):
+			_destroy_shift()
+			get_viewport().set_input_as_handled()
+			return
 		if _ui != null:
 			_ui.visible = not _ui.visible
 			if _ui.visible:
 				Global.open_ui()
 			else:
 				Global.close_ui()
+
+# Destroy on Shift+click: unregister, drop all contents, then drop the chest
+# item itself.
+func _destroy_shift() -> void:
+	var world: Node = _world_ref if _world_ref != null else Global.world_node
+	if world != null and world.has_method("unregister_block"):
+		world.call("unregister_block", _world_cell)
+	var drop_parent: Node = _world_ref if _world_ref != null else Global.world_node
+	if drop_parent != null:
+		for slot in slots:
+			if slot == null: continue
+			var drop: Node = ITEM_SCENE.instantiate()
+			drop.call("set_item_data", (slot as Dictionary)["data"] as ItemData)
+			drop_parent.add_child(drop)
+			(drop as Node2D).global_position = global_position + Vector2(randf_range(-20, 20), randf_range(-20, 20))
+		if item_data != null:
+			var drop: Node = ITEM_SCENE.instantiate()
+			drop.call("set_item_data", item_data)
+			drop_parent.add_child(drop)
+			(drop as Node2D).global_position = global_position + Vector2(0, -16)
+	queue_free()
 
 # ── Build chest UI ────────────────────────────────────────────────
 func _build_ui() -> void:
@@ -286,8 +314,9 @@ func _is_pickaxe(slot) -> bool:
 	return data != null and data.item_name.to_lower().contains("pickaxe")
 
 func _break() -> void:
-	if _world_ref != null and _world_ref.has_method("unregister_block"):
-		_world_ref.call("unregister_block", _world_cell)
+	var world: Node = _world_ref if _world_ref != null else Global.world_node
+	if world != null and world.has_method("unregister_block"):
+		world.call("unregister_block", _world_cell)
 	# Drop all chest contents
 	for slot in slots:
 		if slot == null: continue

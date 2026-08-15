@@ -371,6 +371,7 @@ func _on_slot_selected(slot: int) -> void:
 		Global.Inventory.fill(null)
 		Global.has_pending_pos     = false
 		Global.pending_world_data.clear()
+		Global.pending_time_of_day = -1.0
 		Global.reset_missions()
 	get_tree().change_scene_to_file("res://scenes/game_instance.tscn")
 

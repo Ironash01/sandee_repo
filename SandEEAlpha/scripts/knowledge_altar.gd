@@ -91,23 +91,8 @@ func _add_glow() -> void:
 	_glow.color         = GLOW_COLOR
 	add_child(_glow)
 
-static var _glow_texture: GradientTexture2D = null
-
-static func _get_glow_texture() -> GradientTexture2D:
-	if _glow_texture != null:
-		return _glow_texture
-	var gradient := Gradient.new()
-	gradient.colors  = PackedColorArray([Color(1, 1, 1, 1), Color(1, 1, 1, 0.7), Color(1, 1, 1, 0.0)])
-	gradient.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
-	var tex := GradientTexture2D.new()
-	tex.gradient  = gradient
-	tex.fill      = GradientTexture2D.FILL_RADIAL
-	tex.fill_from = Vector2(0.5, 0.5)
-	tex.fill_to   = Vector2(1.0, 0.5)
-	tex.width     = GLOW_TEXTURE_SIZE
-	tex.height    = GLOW_TEXTURE_SIZE
-	_glow_texture = tex
-	return _glow_texture
+static func _get_glow_texture() -> Texture2D:
+	return Global.get_pixelated_light_texture(GLOW_TEXTURE_SIZE)
 
 func _fix_z_index() -> void:
 	z_index = int(global_position.y / TILE_SIZE)

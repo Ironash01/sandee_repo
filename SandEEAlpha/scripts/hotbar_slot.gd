@@ -78,7 +78,7 @@ func _drop_to_world() -> void:
 		return
 	if not Global.player_node:
 		return
-	var pos: Vector2 = (Global.player_node as Node2D).global_position + Vector2(0, 50)
+	var pos: Vector2 = (Global.player_node as Node2D).global_position
 	Global.drop_item({"data": slot["data"], "quantity": slot["quantity"]}, pos)
 	Global.Hotbar[slot_index] = null
 	Global.Hotbar_updated.emit()

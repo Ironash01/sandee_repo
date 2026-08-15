@@ -1,7 +1,7 @@
-[gd_resource type="Resource" script_class="ItemData" format=3]
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://b3c1w4rvfuvly"]
 
-[ext_resource type="Texture2D" path="res://sprites/items/item_atlas.png" id="1_atlas"]
-[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_script"]
+[ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_atlas"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_script"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_lua_core"]
 atlas = ExtResource("1_atlas")
@@ -11,5 +11,4 @@ region = Rect2(256, 64, 32, 32)
 script = ExtResource("1_script")
 item_name = "Lua Core"
 description = "A core of pure Lua knowledge. Cleanse a dungeon's quiz altar to earn one."
-item_type = "material"
 icon = SubResource("AtlasTexture_lua_core")

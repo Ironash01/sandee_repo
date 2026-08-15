@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://cpfjvs0r0ffdk"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_7hvvj"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_pp731"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gcpj5"]
+atlas = ExtResource("1_7hvvj")
+region = Rect2(416, 0, 32, 32)
+
+[resource]
+script = ExtResource("2_pp731")
+item_name = "Pixie Cave Floor 2"
+item_type = "block"
+is_dev_item = true
+icon = SubResource("AtlasTexture_gcpj5")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

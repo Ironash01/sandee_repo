@@ -1,0 +1,16 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/pixie_mob.gd" id="1_pixie"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_pixie"]
+radius = 9.0
+
+[node name="Pixie" type="CharacterBody2D" groups=["Pixie"]]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1_pixie")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_pixie")

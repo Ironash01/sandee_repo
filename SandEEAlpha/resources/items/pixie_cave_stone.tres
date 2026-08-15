@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://v1ielh2lehbk"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_pdsd1"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_v7fn4"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_xstm0"]
+atlas = ExtResource("1_pdsd1")
+region = Rect2(288, 0, 32, 32)
+
+[resource]
+script = ExtResource("1_v7fn4")
+item_name = "Pixie Stone"
+description = "The most unholy yet the most innocent stone of all time."
+item_type = "block"
+icon = SubResource("AtlasTexture_xstm0")
+block_level = 7
+min_pickaxe_level = 1
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

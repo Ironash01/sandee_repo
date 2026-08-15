@@ -3,10 +3,12 @@ extends Node2D
 # Spawned by world.gd when the player accepts a dungeon mission (see
 # world.gd's _spawn_dungeon_entrance) — NOT placed by the player anymore
 # (the old "Dungeon Spawner" placeable-item flow was removed).
-# When the player walks near and left-clicks, it shows a confirm dialog
-# that dispatches to Global.game_node.enter_dungeon(dungeon_index) — the
-# same parent-scene pattern CavePortal uses, instead of the old
-# change_scene_to_file (which destroyed Player/UI — see game_instance.gd).
+# When the player is near the door and left-clicks ON the door sprite, it
+# shows a confirm dialog that dispatches to
+# Global.game_node.enter_dungeon(dungeon_index) — the same parent-scene
+# pattern CavePortal uses, instead of the old change_scene_to_file (which
+# destroyed Player/UI — see game_instance.gd). Walking near alone no longer
+# opens it; the click has to land on the door itself.
 #
 # Dungeon mapping (matches the currently-shipped missions, backed by
 # DungeonMissionData .tres files):
@@ -27,12 +29,29 @@ const C_ENTER   := Color(0.20, 0.45, 0.20, 1.00)
 const C_CANCEL  := Color(0.40, 0.20, 0.20, 1.00)
 const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.55)
 
+# ── Door hitbox ────────────────────────────────────────────────────
+# The confirm only pops on a left-click that lands ON the door. This node's
+# origin sits on the entrance structure's door tile (see world.gd's
+# _place_dungeon_entrance_structure), so the door is a small rect centered
+# at the origin — roughly the visible doorway (the middle-bottom tile of the
+# sprite) plus a little click slack. A click anywhere else (the surrounding
+# wall sprite, the ground nearby) does nothing.
+const DOOR_HITBOX := Rect2(-18.0, -20.0, 36.0, 40.0)  # px, centered on the door tile
+
+# ── Door highlight ─────────────────────────────────────────────────
+# A yellow outline drawn around the door tile whenever the player is close
+# enough to click it (same _player_nearby condition the click handler
+# checks), so the clickable block reads as clickable. Drawn here in _draw()
+# like cave_portal.gd's entrance marker, at z_index = tile bucket + 1 so the
+# outline always sits on top of the entrance sprites and the player.
+const TILE_SIZE:         int   = 32
+const C_DOOR_HIGHLIGHT:  Color = Color(1.0, 0.9, 0.2, 1.0)
+
 # ── State ─────────────────────────────────────────────────────────
 var dungeon_index: int = 1      # set by world.gd at spawn
 var _player_nearby:  bool = false
 var _confirm_ui:     Control = null
 
-@onready var _sprite:   Sprite2D = $Sprite2D
 @onready var _interact: Area2D   = $InteractArea
 
 # ── Ready ─────────────────────────────────────────────────────────
@@ -41,6 +60,17 @@ func _ready() -> void:
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
 	_build_confirm_ui()
+	queue_redraw()
+
+# ── Draw ───────────────────────────────────────────────────────────
+# Recomputed here rather than _ready() — callers set global_position AFTER
+# add_child() (which is when _ready() fires), so computing it there would
+# permanently bucket every portal at y=0 (same caveat cave_portal.gd notes).
+func _draw() -> void:
+	z_index = int(global_position.y / TILE_SIZE) + 1
+	if _player_nearby:
+		var half: float = TILE_SIZE * 0.5
+		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), C_DOOR_HIGHLIGHT, false, 2.0)
 
 # ── Input ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
@@ -49,23 +79,25 @@ func _input(event: InputEvent) -> void:
 	if _confirm_ui != null and _confirm_ui.visible:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_show_confirm()
+		if _click_is_on_door():
+			_show_confirm()
+
+# True when the click position is on the door sprite — the portal's origin
+# sits on the structure's door tile, so the mouse just has to land inside
+# DOOR_HITBOX around it.
+func _click_is_on_door() -> bool:
+	return DOOR_HITBOX.has_point(to_local(get_global_mouse_position()))
 
 # ── Proximity ─────────────────────────────────────────────────────
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = true
-		# Walk-in also opens the confirm (CavePortal-style) — a left-click can
-		# get swallowed by a nearby tree's chop input (tree.gd consumes it
-		# with set_input_as_handled() BEFORE this portal's _input runs), so
-		# clicking alone is not a reliable way to enter a forest-spawned portal.
-		if _confirm_ui != null and not _confirm_ui.visible \
-				and not Global.any_ui_open() and not Global.pause_menu_open:
-			_show_confirm()
+		queue_redraw()
 
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = false
+		queue_redraw()
 		if _confirm_ui != null and _confirm_ui.visible:
 			_confirm_ui.visible = false
 			Global.close_ui()

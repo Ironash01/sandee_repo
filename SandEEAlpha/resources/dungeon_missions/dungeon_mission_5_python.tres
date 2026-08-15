@@ -9,4 +9,6 @@ mission_description = "In this dungeon you will know what are the basic differen
 entry_resource_file = "entry_5_python.tres"
 quiz_resource_files = Array[String](["dm05_quiz_1_python.tres", "dm05_quiz_2_python.tres", "dm05_quiz_3_python.tres", "dm05_quiz_4_python.tres", "dm05_quiz_5_python.tres", "dm05_quiz_6_python.tres", "dm05_quiz_7_python.tres", "dm05_quiz_8_python.tres"])
 dungeon_index = 5
+altar_amount = 2
+chest_amount = 3
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

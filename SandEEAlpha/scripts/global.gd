@@ -29,6 +29,70 @@ func draw_break_bar(ci: CanvasItem, progress: float, y_offset: float = -20.0) ->
 	var fill_w: float = BREAK_BAR_WIDTH * clampf(progress, 0.0, 1.0)
 	ci.draw_rect(Rect2(-half_w, y_offset, fill_w, BREAK_BAR_HEIGHT), BREAK_BAR_FILL)
 
+# ── Pixelated light texture ────────────────────────────────────────────
+# Minecraft-style 2D light falloff: a circular pool whose brightness drops in
+# stepped bands (like Minecraft light levels) with a faint dither between
+# bands — so it reads as a cascade of pixels ringing out from the center
+# rather than a smooth radial gradient. Every PointLight2D in the game
+# (cave/pixie ore glows, pixie/mob glow, torches, altars) uses this so all
+# lighting shares the same look. Cached per size; each caller passes the size
+# its texture_scale was configured with (512 cave/pixie, 256 mob/torch,
+# 128 altars).
+static var _pixel_light_cache: Dictionary = {}
+
+static func get_pixelated_light_texture(size: int = 256) -> ImageTexture:
+	if _pixel_light_cache.has(size):
+		return _pixel_light_cache[size]
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var half:  float = size * 0.5
+	var steps: float = 6.0           # brightness bands (Minecraft light levels)
+	for y in range(size):
+		for x in range(size):
+			var dx: float = x - half
+			var dy: float = y - half
+			var r: float = sqrt(dx * dx + dy * dy)
+			# 1 at center -> 0 at the circle edge (linear falloff across the pool).
+			var level: float = clampf(1.0 - r / half, 0.0, 1.0)
+			var band:  float = floor(level * steps) / steps
+			var frac:  float = level * steps - floor(level * steps)
+			var smooth: float = band + frac * 0.35  # soften the band edges
+			var h: int = x * 374761393 + y * 668265263
+			var dither: float = (float(absi(h) % 1000) / 1000.0) * 0.12
+			var a: float = clampf(smooth + dither, 0.0, 1.0)
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	var tex := ImageTexture.create_from_image(img)
+	_pixel_light_cache[size] = tex
+	return tex
+
+# ── Smooth light texture ─────────────────────────────────────────────
+# Clean circular radial falloff (hot core -> transparent edge) with NO stepped
+# bands or dither. Used where the pixelated cascade reads as a jarring "square
+# highlight" — currently the placed torch's glow. The gradient falls off very
+# fast near the center (full alpha ends ~15% of the pool) so the bright
+# "initial" light stays a tight core (~0.7 tiles) while a long faint tail
+# carries the outer reach to the full pool edge. Cached per size.
+static var _smooth_light_cache: Dictionary = {}
+
+static func get_smooth_light_texture(size: int = 256) -> GradientTexture2D:
+	if _smooth_light_cache.has(size):
+		return _smooth_light_cache[size]
+	var gradient := Gradient.new()
+	gradient.colors  = PackedColorArray([
+		Color(1, 1, 1, 1),
+		Color(1, 1, 1, 0.65),
+		Color(1, 1, 1, 0.0),
+	])
+	gradient.offsets = PackedFloat32Array([0.0, 0.15, 1.0])
+	var tex := GradientTexture2D.new()
+	tex.gradient  = gradient
+	tex.fill      = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to   = Vector2(0.5, 0.0)
+	tex.width     = size
+	tex.height    = size
+	_smooth_light_cache[size] = tex
+	return tex
+
 # ── Hitbox debug overlay helpers ────────────────────────────────────────
 # Moved out of world.gd so cave_world.gd (and any future world-like scene)
 # can draw the same hitbox visuals without duplicating this logic — the
@@ -99,6 +163,101 @@ var max_health: float = 100.0
 var stamina:    float = 50.0
 var max_stamina: float = 50.0
 
+# Knockback strength per point of damage taken (px/s per damage point).
+const KNOCKBACK_PER_DAMAGE: float = 22.0
+
+# Central damage entry point for every mob/projectile — reduces health, emits
+# the HUD signal, grants 0.3s invincibility frames, and knocks the player back
+# OPPOSITE the direction they're facing (falling back to away-from-attacker).
+# All mobs should go through this (NOT write Global.health directly) so
+# invincibility + knockback stay consistent.
+func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = Vector2.ZERO) -> void:
+	if amount <= 0.0:
+		return
+	var p: Node2D = player_node as Node2D
+	# Invincibility frames block HP loss (and don't re-grant), but the enemy's
+	# hit still LANDS — knockback keeps applying so enemies keep hitting even
+	# while the player is invincible.
+	var invincible: bool = p != null and p.has_method("is_invincible") and p.call("is_invincible")
+	if not invincible:
+		health = maxf(0.0, health - amount)
+		health_changed.emit(health, max_health)
+		if health <= 0.0:
+			_handle_player_death()
+			return
+		if p != null and p.has_method("become_invincible"):
+			p.call("become_invincible")
+	if p == null:
+		return
+	var strength: float = amount * KNOCKBACK_PER_DAMAGE
+	if p.has_method("apply_knockback"):
+		# Knock the player in the ATTACKER's facing direction (attack_dir) —
+		# an enemy striking from the left knocks the player right, like other
+		# 2D games. Falls back to straight away from the attacker when the
+		# attacker didn't supply a facing.
+		var dir: Vector2 = attack_dir if attack_dir.length_squared() > 0.001 \
+			else (p.global_position - from_position)
+		if dir.length_squared() > 0.001:
+			p.call("apply_knockback", dir.normalized(), strength)
+
+# Emitted when the player's health hits zero (the game scene uses this to dim
+# the screen). _handle_player_death immediately respawns the player.
+signal player_died
+
+# Player death: notify on the chat bar, teleport back to the world spawn point,
+# and restore full health. Runs synchronously inside damage_player so death is
+# only handled once per fatal hit.
+var _death_in_progress: bool = false
+const DEATH_RESPAWN_TIME: float = 5.0
+
+func _handle_player_death() -> void:
+	if _death_in_progress:
+		return
+	_death_in_progress = true
+	player_died.emit()
+	log_chat("[color=#ff7777]You died! Respawning in %d seconds...[/color]" % int(DEATH_RESPAWN_TIME))
+	var p: Node2D = player_node as Node2D
+	if p != null:
+		# Freeze + hide the player while dead — the sprite disappears until the
+		# respawn timer finishes.
+		p.process_mode = Node.PROCESS_MODE_DISABLED
+		var sprite: Node = p.get_node_or_null("PlayerSprite")
+		if sprite != null:
+			sprite.visible = false
+	await get_tree().create_timer(DEATH_RESPAWN_TIME).timeout
+	if p == null or not is_instance_valid(p):
+		_death_in_progress = false
+		return
+	# Prefer the Game scene: it exits any active cave/pixie cave/dungeon first
+	# so the player ALWAYS respawns at the OVERWORLD world spawn — not inside
+	# the cave they died in.
+	var spawn: Vector2 = _get_respawn_position()
+	p.global_position = spawn
+	p.process_mode = Node.PROCESS_MODE_ALWAYS
+	var sprite: Node = p.get_node_or_null("PlayerSprite")
+	if sprite != null:
+		sprite.visible = true
+	# Clear any knockback and grant brief i-frames so they can't instantly
+	# re-die on whatever might be near the spawn.
+	if p.has_method("apply_knockback"):
+		p.call("apply_knockback", Vector2.ZERO, 0.0)
+	if p.has_method("become_invincible"):
+		p.call("become_invincible")
+	health = max_health
+	health_changed.emit(health, max_health)
+	_death_in_progress = false
+
+func _get_respawn_position() -> Vector2:
+	if game_node != null and game_node.has_method("get_world_spawn_position"):
+		return game_node.call("get_world_spawn_position") as Vector2
+	var world: Node = world_node
+	if world != null:
+		if world.has_method("_world_spawn_pos"):
+			return world.call("_world_spawn_pos") as Vector2
+		elif world.has_method("get_player_spawn_position"):
+			return world.call("get_player_spawn_position") as Vector2
+	return Vector2.ZERO
+
 signal health_changed(value: float, max_value: float)
 signal stamina_changed(value: float, max_value: float)
 
@@ -114,11 +273,21 @@ var pause_menu_open:    bool  = false
 # managing their own boolean flags and pause state.
 var _ui_open_count: int = 0
 var player_near_station: bool  = false
-var block_mode:          bool  = false   # CTRL toggles — shared across all scripts
+var block_mode:          bool  = false   # Ctrl toggles (gameplay build mode) — shared across all scripts; /blockmode command also works
 var ui_scale:            float = 1.0
+
+# True while the chat console's text input is focused — gates player movement
+# (and other input) so typing WASD into a command doesn't also walk the player.
+var chat_open: bool = false
+
+# Reference to the overworld's DayNightCycle (set in its _ready) so the chat
+# console's /daynight command can toggle it from anywhere. Null while inside a
+# cave/dungeon (those have no sky tint).
+var day_night_cycle: Node = null
 
 signal ui_scale_changed(scale: float)
 signal request_close_all_ui
+signal chat_logged(message: String)
 
 signal camera_zoom_changed(zoom: float)
 signal inventory_toggled(is_open: bool)
@@ -136,6 +305,11 @@ var snowstorm_active: bool = false
 # know "is it day right now" (not just react to the transition) query this
 # directly instead of tracking the signals itself.
 var is_daytime: bool = true
+# Live mirror of day_night_cycle.gd's time_of_day (0..1), written every frame
+# and persisted in save files — so the time of day survives restarts instead
+# of always resetting to noon. Lives on Global (not the node) so it stays
+# readable even while DayNightCycle is out of the tree during cave visits.
+var time_of_day: float = 0.25
 
 # ── Missions ──────────────────────────────────────────────────────
 var missions: Array = []
@@ -322,40 +496,35 @@ func _ready() -> void:
 	load_knowledge_data()
 	_append_dungeon_missions()
 
-# ── Centralized world debug/build-mode shortcuts ───────────────────────
-# Ctrl+Shift+H/C/T and the block-mode Ctrl toggle used to be hand-wired
-# into each world-like scene's own _input() (world.gd, then cave_world.gd
-# duplicating it) — every new scene type needed the same key-detection
-# copied in again. Detecting the keys HERE once and delegating to whichever
-# world is active (via has_method()/call(), same duck-typing convention
-# already used everywhere else in this codebase — e.g. placed blocks'
-# setup()/set_world_cell()) means a future scene just needs to implement
-# matching method names to get these shortcuts for free. World scripts
-# still own the actual toggle/draw logic — this only owns detecting the
-# keypress and routing it.
+# Build mode toggle (Ctrl) — a core gameplay feature that switches between
+# interacting with the world and placing/building blocks. Detected centrally so
+# it works in every world (overworld/cave/pixie/dungeon); each world's own
+# per-frame ghost/grid code reacts to the flag + block_mode_changed signal.
 func _input(event: InputEvent) -> void:
+	if Global.chat_open or Global.pause_menu_open:
+		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	var key_event := event as InputEventKey
-	if key_event.keycode == KEY_H and key_event.ctrl_pressed and key_event.shift_pressed:
-		_dispatch_to_world("toggle_hitboxes")
-	elif key_event.keycode == KEY_C and key_event.ctrl_pressed and key_event.shift_pressed:
-		_dispatch_to_world("toggle_chunk_borders")
-	elif key_event.keycode == KEY_T and key_event.ctrl_pressed and key_event.shift_pressed:
-		_dispatch_to_world("teleport_to_nearest_cave")
-	elif key_event.keycode == KEY_CTRL and not key_event.shift_pressed:
-		# Block mode itself is a plain global flag, not something any one
-		# world "owns" — flipping it here and letting each world's own
-		# per-frame ghost/grid update pick up the new value is simpler than
-		# also duck-typing a reaction method. (World.gd's old inline
-		# "ghost.visible = false" on toggle-off was redundant with that
-		# same per-frame check anyway, just hid it one frame sooner.)
+	if key_event.keycode == KEY_CTRL and not key_event.shift_pressed:
 		block_mode = not block_mode
 		block_mode_changed.emit(block_mode)
 
-func _dispatch_to_world(method_name: String) -> void:
+# ── World-method dispatch (used by the chat console's debug commands) ──
+# Duck-typed like the rest of the codebase (has_method()/call()) — whichever
+# world is active (overworld/cave/pixie/dungeon) only needs to implement the
+# matching method name to support the /hitboxes, /chunkborders and
+# /nearestcave commands. World scripts own the toggle/draw logic; this only
+# routes the call.
+func dispatch_to_world(method_name: String) -> void:
 	if world_node != null and is_instance_valid(world_node) and world_node.has_method(method_name):
 		world_node.call(method_name)
+
+# Routes a line into the chat log (the ChatConsole listens for this). Any
+# system can print to the on-screen chat this way without knowing where the
+# console node is.
+func log_chat(message: String) -> void:
+	chat_logged.emit(message)
 
 func _init_missions() -> void:
 	missions = [
@@ -388,9 +557,37 @@ func _append_dungeon_missions() -> void:
 func accept_mission(id: String) -> void:
 	if accepted_mission_id == id:
 		return
+	var m := _find_mission(id)
+	if m.has("dungeon_index"):
+		# Dungeon missions require their content to actually exist: a non-empty
+		# quiz list whose files all resolve, plus a teachable entry. Incomplete
+		# placeholders (e.g. dungeon_mission_6..10) are listed but not
+		# accept-able — otherwise the quiz altar auto-clears an empty quiz list
+		# and the dungeon "completes" with nothing to do.
+		if not is_dungeon_mission_ready(int(m["dungeon_index"])):
+			return
 	accepted_mission_id = id
 	mission_updated.emit()
 	mission_accepted.emit(id)
+
+# A dungeon mission is accept-able only when its linked content fully resolves:
+# a non-empty quiz_resource_files whose every file loads, and a teachable entry.
+func is_dungeon_mission_ready(idx: int) -> bool:
+	var m := get_dungeon_mission_for_index(idx)
+	if m == null:
+		return false
+	if m.quiz_resource_files.is_empty():
+		return false
+	for f in m.quiz_resource_files:
+		if get_quiz_file(f) == null:
+			return false
+	return m.entry() != null
+
+func _find_mission(id: String) -> Dictionary:
+	for m in missions:
+		if m["id"] == id:
+			return m
+	return {}
 
 func get_accepted_mission() -> Dictionary:
 	for m in missions:
@@ -424,13 +621,15 @@ func reset_missions() -> void:
 	mission_updated.emit()
 
 # ── Add item ──────────────────────────────────────────────────────
-func add_item(item: Dictionary) -> bool:
+func add_item(item: Dictionary, allow_dev: bool = false) -> bool:
 	var data: ItemData = item["data"] as ItemData
-	# Dev items (cave ore placeholders, etc.) are world-gen/game-placed only
-	# — this is the single funnel every acquisition path (mining drops,
-	# crafting results, chest transfers, starting-item grants) goes through,
-	# so rejecting here is enough to make them un-obtainable everywhere.
-	if data != null and data.is_dev_item:
+	# Dev items (cave ore placeholders, grass tufts, etc.) are world-gen /
+	# game-placed only — this is the single funnel every acquisition path
+	# (mining drops, crafting results, chest transfers, starting-item grants)
+	# goes through, so rejecting here is enough to make them un-obtainable
+	# everywhere. The debug shortcut (player.gd's Shift+E) opts into them via
+	# allow_dev so dev-only blocks can actually be handed out for testing.
+	if data != null and data.is_dev_item and not allow_dev:
 		return false
 	# 1. Stack in hotbar
 	for i in range(Hotbar.size()):
@@ -508,13 +707,39 @@ func set_player_reference(player: Node) -> void:
 	player_node = player
 
 # ── Drop item into world ──────────────────────────────────────────
-func adjust_drop_pos(pos: Vector2) -> Vector2:
-	var rad := 100.0
+# Drag-out drops always land ONE TILE in front of the player, in the
+# direction they're facing. The old behavior scattered items up to ~5
+# tiles away (fixed +50px below the player plus a random ±100px nudge);
+# now the anti-overlap jitter is kept small and the final spot is clamped
+# to a single tile from the player.
+const DROP_FACING_VECTORS: Dictionary = {
+	"south":      Vector2(0, 1),
+	"north":      Vector2(0, -1),
+	"east":       Vector2(1, 0),
+	"west":       Vector2(-1, 0),
+	"south-east": Vector2(1, 1),
+	"south-west": Vector2(-1, 1),
+	"north-east": Vector2(1, -1),
+	"north-west": Vector2(-1, -1),
+}
+
+func adjust_drop_pos(_pos: Vector2) -> Vector2:
+	var player := Global.player_node as Node2D
+	if player == null or not player.has_method("get_facing_dir"):
+		return _pos
+	var facing: Vector2 = DROP_FACING_VECTORS.get(player.call("get_facing_dir"), Vector2(0, 1)) as Vector2
+	var result: Vector2 = player.global_position + facing * 32.0
+	# Small jitter so consecutive drops don't stack on the same pixel, but
+	# never enough to leave the 1-tile zone in front of the player.
+	var rad := 16.0
 	for item in get_tree().get_nodes_in_group("items"):
-		if (item as Node2D).global_position.distance_to(pos) < rad:
-			pos += Vector2(randf_range(-rad, rad), randf_range(-rad, rad))
+		if (item as Node2D).global_position.distance_to(result) < rad:
+			result += Vector2(randf_range(-rad, rad), randf_range(-rad, rad))
 			break
-	return pos
+	var to_player: Vector2 = result - player.global_position
+	if to_player.length() > 32.0:
+		result = player.global_position + to_player.normalized() * 32.0
+	return result
 
 # ── UI state ─────────────────────────────────────────────────────
 func open_ui() -> void:
@@ -553,6 +778,7 @@ var active_save_slot:   int        = -1
 var has_pending_pos:    bool       = false
 var pending_player_pos: Vector2    = Vector2.ZERO
 var pending_world_data: Dictionary = {}
+var pending_time_of_day: float = -1.0  # -1 = no saved time, keep the noon default
 
 func has_save(slot: int) -> bool:
 	return FileAccess.file_exists("user://save_slot_%d.json" % slot)
@@ -602,6 +828,16 @@ func save_game(slot: int) -> void:
 		save_data["player_pos_y"] = (player_node as Node2D).global_position.y
 	if world_node != null and world_node.has_method("get_world_save_data"):
 		save_data["world"] = world_node.call("get_world_save_data")
+	# If the Game scene can report a save context (overworld data + a spawn
+	# point), prefer it — this is what makes "saved inside a structure" spawn
+	# the player outside the entrance on Continue instead of at invalid
+	# structure coordinates.
+	if game_node != null and game_node.has_method("get_overworld_save_context"):
+		var ctx: Dictionary = game_node.call("get_overworld_save_context")
+		if ctx.has("player_pos") and ctx.has("world_data"):
+			save_data["player_pos_x"] = (ctx["player_pos"] as Vector2).x
+			save_data["player_pos_y"] = (ctx["player_pos"] as Vector2).y
+			save_data["world"] = ctx["world_data"]
 	for slot_item in Hotbar:
 		if slot_item == null:
 			save_data["hotbar"].append(null)
@@ -625,6 +861,7 @@ func save_game(slot: int) -> void:
 		missions_save.append({"id": m["id"], "completed": m["completed"]})
 	save_data["missions"] = missions_save
 	save_data["accepted_mission_id"] = accepted_mission_id
+	save_data["time_of_day"] = time_of_day
 	save_data["learned_entries"]  = learned_entries.keys()
 	save_data["learned_keywords"] = learned_keywords.keys()
 	var cleared_save: Array = []
@@ -698,6 +935,7 @@ func load_game(slot: int) -> void:
 		mission_updated.emit()
 	if data.has("accepted_mission_id"):
 		accepted_mission_id = str(data["accepted_mission_id"])
+	pending_time_of_day = float(data["time_of_day"]) if data.has("time_of_day") else -1.0
 	if data.has("learned_entries") and data["learned_entries"] is Array:
 		for id in (data["learned_entries"] as Array):
 			if not learned_entries.has(id):

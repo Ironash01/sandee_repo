@@ -9,4 +9,5 @@ mission_description = "In this room you shall learn how to declare an integer or
 entry_resource_file = "entry_2_python.tres"
 quiz_resource_files = Array[String](["dm02_quiz_1_python.tres", "dm02_quiz_2_python.tres", "dm02_quiz_3_python.tres"])
 dungeon_index = 2
+size_modifier = 0
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

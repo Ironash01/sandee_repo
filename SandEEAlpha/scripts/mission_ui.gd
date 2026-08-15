@@ -155,12 +155,16 @@ func _build_popup() -> void:
 
 # ── Signal handlers ───────────────────────────────────────────────
 func _open_list() -> void:
+	if _list_panel.visible:
+		return
 	_rebuild_list_rows()
 	_list_panel.visible = true
 	Global.open_ui()
 	call_deferred("_center_panels")
 
 func _close_list() -> void:
+	if not _list_panel.visible:
+		return
 	_list_panel.visible = false
 	Global.close_ui()
 
@@ -250,6 +254,12 @@ func _rebuild_list_rows() -> void:
 			accept_btn.add_theme_font_size_override("font_size", 12)
 			if m["id"] == Global.accepted_mission_id:
 				accept_btn.text    = "Accepted ✓"
+				accept_btn.disabled = true
+			elif d_idx > 0 and not Global.is_dungeon_mission_ready(d_idx):
+				# Incomplete dungeon placeholder (no/empty/unresolvable quizzes,
+				# or a missing entry) — listed so the player sees the roadmap,
+				# but not accept-able until its content ships.
+				accept_btn.text     = "Unavailable"
 				accept_btn.disabled = true
 			else:
 				accept_btn.text = "Accept"

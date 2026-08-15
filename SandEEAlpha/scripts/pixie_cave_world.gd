@@ -1,0 +1,740 @@
+extends Node2D
+class_name PixieCaveWorld
+
+# A pixie-cave interior — swapped in for the overworld "World" node by
+# game_instance.gd's enter_cave()/exit_cave() when the entered CavePortal is a
+# pixie cave (portal.cave_type == "pixie"). Built entirely in code from
+# PixieCaveGenerator's output at setup() time (no .tscn), same pattern as
+# CaveWorld/DungeonWorld.
+#
+# Standalone (NOT extending CaveWorld) on purpose: CaveWorld caches its shared
+# TileSet + wall/floor cell maps in *static* vars keyed to CaveGenerator.Tile,
+# which a subclass would share (and clobber) with the regular cave. Pixie caves
+# use their own tile types (pixie stone + crystal ores) and their own static
+# cache, so this class duplicates the small tileset/painting/mining/lighting
+# helpers rather than fighting that static-cache design.
+#
+# Layout (PixieCaveGenerator): randomly 32x24, 40x20, or 20x16 dungeon-like —
+# small rooms joined by 2-wide corridors, walls of pixie stone, crystal ores
+# housed inside rooms (copper/iron/silicon guaranteed, diamond a 5% gamble).
+# A 128-tile band of pixie stone closes the void around the grid
+# (SURROUND_BAND_TILES).
+
+const TILE_SIZE:           int   = 32
+const INTERACT_RADIUS_PX:  float = 64.0
+const ITEM_DROP_SCENE:     PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
+const SURROUND_BAND_TILES: int   = 128  # solid pixie-stone band around the grid (matches cave/dungeon)
+
+# Wall/ore tile type -> the ItemData that renders it, drops when mined, and
+# supplies block_level/min_pickaxe_level for the mining-duration formula
+# (maxf(0.1, block_level - pickaxe_level), same as CaveWorld/placeable_block).
+const WALL_ITEM_PATHS: Dictionary = {
+	PixieCaveGenerator.Tile.WALL:            "res://resources/items/pixie_cave_stone.tres",
+	PixieCaveGenerator.Tile.CRYSTAL_COPPER:  "res://resources/items/crystal_copper_ore.tres",
+	PixieCaveGenerator.Tile.CRYSTAL_IRON:    "res://resources/items/crystal_iron_ore.tres",
+	PixieCaveGenerator.Tile.CRYSTAL_SILICON: "res://resources/items/crystal_silicon_ore.tres",
+	PixieCaveGenerator.Tile.CRYSTAL_DIAMOND: "res://resources/items/crystal_diamond_ore.tres",
+}
+
+const FLOOR_ITEM_PATHS: Array = [
+	"res://resources/items/pixie_floor1.tres",
+	"res://resources/items/pixie_floor2.tres",
+	"res://resources/items/pixie_floor3.tres",
+	"res://resources/items/pixie_floor4.tres",
+	"res://resources/items/pixie_floor5.tres",
+]
+
+const SHADOW_TEXTURE_PATH: String = "res://sprites/shadow/shadow_base.png"
+
+# ── Crystal ore regen/glow/dim ──────────────────────────────────────
+# Crystal ores regenerate after mining: 1 in-game hour for copper/iron/silicon,
+# 2 hours for diamond. While mined, the ore tile is dimmed (not removed). When
+# available, the ore has a subtle glow (PointLight2D).
+const ORE_REGEN_HOURS: Dictionary = {
+	PixieCaveGenerator.Tile.CRYSTAL_COPPER:  1.0,
+	PixieCaveGenerator.Tile.CRYSTAL_IRON:    1.0,
+	PixieCaveGenerator.Tile.CRYSTAL_SILICON: 1.0,
+	PixieCaveGenerator.Tile.CRYSTAL_DIAMOND: 2.0,
+}
+const ORE_GLOW_ENERGY: float = 0.4
+const ORE_GLOW_RADIUS_PX: float = 48.0
+
+var _mined_ores: Dictionary = {}  # cell -> {"ore_type": int, "time_mined": float}
+var _ore_lights: Dictionary = {}  # cell -> PointLight2D
+var _ore_fireflies: Dictionary = {}  # cell -> GPUParticles2D (fireflies around an available ore)
+var _dimmed_ore_layer: TileMapLayer = null
+static var _dimmed_ore_cells: Dictionary = {}  # ore_type -> {"source": id, "coord": Vector2i}
+
+# ── Fireflies (glowing orbs near ores + cave wall edges) ──────────────
+# A customized firefly effect: one 32x32 frame of glowing_orbs_sample.png used
+# as a tiny (~8px) particle sprite, spawned in multiples around available
+# crystal ores AND along the edges of cave-stone walls that border open path
+# (rooms/corridors). GPUParticles2D never collide, so fireflies pass through
+# everything. Kept light for mobile: bounded emitters/amounts, tiny sprites,
+# and off-screen emitters are culled by Godot automatically.
+const ORE_ORBS_TEX: Texture2D = preload("res://sprites/particles_effects/glowing_orbs_sample.png")
+const ORE_ORBS_FRAME_SIZE: int = 32
+
+const FIREFLY_SCALE_MIN: float = 0.18   # ~6px on a 32px frame
+const FIREFLY_SCALE_MAX: float = 0.30   # ~10px
+const FIREFLY_AMOUNT_ORE:  int = 5      # per glowing ore
+const FIREFLY_AMOUNT_WALL: int = 3      # per wall-edge emitter
+const WALL_FIREFLY_MAX_EMITTERS: int = 40  # perf cap on wall-edge emitters
+
+static var _orb_texture: Texture2D = null
+
+# ── Pixie mobs (roam the cave, guard the ores) ─────────────────────
+const PIXIE_SCENE:       PackedScene = preload("res://scenes/mobs/Pixie.tscn")
+const PIXIE_SPAWN_COUNT: int = 4  # spawned near crystal ores, any time (cave has no day/night)
+
+var _seed: int = 0  # stored so pixie placement can be deterministic per cave
+
+# ── Mystical darkness / player light ────────────────────────────────────
+# A purple-violet ambient instead of CaveWorld's near-black blue — the start
+# of the "mystical" pixie-cave mood (full glow/fireflies are wired in a later
+# task). Same CanvasModulate + glow WorldEnvironment + player PointLight2D
+# recipe CaveWorld uses, so torches/ore glow slot in for free later.
+const PIXIE_AMBIENT_COLOR:     Color = Color(0.08, 0.05, 0.13, 1.0)  # dim mystical violet
+const LIGHT_TEXTURE_SIZE:      int   = 512
+
+static var _shared_tile_set: TileSet = null
+static var _wall_cells:  Dictionary = {}  # Tile enum -> {"source": id, "coord": Vector2i}
+static var _wall_items:  Dictionary = {}  # Tile enum -> ItemData
+static var _floor_cells: Array      = []  # [{"source": id, "coord": Vector2i}, ...]
+static var _shadow_overlay_image: Image = null
+
+var generator: PixieCaveGenerator = null
+var overworld_return_position: Vector2 = Vector2.ZERO
+var _tilemap: TileMapLayer = null
+
+func setup(seed_value: int, return_position: Vector2) -> void:
+	overworld_return_position = return_position
+	_seed = seed_value
+	generator = PixieCaveGenerator.new()
+	generator.generate(seed_value)
+
+	_tilemap = TileMapLayer.new()
+	_tilemap.name     = "PixieCaveTiles"
+	_tilemap.tile_set = _get_shared_tile_set()
+	# z_index = -300 keeps the tilemap below the player's quantized
+	# int(y / TILE_SIZE) Y-sort buckets (which go negative north of the
+	# grid's center, since the grid is centered on the origin). Same fix
+	# CaveWorld applies — without it the player renders behind walls.
+	_tilemap.z_index = -300
+	add_child(_tilemap)
+
+	# Dimmed ore layer (for mined crystal ores that are regenerating)
+	_dimmed_ore_layer = TileMapLayer.new()
+	_dimmed_ore_layer.name = "DimmedOres"
+	_dimmed_ore_layer.tile_set = _get_dimmed_ore_tile_set()
+	_dimmed_ore_layer.z_index = -300
+	add_child(_dimmed_ore_layer)
+
+	_paint_tiles()
+	_spawn_wall_fireflies()
+	_spawn_pixies()
+	_spawn_exit_marker()
+	_setup_darkness()
+
+func _process(delta: float) -> void:
+	_update_mining(delta)
+	_check_ore_regeneration()
+
+func _check_ore_regeneration() -> void:
+	if _mined_ores.is_empty():
+		return
+	
+	var current_time: float = Global.time_of_day
+	var to_remove: Array = []
+	
+	for cell in _mined_ores:
+		var mined_data: Dictionary = _mined_ores[cell]
+		var ore_type: int = mined_data["ore_type"]
+		var time_mined: float = mined_data["time_mined"]
+		var regen_hours: float = ORE_REGEN_HOURS.get(ore_type, 1.0)
+		var regen_fraction: float = regen_hours / 24.0  # Convert hours to fraction of day
+		
+		# Calculate elapsed time (handle day wrap)
+		var elapsed: float = current_time - time_mined
+		if elapsed < 0:
+			elapsed += 1.0  # Wrapped around midnight
+		
+		if elapsed >= regen_fraction:
+			# Regenerate the ore
+			to_remove.append(cell)
+			
+			# Remove from dimmed layer
+			_dimmed_ore_layer.erase_cell(cell)
+			
+			# Repaint on main layer
+			_paint_cell(cell, ore_type, _cell_to_grid(cell))
+			
+			# Show the glow light + orbs animation
+			var light: PointLight2D = _ore_lights.get(cell)
+			if light != null:
+				light.visible = true
+			var firefly: GPUParticles2D = _ore_fireflies.get(cell)
+			if firefly != null:
+				firefly.emitting = true
+				firefly.visible = true
+	
+	for cell in to_remove:
+		_mined_ores.erase(cell)
+
+# ── Mining (pixie-stone walls / crystal ores) ───────────────────────────
+# Centralized (no per-tile Area2D), same reasoning as CaveWorld. Pickaxe-
+# gated identically: duration = maxf(0.1, block_level - pickaxe_level).
+# NOTE: this is the basic break-to-floor path for now; a later task adds the
+# crystal-ore specifics — glow while minable, dim-not-remove on break, and
+# 1h/2h in-game regen — by branching _break_tile on the ore type.
+var _mine_tile:     Vector2i = Vector2i.ZERO
+var _mining:        bool     = false
+var _mine_elapsed:  float    = 0.0
+var _mine_duration: float    = 1.0
+
+func _input(event: InputEvent) -> void:
+	if Global.any_ui_open() or Global.pause_menu_open:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_try_start_mining()
+		else:
+			_cancel_mining()
+
+func _try_start_mining() -> void:
+	var mouse_cell: Vector2i = _mouse_cell()
+	var grid_pos: Vector2i   = _cell_to_grid(mouse_cell)
+	if not _grid_in_bounds(grid_pos):
+		return
+	var tile_type: int = generator.grid[grid_pos.x][grid_pos.y]
+	if tile_type == PixieCaveGenerator.Tile.FLOOR:
+		return
+	var item: ItemData = _wall_items.get(tile_type)
+	if item == null:
+		return
+	var player: Node2D = Global.player_node as Node2D
+	if player == null:
+		return
+	var tile_world: Vector2 = _tilemap.to_global(_tilemap.map_to_local(mouse_cell))
+	if player.global_position.distance_to(tile_world) > INTERACT_RADIUS_PX:
+		return
+	var pick_lvl: int = _get_held_pickaxe_level()
+	if pick_lvl < 0 or pick_lvl < item.min_pickaxe_level:
+		return
+	get_viewport().set_input_as_handled()
+	_mine_tile     = mouse_cell
+	_mine_duration = maxf(0.1, float(item.block_level - pick_lvl))
+	_mine_elapsed  = 0.0
+	_mining        = true
+	queue_redraw()
+
+func _cancel_mining() -> void:
+	if not _mining:
+		return
+	_mining       = false
+	_mine_elapsed = 0.0
+	queue_redraw()
+
+func _update_mining(delta: float) -> void:
+	if not _mining:
+		return
+	var still_valid: bool = _mouse_cell() == _mine_tile \
+		and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) \
+		and not Global.any_ui_open() and not Global.pause_menu_open
+	if not still_valid:
+		_cancel_mining()
+		return
+	_mine_elapsed = minf(_mine_elapsed + delta, _mine_duration)
+	queue_redraw()
+	if _mine_elapsed >= _mine_duration:
+		_break_tile(_mine_tile)
+		_cancel_mining()
+
+func _draw() -> void:
+	if not _mining:
+		return
+	var tile_world: Vector2 = _tilemap.to_global(_tilemap.map_to_local(_mine_tile))
+	var pos: Vector2        = to_local(tile_world)
+	var progress: float     = _mine_elapsed / _mine_duration if _mine_duration > 0.0 else 1.0
+	var half_w: float       = Global.BREAK_BAR_WIDTH * 0.5
+	var y_offset: float     = -20.0
+	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, Global.BREAK_BAR_WIDTH, Global.BREAK_BAR_HEIGHT), Global.BREAK_BAR_BG)
+	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, Global.BREAK_BAR_WIDTH * clampf(progress, 0.0, 1.0), Global.BREAK_BAR_HEIGHT), Global.BREAK_BAR_FILL)
+
+func _break_tile(cell: Vector2i) -> void:
+	var grid_pos: Vector2i = _cell_to_grid(cell)
+	if not _grid_in_bounds(grid_pos):
+		return
+	var tile_type: int = generator.grid[grid_pos.x][grid_pos.y]
+	var item: ItemData = _wall_items.get(tile_type)
+	
+	# Check if this is a crystal ore (regenerates)
+	var is_crystal_ore = tile_type in [
+		PixieCaveGenerator.Tile.CRYSTAL_COPPER,
+		PixieCaveGenerator.Tile.CRYSTAL_IRON,
+		PixieCaveGenerator.Tile.CRYSTAL_SILICON,
+		PixieCaveGenerator.Tile.CRYSTAL_DIAMOND
+	]
+	
+	if is_crystal_ore:
+		# Dim the ore (move to dimmed layer) instead of removing
+		generator.grid[grid_pos.x][grid_pos.y] = PixieCaveGenerator.Tile.FLOOR
+		_tilemap.erase_cell(cell)
+		
+		# Paint on dimmed layer
+		var dimmed_cell: Dictionary = _dimmed_ore_cells.get(tile_type, {})
+		if not dimmed_cell.is_empty():
+			_dimmed_ore_layer.set_cell(cell, dimmed_cell["source"], dimmed_cell["coord"])
+		
+		# Hide the glow light + orbs animation
+		var light: PointLight2D = _ore_lights.get(cell)
+		if light != null:
+			light.visible = false
+		var firefly: GPUParticles2D = _ore_fireflies.get(cell)
+		if firefly != null:
+			firefly.emitting = false
+			firefly.visible = false
+		
+		# Store mined ore with current in-game time
+		_mined_ores[cell] = {
+			"ore_type": tile_type,
+			"time_mined": Global.time_of_day
+		}
+	else:
+		# Regular wall/stone: break to floor as before
+		generator.grid[grid_pos.x][grid_pos.y] = PixieCaveGenerator.Tile.FLOOR
+		_paint_cell(cell, PixieCaveGenerator.Tile.FLOOR, grid_pos)
+	
+	if item == null:
+		return
+	var drop: Node = ITEM_DROP_SCENE.instantiate()
+	drop.call("set_item_data", item)
+	add_child(drop)
+	var offset := Vector2(randf_range(-8, 8), randf_range(-8, 8))
+	drop.global_position = _tilemap.to_global(_tilemap.map_to_local(cell)) + offset
+
+func _get_held_pickaxe_level() -> int:
+	var slot = Global.get_hotbar_item()
+	if slot == null:
+		return -1
+	var data: ItemData = slot["data"] as ItemData
+	if data == null or not data.item_name.to_lower().contains("pickaxe"):
+		return -1
+	return data.pickaxe_level
+
+func _mouse_cell() -> Vector2i:
+	return _tilemap.local_to_map(_tilemap.to_local(get_global_mouse_position()))
+
+func _grid_in_bounds(grid_pos: Vector2i) -> bool:
+	return grid_pos.x >= 0 and grid_pos.y >= 0 \
+		and grid_pos.x < generator.width and grid_pos.y < generator.height
+
+func _cell_is_wall(cell: Vector2i) -> bool:
+	var grid_pos: Vector2i = _cell_to_grid(cell)
+	if not _grid_in_bounds(grid_pos):
+		return true
+	return generator.grid[grid_pos.x][grid_pos.y] != PixieCaveGenerator.Tile.FLOOR
+
+# 2 tiles north of the entrance/exit tile, not on top of it (matches
+# CaveWorld); PixieCaveGenerator._carve_entrance guarantees this column is open.
+func get_player_spawn_position() -> Vector2:
+	var tile: Vector2i = generator.entrance_tile - Vector2i(0, 2)
+	return _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(tile)))
+
+# Grid indices run 0..width-1 / 0..height-1; the map is centered on the origin
+# (non-square, unlike CaveWorld's size/2 for both axes), so every grid<->cell
+# conversion uses separate width/2 and height/2 offsets.
+func _grid_to_cell(tile: Vector2i) -> Vector2i:
+	return tile - Vector2i(generator.width / 2, generator.height / 2)
+
+func _cell_to_grid(cell: Vector2i) -> Vector2i:
+	return cell + Vector2i(generator.width / 2, generator.height / 2)
+
+# ── Shared tileset (built once, reused by every pixie cave) ─────────────
+static func _get_shared_tile_set() -> TileSet:
+	if _shared_tile_set != null:
+		return _shared_tile_set
+	var ts := TileSet.new()
+	ts.tile_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	ts.add_physics_layer()
+	ts.set_physics_layer_collision_layer(0, 1)
+	ts.set_physics_layer_collision_mask(0, 1)
+	var poly := PackedVector2Array([
+		Vector2(-TILE_SIZE / 2.0, -TILE_SIZE / 2.0),
+		Vector2(TILE_SIZE / 2.0, -TILE_SIZE / 2.0),
+		Vector2(TILE_SIZE / 2.0, TILE_SIZE / 2.0),
+		Vector2(-TILE_SIZE / 2.0, TILE_SIZE / 2.0),
+	])
+	for tile_type in WALL_ITEM_PATHS.keys():
+		var item: ItemData = load(WALL_ITEM_PATHS[tile_type]) as ItemData
+		if item == null:
+			push_warning("PixieCaveWorld: missing item resource for tile type %s" % tile_type)
+			continue
+		_wall_items[tile_type] = item
+		var cell: Dictionary = _add_wall_icon_source(ts, item.icon)
+		if cell.is_empty():
+			push_warning("PixieCaveWorld: '%s' has no icon — wall tile invisible" % item.item_name)
+			continue
+		var src: TileSetAtlasSource = ts.get_source(cell["source"]) as TileSetAtlasSource
+		var td: TileData = src.get_tile_data(cell["coord"], 0)
+		td.add_collision_polygon(0)
+		td.set_collision_polygon_points(0, 0, poly)
+		_wall_cells[tile_type] = cell
+	for path in FLOOR_ITEM_PATHS:
+		var item: ItemData = load(path) as ItemData
+		if item == null or item.icon == null:
+			continue
+		var cell: Dictionary = _add_icon_source(ts, item.icon)
+		if not cell.is_empty():
+			_floor_cells.append(cell)
+	if _floor_cells.is_empty():
+		push_warning("PixieCaveWorld: no pixie_floor item has an icon set — floor invisible")
+	_shared_tile_set = ts
+	return ts
+
+# Each icon is its own AtlasTexture region into the shared item spritesheet,
+# not on one common 32px grid, so every item gets its own dedicated source
+# sized to its exact region (mirrors CaveWorld._add_icon_source).
+static func _add_icon_source(ts: TileSet, icon: Texture2D) -> Dictionary:
+	if icon == null:
+		return {}
+	var tex: Texture2D
+	var region: Rect2
+	var atlas_tex := icon as AtlasTexture
+	if atlas_tex != null:
+		tex    = atlas_tex.atlas
+		region = atlas_tex.region
+	else:
+		tex    = icon
+		region = Rect2(Vector2.ZERO, icon.get_size())
+	if tex == null:
+		return {}
+	var src := TileSetAtlasSource.new()
+	src.texture             = tex
+	src.margins             = Vector2i(region.position.round())
+	src.texture_region_size = Vector2i(region.size.round())
+	src.create_tile(Vector2i.ZERO)
+	var source_id: int = ts.add_source(src)
+	return {"source": source_id, "coord": Vector2i.ZERO}
+
+# Wall/ore tiles get the standard shadow baked into their own tile texture
+# (compositing needs a real pixel buffer, not just a region reference) — same
+# approach as CaveWorld._add_wall_icon_source / _build_wall_tile_image.
+static func _add_wall_icon_source(ts: TileSet, icon: Texture2D) -> Dictionary:
+	var composite: Image = _build_wall_tile_image(icon)
+	if composite == null:
+		return {}
+	var tex := ImageTexture.create_from_image(composite)
+	var src := TileSetAtlasSource.new()
+	src.texture             = tex
+	src.texture_region_size = composite.get_size()
+	src.create_tile(Vector2i.ZERO)
+	var source_id: int = ts.add_source(src)
+	return {"source": source_id, "coord": Vector2i.ZERO}
+
+static func _build_wall_tile_image(icon: Texture2D) -> Image:
+	if icon == null:
+		return null
+	var icon_img: Image
+	var atlas_tex := icon as AtlasTexture
+	if atlas_tex != null and atlas_tex.atlas != null:
+		var full_img: Image = atlas_tex.atlas.get_image()
+		var region := Rect2i(Vector2i(atlas_tex.region.position.round()), Vector2i(atlas_tex.region.size.round()))
+		icon_img = full_img.get_region(region)
+	else:
+		icon_img = icon.get_image()
+	icon_img = icon_img.duplicate()
+	icon_img.convert(Image.FORMAT_RGBA8)
+	var shadow: Image = _get_shadow_overlay_image()
+	if shadow == null:
+		return icon_img
+	var composite: Image = icon_img.duplicate()
+	var pos := Vector2i((composite.get_width() - shadow.get_width()) / 2, composite.get_height() - shadow.get_height())
+	composite.blend_rect(shadow, Rect2i(Vector2i.ZERO, shadow.get_size()), pos)
+	return composite
+
+static func _get_shadow_overlay_image() -> Image:
+	if _shadow_overlay_image != null:
+		return _shadow_overlay_image
+	var tex: Texture2D = load(SHADOW_TEXTURE_PATH) as Texture2D
+	if tex == null:
+		return null
+	var img: Image = tex.get_image()
+	img = img.duplicate()
+	img.convert(Image.FORMAT_RGBA8)
+	img.resize(int(TILE_SIZE * 0.85), int(TILE_SIZE * 0.30), Image.INTERPOLATE_BILINEAR)
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			var c: Color = img.get_pixel(x, y)
+			c.a *= 0.45
+			img.set_pixel(x, y, c)
+	_shadow_overlay_image = img
+	return _shadow_overlay_image
+
+# Creates a TileSet with dimmed versions of crystal ore tiles (for the regen system)
+static func _get_dimmed_ore_tile_set() -> TileSet:
+	var ts := TileSet.new()
+	ts.tile_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	ts.add_physics_layer()
+	ts.set_physics_layer_collision_layer(0, 1)
+	ts.set_physics_layer_collision_mask(0, 1)
+	
+	var crystal_ores = [
+		PixieCaveGenerator.Tile.CRYSTAL_COPPER,
+		PixieCaveGenerator.Tile.CRYSTAL_IRON,
+		PixieCaveGenerator.Tile.CRYSTAL_SILICON,
+		PixieCaveGenerator.Tile.CRYSTAL_DIAMOND,
+	]
+	
+	for ore_type in crystal_ores:
+		var item: ItemData = load(WALL_ITEM_PATHS[ore_type]) as ItemData
+		if item == null or item.icon == null:
+			continue
+		
+		# Create dimmed version of the icon
+		var icon_img: Image
+		var atlas_tex := item.icon as AtlasTexture
+		if atlas_tex != null and atlas_tex.atlas != null:
+			var full_img: Image = atlas_tex.atlas.get_image()
+			var region := Rect2i(Vector2i(atlas_tex.region.position.round()), Vector2i(atlas_tex.region.size.round()))
+			icon_img = full_img.get_region(region)
+		else:
+			icon_img = item.icon.get_image()
+		
+		icon_img = icon_img.duplicate()
+		icon_img.convert(Image.FORMAT_RGBA8)
+		
+		# Darken the image (multiply RGB by 0.3)
+		for y in range(icon_img.get_height()):
+			for x in range(icon_img.get_width()):
+				var c: Color = icon_img.get_pixel(x, y)
+				c.r *= 0.3
+				c.g *= 0.3
+				c.b *= 0.3
+				icon_img.set_pixel(x, y, c)
+		
+		var tex := ImageTexture.create_from_image(icon_img)
+		var src := TileSetAtlasSource.new()
+		src.texture = tex
+		src.texture_region_size = Vector2i(TILE_SIZE, TILE_SIZE)
+		src.create_tile(Vector2i.ZERO)
+		var source_id: int = ts.add_source(src)
+		
+		_dimmed_ore_cells[ore_type] = {"source": source_id, "coord": Vector2i.ZERO}
+	
+	return ts
+
+# ── Paint the generated grid into the TileMapLayer ─────────────────────
+func _paint_tiles() -> void:
+	for x in range(generator.width):
+		for y in range(generator.height):
+			var grid_pos := Vector2i(x, y)
+			_paint_cell(_grid_to_cell(grid_pos), generator.grid[x][y], grid_pos)
+			# Add glow light for crystal ores
+			var tile_type: int = generator.grid[x][y]
+			if tile_type in [PixieCaveGenerator.Tile.CRYSTAL_COPPER, PixieCaveGenerator.Tile.CRYSTAL_IRON, PixieCaveGenerator.Tile.CRYSTAL_SILICON, PixieCaveGenerator.Tile.CRYSTAL_DIAMOND]:
+				_add_ore_light(_grid_to_cell(grid_pos), tile_type)
+	_paint_surrounding_walls()
+
+# One 32x32 frame of the glowing orbs strip, extracted as a standalone texture
+# (the particle sprite). Cached once and shared by every firefly emitter.
+static func _get_orb_texture() -> Texture2D:
+	if _orb_texture != null:
+		return _orb_texture
+	var img: Image = ORE_ORBS_TEX.get_image()
+	if img == null:
+		return null
+	img = img.get_region(Rect2i(0, 0, ORE_ORBS_FRAME_SIZE, ORE_ORBS_FRAME_SIZE))
+	_orb_texture = ImageTexture.create_from_image(img)
+	return _orb_texture
+
+# Builds one firefly emitter. The particles flow AROUND the emitter (a slight
+# tangential acceleration curls them into a short orbit around the ore/wall
+# point instead of lingering in place), and each one PULSES — growing then
+# shrinking in size and opacity over its lifetime — for a breathing, flowing
+# look. GPUParticles2D have no collision, so fireflies pass through everything.
+func _make_firefly_emitter(amount: int) -> GPUParticles2D:
+	var f := GPUParticles2D.new()
+	f.texture = _get_orb_texture()
+	f.amount = amount
+	f.lifetime = 2.0
+	f.preprocess = 0.8
+	f.local_coords = false
+	f.z_index = -298  # above the tilemap/light
+	f.emitting = true
+	var fm := ParticleProcessMaterial.new()
+	fm.direction = Vector3(0, -1, 0)
+	fm.spread = 180.0
+	fm.gravity = Vector3.ZERO
+	# Flow AROUND the ore: particles spawn on a ring around the emitter and
+	# drift gently outward — never lingering on the tile itself.
+	fm.initial_velocity_min = 4.0
+	fm.initial_velocity_max = 9.0
+	fm.scale_min = FIREFLY_SCALE_MIN
+	fm.scale_max = FIREFLY_SCALE_MAX
+	# Pulsating flow: each particle grows then shrinks over its lifetime.
+	var curve := Curve.new()
+	curve.add_point(Vector2(0.0, 0.45))
+	curve.add_point(Vector2(0.5, 1.0))
+	curve.add_point(Vector2(1.0, 0.45))
+	var curve_tex := CurveTexture.new()
+	curve_tex.curve = curve
+	fm.scale_curve = curve_tex
+	var grad := Gradient.new()
+	grad.colors  = PackedColorArray([Color(1, 1, 1, 0.15), Color(1, 1, 1, 1.0), Color(1, 1, 1, 0.15)])
+	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = grad
+	fm.color_ramp = ramp
+	fm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_RING
+	fm.emission_ring_radius = 10.0
+	f.process_material = fm
+	return f
+
+# Fireflies hugging the cave's interior wall surfaces: every pixie-stone wall
+# tile that borders an open floor cell gets a chance to host a tiny emitter.
+# Sampled down to WALL_FIREFLY_MAX_EMITTERS so node/particle counts stay
+# mobile-friendly.
+func _spawn_wall_fireflies() -> void:
+	var edge_cells: Array = []
+	for x in range(generator.width):
+		for y in range(generator.height):
+			if generator.grid[x][y] == PixieCaveGenerator.Tile.WALL and _has_floor_neighbor(x, y):
+				edge_cells.append(_grid_to_cell(Vector2i(x, y)))
+	if edge_cells.is_empty():
+		return
+	var step: int = maxi(1, ceili(float(edge_cells.size()) / WALL_FIREFLY_MAX_EMITTERS))
+	var count := 0
+	var i := 0
+	while i < edge_cells.size() and count < WALL_FIREFLY_MAX_EMITTERS:
+		var f := _make_firefly_emitter(FIREFLY_AMOUNT_WALL)
+		add_child(f)
+		f.global_position = _tilemap.to_global(_tilemap.map_to_local(edge_cells[i] as Vector2i))
+		count += 1
+		i += step
+
+func _has_floor_neighbor(x: int, y: int) -> bool:
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var nx: int = x + d.x
+		var ny: int = y + d.y
+		if nx < 0 or ny < 0 or nx >= generator.width or ny >= generator.height:
+			continue
+		if generator.grid[nx][ny] == PixieCaveGenerator.Tile.FLOOR:
+			return true
+	return false
+
+func _add_ore_light(cell_pos: Vector2i, ore_type: int) -> void:
+	var light := PointLight2D.new()
+	light.texture = _get_light_texture()
+	light.texture_scale = (ORE_GLOW_RADIUS_PX * 2.0) / float(LIGHT_TEXTURE_SIZE)
+	light.energy = ORE_GLOW_ENERGY
+	# Color the light based on ore type
+	match ore_type:
+		PixieCaveGenerator.Tile.CRYSTAL_COPPER:
+			light.color = Color(0.9, 0.6, 0.3)  # copper orange
+		PixieCaveGenerator.Tile.CRYSTAL_IRON:
+			light.color = Color(0.7, 0.7, 0.8)  # iron blue-gray
+		PixieCaveGenerator.Tile.CRYSTAL_SILICON:
+			light.color = Color(0.4, 0.8, 0.9)  # silicon cyan
+		PixieCaveGenerator.Tile.CRYSTAL_DIAMOND:
+			light.color = Color(0.9, 0.9, 1.0)  # diamond white-blue
+	light.z_index = -299  # just above the tilemap
+	add_child(light)
+	light.global_position = _tilemap.to_global(_tilemap.map_to_local(cell_pos))
+	_ore_lights[cell_pos] = light
+
+	# Fireflies drifting around the available ore (tiny 8px glowing specks).
+	var f := _make_firefly_emitter(FIREFLY_AMOUNT_ORE)
+	add_child(f)
+	f.global_position = _tilemap.to_global(_tilemap.map_to_local(cell_pos))
+	_ore_fireflies[cell_pos] = f
+
+# 128-tile band of pixie stone on all four sides closes the void around the
+# (non-square) grid — the generator already treats out-of-bounds as solid
+# (_cell_is_wall), so this is purely visual. Matches CaveWorld/DungeonWorld.
+func _paint_surrounding_walls() -> void:
+	var cell: Dictionary = _wall_cells.get(PixieCaveGenerator.Tile.WALL, {})
+	if cell.is_empty():
+		return
+	var half_x: int = generator.width / 2
+	var half_y: int = generator.height / 2
+	var band:  int = SURROUND_BAND_TILES
+	for cx in range(-(half_x + band), half_x + band):
+		for cy in range(-(half_y + band), half_y + band):
+			if cx >= -half_x and cx < half_x and cy >= -half_y and cy < half_y:
+				continue  # inside the generated grid — already painted
+			_tilemap.set_cell(Vector2i(cx, cy), cell["source"], cell["coord"])
+
+func _paint_cell(cell_pos: Vector2i, tile_type: int, grid_pos: Vector2i) -> void:
+	var cell: Dictionary
+	if tile_type == PixieCaveGenerator.Tile.FLOOR:
+		cell = _floor_cells[_floor_variant_index(grid_pos)] if not _floor_cells.is_empty() else {}
+	else:
+		cell = _wall_cells.get(tile_type, {})
+	if cell.is_empty():
+		return
+	_tilemap.set_cell(cell_pos, cell["source"], cell["coord"])
+
+func _floor_variant_index(grid_pos: Vector2i) -> int:
+	var h: int = (grid_pos.x * 92821) ^ (grid_pos.y * 68917)
+	return absi(h) % _floor_cells.size()
+
+# ── Pixie mobs ─────────────────────────────────────────────────────
+# Spawns a few pixies on the cave's PATHWAY (floor) tiles. The cave has no
+# day/night cycle, so they're present regardless of the time of day — this is
+# what "spawn near pixie caves regardless of the day and time" means.
+# Placement is deterministic per cave (seeded from _seed) and picks distinct
+# floor cells so pixies never start inside the ore walls.
+func _spawn_pixies() -> void:
+	var path_cells: Array = []
+	for x in range(generator.width):
+		for y in range(generator.height):
+			if generator.grid[x][y] == PixieCaveGenerator.Tile.FLOOR:
+				path_cells.append(_grid_to_cell(Vector2i(x, y)))
+	if path_cells.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed
+	var chosen: Array = path_cells.duplicate()
+	var count: int = mini(PIXIE_SPAWN_COUNT, chosen.size())
+	for i in range(count):
+		# Pick a distinct floor cell (partial Fisher-Yates on the copy).
+		var idx: int = rng.randi_range(i, chosen.size() - 1)
+		var tmp = chosen[i]
+		chosen[i] = chosen[idx]
+		chosen[idx] = tmp
+		var path_cell: Vector2i = chosen[i] as Vector2i
+		var inst: Node2D = PIXIE_SCENE.instantiate()
+		add_child(inst)
+		inst.global_position = _tilemap.to_global(_tilemap.map_to_local(path_cell)) \
+			+ Vector2(rng.randf_range(-6.0, 6.0), rng.randf_range(-6.0, 6.0))
+
+func _spawn_exit_marker() -> void:
+	var exit_portal := CavePortal.new()
+	exit_portal.mode = CavePortal.Mode.EXIT
+	add_child(exit_portal)
+	exit_portal.global_position = _tilemap.to_global(
+		_tilemap.map_to_local(_grid_to_cell(generator.entrance_tile)))
+
+# ── Mystical darkness (dim ambient only) ───────────────
+func _setup_darkness() -> void:
+	var ambient := CanvasModulate.new()
+	ambient.color = PIXIE_AMBIENT_COLOR
+	add_child(ambient)
+	add_child(_build_glow_environment())
+
+func _build_glow_environment() -> WorldEnvironment:
+	var world_env := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode   = Environment.BG_CANVAS
+	env.glow_enabled       = true
+	env.glow_intensity     = 0.9
+	env.glow_strength      = 1.1
+	env.glow_bloom         = 0.15
+	env.glow_hdr_threshold = 0.85
+	env.glow_blend_mode    = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	world_env.environment = env
+	return world_env
+
+static func _get_light_texture() -> Texture2D:
+	return Global.get_pixelated_light_texture(LIGHT_TEXTURE_SIZE)
