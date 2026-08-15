@@ -72,7 +72,7 @@ impl INode for LuaState {
         let signals: Table = self
             .lua
             .globals()
-            .get("signals")
+            .get("GODOT_PROP_signals")
             .expect("Failed to get signals");
 
         while !signals.is_empty() {
@@ -171,13 +171,13 @@ impl LuaState {
     fn prepare_lua_state(&mut self) -> Result<()> {
         let globals = self.lua.globals();
         let signals = self.lua.create_table()?;
-        globals.set("signals", signals)?;
+        globals.set("GODOT_PROP_signals", signals)?;
         // vector singleton
         globals.set("vector", LuaVector::new(0., 0.))?;
 
         // signals as functions
         let print_func = self.lua.create_function(|state, args: Variadic<Value>| {
-            let signals: Table = state.globals().get("signals")?;
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
             let print_string: Vec<String> = args
                 .iter()
                 .map(|x| x.to_string())
@@ -189,7 +189,7 @@ impl LuaState {
         globals.set("print", print_func)?;
 
         let move_func = self.lua.create_function(|state, (x, y): (Value, Value)| {
-            let signals: Table = state.globals().get("signals")?;
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
             let vector = match (x, y) {
                 (Value::Integer(x), Value::Integer(y)) => Ok(LuaVector::new(x as f32, y as f32)),
                 (Value::Number(x), Value::Number(y)) => Ok(LuaVector::new(x as f32, y as f32)),
@@ -206,21 +206,21 @@ impl LuaState {
         globals.set("move", move_func)?;
 
         let attack_func = self.lua.create_function(|state, ()| {
-            let signals: Table = state.globals().get("signals")?;
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
             insert_signal(signals, state, LuaSignal::Attack, Value::Nil)?;
             Ok(())
         })?;
         globals.set("attack", attack_func)?;
 
         let interact_func = self.lua.create_function(|state, ()| {
-            let signals: Table = state.globals().get("signals")?;
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
             insert_signal(signals, state, LuaSignal::Interact, Value::Nil)?;
             Ok(())
         })?;
         globals.set("interact", interact_func)?;
 
         let drop_item_func = self.lua.create_function(|state, quantity: Value| {
-            let signals: Table = state.globals().get("signals")?;
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
             let quantity = match quantity {
                 Value::Integer(q) => q as u32,
                 Value::Number(q) => q as u32,
@@ -232,7 +232,7 @@ impl LuaState {
         globals.set("drop_item", drop_item_func)?;
 
         let place_item_func = self.lua.create_function(|state, ()| {
-            let signals: Table = state.globals().get("signals")?;
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
             insert_signal(signals, state, LuaSignal::PlaceItem, Value::Nil)?;
             Ok(())
         })?;

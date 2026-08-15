@@ -1,8 +1,10 @@
 [gd_scene format=3 uid="uid://ba33nymo1lcdx"]
 
+[ext_resource type="Script" uid="uid://dtp0p5ucikvt3" path="res://scripts/test/test_python.gd" id="1_0qf07"]
 [ext_resource type="PackedScene" uid="uid://ljsj613w8cix" path="res://scenes/ui/code_editor.tscn" id="2_25jx0"]
 
 [node name="Node2D" type="Node2D" unique_id=1202137654]
+script = ExtResource("1_0qf07")
 
 [node name="Control" type="Control" parent="." unique_id=495409997]
 layout_mode = 3
@@ -51,3 +53,5 @@ vm = NodePath("../PythonVM")
 [node name="PythonVM" type="PythonVM" parent="." unique_id=2143334523]
 
 [connection signal="pressed" from="Control/Button" to="." method="_on_button_pressed"]
+[connection signal="code_failed" from="PythonState" to="." method="_on_python_state_code_failed"]
+[connection signal="signal_print" from="PythonState" to="." method="_on_python_state_signal_print"]
