@@ -1,11 +1,11 @@
-use std::str::FromStr;
+use std::{collections::VecDeque, str::FromStr};
 
 use anyhow::{Result, anyhow};
 use godot::prelude::*;
 use indoc::formatdoc;
 use rustpython_vm::{
     Interpreter, Settings,
-    builtins::{PyDictRef, PyListRef, PyStr},
+    builtins::{PyDictRef, PyIntRef, PyListRef, PyStr, PyStrRef, PyTupleRef},
 };
 use strum::{AsRefStr, EnumString};
 
@@ -13,6 +13,7 @@ use strum::{AsRefStr, EnumString};
 pub enum PythonSignal {
     Generic,
     Print(String),
+    Create(String, u32),
 }
 
 #[derive(GodotClass)]
@@ -33,7 +34,11 @@ impl INode for PythonVM {
 }
 
 impl PythonVM {
-    fn run_code(&self, code: &str) -> Result<Vec<PythonSignal>> {
+    fn run_code(
+        &self,
+        inventory: &Array<Gd<InventoryItem>>,
+        code: &str,
+    ) -> Result<VecDeque<PythonSignal>> {
         self.interpreter.enter(|vm| {
             let scope = vm.new_scope_with_builtins();
 
@@ -41,8 +46,11 @@ impl PythonVM {
                 r#"
                 GODOT_PROP_signals = []
 
-                def print(*objects, sep = ' ', end = '\n', file = None, flush = False):
+                def print(*objects, sep = ' ', end = '', file = None, flush = False):
                     GODOT_PROP_signals.append({{'Print': sep.join([str(o) for o in objects]) + end}})
+
+                def create(object, quantity):
+                    GODOT_PROP_signals.append({{'Create': (object, quantity)}})
 
                 {}"#,
                 code
@@ -70,6 +78,16 @@ impl PythonVM {
                                 .downcast::<PyStr>()
                                 .map_err(|_| anyhow!("Could not convert print signal (downcast error)"))?.to_string())
                             },
+                        PythonSignal::Create(_, _) => {
+                           let value: PyTupleRef = value.downcast().map_err(|_| anyhow!("Could not convert create signal (downcast error"))?;
+                           let object: PyStrRef = value
+                               .first().ok_or(anyhow!("Could not convert create signal (tuple access error)"))?
+                               .clone().downcast().map_err(|_| anyhow!("Could not convert create signal (object downcast error)"))?;
+                           let quantity: PyIntRef = value
+                               .last().ok_or(anyhow!("Could not convert create signal (tuple access error)"))?
+                               .clone().downcast().map_err(|_| anyhow!("Could not convert create signal (quantity downcast error)"))?;
+                           PythonSignal::Create(object.to_string(), quantity.as_u32_mask())
+                        },
                         PythonSignal::Generic => PythonSignal::Generic,
                     };
 
@@ -102,7 +120,7 @@ struct PythonState {
     code: GString,
     #[var]
     inventory: Array<Gd<InventoryItem>>,
-    signals: Vec<PythonSignal>,
+    signals: VecDeque<PythonSignal>,
     base: Base<Node>,
 }
 
@@ -113,17 +131,20 @@ impl INode for PythonState {
             vm: None,
             code: GString::new(),
             inventory: Array::new(),
-            signals: Vec::new(),
+            signals: VecDeque::new(),
             base,
         }
     }
 
     fn physics_process(&mut self, _: f64) {
         while !self.signals.is_empty() {
-            let signal = self.signals.pop().expect("Failed to read signal");
+            let signal = self.signals.pop_front().expect("Failed to read signal");
 
             match signal {
                 PythonSignal::Print(string) => self.signals().signal_print().emit(string),
+                PythonSignal::Create(object, quantity) => {
+                    self.signals().signal_create().emit(object, quantity)
+                }
                 PythonSignal::Generic => (),
             }
         }
@@ -138,6 +159,8 @@ impl PythonState {
     fn code_failed(error: String);
     #[signal]
     fn signal_print(string: String);
+    #[signal]
+    fn signal_create(object: String, quantity: u32);
 
     #[func]
     pub fn add_item(&mut self, name: GString, quantity: u32) {
@@ -165,18 +188,16 @@ impl PythonState {
         }
     }
 
-    pub fn _run_code(&self, code: &str) -> Result<Vec<PythonSignal>> {
+    pub fn _run_code(&self, code: &str) -> Result<VecDeque<PythonSignal>> {
         match self.vm.clone() {
             None => Err(anyhow!("No VM available.")),
-            Some(vm) => vm.bind().run_code(code),
+            Some(vm) => vm.bind().run_code(&self.inventory, code),
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::rc::Rc;
-
     use anyhow::{Result, anyhow};
     use indoc::indoc;
     use rustpython_vm::{Interpreter, PyResult, Settings};
