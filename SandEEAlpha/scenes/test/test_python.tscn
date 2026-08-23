@@ -47,11 +47,4 @@ anchor_bottom = 0.8
 grow_vertical = 1
 language = 1
 
-[node name="PythonState" type="PythonState" parent="." unique_id=949813975 node_paths=PackedStringArray("vm")]
-vm = NodePath("../PythonVM")
-
-[node name="PythonVM" type="PythonVM" parent="." unique_id=2143334523]
-
 [connection signal="pressed" from="Control/Button" to="." method="_on_button_pressed"]
-[connection signal="code_failed" from="PythonState" to="." method="_on_python_state_code_failed"]
-[connection signal="signal_print" from="PythonState" to="." method="_on_python_state_signal_print"]

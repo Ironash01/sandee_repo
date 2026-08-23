@@ -1,2 +1,5 @@
 [build]
 target-dir = "../ext_bin/"
+
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android36-clang"
