@@ -3,6 +3,49 @@ use godot::prelude::*;
 use ruff_python_ast::{Expr, Number, Operator, Stmt, UnaryOp};
 use ruff_python_parser::{Mode, ParseOptions};
 
+enum Symbol {
+    Variable(String),
+    Function(String, bool),
+    Class(String),
+}
+
+impl PartialEq<String> for Symbol {
+    fn eq(&self, other: &String) -> bool {
+        match self {
+            Symbol::Variable(this) => this == other,
+            Symbol::Function(this, _) => this == other,
+            Symbol::Class(this) => this == other,
+        }
+    }
+}
+
+#[derive(Default)]
+struct SymbolsStack {
+    stack: Vec<Vec<Symbol>>,
+}
+
+impl SymbolsStack {
+    fn add_symbol(&mut self, symbol: Symbol) {
+        if let Some(last) = self.stack.last_mut() {
+            last.push(symbol);
+        }
+    }
+
+    fn exists(&self, name: &String) -> bool {
+        self.stack
+            .iter()
+            .any(|frame| frame.iter().any(|sym| sym == name))
+    }
+
+    fn push(&mut self) {
+        self.stack.push(Vec::new());
+    }
+
+    fn pop(&mut self) {
+        self.stack.pop();
+    }
+}
+
 #[derive(Default)]
 struct Transpiler {
     indent_level: usize,
@@ -77,7 +120,7 @@ impl Transpiler {
                         })
                         .collect();
                     transpiled.push_str(&format!(
-                        "{}var {} = {{{}}}\n{}{}.assign(_{})\n",
+                        "{}var {} = {{{}}}\n{}{}.merge(_{}, true)\n",
                         self.indent(),
                         kwargs_name,
                         kwargs.join(", "),

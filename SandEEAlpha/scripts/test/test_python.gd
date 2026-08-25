@@ -14,6 +14,6 @@ func _process(delta: float) -> void:
 
 func _on_button_pressed() -> void:
 	var script = GDScript.new()
-	script.source_code = "var lol = 0.0\n\nfunc test() -> void:\n\tprint(100.0 / lol)"
+	script.source_code = "var x = int(\"definitely not an integer\")"
 	var err = script.reload()
 	print(err)
