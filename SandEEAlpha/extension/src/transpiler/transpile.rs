@@ -1,27 +1,39 @@
+use std::fmt::format;
+
 use anyhow::{Result, anyhow};
 use godot::prelude::*;
 use ruff_python_ast::{Expr, Number, Operator, Stmt, UnaryOp};
 use ruff_python_parser::{Mode, ParseOptions};
 
 enum Symbol {
+    // name
     Variable(String),
-    Function(String, bool),
-    Class(String),
+    // name, has_kwargs, has_vararg, num_args, known_kwargs
+    Function(String, bool, bool, usize, Vec<String>),
+    // name, has_kwargs, has_vararg, num_args, known_kwargs
+    Class(String, bool, bool, usize, Vec<String>),
 }
 
 impl PartialEq<String> for Symbol {
     fn eq(&self, other: &String) -> bool {
         match self {
             Symbol::Variable(this) => this == other,
-            Symbol::Function(this, _) => this == other,
-            Symbol::Class(this) => this == other,
+            Symbol::Function(this, _, _, _, _) => this == other,
+            Symbol::Class(this, _, _, _, _) => this == other,
         }
     }
 }
 
-#[derive(Default)]
 struct SymbolsStack {
     stack: Vec<Vec<Symbol>>,
+}
+
+impl Default for SymbolsStack {
+    fn default() -> Self {
+        Self {
+            stack: vec![Vec::new()],
+        }
+    }
 }
 
 impl SymbolsStack {
@@ -37,6 +49,16 @@ impl SymbolsStack {
             .any(|frame| frame.iter().any(|sym| sym == name))
     }
 
+    fn find(&self, name: &String) -> Option<&Symbol> {
+        for frame in &self.stack {
+            let symbol = frame.iter().find(|sym| *sym == name);
+            if symbol.is_some() {
+                return symbol;
+            }
+        }
+        None
+    }
+
     fn push(&mut self) {
         self.stack.push(Vec::new());
     }
@@ -49,11 +71,22 @@ impl SymbolsStack {
 #[derive(Default)]
 struct Transpiler {
     indent_level: usize,
+    symbols: SymbolsStack,
 }
 
 impl Transpiler {
-    fn indent(&self) -> String {
+    fn indent_string(&self) -> String {
         "\t".repeat(self.indent_level)
+    }
+
+    fn indent(&mut self) {
+        self.indent_level += 1;
+        self.symbols.push();
+    }
+
+    fn dedent(&mut self) {
+        self.indent_level -= 1;
+        self.symbols.pop();
     }
 
     fn transpile_statements(&mut self, statements: &[Stmt]) -> String {
@@ -67,9 +100,10 @@ impl Transpiler {
     fn transpile_statement(&mut self, statement: &Stmt) -> String {
         let transpiled = match statement {
             Stmt::FunctionDef(func) => {
-                let mut transpiled = format!("func {}(", func.name.to_string());
+                let mut transpiled = format!("func {}(", func.name.as_str());
                 let mut args = Vec::with_capacity(func.parameters.len());
                 let mut kwargs = Vec::with_capacity(func.parameters.len());
+                let mut final_args = Vec::with_capacity(func.parameters.len());
 
                 func.parameters
                     .posonlyargs
@@ -89,48 +123,53 @@ impl Transpiler {
                     }
                 });
 
-                let kwargs_name = func
+                if let Some(kwargs_name) = func
                     .parameters
                     .kwarg
                     .as_ref()
                     .and_then(|kwarg| Some(kwarg.name().as_str()))
-                    .unwrap_or("kwargs");
-
-                if !kwargs.is_empty() {
-                    transpiled
-                        .push_str(&format!("_{}: Dictionary[String, Variant], ", kwargs_name));
-                } else if func.parameters.kwarg.is_some() {
-                    transpiled.push_str(&format!("{}: Dictionary[String, Variant], ", kwargs_name));
+                {
+                    final_args.push(format!("{}: Dictionary[String, Variant]", kwargs_name));
                 }
 
-                transpiled.push_str(&args.join(", "));
+                args.iter().for_each(|arg| final_args.push(arg.to_string()));
+
+                kwargs
+                    .iter()
+                    .for_each(|(kwarg, _)| final_args.push(format!("{}", kwarg)));
 
                 if let Some(vararg) = func.parameters.vararg.as_ref() {
-                    transpiled.push_str(&format!(", ...{}: Array", vararg.name().as_str()));
+                    final_args.push(format!("...{}: Array", vararg.name().as_str()));
                 }
 
+                transpiled.push_str(&final_args.join(", "));
                 transpiled.push_str("):\n");
 
-                self.indent_level += 1;
-                if !kwargs.is_empty() {
-                    let kwargs: Vec<_> = kwargs
+                self.symbols.add_symbol(Symbol::Function(
+                    func.name.to_string(),
+                    func.parameters.kwarg.is_some(),
+                    func.parameters.vararg.is_some(),
+                    final_args.len(),
+                    kwargs
                         .iter()
-                        .map(|kwarg| {
-                            format!("\"{}\": {}", kwarg.0, self.transpile_expression(kwarg.1))
-                        })
-                        .collect();
+                        .map(|(kwargs, _)| kwargs.to_string())
+                        .collect(),
+                ));
+
+                self.indent();
+                kwargs.iter().for_each(|kwarg| {
                     transpiled.push_str(&format!(
-                        "{}var {} = {{{}}}\n{}{}.merge(_{}, true)\n",
-                        self.indent(),
-                        kwargs_name,
-                        kwargs.join(", "),
-                        self.indent(),
-                        kwargs_name,
-                        kwargs_name
+                        "{}{} = {} if {} else {}\n",
+                        self.indent_string(),
+                        kwarg.0,
+                        kwarg.0,
+                        kwarg.0,
+                        self.transpile_expression(kwarg.1)
                     ));
-                }
+                });
+
                 transpiled.push_str(&self.transpile_statements(&func.body));
-                self.indent_level -= 1;
+                self.dedent();
 
                 transpiled
             }
@@ -147,7 +186,7 @@ impl Transpiler {
             Stmt::Continue(_) => "continue".to_string(),
             _ => "# Unhandled statement".to_string(),
         };
-        format!("{}{}\n", self.indent(), transpiled)
+        format!("{}{}\n", self.indent_string(), transpiled)
     }
 
     fn transpile_expression(&mut self, expression: &Expr) -> String {
@@ -228,7 +267,7 @@ impl Transpiler {
 
                     transpiled.push_str("):\n");
 
-                    self.indent_level += 1;
+                    self.indent();
                     if !kwargs.is_empty() {
                         let kwargs: Vec<_> = kwargs
                             .iter()
@@ -238,10 +277,10 @@ impl Transpiler {
                             .collect();
                         transpiled.push_str(&format!(
                             "{}var {} = {{{}}}\n{}{}.assign(_{})\n",
-                            self.indent(),
+                            self.indent_string(),
                             kwargs_name,
                             kwargs.join(", "),
-                            self.indent(),
+                            self.indent_string(),
                             kwargs_name,
                             kwargs_name
                         ));
@@ -251,7 +290,7 @@ impl Transpiler {
                     "return {}\n",
                     self.transpile_expression(&lambda.body)
                 ));
-                self.indent_level -= 1;
+                self.dedent();
 
                 transpiled
             }
@@ -264,21 +303,83 @@ impl Transpiler {
                     .iter()
                     .map(|arg| self.transpile_expression(arg))
                     .collect();
-                let args = args.join(", ");
 
-                let kwargs: Vec<String> = kwargs
+                let kwargs: Vec<(&str, String)> = kwargs
                     .iter()
                     .map(|kw| {
                         let key = match &kw.arg {
                             Some(id) => id.as_str(),
                             None => "# what",
                         };
-                        format!("\"{}\": {}", key, self.transpile_expression(&kw.value))
+                        (key, self.transpile_expression(&kw.value))
                     })
                     .collect();
-                let kwargs = format!("{{{}}}", kwargs.join(", "));
 
-                format!("{}({}, {})", name, kwargs, args)
+                if let Some(symbol) = self.symbols.find(&name) {
+                    match symbol {
+                        Symbol::Function(name, has_kwargs, has_varargs, num_args, known_kwargs) => {
+                            println!(
+                                "Found function: {}, {}, {}, {}, {:?}",
+                                name, has_kwargs, has_varargs, num_args, known_kwargs
+                            );
+                            let mut final_args = Vec::with_capacity(*num_args);
+                            let mut num_args = *num_args;
+                            if *has_kwargs {
+                                num_args -= 1;
+                            }
+                            if *has_varargs {
+                                num_args -= 1;
+                            }
+                            let num_args = num_args - known_kwargs.len();
+
+                            let entered_kwargs: Vec<_> = known_kwargs
+                                .iter()
+                                .map(|kwarg| {
+                                    if let Some((_, value)) =
+                                        kwargs.iter().find(|(key, _)| key == kwarg)
+                                    {
+                                        value.as_str()
+                                    } else {
+                                        "null"
+                                    }
+                                })
+                                .collect();
+
+                            if *has_kwargs {
+                                let other_kwargs: Vec<_> = kwargs
+                                    .iter()
+                                    .filter(|(key, _)| !known_kwargs.contains(&key.to_string()))
+                                    .map(|(key, value)| format!("\"{}\" : {}", key, value))
+                                    .collect();
+                                final_args.push(format!("{{{}}}", other_kwargs.join(", ")));
+                            }
+
+                            if *has_varargs {
+                                args[..num_args.min(args.len())]
+                                    .iter()
+                                    .for_each(|arg| final_args.push(arg.to_string()));
+                            } else {
+                                args.iter().for_each(|arg| final_args.push(arg.to_string()));
+                            }
+
+                            entered_kwargs
+                                .iter()
+                                .for_each(|kwarg| final_args.push(kwarg.to_string()));
+
+                            if *has_varargs {
+                                if let Some(args) = args.get(num_args..) {
+                                    args.iter().for_each(|arg| final_args.push(arg.to_string()));
+                                }
+                            }
+
+                            format!("{}({})", name, final_args.join(", "))
+                        }
+                        _ => String::new(),
+                    }
+                } else {
+                    let kwargs: Vec<_> = kwargs.iter().map(|(_, value)| value.as_str()).collect();
+                    format!("{}({}, {})", name, args.join(", "), kwargs.join(", "))
+                }
             }
             Expr::StringLiteral(string) => format!("\"{}\"", string.value.to_str()),
             Expr::NumberLiteral(number) => match &number.value {
@@ -337,6 +438,7 @@ mod test {
             def print(*objects, sep = ' ', end = '', file = None, flush = False):
                 GODOT_PROP_signals.append({{'Print': sep.join([str(o) for o in objects]) + end}})
             print(\"Hello\", True, 1, 3.14, None, sep=\" separator \")
+            foo(True, 10, 2.0, \"me when\", \"var arg\", me_when=\"unknown kwarg\")
             "};
         let transpiled = transpiler.transpile(code)?;
         println!("\nOriginal:\n{}\nTranspiled:\n{}", code, transpiled);
