@@ -89,15 +89,15 @@ impl Transpiler {
         self.symbols.pop();
     }
 
-    fn transpile_statements(&mut self, statements: &[Stmt]) -> String {
+    fn transpile_statements(&mut self, statements: &[Stmt]) -> Result<String> {
         let mut transpiled = String::new();
-        statements
-            .iter()
-            .for_each(|statement| transpiled.push_str(&self.transpile_statement(statement)));
-        transpiled
+        for statement in statements {
+            transpiled.push_str(&self.transpile_statement(statement)?);
+        }
+        Ok(transpiled)
     }
 
-    fn transpile_statement(&mut self, statement: &Stmt) -> String {
+    fn transpile_statement(&mut self, statement: &Stmt) -> Result<String> {
         let transpiled = match statement {
             Stmt::FunctionDef(func) => {
                 let mut transpiled = format!("func {}(", func.name.as_str());
@@ -123,13 +123,11 @@ impl Transpiler {
                     }
                 });
 
-                if let Some(kwargs_name) = func
-                    .parameters
-                    .kwarg
-                    .as_ref()
-                    .and_then(|kwarg| Some(kwarg.name().as_str()))
-                {
-                    final_args.push(format!("{}: Dictionary[String, Variant]", kwargs_name));
+                if let Some(kwargs_name) = func.parameters.kwarg.as_ref() {
+                    final_args.push(format!(
+                        "{}: Dictionary[String, Variant]",
+                        kwargs_name.name().as_str()
+                    ));
                 }
 
                 args.iter().for_each(|arg| final_args.push(arg.to_string()));
@@ -157,163 +155,187 @@ impl Transpiler {
                 ));
 
                 self.indent();
-                kwargs.iter().for_each(|kwarg| {
+                if let Some(kwargs_name) = func.parameters.kwarg.as_ref() {
+                    self.symbols
+                        .add_symbol(Symbol::Variable(kwargs_name.name().to_string()));
+                }
+
+                args.iter()
+                    .for_each(|arg| self.symbols.add_symbol(Symbol::Variable(arg.to_string())));
+
+                for (key, value) in kwargs {
+                    self.symbols.add_symbol(Symbol::Variable(key.to_string()));
                     transpiled.push_str(&format!(
                         "{}{} = {} if {} else {}\n",
                         self.indent_string(),
-                        kwarg.0,
-                        kwarg.0,
-                        kwarg.0,
-                        self.transpile_expression(kwarg.1)
+                        key,
+                        key,
+                        key,
+                        self.transpile_expression(value)?
                     ));
-                });
+                }
 
-                transpiled.push_str(&self.transpile_statements(&func.body));
+                if let Some(vararg) = func.parameters.vararg.as_ref() {
+                    self.symbols
+                        .add_symbol(Symbol::Variable(vararg.name().to_string()));
+                }
+
+                transpiled.push_str(&self.transpile_statements(&func.body)?);
                 self.dedent();
 
-                transpiled
+                Ok(transpiled)
             }
-            Stmt::Return(ret) => {
-                if let Some(value) = ret.value.as_ref() {
-                    format!("return {}", self.transpile_expression(value))
-                } else {
-                    "return".to_string()
-                }
+            Stmt::Return(ret) => Ok(if let Some(value) = ret.value.as_ref() {
+                format!("return {}", self.transpile_expression(value)?)
+            } else {
+                "return".to_string()
+            }),
+            Stmt::For(stmt_for) => {
+                let target = self.transpile_expression(&stmt_for.target)?;
+                let iter = self.transpile_expression(&stmt_for.iter)?;
+
+                self.indent();
+                let body = self.transpile_statements(&stmt_for.body)?;
+                self.dedent();
+
+                Ok(format!("for {} in {}:\n{}", target, iter, body))
+            }
+            Stmt::While(stmt_while) => {
+                let test = self.transpile_expression(&stmt_while.test)?;
+
+                self.indent();
+                let body = self.transpile_statements(&stmt_while.body)?;
+                self.dedent();
+
+                Ok(format!("while {}:\n{}", test, body))
+            }
+            Stmt::If(stmt_if) => {
+                let test = self.transpile_expression(&stmt_if.test)?;
+
+                self.indent();
+                let body = self.transpile_statements(&stmt_if.body)?;
+                self.dedent();
+
+                let elif_elses: Result<Vec<_>> = stmt_if
+                    .elif_else_clauses
+                    .iter()
+                    .map(|elif_else| {
+                        if let Some(test) = elif_else.test.as_ref() {
+                            let test = self.transpile_expression(test)?;
+
+                            self.indent();
+                            let body = self.transpile_statements(&elif_else.body)?;
+                            self.dedent();
+                            Ok(format!("elif {}:\n{}", test, body))
+                        } else {
+                            self.indent();
+                            let body = self.transpile_statements(&elif_else.body)?;
+                            self.dedent();
+                            Ok(format!("else:\n{}", body))
+                        }
+                    })
+                    .collect();
+
+                Ok(format!(
+                    "if {}:\n{}\n{}",
+                    test,
+                    body,
+                    elif_elses?.join("\n")
+                ))
             }
             Stmt::Expr(expr) => self.transpile_expression(&expr.value),
-            Stmt::Pass(_) => "pass".to_string(),
-            Stmt::Break(_) => "break".to_string(),
-            Stmt::Continue(_) => "continue".to_string(),
-            _ => "# Unhandled statement".to_string(),
+            Stmt::Pass(_) => Ok("pass".to_string()),
+            Stmt::Break(_) => Ok("break".to_string()),
+            Stmt::Continue(_) => Ok("continue".to_string()),
+            _ => Ok("# Unhandled statement".to_string()),
         };
-        format!("{}{}\n", self.indent_string(), transpiled)
+        Ok(format!("{}{}\n", self.indent_string(), transpiled?))
     }
 
-    fn transpile_expression(&mut self, expression: &Expr) -> String {
+    fn transpile_expression(&mut self, expression: &Expr) -> Result<String> {
         match expression {
             Expr::BoolOp(op) => {
-                let values: Vec<_> = op
+                let values: Result<Vec<_>> = op
                     .values
                     .iter()
                     .map(|expr| self.transpile_expression(expr))
                     .collect();
-                values.join(&format!(" {} ", op.op.as_str()))
+                let values = values?;
+                Ok(values.join(&format!(" {} ", op.op.as_str())))
             }
             Expr::BinOp(op) => match op.op {
-                Operator::MatMult => "# Unsupported operator".to_string(),
-                Operator::FloorDiv => format!(
+                Operator::MatMult => Err(anyhow!("Unsupported operator: @")),
+                Operator::FloorDiv => Ok(format!(
                     "int(floor({} / {}))",
-                    self.transpile_expression(&op.left),
-                    self.transpile_expression(&op.right)
-                ),
-                _ => format!(
+                    self.transpile_expression(&op.left)?,
+                    self.transpile_expression(&op.right)?
+                )),
+                _ => Ok(format!(
                     "{} {} {}",
-                    self.transpile_expression(&op.left),
-                    self.transpile_expression(&op.right),
+                    self.transpile_expression(&op.left)?,
+                    self.transpile_expression(&op.right)?,
                     op.op.as_str()
-                ),
+                )),
             },
             Expr::UnaryOp(op) => match op.op {
-                UnaryOp::Not => format!("not {}", self.transpile_expression(&op.operand)),
-                _ => format!(
+                UnaryOp::Not => Ok(format!("not {}", self.transpile_expression(&op.operand)?)),
+                _ => Ok(format!(
                     "{}{}",
                     op.op.as_str(),
-                    self.transpile_expression(&op.operand)
-                ),
+                    self.transpile_expression(&op.operand)?
+                )),
             },
-            Expr::Lambda(lambda) => {
-                let mut transpiled = "func (".to_string();
-                if let Some(parameters) = lambda.parameters.as_ref() {
-                    let mut args = Vec::with_capacity(parameters.len());
-                    let mut kwargs = Vec::with_capacity(parameters.len());
+            Expr::If(expr_if) => {
+                let test = self.transpile_expression(&expr_if.test)?;
+                let body = self.transpile_expression(&expr_if.body)?;
+                let or_else = self.transpile_expression(&expr_if.orelse)?;
 
-                    parameters
-                        .posonlyargs
-                        .iter()
-                        .chain(parameters.args.iter())
-                        .for_each(|arg| {
-                            if let Some(default) = arg.default() {
-                                kwargs.push((arg.name().as_str(), default));
-                            } else {
-                                args.push(arg.name().as_str());
-                            }
-                        });
+                Ok(format!("{} if {} else {}", body, test, or_else))
+            }
+            Expr::Dict(dict) => {
+                let items: Result<Vec<_>> = dict
+                    .items
+                    .iter()
+                    .map(|item| {
+                        let key = if let Some(key) = item.key.as_ref() {
+                            self.transpile_expression(key)
+                        } else {
+                            Err(anyhow!(
+                                "Unpacking operator for dictionaries is not supported"
+                            ))
+                        }?;
+                        let value = self.transpile_expression(&item.value)?;
 
-                    parameters.kwonlyargs.iter().for_each(|kwarg| {
-                        if let Some(default) = kwarg.default() {
-                            kwargs.push((kwarg.name().as_str(), default));
-                        }
-                    });
-
-                    let kwargs_name = parameters
-                        .kwarg
-                        .as_ref()
-                        .and_then(|kwarg| Some(kwarg.name().as_str()))
-                        .unwrap_or("kwargs");
-
-                    if !kwargs.is_empty() {
-                        transpiled
-                            .push_str(&format!("_{}: Dictionary[String, Variant], ", kwargs_name));
-                    } else if parameters.kwarg.is_some() {
-                        transpiled
-                            .push_str(&format!("{}: Dictionary[String, Variant], ", kwargs_name));
-                    }
-
-                    transpiled.push_str(&args.join(", "));
-
-                    if let Some(vararg) = parameters.vararg.as_ref() {
-                        transpiled.push_str(&format!(", ...{}: Array", vararg.name().as_str()));
-                    }
-
-                    transpiled.push_str("):\n");
-
-                    self.indent();
-                    if !kwargs.is_empty() {
-                        let kwargs: Vec<_> = kwargs
-                            .iter()
-                            .map(|kwarg| {
-                                format!("\"{}\": {}", kwarg.0, self.transpile_expression(kwarg.1))
-                            })
-                            .collect();
-                        transpiled.push_str(&format!(
-                            "{}var {} = {{{}}}\n{}{}.assign(_{})\n",
-                            self.indent_string(),
-                            kwargs_name,
-                            kwargs.join(", "),
-                            self.indent_string(),
-                            kwargs_name,
-                            kwargs_name
-                        ));
-                    }
-                }
-                transpiled.push_str(&format!(
-                    "return {}\n",
-                    self.transpile_expression(&lambda.body)
-                ));
-                self.dedent();
-
-                transpiled
+                        Ok(format!("{} : {}", key, value))
+                    })
+                    .collect();
+                Ok(format!("{{{}}}", items?.join(", ")))
             }
             Expr::Call(call) => {
-                let name = self.transpile_expression(&call.func);
+                let name = self.transpile_expression(&call.func)?;
                 let args = &call.arguments.args;
                 let kwargs = &call.arguments.keywords;
 
-                let args: Vec<String> = args
+                let args: Result<Vec<_>> = args
                     .iter()
                     .map(|arg| self.transpile_expression(arg))
                     .collect();
+                let args = args?;
 
-                let kwargs: Vec<(&str, String)> = kwargs
+                let kwargs: Result<Vec<(&str, String)>> = kwargs
                     .iter()
                     .map(|kw| {
-                        let key = match &kw.arg {
-                            Some(id) => id.as_str(),
-                            None => "# what",
-                        };
-                        (key, self.transpile_expression(&kw.value))
+                        let key = if let Some(arg) = &kw.arg {
+                            Ok(arg.as_str())
+                        } else {
+                            Err(anyhow!(
+                                "Unpacking operator for dictionaries is not supported."
+                            ))
+                        }?;
+                        Ok((key, self.transpile_expression(&kw.value)?))
                     })
                     .collect();
+                let kwargs = kwargs?;
 
                 if let Some(symbol) = self.symbols.find(&name) {
                     match symbol {
@@ -331,6 +353,15 @@ impl Transpiler {
                                 num_args -= 1;
                             }
                             let num_args = num_args - known_kwargs.len();
+
+                            if args.len() < num_args {
+                                return Err(anyhow!(
+                                    "Function {} expected {} positional arguments, received {}.",
+                                    name,
+                                    num_args,
+                                    args.len()
+                                ));
+                            }
 
                             let entered_kwargs: Vec<_> = known_kwargs
                                 .iter()
@@ -372,25 +403,34 @@ impl Transpiler {
                                 }
                             }
 
-                            format!("{}({})", name, final_args.join(", "))
+                            Ok(format!("{}({})", name, final_args.join(", ")))
                         }
-                        _ => String::new(),
+                        Symbol::Variable(name) => {
+                            let kwargs: Vec<_> =
+                                kwargs.iter().map(|(_, value)| value.as_str()).collect();
+                            Ok(format!(
+                                "{}({}, {})",
+                                name,
+                                args.join(", "),
+                                kwargs.join(", ")
+                            ))
+                        }
+                        _ => Err(anyhow!("TO IMPLEMENT")),
                     }
                 } else {
-                    let kwargs: Vec<_> = kwargs.iter().map(|(_, value)| value.as_str()).collect();
-                    format!("{}({}, {})", name, args.join(", "), kwargs.join(", "))
+                    Err(anyhow!("No variable {} found", name))
                 }
             }
-            Expr::StringLiteral(string) => format!("\"{}\"", string.value.to_str()),
+            Expr::StringLiteral(string) => Ok(format!("\"{}\"", string.value.to_str())),
             Expr::NumberLiteral(number) => match &number.value {
-                Number::Int(int) => int.to_string(),
-                Number::Float(float) => float.to_string(),
-                _ => "# Complex number unhandled".to_string(),
+                Number::Int(int) => Ok(int.to_string()),
+                Number::Float(float) => Ok(float.to_string()),
+                _ => Err(anyhow!("Complex numbers are unsupported.")),
             },
-            Expr::BooleanLiteral(bool) => bool.value.to_string(),
-            Expr::NoneLiteral(_) => "null".to_string(),
-            Expr::Name(name) => name.id.to_string(),
-            _ => "# Unhandled expr".to_string(),
+            Expr::BooleanLiteral(bool) => Ok(bool.value.to_string()),
+            Expr::NoneLiteral(_) => Ok("null".to_string()),
+            Expr::Name(name) => Ok(name.id.to_string()),
+            _ => Ok("# Unhandled expr".to_string()),
         }
     }
 
@@ -399,7 +439,7 @@ impl Transpiler {
             .try_into_module()
             .ok_or(anyhow!("Failed to convert into Python module."))?
             .into_suite();
-        Ok(self.transpile_statements(&ast))
+        self.transpile_statements(&ast)
     }
 }
 
@@ -433,10 +473,11 @@ mod test {
         let mut transpiler = Transpiler::default();
         let code = indoc::indoc! {"
             def foo(posarg, arg1, arg2, kwarg1=10, kwarg2=2.0, *vararg, kwonly1=True, kwonly2=None, **keyword):
-                arg1 = 10
+                # arg1 = 10
                 pass
             def print(*objects, sep = ' ', end = '', file = None, flush = False):
-                GODOT_PROP_signals.append({{'Print': sep.join([str(o) for o in objects]) + end}})
+                # GODOT_PROP_signals.append({{'Print': sep.join([str(o) for o in objects]) + end}})
+                pass
             print(\"Hello\", True, 1, 3.14, None, sep=\" separator \")
             foo(True, 10, 2.0, \"me when\", \"var arg\", me_when=\"unknown kwarg\")
             "};
