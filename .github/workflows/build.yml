@@ -28,14 +28,14 @@ jobs:
           toolchain: stable
 
       - name: Install Rust with Android Target
-        if: matrix.os.os == android
+        if: matrix.os.os == 'android'
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: aarch64-linux-android
 
       - name: Install Android NDK
-        if: matrix.os.os == android
+        if: matrix.os.os == 'android'
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r29
