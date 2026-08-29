@@ -1,8 +1,6 @@
-use std::fmt::format;
-
 use anyhow::{Result, anyhow};
 use godot::prelude::*;
-use ruff_python_ast::{Expr, Number, Operator, Stmt, UnaryOp};
+use ruff_python_ast::{Expr, ExprContext, Number, Operator, Stmt, UnaryOp};
 use ruff_python_parser::{Mode, ParseOptions};
 
 enum Symbol {
@@ -14,12 +12,12 @@ enum Symbol {
     Class(String, bool, bool, usize, Vec<String>),
 }
 
-impl PartialEq<String> for Symbol {
-    fn eq(&self, other: &String) -> bool {
+impl PartialEq<str> for Symbol {
+    fn eq(&self, other: &str) -> bool {
         match self {
-            Symbol::Variable(this) => this == other,
-            Symbol::Function(this, _, _, _, _) => this == other,
-            Symbol::Class(this, _, _, _, _) => this == other,
+            Symbol::Variable(this) => this.as_str() == other,
+            Symbol::Function(this, _, _, _, _) => this.as_str() == other,
+            Symbol::Class(this, _, _, _, _) => this.as_str() == other,
         }
     }
 }
@@ -43,13 +41,13 @@ impl SymbolsStack {
         }
     }
 
-    fn exists(&self, name: &String) -> bool {
+    fn exists(&self, name: &str) -> bool {
         self.stack
             .iter()
             .any(|frame| frame.iter().any(|sym| sym == name))
     }
 
-    fn find(&self, name: &String) -> Option<&Symbol> {
+    fn find(&self, name: &str) -> Option<&Symbol> {
         for frame in &self.stack {
             let symbol = frame.iter().find(|sym| *sym == name);
             if symbol.is_some() {
@@ -190,6 +188,125 @@ impl Transpiler {
             } else {
                 "return".to_string()
             }),
+            Stmt::Assign(assign) => {
+                let mut transpiled = Vec::new();
+                let value = self.transpile_expression(&assign.value)?;
+                let value_len = match &*assign.value {
+                    Expr::Tuple(tuple) => Some(tuple.len()),
+                    Expr::List(list) => Some(list.len()),
+                    _ => None,
+                };
+                for target in &assign.targets {
+                    let target_str = self.transpile_expression(&target)?;
+                    match target {
+                        Expr::Tuple(target) => match value_len {
+                            Some(value_len) => {
+                                if value_len < target.len() {
+                                    return Err(anyhow!(
+                                        "Not enough values to unpack for target {} (expected {}, got {})",
+                                        target_str,
+                                        target.len(),
+                                        value_len
+                                    ));
+                                } else if value_len > target.len() {
+                                    return Err(anyhow!(
+                                        "Too many values to unpack for target {} (expected {}, got {})",
+                                        target_str,
+                                        target.len(),
+                                        value_len
+                                    ));
+                                }
+                                for (i, target) in target.elts.iter().enumerate() {
+                                    let target = self.transpile_expression(target)?;
+                                    if self.symbols.exists(&target) {
+                                        transpiled.push(format!("{} = {}[{}]", target, value, i));
+                                    } else {
+                                        transpiled
+                                            .push(format!("var {} = {}[{}]", target, value, i));
+                                        self.symbols.add_symbol(Symbol::Variable(target));
+                                    }
+                                }
+                            }
+                            None => {
+                                return Err(anyhow!(
+                                    "Cannot unpack non-iterable value {} for target {}",
+                                    value,
+                                    target_str
+                                ));
+                            }
+                        },
+                        Expr::List(target) => match value_len {
+                            Some(value_len) => {
+                                if value_len < target.len() {
+                                    return Err(anyhow!(
+                                        "Not enough values to unpack for target {} (expected {}, got {})",
+                                        target_str,
+                                        target.len(),
+                                        value_len
+                                    ));
+                                } else if value_len > target.len() {
+                                    return Err(anyhow!(
+                                        "Too many values to unpack for target {} (expected {}, got {})",
+                                        target_str,
+                                        target.len(),
+                                        value_len
+                                    ));
+                                }
+                                for (i, target) in target.elts.iter().enumerate() {
+                                    let target = self.transpile_expression(target)?;
+                                    if self.symbols.exists(&target) {
+                                        transpiled.push(format!("{} = {}[{}]", target, value, i));
+                                    } else {
+                                        transpiled
+                                            .push(format!("var {} = {}[{}]", target, value, i));
+                                        self.symbols.add_symbol(Symbol::Variable(target));
+                                    }
+                                }
+                            }
+                            None => {
+                                return Err(anyhow!(
+                                    "Cannot unpack non-iterable value {} for target {}",
+                                    value,
+                                    target_str
+                                ));
+                            }
+                        },
+                        _ => {
+                            if self.symbols.exists(&target_str) {
+                                transpiled.push(format!("{} = {}", target_str, value));
+                            } else {
+                                transpiled.push(format!("var {} = {}", target_str, value));
+                                self.symbols.add_symbol(Symbol::Variable(target_str));
+                            }
+                        }
+                    }
+                }
+                Ok(transpiled.join("\n"))
+            }
+            Stmt::AugAssign(aug_assign) => {
+                let target = self.transpile_expression(&aug_assign.target)?;
+                if self.symbols.exists(&target) {
+                    match aug_assign.op {
+                        Operator::MatMult => {
+                            Err(anyhow!("Matrix multiplication operator @ is unsupported"))
+                        }
+                        Operator::FloorDiv => Ok(format!(
+                            "{} = int(floor({} / {}))",
+                            target,
+                            target,
+                            self.transpile_expression(&aug_assign.value)?
+                        )),
+                        _ => Ok(format!(
+                            "{} {}= {}",
+                            target,
+                            aug_assign.op.as_str(),
+                            self.transpile_expression(&aug_assign.value)?
+                        )),
+                    }
+                } else {
+                    Err(anyhow!("No variable {} found", target))
+                }
+            }
             Stmt::For(stmt_for) => {
                 let target = self.transpile_expression(&stmt_for.target)?;
                 let iter = self.transpile_expression(&stmt_for.iter)?;
@@ -264,7 +381,9 @@ impl Transpiler {
                 Ok(values.join(&format!(" {} ", op.op.as_str())))
             }
             Expr::BinOp(op) => match op.op {
-                Operator::MatMult => Err(anyhow!("Unsupported operator: @")),
+                Operator::MatMult => {
+                    Err(anyhow!("Matrix multiplication operator @ is unsupported"))
+                }
                 Operator::FloorDiv => Ok(format!(
                     "int(floor({} / {}))",
                     self.transpile_expression(&op.left)?,
@@ -418,7 +537,7 @@ impl Transpiler {
                         _ => Err(anyhow!("TO IMPLEMENT")),
                     }
                 } else {
-                    Err(anyhow!("No variable {} found", name))
+                    Err(anyhow!("No callable {} found", name))
                 }
             }
             Expr::StringLiteral(string) => Ok(format!("\"{}\"", string.value.to_str())),
@@ -429,7 +548,67 @@ impl Transpiler {
             },
             Expr::BooleanLiteral(bool) => Ok(bool.value.to_string()),
             Expr::NoneLiteral(_) => Ok("null".to_string()),
-            Expr::Name(name) => Ok(name.id.to_string()),
+            Expr::Attribute(attr) => Ok(format!(
+                "{}.{}",
+                self.transpile_expression(&attr.value)?,
+                attr.attr.as_str()
+            )),
+            Expr::Subscript(subscript) => {
+                let value = self.transpile_expression(&subscript.value)?;
+                match &*subscript.slice {
+                    Expr::Tuple(_) => Err(anyhow!("Tuple subscripts are unsupported")),
+                    Expr::Slice(_) => Ok(format!(
+                        "{}.slice({})",
+                        value,
+                        self.transpile_expression(&subscript.slice)?
+                    )),
+                    _ => Ok(format!(
+                        "{}[{}]",
+                        value,
+                        self.transpile_expression(&subscript.slice)?
+                    )),
+                }
+            }
+            Expr::Name(name) => match name.ctx {
+                ExprContext::Load | ExprContext::Del => self
+                    .symbols
+                    .exists(&name.id())
+                    .then_some(name.id().to_string())
+                    .ok_or(anyhow!("No variable {} found", name.id())),
+                _ => Ok(name.id().to_string()),
+            },
+            Expr::List(list) => {
+                let elts: Result<Vec<_>> = list
+                    .elts
+                    .iter()
+                    .map(|elt| self.transpile_expression(elt))
+                    .collect();
+                Ok(format!("[{}]", elts?.join(", ")))
+            }
+            Expr::Tuple(tuple) => {
+                let elts: Result<Vec<_>> = tuple
+                    .elts
+                    .iter()
+                    .map(|elt| self.transpile_expression(elt))
+                    .collect();
+                Ok(format!("[{}]", elts?.join(", ")))
+            }
+            Expr::Slice(slice) => {
+                let lower = slice
+                    .lower
+                    .as_ref()
+                    .map_or(Ok("0".to_string()), |l| self.transpile_expression(&l))?;
+                let upper = slice
+                    .upper
+                    .as_ref()
+                    .map_or(Ok(i32::MAX.to_string()), |l| self.transpile_expression(&l))?;
+                let step = slice
+                    .step
+                    .as_ref()
+                    .map_or(Ok("1".to_string()), |l| self.transpile_expression(&l))?;
+
+                Ok(format!("{}, {}, {}", lower, upper, step))
+            }
             _ => Ok("# Unhandled expr".to_string()),
         }
     }
@@ -473,11 +652,13 @@ mod test {
         let mut transpiler = Transpiler::default();
         let code = indoc::indoc! {"
             def foo(posarg, arg1, arg2, kwarg1=10, kwarg2=2.0, *vararg, kwonly1=True, kwonly2=None, **keyword):
-                # arg1 = 10
+                arg1 = 10
                 pass
             def print(*objects, sep = ' ', end = '', file = None, flush = False):
                 # GODOT_PROP_signals.append({{'Print': sep.join([str(o) for o in objects]) + end}})
                 pass
+            a, b = c = 1, 2
+            c = d
             print(\"Hello\", True, 1, 3.14, None, sep=\" separator \")
             foo(True, 10, 2.0, \"me when\", \"var arg\", me_when=\"unknown kwarg\")
             "};

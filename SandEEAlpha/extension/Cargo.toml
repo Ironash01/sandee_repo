@@ -11,8 +11,8 @@ anyhow = "1.0.102"
 godot = "0.5.5"
 indoc = "2.0.7"
 mlua = { version = "0.12.0", features = ["luau", "send", "error-send", "anyhow"] }
-ruff_python_ast = "0.0.10"
-ruff_python_parser = "0.0.10"
+ruff_python_ast = "0.0.11"
+ruff_python_parser = "0.0.11"
 # rustpython-vm = { git = "https://github.com/RustPython/RustPython", version = "0.5.0" }
 # rustpython-vm = "0.5.0"
 strum = { version = "0.28.0", features = ["derive"] }
