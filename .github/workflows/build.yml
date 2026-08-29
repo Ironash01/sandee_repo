@@ -58,7 +58,7 @@ jobs:
           path: SandEEAlpha/ext_bin/release/interpreter.dll
 
       - name: Store artifact (Android)
-        if: matrix.os.os = 'android'
+        if: matrix.os.os == 'android'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.os.os }}
