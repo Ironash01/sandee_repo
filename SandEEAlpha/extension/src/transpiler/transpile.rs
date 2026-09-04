@@ -3,25 +3,56 @@ use godot::prelude::*;
 use ruff_python_ast::{Expr, ExprContext, Number, Operator, Stmt, UnaryOp};
 use ruff_python_parser::{Mode, ParseOptions};
 
+#[derive(Debug)]
+struct Arguments {
+    has_kwargs: bool,
+    has_vararg: bool,
+    num_args: usize,
+    known_kwargs: Vec<String>,
+}
+
+impl Arguments {
+    fn new(has_kwargs: bool, has_vararg: bool, num_args: usize, known_kwargs: Vec<String>) -> Self {
+        Self {
+            has_kwargs,
+            has_vararg,
+            num_args,
+            known_kwargs,
+        }
+    }
+}
+
+#[derive(Debug)]
 enum Symbol {
     // name
     Variable(String),
     // name, has_kwargs, has_vararg, num_args, known_kwargs
-    Function(String, bool, bool, usize, Vec<String>),
+    Function(String, Arguments),
     // name, has_kwargs, has_vararg, num_args, known_kwargs
-    Class(String, bool, bool, usize, Vec<String>),
+    Class(String, Arguments),
+}
+
+impl Symbol {
+    fn name(&self) -> &str {
+        match self {
+            Symbol::Variable(this) => this.as_str(),
+            Symbol::Function(this, _) => this.as_str(),
+            Symbol::Class(this, _) => this.as_str(),
+        }
+    }
 }
 
 impl PartialEq<str> for Symbol {
     fn eq(&self, other: &str) -> bool {
         match self {
             Symbol::Variable(this) => this.as_str() == other,
-            Symbol::Function(this, _, _, _, _) => this.as_str() == other,
-            Symbol::Class(this, _, _, _, _) => this.as_str() == other,
+            Symbol::Function(this, _) => this.as_str() == other,
+            Symbol::Class(this, _) => this.as_str() == other,
         }
     }
 }
 
+#[derive(Debug)]
 struct SymbolsStack {
     stack: Vec<Vec<Symbol>>,
 }
@@ -37,7 +68,10 @@ impl Default for SymbolsStack {
 impl SymbolsStack {
     fn add_symbol(&mut self, symbol: Symbol) {
         if let Some(last) = self.stack.last_mut() {
-            last.push(symbol);
+            match last.iter_mut().find(|sym| *sym == symbol.name()) {
+                Some(existing) => *existing = symbol,
+                None => last.push(symbol),
+            }
         }
     }
 
@@ -63,6 +97,11 @@ impl SymbolsStack {
 
     fn pop(&mut self) {
         self.stack.pop();
+    }
+
+    fn clear(&mut self) {
+        self.stack.clear();
+        self.push();
     }
 }
 
@@ -143,13 +182,15 @@ impl Transpiler {
 
                 self.symbols.add_symbol(Symbol::Function(
                     func.name.to_string(),
-                    func.parameters.kwarg.is_some(),
-                    func.parameters.vararg.is_some(),
-                    final_args.len(),
-                    kwargs
-                        .iter()
-                        .map(|(kwargs, _)| kwargs.to_string())
-                        .collect(),
+                    Arguments::new(
+                        func.parameters.kwarg.is_some(),
+                        func.parameters.vararg.is_some(),
+                        final_args.len(),
+                        kwargs
+                            .iter()
+                            .map(|(kwargs, _)| kwargs.to_string())
+                            .collect(),
+                    ),
                 ));
 
                 self.indent();
@@ -458,20 +499,17 @@ impl Transpiler {
 
                 if let Some(symbol) = self.symbols.find(&name) {
                     match symbol {
-                        Symbol::Function(name, has_kwargs, has_varargs, num_args, known_kwargs) => {
-                            println!(
-                                "Found function: {}, {}, {}, {}, {:?}",
-                                name, has_kwargs, has_varargs, num_args, known_kwargs
-                            );
-                            let mut final_args = Vec::with_capacity(*num_args);
-                            let mut num_args = *num_args;
-                            if *has_kwargs {
+                        Symbol::Function(name, func_args) => {
+                            println!("Found function: {}, {:?}", name, func_args);
+                            let mut final_args = Vec::with_capacity(func_args.num_args);
+                            let mut num_args = func_args.num_args;
+                            if func_args.has_kwargs {
                                 num_args -= 1;
                             }
-                            if *has_varargs {
+                            if func_args.has_vararg {
                                 num_args -= 1;
                             }
-                            let num_args = num_args - known_kwargs.len();
+                            let num_args = num_args - func_args.known_kwargs.len();
 
                             if args.len() < num_args {
                                 return Err(anyhow!(
@@ -482,7 +520,8 @@ impl Transpiler {
                                 ));
                             }
 
-                            let entered_kwargs: Vec<_> = known_kwargs
+                            let entered_kwargs: Vec<_> = func_args
+                                .known_kwargs
                                 .iter()
                                 .map(|kwarg| {
                                     if let Some((_, value)) =
@@ -495,16 +534,18 @@ impl Transpiler {
                                 })
                                 .collect();
 
-                            if *has_kwargs {
+                            if func_args.has_kwargs {
                                 let other_kwargs: Vec<_> = kwargs
                                     .iter()
-                                    .filter(|(key, _)| !known_kwargs.contains(&key.to_string()))
+                                    .filter(|(key, _)| {
+                                        !func_args.known_kwargs.contains(&key.to_string())
+                                    })
                                     .map(|(key, value)| format!("\"{}\" : {}", key, value))
                                     .collect();
                                 final_args.push(format!("{{{}}}", other_kwargs.join(", ")));
                             }
 
-                            if *has_varargs {
+                            if func_args.has_vararg {
                                 args[..num_args.min(args.len())]
                                     .iter()
                                     .for_each(|arg| final_args.push(arg.to_string()));
@@ -516,7 +557,7 @@ impl Transpiler {
                                 .iter()
                                 .for_each(|kwarg| final_args.push(kwarg.to_string()));
 
-                            if *has_varargs {
+                            if func_args.has_vararg {
                                 if let Some(args) = args.get(num_args..) {
                                     args.iter().for_each(|arg| final_args.push(arg.to_string()));
                                 }
@@ -614,11 +655,36 @@ impl Transpiler {
     }
 
     fn transpile(&mut self, code: &str) -> Result<String> {
+        self.symbols.clear();
+        let builtins = vec![
+            Symbol::Function(
+                "print".to_string(),
+                Arguments::new(
+                    false,
+                    true,
+                    3,
+                    vec!["sep", "end"].iter().map(|s| s.to_string()).collect(),
+                ),
+            ),
+            Symbol::Function(
+                "create".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+        ];
+        builtins
+            .into_iter()
+            .for_each(|symbol| self.symbols.add_symbol(symbol));
         let ast = ruff_python_parser::parse(code, ParseOptions::from(Mode::Module))?
             .try_into_module()
             .ok_or(anyhow!("Failed to convert into Python module."))?
             .into_suite();
-        self.transpile_statements(&ast)
+        let transpiled = self.transpile_statements(&ast);
+        println!("{:?}", self.symbols);
+        if self.symbols.exists("main") {
+            transpiled
+        } else {
+            Err(anyhow!("No main function found"))
+        }
     }
 }
 
@@ -651,6 +717,7 @@ mod test {
     fn test_transpile() -> Result<()> {
         let mut transpiler = Transpiler::default();
         let code = indoc::indoc! {"
+
             def foo(posarg, arg1, arg2, kwarg1=10, kwarg2=2.0, *vararg, kwonly1=True, kwonly2=None, **keyword):
                 arg1 = 10
                 pass
@@ -658,9 +725,10 @@ mod test {
                 # GODOT_PROP_signals.append({{'Print': sep.join([str(o) for o in objects]) + end}})
                 pass
             a, b = c = 1, 2
-            c = d
             print(\"Hello\", True, 1, 3.14, None, sep=\" separator \")
             foo(True, 10, 2.0, \"me when\", \"var arg\", me_when=\"unknown kwarg\")
+            def main():
+                pass
             "};
         let transpiled = transpiler.transpile(code)?;
         println!("\nOriginal:\n{}\nTranspiled:\n{}", code, transpiled);

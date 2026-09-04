@@ -9,11 +9,17 @@ func _ready() -> void:
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	stats_label.text = "FPS: %.3f" % Engine.get_frames_per_second()
+	
+func foo():
+	print("foo")
 
 func _on_button_pressed() -> void:
-	var script = GDScript.new()
-	script.source_code = "var x = int(\"definitely not an integer\")"
+	var script: GDScript = GDScript.new()
+	script.source_code = "extends Node\nfunc main():\n\tprint(\"test\")\n\tfoo()"
 	var err = script.reload()
-	print(err)
+	var instance: Node = script.new()
+	add_child(instance)
+	instance.main()
+	instance.queue_free()
