@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://dtp0p5ucikvt3" path="res://scripts/test/test_python.gd" id="1_0qf07"]
 [ext_resource type="PackedScene" uid="uid://ljsj613w8cix" path="res://scenes/ui/code_editor.tscn" id="2_25jx0"]
+[ext_resource type="Script" uid="uid://be52a7m1lfa56" path="res://scripts/python_state.gd" id="3_25jx0"]
 
 [node name="Node2D" type="Node2D" unique_id=1202137654]
 script = ExtResource("1_0qf07")
@@ -47,4 +48,10 @@ anchor_bottom = 0.8
 grow_vertical = 1
 language = 1
 
+[node name="PythonState" type="Node" parent="." unique_id=164227866]
+script = ExtResource("3_25jx0")
+metadata/_custom_type_script = "uid://be52a7m1lfa56"
+
 [connection signal="pressed" from="Control/Button" to="." method="_on_button_pressed"]
+[connection signal="code_failed" from="PythonState" to="." method="_on_python_state_code_failed"]
+[connection signal="signal_print" from="PythonState" to="." method="_on_python_state_signal_print"]

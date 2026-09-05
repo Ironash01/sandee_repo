@@ -23,6 +23,20 @@ impl Arguments {
 }
 
 #[derive(Debug)]
+enum PythonType {
+    None,
+    Int,
+    Float,
+    Bool,
+    String,
+    Dictionary,
+    List,
+    Tuple,
+    Class,
+    Generic,
+}
+
+#[derive(Debug)]
 enum Symbol {
     // name
     Variable(String),
@@ -500,6 +514,7 @@ impl Transpiler {
                 if let Some(symbol) = self.symbols.find(&name) {
                     match symbol {
                         Symbol::Function(name, func_args) => {
+                            let name = if name == "print" { "godot_print" } else { name };
                             println!("Found function: {}, {:?}", name, func_args);
                             let mut final_args = Vec::with_capacity(func_args.num_args);
                             let mut num_args = func_args.num_args;
@@ -615,7 +630,7 @@ impl Transpiler {
                     .symbols
                     .exists(&name.id())
                     .then_some(name.id().to_string())
-                    .ok_or(anyhow!("No variable {} found", name.id())),
+                    .ok_or(anyhow!("No symbol {} found", name.id())),
                 _ => Ok(name.id().to_string()),
             },
             Expr::List(list) => {
