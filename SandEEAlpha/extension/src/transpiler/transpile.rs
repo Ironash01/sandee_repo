@@ -22,24 +22,48 @@ impl Arguments {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum PythonType {
     None,
-    Int,
-    Float,
+    Any,
+    Number,
     Bool,
     String,
-    Dictionary,
+    Dict,
     List,
     Tuple,
     Class,
-    Generic,
+    Callable,
+}
+
+impl PythonType {
+    fn from_expr(value: &Expr, symbols: &SymbolsStack) -> Result<Self> {
+        match value {
+            Expr::Dict(_) | Expr::DictComp(_) => Ok(Self::Dict),
+            Expr::List(_) | Expr::ListComp(_) => Ok(Self::List),
+            Expr::FString(_) | Expr::TString(_) | Expr::StringLiteral(_) => Ok(Self::String),
+            Expr::NumberLiteral(_) => Ok(Self::Number),
+            Expr::BooleanLiteral(_) => Ok(Self::Bool),
+            Expr::NoneLiteral(_) => Ok(Self::None),
+            Expr::Name(name) => symbols
+                .find(&name.id)
+                .and_then(|symbol| match symbol {
+                    Symbol::Variable(_, var) => Some(var.clone()),
+                    Symbol::Class(_, _) => Some(Self::Class),
+                    Symbol::Function(_, _) => Some(Self::Callable),
+                })
+                .ok_or(anyhow!("Cannot find type of {:?}", name)),
+            Expr::Tuple(_) => Ok(Self::Tuple),
+            Expr::Call(_) => Ok(Self::Any),
+            _ => Err(anyhow!("Cannot transform {:?} to a type", value)),
+        }
+    }
 }
 
 #[derive(Debug)]
 enum Symbol {
     // name
-    Variable(String),
+    Variable(String, PythonType),
     // name, has_kwargs, has_vararg, num_args, known_kwargs
     Function(String, Arguments),
     // name, has_kwargs, has_vararg, num_args, known_kwargs
@@ -49,7 +73,7 @@ enum Symbol {
 impl Symbol {
     fn name(&self) -> &str {
         match self {
-            Symbol::Variable(this) => this.as_str(),
+            Symbol::Variable(this, _) => this.as_str(),
             Symbol::Function(this, _) => this.as_str(),
             Symbol::Class(this, _) => this.as_str(),
         }
@@ -59,7 +83,7 @@ impl Symbol {
 impl PartialEq<str> for Symbol {
     fn eq(&self, other: &str) -> bool {
         match self {
-            Symbol::Variable(this) => this.as_str() == other,
+            Symbol::Variable(this, _) => this.as_str() == other,
             Symbol::Function(this, _) => this.as_str() == other,
             Symbol::Class(this, _) => this.as_str() == other,
         }
@@ -209,15 +233,22 @@ impl Transpiler {
 
                 self.indent();
                 if let Some(kwargs_name) = func.parameters.kwarg.as_ref() {
-                    self.symbols
-                        .add_symbol(Symbol::Variable(kwargs_name.name().to_string()));
+                    self.symbols.add_symbol(Symbol::Variable(
+                        kwargs_name.name().to_string(),
+                        PythonType::Dict,
+                    ));
                 }
 
-                args.iter()
-                    .for_each(|arg| self.symbols.add_symbol(Symbol::Variable(arg.to_string())));
+                args.iter().for_each(|arg| {
+                    self.symbols
+                        .add_symbol(Symbol::Variable(arg.to_string(), PythonType::Any))
+                });
 
                 for (key, value) in kwargs {
-                    self.symbols.add_symbol(Symbol::Variable(key.to_string()));
+                    self.symbols.add_symbol(Symbol::Variable(
+                        key.to_string(),
+                        PythonType::from_expr(value, &self.symbols)?,
+                    ));
                     transpiled.push_str(&format!(
                         "{}{} = {} if {} else {}\n",
                         self.indent_string(),
@@ -229,8 +260,10 @@ impl Transpiler {
                 }
 
                 if let Some(vararg) = func.parameters.vararg.as_ref() {
-                    self.symbols
-                        .add_symbol(Symbol::Variable(vararg.name().to_string()));
+                    self.symbols.add_symbol(Symbol::Variable(
+                        vararg.name().to_string(),
+                        PythonType::List,
+                    ));
                 }
 
                 transpiled.push_str(&self.transpile_statements(&func.body)?);
@@ -271,6 +304,11 @@ impl Transpiler {
                                         value_len
                                     ));
                                 }
+                                let values = match &*assign.value {
+                                    Expr::Tuple(tuple) => &tuple.elts,
+                                    Expr::List(list) => &list.elts,
+                                    _ => unreachable!(),
+                                };
                                 for (i, target) in target.elts.iter().enumerate() {
                                     let target = self.transpile_expression(target)?;
                                     if self.symbols.exists(&target) {
@@ -278,7 +316,10 @@ impl Transpiler {
                                     } else {
                                         transpiled
                                             .push(format!("var {} = {}[{}]", target, value, i));
-                                        self.symbols.add_symbol(Symbol::Variable(target));
+                                        self.symbols.add_symbol(Symbol::Variable(
+                                            target,
+                                            PythonType::from_expr(&values[i], &self.symbols)?,
+                                        ));
                                     }
                                 }
                             }
@@ -307,6 +348,11 @@ impl Transpiler {
                                         value_len
                                     ));
                                 }
+                                let values = match &*assign.value {
+                                    Expr::Tuple(tuple) => &tuple.elts,
+                                    Expr::List(list) => &list.elts,
+                                    _ => unreachable!(),
+                                };
                                 for (i, target) in target.elts.iter().enumerate() {
                                     let target = self.transpile_expression(target)?;
                                     if self.symbols.exists(&target) {
@@ -314,7 +360,10 @@ impl Transpiler {
                                     } else {
                                         transpiled
                                             .push(format!("var {} = {}[{}]", target, value, i));
-                                        self.symbols.add_symbol(Symbol::Variable(target));
+                                        self.symbols.add_symbol(Symbol::Variable(
+                                            target,
+                                            PythonType::from_expr(&values[i], &self.symbols)?,
+                                        ));
                                     }
                                 }
                             }
@@ -331,7 +380,10 @@ impl Transpiler {
                                 transpiled.push(format!("{} = {}", target_str, value));
                             } else {
                                 transpiled.push(format!("var {} = {}", target_str, value));
-                                self.symbols.add_symbol(Symbol::Variable(target_str));
+                                self.symbols.add_symbol(Symbol::Variable(
+                                    target_str,
+                                    PythonType::from_expr(&assign.value, &self.symbols)?,
+                                ));
                             }
                         }
                     }
@@ -580,16 +632,19 @@ impl Transpiler {
 
                             Ok(format!("{}({})", name, final_args.join(", ")))
                         }
-                        Symbol::Variable(name) => {
-                            let kwargs: Vec<_> =
-                                kwargs.iter().map(|(_, value)| value.as_str()).collect();
-                            Ok(format!(
-                                "{}({}, {})",
-                                name,
-                                args.join(", "),
-                                kwargs.join(", ")
-                            ))
-                        }
+                        Symbol::Variable(name, pytype) => match pytype {
+                            PythonType::Callable => {
+                                let kwargs: Vec<_> =
+                                    kwargs.iter().map(|(_, value)| value.as_str()).collect();
+                                Ok(format!(
+                                    "{}({}, {})",
+                                    name,
+                                    args.join(", "),
+                                    kwargs.join(", ")
+                                ))
+                            }
+                            _ => Err(anyhow!("Variable {} is not callable", name)),
+                        },
                         _ => Err(anyhow!("TO IMPLEMENT")),
                     }
                 } else {
@@ -693,10 +748,9 @@ impl Transpiler {
             .try_into_module()
             .ok_or(anyhow!("Failed to convert into Python module."))?
             .into_suite();
-        let transpiled = self.transpile_statements(&ast);
-        println!("{:?}", self.symbols);
+        let transpiled = self.transpile_statements(&ast)?;
         if self.symbols.exists("main") {
-            transpiled
+            Ok(transpiled)
         } else {
             Err(anyhow!("No main function found"))
         }
@@ -732,21 +786,15 @@ mod test {
     fn test_transpile() -> Result<()> {
         let mut transpiler = Transpiler::default();
         let code = indoc::indoc! {"
-
-            def foo(posarg, arg1, arg2, kwarg1=10, kwarg2=2.0, *vararg, kwonly1=True, kwonly2=None, **keyword):
-                arg1 = 10
-                pass
-            def print(*objects, sep = ' ', end = '', file = None, flush = False):
-                # GODOT_PROP_signals.append({{'Print': sep.join([str(o) for o in objects]) + end}})
-                pass
-            a, b = c = 1, 2
-            print(\"Hello\", True, 1, 3.14, None, sep=\" separator \")
-            foo(True, 10, 2.0, \"me when\", \"var arg\", me_when=\"unknown kwarg\")
             def main():
-                pass
+                foo = ['1', '2', '3']
+                bar = ', '.join(foo)
             "};
         let transpiled = transpiler.transpile(code)?;
-        println!("\nOriginal:\n{}\nTranspiled:\n{}", code, transpiled);
+        println!(
+            "\nOriginal:\n{}\nTranspiled:\n{}\nGlobals: {:?}",
+            code, transpiled, transpiler.symbols
+        );
         Ok(())
     }
 }
