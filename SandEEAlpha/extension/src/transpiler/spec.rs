@@ -17,6 +17,30 @@ const STRING_ATTRS: &'static [&'static [&'static str]] = &[
     &["rjust", "lpad"],
     &["startswith", "begins_with"],
     &["strip", "rstrip", "lstrip"],
+    &["upper", "to_upper"],
+];
+
+const SEQ_ATTRS: &'static [&'static [&'static str]] = &[&["count", "count"], &["index", "get"]];
+
+const LIST_ATTRS: &'static [&'static [&'static str]] = &[
+    &["append", "append"],
+    &["clear", "clear"],
+    &["copy", "duplicate"],
+    &["extend", "append_array"],
+    &["insert", "insert"],
+    &["pop", "pop_back"],
+    &["remove", "erase"],
+    &["reverse", "reverse"],
+];
+
+const DICT_ATTRS: &'static [&'static [&'static str]] = &[
+    &["clear", "clear"],
+    &["copy", "duplicate"],
+    &["get", "get"],
+    &["keys", "keys"],
+    &["setdefault", "get_or_add"],
+    &["update", "merge"],
+    &["values", "values"],
 ];
 
 #[derive(Debug)]
@@ -83,6 +107,38 @@ impl PythonType {
     pub fn has_attr<'a>(&self, attr: &'a str) -> Option<Vec<&'a str>> {
         match self {
             Self::None | Self::Number | Self::Bool | Self::Callable => None,
+            Self::String => {
+                if let Some(found_attr) = STRING_ATTRS.iter().find(|a| a[0] == attr) {
+                    Some(found_attr[1..].to_vec())
+                } else {
+                    None
+                }
+            }
+            Self::Dict => {
+                if let Some(found_attr) = DICT_ATTRS.iter().find(|a| a[0] == attr) {
+                    Some(found_attr[1..].to_vec())
+                } else {
+                    None
+                }
+            }
+            Self::Tuple => {
+                if let Some(found_attr) = SEQ_ATTRS.iter().find(|a| a[0] == attr) {
+                    Some(found_attr[1..].to_vec())
+                } else {
+                    None
+                }
+            }
+            Self::List => {
+                if let Some(found_attr) = SEQ_ATTRS
+                    .iter()
+                    .chain(LIST_ATTRS.iter())
+                    .find(|a| a[0] == attr)
+                {
+                    Some(found_attr[1..].to_vec())
+                } else {
+                    None
+                }
+            }
             _ => Some(vec![attr]),
         }
     }

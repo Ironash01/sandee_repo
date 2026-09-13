@@ -686,7 +686,7 @@ mod test {
                 pass
             def main():
                 foo = ['1', '2', '3']
-                bar = ', '.join(foo)
+                bar = '   test   '.upper()
             "};
         let transpiled = transpiler.transpile(code)?;
         println!(
