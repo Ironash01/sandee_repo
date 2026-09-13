@@ -1,147 +1,8 @@
+use crate::transpiler::spec::{Arguments, PythonType, Symbol, SymbolsStack};
 use anyhow::{Result, anyhow};
 use godot::prelude::*;
 use ruff_python_ast::{Expr, ExprContext, Number, Operator, Stmt, UnaryOp};
 use ruff_python_parser::{Mode, ParseOptions};
-
-#[derive(Debug)]
-struct Arguments {
-    has_kwargs: bool,
-    has_vararg: bool,
-    num_args: usize,
-    known_kwargs: Vec<String>,
-}
-
-impl Arguments {
-    fn new(has_kwargs: bool, has_vararg: bool, num_args: usize, known_kwargs: Vec<String>) -> Self {
-        Self {
-            has_kwargs,
-            has_vararg,
-            num_args,
-            known_kwargs,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-enum PythonType {
-    None,
-    Any,
-    Number,
-    Bool,
-    String,
-    Dict,
-    List,
-    Tuple,
-    Class,
-    Callable,
-}
-
-impl PythonType {
-    fn from_expr(value: &Expr, symbols: &SymbolsStack) -> Result<Self> {
-        match value {
-            Expr::Dict(_) | Expr::DictComp(_) => Ok(Self::Dict),
-            Expr::List(_) | Expr::ListComp(_) => Ok(Self::List),
-            Expr::FString(_) | Expr::TString(_) | Expr::StringLiteral(_) => Ok(Self::String),
-            Expr::NumberLiteral(_) => Ok(Self::Number),
-            Expr::BooleanLiteral(_) => Ok(Self::Bool),
-            Expr::NoneLiteral(_) => Ok(Self::None),
-            Expr::Name(name) => symbols
-                .find(&name.id)
-                .and_then(|symbol| match symbol {
-                    Symbol::Variable(_, var) => Some(var.clone()),
-                    Symbol::Class(_, _) => Some(Self::Class),
-                    Symbol::Function(_, _) => Some(Self::Callable),
-                })
-                .ok_or(anyhow!("Cannot find type of {:?}", name)),
-            Expr::Tuple(_) => Ok(Self::Tuple),
-            Expr::Call(_) => Ok(Self::Any),
-            _ => Err(anyhow!("Cannot transform {:?} to a type", value)),
-        }
-    }
-}
-
-#[derive(Debug)]
-enum Symbol {
-    // name
-    Variable(String, PythonType),
-    // name, has_kwargs, has_vararg, num_args, known_kwargs
-    Function(String, Arguments),
-    // name, has_kwargs, has_vararg, num_args, known_kwargs
-    Class(String, Arguments),
-}
-
-impl Symbol {
-    fn name(&self) -> &str {
-        match self {
-            Symbol::Variable(this, _) => this.as_str(),
-            Symbol::Function(this, _) => this.as_str(),
-            Symbol::Class(this, _) => this.as_str(),
-        }
-    }
-}
-
-impl PartialEq<str> for Symbol {
-    fn eq(&self, other: &str) -> bool {
-        match self {
-            Symbol::Variable(this, _) => this.as_str() == other,
-            Symbol::Function(this, _) => this.as_str() == other,
-            Symbol::Class(this, _) => this.as_str() == other,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct SymbolsStack {
-    stack: Vec<Vec<Symbol>>,
-}
-
-impl Default for SymbolsStack {
-    fn default() -> Self {
-        Self {
-            stack: vec![Vec::new()],
-        }
-    }
-}
-
-impl SymbolsStack {
-    fn add_symbol(&mut self, symbol: Symbol) {
-        if let Some(last) = self.stack.last_mut() {
-            match last.iter_mut().find(|sym| *sym == symbol.name()) {
-                Some(existing) => *existing = symbol,
-                None => last.push(symbol),
-            }
-        }
-    }
-
-    fn exists(&self, name: &str) -> bool {
-        self.stack
-            .iter()
-            .any(|frame| frame.iter().any(|sym| sym == name))
-    }
-
-    fn find(&self, name: &str) -> Option<&Symbol> {
-        for frame in &self.stack {
-            let symbol = frame.iter().find(|sym| *sym == name);
-            if symbol.is_some() {
-                return symbol;
-            }
-        }
-        None
-    }
-
-    fn push(&mut self) {
-        self.stack.push(Vec::new());
-    }
-
-    fn pop(&mut self) {
-        self.stack.pop();
-    }
-
-    fn clear(&mut self) {
-        self.stack.clear();
-        self.push();
-    }
-}
 
 #[derive(Default)]
 struct Transpiler {
@@ -537,120 +398,173 @@ impl Transpiler {
                     .collect();
                 Ok(format!("{{{}}}", items?.join(", ")))
             }
-            Expr::Call(call) => {
-                let name = self.transpile_expression(&call.func)?;
-                let args = &call.arguments.args;
-                let kwargs = &call.arguments.keywords;
+            Expr::Call(call) => match &*call.func {
+                Expr::Name(name) => {
+                    let name = name.id().as_str();
+                    let args = &call.arguments.args;
+                    let kwargs = &call.arguments.keywords;
 
-                let args: Result<Vec<_>> = args
-                    .iter()
-                    .map(|arg| self.transpile_expression(arg))
-                    .collect();
-                let args = args?;
+                    let args: Result<Vec<_>> = args
+                        .iter()
+                        .map(|arg| self.transpile_expression(arg))
+                        .collect();
+                    let args = args?;
 
-                let kwargs: Result<Vec<(&str, String)>> = kwargs
-                    .iter()
-                    .map(|kw| {
-                        let key = if let Some(arg) = &kw.arg {
-                            Ok(arg.as_str())
-                        } else {
-                            Err(anyhow!(
-                                "Unpacking operator for dictionaries is not supported."
-                            ))
-                        }?;
-                        Ok((key, self.transpile_expression(&kw.value)?))
-                    })
-                    .collect();
-                let kwargs = kwargs?;
-
-                if let Some(symbol) = self.symbols.find(&name) {
-                    match symbol {
-                        Symbol::Function(name, func_args) => {
-                            let name = if name == "print" { "godot_print" } else { name };
-                            println!("Found function: {}, {:?}", name, func_args);
-                            let mut final_args = Vec::with_capacity(func_args.num_args);
-                            let mut num_args = func_args.num_args;
-                            if func_args.has_kwargs {
-                                num_args -= 1;
-                            }
-                            if func_args.has_vararg {
-                                num_args -= 1;
-                            }
-                            let num_args = num_args - func_args.known_kwargs.len();
-
-                            if args.len() < num_args {
-                                return Err(anyhow!(
-                                    "Function {} expected {} positional arguments, received {}.",
-                                    name,
-                                    num_args,
-                                    args.len()
-                                ));
-                            }
-
-                            let entered_kwargs: Vec<_> = func_args
-                                .known_kwargs
-                                .iter()
-                                .map(|kwarg| {
-                                    if let Some((_, value)) =
-                                        kwargs.iter().find(|(key, _)| key == kwarg)
-                                    {
-                                        value.as_str()
-                                    } else {
-                                        "null"
-                                    }
-                                })
-                                .collect();
-
-                            if func_args.has_kwargs {
-                                let other_kwargs: Vec<_> = kwargs
-                                    .iter()
-                                    .filter(|(key, _)| {
-                                        !func_args.known_kwargs.contains(&key.to_string())
-                                    })
-                                    .map(|(key, value)| format!("\"{}\" : {}", key, value))
-                                    .collect();
-                                final_args.push(format!("{{{}}}", other_kwargs.join(", ")));
-                            }
-
-                            if func_args.has_vararg {
-                                args[..num_args.min(args.len())]
-                                    .iter()
-                                    .for_each(|arg| final_args.push(arg.to_string()));
+                    let kwargs: Result<Vec<(&str, String)>> = kwargs
+                        .iter()
+                        .map(|kw| {
+                            let key = if let Some(arg) = &kw.arg {
+                                Ok(arg.as_str())
                             } else {
-                                args.iter().for_each(|arg| final_args.push(arg.to_string()));
-                            }
+                                Err(anyhow!(
+                                    "Unpacking operator for dictionaries is not supported."
+                                ))
+                            }?;
+                            Ok((key, self.transpile_expression(&kw.value)?))
+                        })
+                        .collect();
+                    let kwargs = kwargs?;
 
-                            entered_kwargs
-                                .iter()
-                                .for_each(|kwarg| final_args.push(kwarg.to_string()));
+                    if let Some(symbol) = self.symbols.find(name) {
+                        match symbol {
+                            Symbol::Function(name, func_args) => {
+                                let name = if name == "print" { "godot_print" } else { name };
+                                println!("Found function: {}, {:?}", name, func_args);
+                                let mut final_args = Vec::with_capacity(func_args.num_args);
+                                let mut num_args = func_args.num_args;
+                                if func_args.has_kwargs {
+                                    num_args -= 1;
+                                }
+                                if func_args.has_vararg {
+                                    num_args -= 1;
+                                }
+                                let num_args = num_args - func_args.known_kwargs.len();
 
-                            if func_args.has_vararg {
-                                if let Some(args) = args.get(num_args..) {
+                                if args.len() < num_args {
+                                    return Err(anyhow!(
+                                        "Function {} expected {} positional arguments, received {}.",
+                                        name,
+                                        num_args,
+                                        args.len()
+                                    ));
+                                }
+
+                                let entered_kwargs: Vec<_> = func_args
+                                    .known_kwargs
+                                    .iter()
+                                    .map(|kwarg| {
+                                        if let Some((_, value)) =
+                                            kwargs.iter().find(|(key, _)| key == kwarg)
+                                        {
+                                            value.as_str()
+                                        } else {
+                                            "null"
+                                        }
+                                    })
+                                    .collect();
+
+                                if func_args.has_kwargs {
+                                    let other_kwargs: Vec<_> = kwargs
+                                        .iter()
+                                        .filter(|(key, _)| {
+                                            !func_args.known_kwargs.contains(&key.to_string())
+                                        })
+                                        .map(|(key, value)| format!("\"{}\" : {}", key, value))
+                                        .collect();
+                                    final_args.push(format!("{{{}}}", other_kwargs.join(", ")));
+                                }
+
+                                if func_args.has_vararg {
+                                    args[..num_args.min(args.len())]
+                                        .iter()
+                                        .for_each(|arg| final_args.push(arg.to_string()));
+                                } else {
                                     args.iter().for_each(|arg| final_args.push(arg.to_string()));
                                 }
-                            }
 
-                            Ok(format!("{}({})", name, final_args.join(", ")))
-                        }
-                        Symbol::Variable(name, pytype) => match pytype {
-                            PythonType::Callable => {
-                                let kwargs: Vec<_> =
-                                    kwargs.iter().map(|(_, value)| value.as_str()).collect();
-                                Ok(format!(
-                                    "{}({}, {})",
-                                    name,
-                                    args.join(", "),
-                                    kwargs.join(", ")
-                                ))
+                                entered_kwargs
+                                    .iter()
+                                    .for_each(|kwarg| final_args.push(kwarg.to_string()));
+
+                                if func_args.has_vararg {
+                                    if let Some(args) = args.get(num_args..) {
+                                        args.iter()
+                                            .for_each(|arg| final_args.push(arg.to_string()));
+                                    }
+                                }
+
+                                Ok(format!("{}({})", name, final_args.join(", ")))
                             }
-                            _ => Err(anyhow!("Variable {} is not callable", name)),
-                        },
-                        _ => Err(anyhow!("TO IMPLEMENT")),
+                            Symbol::Variable(name, pytype) => match pytype {
+                                PythonType::Callable => {
+                                    let kwargs: Vec<_> =
+                                        kwargs.iter().map(|(_, value)| value.as_str()).collect();
+                                    Ok(format!(
+                                        "{}({}, {})",
+                                        name,
+                                        args.join(", "),
+                                        kwargs.join(", ")
+                                    ))
+                                }
+                                _ => Err(anyhow!("Variable {} is not callable", name)),
+                            },
+                            _ => Err(anyhow!("TO IMPLEMENT")),
+                        }
+                    } else {
+                        Err(anyhow!("No callable {} found", name))
                     }
-                } else {
-                    Err(anyhow!("No callable {} found", name))
                 }
-            }
+                Expr::Attribute(attr) => {
+                    let pytype = PythonType::from_expr(&attr.value, &self.symbols)?;
+                    let accessed_attr = attr.attr.as_str();
+                    if let Some(godot_attr) = pytype.has_attr(accessed_attr) {
+                        let args = &call.arguments.args;
+                        let kwargs = &call.arguments.keywords;
+
+                        let args: Result<Vec<_>> = args
+                            .iter()
+                            .map(|arg| self.transpile_expression(arg))
+                            .collect();
+                        let args = args?;
+
+                        let kwargs: Result<Vec<(&str, String)>> = kwargs
+                            .iter()
+                            .map(|kw| {
+                                let key = if let Some(arg) = &kw.arg {
+                                    Ok(arg.as_str())
+                                } else {
+                                    Err(anyhow!(
+                                        "Unpacking operator for dictionaries is not supported."
+                                    ))
+                                }?;
+                                Ok((key, self.transpile_expression(&kw.value)?))
+                            })
+                            .collect();
+                        let kwargs = kwargs?;
+
+                        let kwargs: Vec<_> =
+                            kwargs.iter().map(|(_, value)| value.to_string()).collect();
+
+                        let final_args: Vec<_> =
+                            args.into_iter().chain(kwargs.into_iter()).collect();
+                        Ok(godot_attr
+                            .iter()
+                            .fold(self.transpile_expression(&attr.value)?, |res, attr| {
+                                format!("{}.{}({})", res, attr, final_args.join(", "))
+                            }))
+                    } else {
+                        Err(anyhow!(
+                            "{} does not have the attribute {}.",
+                            self.transpile_expression(&attr.value)?,
+                            accessed_attr
+                        ))
+                    }
+                }
+                _ => Err(anyhow!(
+                    "Expression {} is not callable",
+                    self.transpile_expression(&call.func)?
+                )),
+            },
             Expr::StringLiteral(string) => Ok(format!("\"{}\"", string.value.to_str())),
             Expr::NumberLiteral(number) => match &number.value {
                 Number::Int(int) => Ok(int.to_string()),
@@ -725,25 +639,7 @@ impl Transpiler {
     }
 
     fn transpile(&mut self, code: &str) -> Result<String> {
-        self.symbols.clear();
-        let builtins = vec![
-            Symbol::Function(
-                "print".to_string(),
-                Arguments::new(
-                    false,
-                    true,
-                    3,
-                    vec!["sep", "end"].iter().map(|s| s.to_string()).collect(),
-                ),
-            ),
-            Symbol::Function(
-                "create".to_string(),
-                Arguments::new(false, false, 1, Vec::new()),
-            ),
-        ];
-        builtins
-            .into_iter()
-            .for_each(|symbol| self.symbols.add_symbol(symbol));
+        self.symbols.reset();
         let ast = ruff_python_parser::parse(code, ParseOptions::from(Mode::Module))?
             .try_into_module()
             .ok_or(anyhow!("Failed to convert into Python module."))?

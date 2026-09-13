@@ -1,3 +1,4 @@
+mod spec;
 mod transpile;
 
 pub mod prelude {
