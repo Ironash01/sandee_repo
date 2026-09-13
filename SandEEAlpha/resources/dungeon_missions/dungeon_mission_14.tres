@@ -4,9 +4,9 @@
 
 [resource]
 script = ExtResource("1_w46nt")
-mission_name = "Boolean Room"
+mission_name = "Lua Boolean Room"
 mission_description = "Learn about Booleans, which are a data type with two values: true and false."
 entry_resource_file = "entry_5_lua.tres"
 quiz_resource_files = Array[String](["dm14_quiz_1_lua.tres", "dm14_quiz_2_lua.tres", "dm14_quiz_3_lua.tres"])
-dungeon_index = 14
+dungeon_index = 15
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

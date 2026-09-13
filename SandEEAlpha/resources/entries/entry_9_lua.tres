@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://n4wnt0qcnr08"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_twkql"]
+
+[resource]
+script = ExtResource("1_twkql")
+entry_name = "Relational Operators"
+description = "These operators are used to compare values such as numbers or strings. These result in either true or false depending on the conditions.
+
+Operators include ‘greater than’ (>), ‘less than’ (<), ‘greater than or equal to…’ (>=), ‘less than or equal to…’ (<=), ‘equal’ (==), and ‘not equal’ (~=).
+Note that Lua's not equal' is ~= while Python's is != .
+
+The following shows how Relational operators are used: 
+a = 5
+b = 4
+print(a > b) -- prints true since a = 5 is more than b = 4
+
+x = \"Sun\"
+y = \"Moon\"
+z = \"Sun\"
+print(x == y) -- prints false
+print(x == z) -- prints true
+print(x ~= y) -- prints true, as x and y do not share the same value
+
+Comparing a number with a string will result in an error: 
+x = 1
+y = \"a\"
+print(x > y) -- error
+"
+keyword = "Relational Operators"
+category = "basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

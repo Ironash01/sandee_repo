@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://bmfe86ypc4xeg"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_cmixp"]
+
+[resource]
+script = ExtResource("1_cmixp")
+entry_name = "Arithmetic Operators"
+description = "These are basic mathematical operators such as addition (+), subtraction (-), multiplication (*), and division (/). 
+Additional Arithmetic operators include the modulo (%) and the unary negation (-) to indicate negative numbers. Here are some examples: 
+a = 1
+b = 2
+result = a + b -- adds the value of a and b
+print(result) -- prints 3
+
+a = 6 - 7 -- equals to -1
+print(a) -- prints -1
+b = 8 * 8 -- equals to 64
+c = b / 2 -- equals to 32
+d = c + -47 -- equals to -15
+print(d) -- prints -15
+
+a = 94 % 67 -- retrieves the remainder, which is 27
+print(a) -- prints 27
+"
+keyword = "Arithmetic"
+category = "basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

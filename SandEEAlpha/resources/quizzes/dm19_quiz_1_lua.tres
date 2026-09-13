@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://bgshbav42qrne"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_biaju"]
+
+[resource]
+script = ExtResource("1_biaju")
+shape = 0
+question_name = "Relational Operators"
+question = "What does print(5 > 10) return?"
+answer_short_a = "True"
+answer_short_b = "False"
+correct_short_index = 1
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

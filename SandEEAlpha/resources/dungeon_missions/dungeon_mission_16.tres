@@ -4,5 +4,8 @@
 
 [resource]
 script = ExtResource("1_o4lmh")
-dungeon_index = 16
+mission_name = "Lua Variables and Assignment "
+mission_description = "Declare variables and assign values to be used. "
+entry_resource_file = "entry_7_lua.tres"
+dungeon_index = 17
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

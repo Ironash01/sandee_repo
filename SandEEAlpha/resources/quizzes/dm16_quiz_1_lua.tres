@@ -4,4 +4,12 @@
 
 [resource]
 script = ExtResource("1_6mt7j")
+shape = 0
+question_name = "Variables and Assignment"
+question = "What symbol is used to assign a variable?"
+answer_short_a = "-"
+answer_short_b = "="
+answer_short_c = ":"
+answer_short_d = "~"
+correct_short_index = 1
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

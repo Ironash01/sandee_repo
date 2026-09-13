@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://dw0mi8knvx6f5"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_vggd7"]
+
+[resource]
+script = ExtResource("1_vggd7")
+shape = 0
+question_name = "Print"
+question = "What does print(9 + 10) print?"
+answer_short_a = "21"
+answer_short_b = "20"
+answer_short_c = "19"
+answer_short_d = "18"
+correct_short_index = 2
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

@@ -4,4 +4,19 @@
 
 [resource]
 script = ExtResource("1_vkl45")
+entry_name = "Variables and Assignment"
+description = "\"Variables have two types: global and local. For now, we will focus on creating global variables.\"
+\"Global variables do not need any kind of declarations. You can assign a value by using \"=\". However, creating a variable without an assigning a value causes an error. \"
+\"Always remember to explicitly declare a value to a variable. Some examples: \"
+a -- no explicitly declared value, will cause an error
+b = 1 -- value is ‘1’
+c = \"Carrot\" -- value is ‘Carrot’
+d = nil -- has no value, printed as nil is assigned to it, cannot be concatenated
+\"You can also assign a variable’s value using another variable. The value is copied from one variable to the other. This is simply called as Assignment. Here are some examples: \"
+a = 5
+b = a -- b takes over a’s value
+print(b) -- prints 5
+"
+keyword = "Variables and Assignment"
+category = "basics"
 metadata/_custom_type_script = "uid://c8mblthys4abt"

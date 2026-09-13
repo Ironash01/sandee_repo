@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://6l5pi00k8cv3"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_sjvau"]
+
+[resource]
+script = ExtResource("1_sjvau")
+mission_name = "Lua Relational Operators"
+mission_description = "Learn about relational operators like less than, equal to, and not equal."
+entry_resource_file = "entry_9_lua.tres"
+quiz_resource_files = Array[String](["dm19_quiz_1_lua.tres", "dm19_quiz_2_lua.tres", "dm19_quiz_3_lua.tres"])
+dungeon_index = 19
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

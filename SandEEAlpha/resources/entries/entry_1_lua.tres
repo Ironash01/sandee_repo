@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://b428vkp673w6k"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_l3lpm"]
+
+[resource]
+script = ExtResource("1_l3lpm")
+entry_name = "Lua Printing"
+description = "To print a string, number, or variable, use the function print()
+For example:
+print(\"Hello World!\") --prints 'Hello World!'
+print(2) -- prints 2
+
+You can also perform operations like addition and subtraction.
+print(14 + 16) -- prints 30"
+keyword = "Print"
+category = "basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"

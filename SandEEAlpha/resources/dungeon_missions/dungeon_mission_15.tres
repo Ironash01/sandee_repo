@@ -8,5 +8,5 @@ mission_name = "Lua Data Types Room"
 mission_description = "This room explores general details about Lua's Data Types."
 entry_resource_file = "entry_6_lua.tres"
 quiz_resource_files = Array[String](["dm15_quiz_1.tres", "dm15_quiz_2.tres", "dm15_quiz_3.tres"])
-dungeon_index = 15
+dungeon_index = 16
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

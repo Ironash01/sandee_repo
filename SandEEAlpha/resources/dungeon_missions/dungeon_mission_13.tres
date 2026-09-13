@@ -4,9 +4,9 @@
 
 [resource]
 script = ExtResource("1_rdtyl")
-mission_name = "Number and String Room"
+mission_name = "Lua Number and String Room"
 mission_description = "Learn about Numbers and Strings, which are common data types. "
 entry_resource_file = "entry_4_lua.tres"
 quiz_resource_files = Array[String](["dm13_quiz_1.tres", "dm13_quiz_2.tres", "dm13_quiz_3.tres", "dm13_quiz_4.tres", "dm13_quiz_5.tres"])
-dungeon_index = 13
+dungeon_index = 14
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

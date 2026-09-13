@@ -4,4 +4,17 @@
 
 [resource]
 script = ExtResource("1_tihj7")
+shape = 0
+question_name = "Variables and Assignment"
+question = "What is the value of the 'c' variable?
+a = 5
+b = 10
+c = 15
+d = 20
+x = c"
+answer_short_a = "5"
+answer_short_b = "10"
+answer_short_c = "15"
+answer_short_d = "20"
+correct_short_index = 2
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://bnbumr6babjpn"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_fx75e"]
+
+[resource]
+script = ExtResource("1_fx75e")
+shape = 0
+question_name = "Arithmetic Operators"
+question = "What does the modulus (%) operator do?"
+answer_short_a = "Return the sum"
+answer_short_b = "Return the quotient"
+answer_short_c = "Return the remainder"
+answer_short_d = "Return the diference"
+correct_short_index = 2
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

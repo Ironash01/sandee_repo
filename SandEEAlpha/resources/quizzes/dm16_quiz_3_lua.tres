@@ -4,4 +4,8 @@
 
 [resource]
 script = ExtResource("1_k8l4v")
+shape = 2
+question_name = "Variables and Assignment"
+question = "Create a variable, assign the string \"Spider\", and print it."
+answer_output = "Spider"
 metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

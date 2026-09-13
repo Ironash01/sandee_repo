@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://s3rgqlvsjete"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_swli5"]
+
+[resource]
+script = ExtResource("1_swli5")
+shape = 0
+question_name = "Logical Operators"
+question = "What does the 'not' keyword do?"
+answer_short_a = "Checks if both are true"
+answer_short_b = "Checks if at least one is true"
+answer_short_c = "Negates the value"
+correct_short_index = 2
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

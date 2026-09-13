@@ -4,9 +4,9 @@
 
 [resource]
 script = ExtResource("1_nukfm")
-mission_name = "Lexical and Syntax Room"
+mission_name = "Lua Lexical and Syntax Room"
 mission_description = "This exercise teaches you the lexical and syntax conventions of Lua. This means how to properly name identifiers for variables."
 entry_resource_file = "entry_2_lua.tres"
 quiz_resource_files = Array[String](["dm_11_quiz_1.lua", "dm_11_quiz_2.lua", "dm_11_quiz_3.lua"])
-dungeon_index = 11
+dungeon_index = 12
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

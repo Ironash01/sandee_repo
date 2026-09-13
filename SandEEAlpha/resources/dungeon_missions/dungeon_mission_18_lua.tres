@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://bdyvu4d0i0onx"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_u3w50"]
+
+[resource]
+script = ExtResource("1_u3w50")
+mission_name = "Lua Arithmetic Operators"
+mission_description = "Learn how to perform arithmetic operators such as addition, subtraction and multiplication.
+"
+entry_resource_file = "entry_8_lua.tres"
+quiz_resource_files = Array[String](["dm18_quiz_1_lua.tres", "dm18_quiz_2_lua.tres", "dm18_quiz_3_lua.tres"])
+dungeon_index = 18
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

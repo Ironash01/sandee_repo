@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://wgn8xjw27gpu"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_qd2ei"]
+
+[resource]
+script = ExtResource("1_qd2ei")
+shape = 2
+question_name = "Print"
+question = "Print the string \"Hello!\""
+answer_output = "Hello!"
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://o8atvl4kygum"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_rbnwj"]
+
+[resource]
+script = ExtResource("1_rbnwj")
+shape = 0
+question_name = "Print"
+question = "Which of the following cannot be printed by the print() function"
+answer_short_a = "numbers"
+answer_short_b = "strings"
+answer_short_c = "functions"
+answer_short_d = "variables"
+correct_short_index = 2
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

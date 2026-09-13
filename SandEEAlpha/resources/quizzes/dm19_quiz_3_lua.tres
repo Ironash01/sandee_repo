@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://bu0qd1ubjq4si"]
+
+[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_rug6i"]
+
+[resource]
+script = ExtResource("1_rug6i")
+shape = 0
+question_name = "Relational Operators"
+question = "What is the symbol for \"not equal\" in Lua?"
+answer_short_a = "!="
+answer_short_b = "~="
+answer_short_c = "-="
+answer_short_d = ":="
+correct_short_index = 1
+metadata/_custom_type_script = "uid://d1g3k0mq7l5wj"

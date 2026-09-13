@@ -4,9 +4,9 @@
 
 [resource]
 script = ExtResource("1_muhtf")
-mission_name = "Concatenation Room"
+mission_name = "Lua Concatenation Room"
 mission_description = "This mission utilizes an operation called concatenation."
 entry_resource_file = "entry_3_lua.tres"
 quiz_resource_files = Array[String](["dm12_quiz_1_lua.tres", "dm12_quiz_2_lua.tres", "dm12_quiz_3_lua.tres"])
-dungeon_index = 12
+dungeon_index = 13
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

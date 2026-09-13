@@ -1,0 +1,34 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3 uid="uid://gjltectv0kw1"]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_sbypu"]
+
+[resource]
+script = ExtResource("1_sbypu")
+entry_name = "Logical Operators"
+description = "These include ‘and’, ‘or’, and ‘not’. Logical operators are used to evaluate expressions.
+
+\"Logical operators consider the values ‘false’ and ‘nil’ as false, and ‘true’ along with everything else is considered as true.\"
+\"The ‘and’ and ‘or’ operations are used to compare values if they are true or false.\"
+\"‘and’ outputs false if at least one value is false and outputs true if both values are true. ‘or’ on the other hand outputs true if at least one value is true and outputs false if both values are false.\"
+\"To put it simply, ‘and’ needs both values to be true to output true, while ‘or’ only needs at least one true value. Otherwise, it outputs false.\"
+print(false and false) -- prints false, both are false
+print(true and false) -- prints false, not the same
+print(true and true) -- prints true, both are true
+
+print(false or false) -- prints false, both are false
+print(true or false) -- prints true, has true
+print(true or true) -- prints true, both are true
+Logical operators are useful for making comparisons to make conditions. If the comparison meets a certain condition (either true or false), you can utilize it to run a specific chunk of code.
+
+The last Logical operator is ‘not’ which negates a given value, i.e. converts true to false and vice versa. Some examples include: 
+print(not true) -- prints out false
+print(not false) -- prints out true
+print(not 5) -- prints out false
+
+These examples combine the logical expressions: 
+print(not true and true) -- prints false, ‘and’ returns a false argument
+print(not true or true) -- prints true, ‘or’ returns a true argument
+"
+keyword = "Logical Operators"
+category = "basics"
+metadata/_custom_type_script = "uid://c8mblthys4abt"
