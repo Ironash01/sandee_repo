@@ -178,6 +178,47 @@ impl SymbolsStack {
                 "create".to_string(),
                 Arguments::new(false, false, 1, Vec::new()),
             ),
+            Symbol::Function(
+                "len".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "range".to_string(),
+                Arguments::new(
+                    false,
+                    false,
+                    3,
+                    vec!["end", "step"].iter().map(|s| s.to_string()).collect(),
+                ),
+            ),
+            Symbol::Function(
+                "int".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "float".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "bool".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "abs".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "min".to_string(),
+                Arguments::new(false, true, 3, Vec::new()),
+            ),
+            Symbol::Function(
+                "max".to_string(),
+                Arguments::new(false, true, 3, Vec::new()),
+            ),
+            Symbol::Function(
+                "pow".to_string(),
+                Arguments::new(false, false, 2, Vec::new()),
+            ),
         ]]
     }
 }

@@ -682,6 +682,8 @@ mod test {
     fn test_transpile() -> Result<()> {
         let mut transpiler = Transpiler::default();
         let code = indoc::indoc! {"
+            def baz(arg1, arg2, /, *args):
+                pass
             def main():
                 foo = ['1', '2', '3']
                 bar = ', '.join(foo)
