@@ -240,12 +240,7 @@ impl SymbolsStack {
             ),
             Symbol::Function(
                 "range".to_string(),
-                Arguments::new(
-                    false,
-                    false,
-                    3,
-                    vec!["end", "step"].iter().map(|s| s.to_string()).collect(),
-                ),
+                Arguments::new(false, true, 1, Vec::new()),
             ),
             Symbol::Function(
                 "int".to_string(),

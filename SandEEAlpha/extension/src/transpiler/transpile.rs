@@ -277,13 +277,26 @@ impl Transpiler {
             }
             Stmt::For(stmt_for) => {
                 let target = self.transpile_expression(&stmt_for.target)?;
-                let iter = self.transpile_expression(&stmt_for.iter)?;
+                if stmt_for.target.is_name_expr() {
+                    let iter = self.transpile_expression(&stmt_for.iter)?;
+                    let iter_type = PythonType::from_expr(&stmt_for.iter, &self.symbols)?;
 
-                self.indent();
-                let body = self.transpile_statements(&stmt_for.body)?;
-                self.dedent();
+                    self.indent();
+                    match iter_type {
+                        PythonType::String => self
+                            .symbols
+                            .add_symbol(Symbol::Variable(target.clone(), PythonType::String)),
+                        _ => self
+                            .symbols
+                            .add_symbol(Symbol::Variable(target.clone(), PythonType::Any)),
+                    }
+                    let body = self.transpile_statements(&stmt_for.body)?;
+                    self.dedent();
 
-                Ok(format!("for {} in {}:\n{}", target, iter, body))
+                    Ok(format!("for {} in {}:\n{}", target, iter, body))
+                } else {
+                    Err(anyhow!("{} target for for loops is unsupported.", target))
+                }
             }
             Stmt::While(stmt_while) => {
                 let test = self.transpile_expression(&stmt_while.test)?;
@@ -644,7 +657,7 @@ impl Transpiler {
             .try_into_module()
             .ok_or(anyhow!("Failed to convert into Python module."))?
             .into_suite();
-        let transpiled = self.transpile_statements(&ast)?;
+        let transpiled = self.transpile_statements(ast.as_slice())?;
         if self.symbols.exists("main") {
             Ok(transpiled)
         } else {
@@ -687,6 +700,8 @@ mod test {
             def main():
                 foo = ['1', '2', '3']
                 bar = '   test   '.upper()
+                for i in range(3):
+                    print(i)
             "};
         let transpiled = transpiler.transpile(code)?;
         println!(
