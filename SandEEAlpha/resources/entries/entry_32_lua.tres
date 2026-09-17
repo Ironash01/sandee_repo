@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Arithmetic"
+description = "Lua supports standard arithmetic operators for mathematical operations.
+
++ addition, - subtraction, * multiplication, / division
+% modulus (remainder), ^ exponentiation
+
+print(10 + 5)   -- 15
+print(10 - 3)   -- 7
+print(4 * 3)    -- 12
+print(10 / 3)   -- 3.333...
+print(10 % 3)   -- 1
+print(2 ^ 8)    -- 256
+
+Lua uses 64-bit double precision for all numbers. There is no separate integer type."
+keyword = "math"
+language = "lua"
+category = "Easy"

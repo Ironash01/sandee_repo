@@ -37,6 +37,13 @@ func sword_slash_radius() -> int:
 # ── Inventory icon ────────────────────────────────────────────────
 @export var icon: Texture2D
 
+# ── Inventory stacking ─────────────────────────────────────────────
+## Whether this item can stack in inventory slots
+@export var stackable: bool = true
+
+## Maximum number of items per stack (1-999)
+@export_range(1, 999) var max_stack_size: int = 99
+
 # ── Placement (block / door only) ────────────────────────────────
 ## Enable to allow this item to be placed in the world
 @export var is_placeable: bool = false
@@ -94,14 +101,18 @@ func sword_slash_radius() -> int:
 ## Scene instantiated when this item is placed on the map
 @export var place_scene_path: String = ""
 
+# ── Validation: tools cannot stack ──────────────────────────────────
+func _validate_property(property: Dictionary) -> void:
+	if property["name"] == "stackable" and stackable:
+		# Tools (weapons, pickaxes, swords) cannot stack
+		if is_sword or sword_level > 0 or pickaxe_level > 0:
+			property["value"] = false
+
 # ── Helper: build the inventory dict the game uses internally ─────
-func to_dict() -> Dictionary:
+# Returns the canonical {"data": ItemData, "quantity": int} slot format
+# used by Global.Hotbar / Global.Inventory / chest_block etc.
+func to_dict(quantity: int = 1) -> Dictionary:
 	return {
-		"quantity":          1,
-		"type":              item_type,
-		"name":              item_name,
-		"effect":            effect,
-		"texture":           icon,
-		"scene_path":        "res://scenes/ui/InventoryItem.tscn",
-		"place_scene_path":  place_scene_path if is_placeable else "",
+		"data":     self,
+		"quantity": quantity,
 	}

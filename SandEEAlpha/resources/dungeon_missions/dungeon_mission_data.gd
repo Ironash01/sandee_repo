@@ -3,14 +3,16 @@ class_name DungeonMissionData
 
 # ── Dungeon mission (drives one procedurally generated dungeon) ────
 # One file per mission, e.g. dungeon_mission_1.tres. Links a teachable
-# knowledge entry to the quizzes that verify it. The dungeon generator
+# knowledge entry to the embedded questions that verify it. The dungeon generator
 # builds a randomized path/layout from these fields:
 #   entry_resource_file  → the KnowledgeEntry placed on the knowledge altar
 #                          (first room). Interacting records it + unlocks its
 #                          keyword in the player's encyclopedia.
-#   quiz_resource_files  → QuizQuestion files presented by the quiz altar in
-#                          the final room. All must be answered correctly for
-#                          the exit to open and the dungeon to be cleared.
+#   questions            → the quiz altar's questions, embedded INLINE in this
+#                          resource as DungeonQuestion sub-resources (no separate
+#                          quiz .tres files). Each has a type dropdown (MCQ or
+#                          COMPILER). All must be answered correctly for the exit
+#                          to open and the dungeon to be cleared.
 #   size_modifier        → dropdown dungeon grid tier: 64x64, 128x128 or 256x256.
 #   altar_amount         → altar/checkpoint rooms to generate (the entry altar's
 #                          room is always the first one; the rest are spawned as
@@ -22,7 +24,7 @@ class_name DungeonMissionData
 @export var mission_name: String = ""            # shown in the mission list
 @export_multiline var mission_description: String = ""
 @export var entry_resource_file: String = ""     # file name, e.g. "entry_1_lua.tres"
-@export var quiz_resource_files: Array[String] = []  # e.g. ["quiz_1_lua.tres", "quiz_2_lua.tres"]
+@export var questions: Array[DungeonQuestion] = []  # inline quiz questions (MCQ / COMPILER)
 @export var dungeon_index: int = 1               # matches the mission's dungeon_index in Global.missions
 @export var reward_item_path: String = "res://resources/items/lua_core.tres"
 @export_enum("64x64", "128x128", "256x256") var size_modifier: int = 1
@@ -36,11 +38,3 @@ func id() -> String:
 # Resolved against the loaded registries in Global (see load_knowledge_data).
 func entry() -> KnowledgeEntry:
 	return Global.get_knowledge_entry_file(entry_resource_file) if not entry_resource_file.is_empty() else null
-
-func quizzes() -> Array[QuizQuestion]:
-	var out: Array[QuizQuestion] = []
-	for f in quiz_resource_files:
-		var q: QuizQuestion = Global.get_quiz_file(f)
-		if q != null:
-			out.append(q)
-	return out

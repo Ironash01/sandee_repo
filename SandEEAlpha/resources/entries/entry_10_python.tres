@@ -4,4 +4,26 @@
 
 [resource]
 script = ExtResource("1_g070l")
-metadata/_custom_type_script = "uid://c8mblthys4abt"
+entry_name = "Function"
+description = "In Python a function is a reusable block of code that only runs when you call it. We define a function with the def keyword, give it a name, and add parentheses after the name.
+
+Here is a sample code using a function:
+
+def my_function():
+    print(\"Hello from a function\")
+
+my_function()
+
+The line def my_function(): defines the function, and the indented line under it is the body that runs when the function is called. Nothing happens until we call it with my_function().
+
+A function can also take values called parameters, and it can send a value back to the caller with the return keyword. For example:
+
+def greet(name):
+    return \"Hello \" + name
+
+print(greet(\"World\"))
+
+Here the function greet takes a name, returns a greeting string, and print shows the result Hello World."
+keyword = "def"
+language = "python"
+category = "Hard"

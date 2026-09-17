@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua print()"
+description = "In Lua, print() sends text to the output console. Strings must be wrapped in double quotes.
+
+To print a word in Lua:
+
+print(\"hello\")
+
+You can also print numbers directly, without quotes:
+
+print(42)
+
+And you can print multiple values by separating them with commas:
+
+print(\"hello\", \"world\")
+
+Note: Lua uses double quotes for strings. Using print without parentheses or quotes will cause an error."
+keyword = "print"
+language = "lua"
+category = "Easy"

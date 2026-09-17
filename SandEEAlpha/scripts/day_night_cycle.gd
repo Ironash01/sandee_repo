@@ -22,6 +22,7 @@ const STORM_EASE_SPEED: float = 0.15  # blend fraction per second toward target
 var _storm_blend: float = 0.0
 
 var _sky_gradient: Gradient
+var _debug_log_timer: float = 0.0
 
 func _ready() -> void:
 	Global.day_night_cycle = self
@@ -50,9 +51,17 @@ func _process(delta: float) -> void:
 	Global.time_of_day = time_of_day
 	_update_color(delta)
 	_update_day_state()
+	# Diagnostic heartbeat — logs time_of_day + flag every 5 seconds.
+	_debug_log_timer += delta
+	if _debug_log_timer >= 5.0:
+		_debug_log_timer = 0.0
+		print("[DayNight] time_of_day=", "%.3f" % time_of_day, " Global.is_daytime=", Global.is_daytime)
 
 func is_daytime() -> bool:
-	return time_of_day < 0.5
+	# The sky gradient becomes visibly dark around 0.55–0.6 (between sunset
+	# at 0.5 and midnight at 0.75).  Use 0.58 so the flag flips when the
+	# sky actually looks like night, not at the mathematical midpoint.
+	return time_of_day < 0.58
 
 # Debug command (/daynight) — instantly snaps to the opposite period's
 # midpoint (noon / midnight) instead of just flipping by 0.5, so the jump is
@@ -61,6 +70,7 @@ func toggle_period() -> void:
 	time_of_day = 0.75 if is_daytime() else 0.25
 	_update_color(0.0)
 	_update_day_state()
+	print("[DayNight] toggle_period | time_of_day=", time_of_day, " is_daytime()=", is_daytime(), " Global.is_daytime=", Global.is_daytime)
 
 func _update_color(delta: float) -> void:
 	var target_blend: float = STORM_MAX_BLEND if Global.snowstorm_active else 0.0

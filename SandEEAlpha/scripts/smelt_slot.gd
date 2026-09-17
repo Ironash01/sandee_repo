@@ -10,6 +10,8 @@ signal item_clicked
 
 var accept_drops: bool = true
 
+const SLOT_ICON_MARGIN: float = 8.0
+
 var _icon: TextureRect = null
 
 func _init() -> void:
@@ -20,7 +22,7 @@ func _init() -> void:
 	_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-	var m: float = 8.0 * Global.ui_scale
+	var m: float = SLOT_ICON_MARGIN * Global.ui_scale
 	_icon.offset_left   = int(m)
 	_icon.offset_top    = int(m)
 	_icon.offset_right  = -int(m)
@@ -31,13 +33,26 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	var sz: float = Global.ITEM_SLOT_SIZE * Global.ui_scale
 	custom_minimum_size = Vector2(sz, sz)
+	# Keep the slot a SQUARE. The furnace row is a tall HBox (input+fuel stack
+	# sets its height), so without these the output slot stretches along the
+	# cross axis into a rectangle and the icon/sprite no longer fits.
+	size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	size_flags_vertical   = Control.SIZE_SHRINK_CENTER
 
 func set_icon(tex: Texture2D, alpha: float = 1.0) -> void:
 	_icon.texture  = tex
 	_icon.modulate = Color(1, 1, 1, alpha)
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.22, 0.32, 0.58, 1.0), false, 1.5)
+	# Draw the border box to FIT the item square: the icon is inset by
+	# SLOT_ICON_MARGIN on each side, so drawing the box at the same inset
+	# makes it hug the item instead of leaving a gap around it.
+	var m: float = _icon_margin()
+	draw_rect(Rect2(Vector2(m, m), size - Vector2(m, m) * 2.0),
+		Color(0.22, 0.32, 0.58, 1.0), false, 1.5)
+
+func _icon_margin() -> float:
+	return SLOT_ICON_MARGIN * Global.ui_scale
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton \

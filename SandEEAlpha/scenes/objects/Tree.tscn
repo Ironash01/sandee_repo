@@ -1,10 +1,10 @@
 [gd_scene format=3 uid="uid://bjiajyv2oikxy"]
 
 [ext_resource type="Script" uid="uid://b4oss0t26p2pl" path="res://scripts/tree.gd" id="1_tree"]
-[ext_resource type="Texture2D" uid="uid://cjyaahgcveroy" path="res://sprites/tree/new_tree.webp" id="2_f8e6q"]
+[ext_resource type="Texture2D" uid="uid://besybs3vy5arr" path="res://sprites/tree/tree.png" id="2_f8e6q"]
 
 [sub_resource type="RectangleShape2D" id="RectShape_tree"]
-size = Vector2(40, 60)
+size = Vector2(28, 20)
 
 [sub_resource type="CircleShape2D" id="CircleShape_interact"]
 radius = 48.0
@@ -19,10 +19,12 @@ hframes = 1
 [node name="StaticBody2D" type="StaticBody2D" parent="." unique_id=1214510744]
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="StaticBody2D" unique_id=341098234]
-position = Vector2(0, -30)
+position = Vector2(0, -10)
 shape = SubResource("RectShape_tree")
 
 [node name="InteractArea" type="Area2D" parent="." unique_id=1961155463]
+collision_layer = 0
+collision_mask = 4
 
 [node name="InteractShape" type="CollisionShape2D" parent="InteractArea" unique_id=1052882180]
 shape = SubResource("CircleShape_interact")

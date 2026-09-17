@@ -73,6 +73,8 @@ position = Vector2(-0.5, 20)
 shape = SubResource("RectangleShape2D_4g2s1")
 
 [node name="Area2D" type="Area2D" parent="Sprite2D" unique_id=672872807]
+collision_layer = 0
+collision_mask = 4
 
 [node name="interact_shape" type="CollisionShape2D" parent="Sprite2D/Area2D" unique_id=918113828]
 shape = SubResource("CircleShape2D_emi2p")

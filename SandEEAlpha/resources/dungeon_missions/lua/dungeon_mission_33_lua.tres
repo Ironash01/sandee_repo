@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua33blg"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "What does the 'not' operator return when applied to true in Lua?"
+answer_a = "true"
+answer_b = "false"
+answer_c = "nil"
+answer_d = "0"
+correct_index = 1
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that prints true if both variables a and b are true. Set a = true and b = true."
+language = "lua"
+starter_code = "local a = true\nlocal b = true\nprint(a and b)"
+answer_output = "true"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that prints true if at least one of variables x or y is true. Set x = false and y = true."
+language = "lua"
+starter_code = "local x = false\nlocal y = true\nprint(x or y)"
+answer_output = "true"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Boolean Logic"
+mission_description = "Learn how to use and, or, and not operators for boolean logic in Lua."
+entry_resource_file = "entry_33_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 33
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

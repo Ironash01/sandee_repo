@@ -4,6 +4,7 @@ extends CharacterBody2D
 const SPRINT_MULTIPLIER:   float = 1.8
 
 const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png")
+const SWING_SCRIPT: GDScript = preload("res://scripts/sword_swing_effect.gd")
 
 @onready var sprite:           AnimatedSprite2D = $PlayerSprite
 @onready var interaction_shape: CollisionShape2D = $Area2D/InteractionCol
@@ -14,6 +15,11 @@ static var _shared_frames: SpriteFrames = null
 
 var input_direction: Vector2 = Vector2.ZERO
 var _last_dir:   String = "south"   # default facing
+
+# Fired whenever a swing animation actually plays. World backends (overworld
+# grass cutting, etc.) connect to this so their swing-coupled gameplay runs
+# on the same trigger regardless of which world scene is active.
+signal swing_performed
 var _sprinting:          bool  = false
 var _stamina_exhausted:  bool  = false
 var _move_mission_done:      bool  = false
@@ -97,7 +103,8 @@ func _ready() -> void:
 	sprite.sprite_frames = _shared_frames
 	sprite.scale = Vector2(0.980, 0.980)
 	# Offset tuned to sit under the feet — PlayerCol's collision box
-	# (position.y 6.5, half-height 16.5) bottoms out around y=23.
+	# (waist-high band, position.y 17, half-height 6) bottoms out at y=23,
+	# same as the sprite's feet.
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 14.0), Vector2(0.8, 0.4), 0.35))
 	add_child(MissionGuideArrow.new())
 	sprite.play("idle_south")
@@ -167,7 +174,9 @@ func get_input() -> void:
 	velocity = input_direction * movement_speed * (SPRINT_MULTIPLIER if _sprinting else 1.0) * storm_mult
 
 # The player's origin sits at chest height — the sprite (48x48 @ 0.98 scale,
-# centered on the origin) bottoms out around +23px, same as PlayerCol's box.
+# centered on the origin) bottoms out around +23px, where PlayerCol's
+# waist-high collision band also ends (the head/shoulders above it no longer
+# collide, the classic top-down overlap behavior).
 # Sorting by the origin meant a tree (anchored at its trunk base, same
 # int(y/32) bucket) that the player pressed against from the south tied with
 # the player and, being added later, drew OVER the player's head. The sort
@@ -177,6 +186,12 @@ func get_input() -> void:
 # bottom-anchored sprite.
 const YSORT_FEET_OFFSET: float = 23.0   # sprite/collision bottom below the origin
 const YSORT_TIEBREAK:    float = 16.0   # half a tile — player wins ties when south of an object's base
+
+# World-space Y of the feet — the reference world.gd's _update_grass_sort
+# compares against each walkable grass tuft's root line (see grass.gd's
+# root_y()). Kept here so the feet offset has a single source of truth.
+func sort_feet_y() -> float:
+	return global_position.y + YSORT_FEET_OFFSET
 
 # ── Knockback (mob/projectile hits) ───────────────────────────────
 # A decaying velocity impulse applied on top of input movement. Set via
@@ -198,12 +213,17 @@ func facing_vector() -> Vector2:
 # ── Invincibility frames (0.3s after being hit) ─────────────────────
 var _invincible_until_ms: int = 0
 const INVINCIBILITY_MS: int = 300
+# Visual-only red flash duration — longer than invincibility so a hit reads
+# clearly (Terraria-style), without extending the i-frame gameplay window.
+var _hit_flash_until_ms: int = 0
+const HIT_FLASH_MS: int = 1000
 
 func is_invincible() -> bool:
 	return Time.get_ticks_msec() < _invincible_until_ms
 
 func become_invincible() -> void:
 	_invincible_until_ms = Time.get_ticks_msec() + INVINCIBILITY_MS
+	_hit_flash_until_ms  = Time.get_ticks_msec() + HIT_FLASH_MS
 
 func _physics_process(delta: float) -> void:
 	if get_tree().paused:
@@ -213,8 +233,11 @@ func _physics_process(delta: float) -> void:
 	# Knockback rides on top of the player's own velocity.
 	velocity += _knockback
 	_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
-	# Red flash while in the post-hit invincibility frames.
-	sprite.modulate = Color(1.0, 0.30, 0.30, 1.0) if is_invincible() else Color.WHITE
+	# Red flash for ~1s on hit (longer than the invincibility window) so a
+	# landed hit reads clearly; settles back to white after.
+	sprite.modulate = Color(1.0, 0.30, 0.30, 1.0) \
+		if (is_invincible() or Time.get_ticks_msec() < _hit_flash_until_ms) \
+		else Color.WHITE
 	if not _move_mission_done and input_direction != Vector2.ZERO:
 		_move_mission_done = true
 		Global.complete_mission("move")
@@ -283,10 +306,12 @@ func _teleport_to_open_spot() -> void:
 # ── Boat / water helpers ──────────────────────────────────────────
 
 # Clamp velocity per-axis so the player can slide along a shoreline.
+# Mirrors PlayerCol's waist-high box: 20x12 at (0, 17) — keep in sync with
+# player.tscn (and _cell_blocked_by_player in world.gd / cave_world.gd).
 func _clamp_velocity_for_water(water_layer: TileMapLayer, delta: float) -> void:
 	const HALF_W: float = 10.0
-	const HALF_H: float = 16.5
-	const OY:     float = 6.5
+	const HALF_H: float = 6.0
+	const OY:     float = 17.0
 
 	if velocity.x != 0.0:
 		var sx: float     = sign(velocity.x)
@@ -473,7 +498,57 @@ func _get_closest_dir(vec: Vector2) -> String:
 			best_dir = d["name"]
 	return best_dir
 
+# ── Swing facing-lock ─────────────────────────────────────────────
+# While a swing is playing the player is locked to the facing direction they
+# started the swing from — turning the character mid-swing would break the
+# arc's alignment. world.gd calls _trigger_swing() when the player swings.
+var _swing_lock_until_ms: int = 0
+var _active_swing:        Node = null   # the live swing effect (single instance)
+const SWING_LOCK_MS:     int = 240   # a touch longer than the swing effect
+
+# Public: perform a swing with whatever item is currently held. Callable from
+# any interaction (plain click, block/tool breaking, tree chopping) so the
+# swing effect plays regardless of how the input event is consumed — this is
+# the single entry point the whole game routes swings through. The effect is
+# spawned as a CHILD of the player so it anchors to the character and travels
+# with them, oriented to the current facing. Only one swing is live at a time
+# (a new one is ignored until the current has finished and freed itself).
+func swing_held_item() -> bool:
+	var icon: Texture2D = null
+	var damage: float  = 0.0
+	var held: Variant = Global.get_hotbar_item()
+	if held != null and (held as Dictionary).get("data") != null:
+		var data: ItemData = (held as Dictionary)["data"] as ItemData
+		if data != null:
+			icon = data.icon
+			# Only a sword deals combat damage; the amount scales with the
+			# sword level (see ItemData.sword_damage, = sword_level + 3).
+			if data.is_sword:
+				damage = float(data.sword_damage())
+	return _trigger_swing(icon, damage)
+
+# Spawns the swing effect as a child of the player. Returns false if it was
+# ignored — a swing already live, or no icon to swing with.
+func _trigger_swing(icon: Texture2D, damage: float = 0.0) -> bool:
+	# Ignore while a swing is still playing — no overlapping swings.
+	if _active_swing != null and is_instance_valid(_active_swing):
+		return false
+	if icon == null:
+		return false
+	var fx: Node2D = SWING_SCRIPT.new() as Node2D
+	if fx == null:
+		return false
+	fx.set("_icon", icon)
+	fx.set("_dir", _last_dir)
+	fx.set("_damage", damage)
+	_active_swing = fx
+	add_child(fx)
+	_swing_lock_until_ms = Time.get_ticks_msec() + SWING_LOCK_MS
+	swing_performed.emit()
+	return true
+
 func _update_animation() -> void:
+	var locked := Time.get_ticks_msec() < _swing_lock_until_ms
 	if input_direction == Vector2.ZERO:
 		sprite.speed_scale = 1.0
 		var anim := "idle_" + _last_dir.replace("-", "_")
@@ -481,7 +556,8 @@ func _update_animation() -> void:
 			sprite.play(anim)
 	else:
 		sprite.speed_scale = SPRINT_MULTIPLIER if _sprinting else 1.0
-		_last_dir = _get_closest_dir(input_direction)
+		if not locked:
+			_last_dir = _get_closest_dir(input_direction)
 		var anim := "walk_" + _last_dir.replace("-", "_")
 		if sprite.animation != anim:
 			sprite.play(anim)
@@ -564,8 +640,15 @@ func _input(event: InputEvent) -> void:
 				Global.complete_mission("open_inventory")
 		return
 
-	if Global.any_ui_open() or Global.pause_menu_open:
+	if Global.any_ui_open() or Global.pause_menu_open or Global.block_mode:
 		return
+	# Plain left-click swings the held item. This runs from the PLAYER, which
+	# exists in every world backend (overworld, cave, pixie cave, dungeon), so
+	# the swing animation plays no matter which scene is active. Shift+click is
+	# reserved for destroying placed blocks/tools, so it doesn't swing.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+			and event.pressed and not Input.is_key_pressed(KEY_SHIFT):
+		swing_held_item()
 
 func apply_item_effect(item) -> void:
 	match item["effect"]:

@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Coroutines"
+description = "Coroutines in Lua provide cooperative multitasking. They can be paused and resumed.
+
+Creating a coroutine:
+
+local co = coroutine.create(function()
+    coroutine.yield(1)
+    coroutine.yield(2)
+    return 3
+end)
+
+Resuming:
+
+print(coroutine.resume(co))  -- true  1
+print(coroutine.resume(co))  -- true  2
+print(coroutine.resume(co))  -- true  3
+
+coroutine.yield pauses execution and returns a value. coroutine.resume continues it. The first return value of resume is a success boolean."
+keyword = "coroutine"
+language = "lua"
+category = "Medium"

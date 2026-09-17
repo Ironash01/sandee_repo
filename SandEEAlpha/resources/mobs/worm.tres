@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="MobCombatData" format=3 uid="uid://dwaruoi21pp17"]
+
+[ext_resource type="Script" uid="uid://di4f1xh6lclpd" path="res://resources/mobs/combat.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+mob_name = "Desert Worm"
+ai_type = "WORM"
+damage = 20.0
+health = 250.0
+speed = 100.0
+spawn_desert = true
+max_spawn = 5

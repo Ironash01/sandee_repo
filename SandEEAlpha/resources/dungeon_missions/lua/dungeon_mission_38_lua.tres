@@ -1,0 +1,45 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua38err"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "Which function safely calls a function in Lua and catches any errors?"
+answer_a = "try.call"
+answer_b = "safe.call"
+answer_c = "pcall"
+answer_d = "catch.call"
+correct_index = 2
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that uses pcall to call a function that divides 10 by 0, and prints the success status and error message."
+language = "lua"
+starter_code = "local ok, err = pcall(function()\n    return 10 / 0\nend)\nprint(ok)\nprint(err)"
+answer_output = "false\nattempt to perform arithmetic on a zero value"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 0
+question = "What does pcall return when the function succeeds?"
+answer_a = "nil, error"
+answer_b = "true, return_value"
+answer_c = "false, nil"
+answer_d = "return_value"
+correct_index = 1
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Error Handling"
+mission_description = "Learn how to handle errors in Lua using pcall and xpcall for safe function calls."
+entry_resource_file = "entry_38_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 38
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

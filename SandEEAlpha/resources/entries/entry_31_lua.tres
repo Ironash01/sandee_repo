@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Functions"
+description = "In Lua, functions are defined with the function keyword and ended with end. Use return to send a value back.
+
+Function definition:
+
+function add(a, b)
+    return a + b
+end
+
+Calling a function:
+
+print(add(3, 4))  -- 7
+
+Functions can return multiple values:
+
+function swap(a, b)
+    return b, a
+end
+
+Lua functions are first-class values, so you can assign them to variables and pass them as arguments."
+keyword = "function"
+language = "lua"
+category = "Easy"

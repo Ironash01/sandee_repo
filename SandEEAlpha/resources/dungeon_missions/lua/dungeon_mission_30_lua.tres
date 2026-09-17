@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua30lop"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that uses a for loop to print the numbers 1 through 5."
+language = "lua"
+starter_code = "for i = 1, 5 do\n    print(i)\nend"
+answer_output = "1\n2\n3\n4\n5"
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 0
+question = "Which loop repeats at least once before checking its condition in Lua?"
+answer_a = "for"
+answer_b = "while"
+answer_c = "repeat"
+answer_d = "do"
+correct_index = 2
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that uses a while loop to count from 1 to 3, printing each number."
+language = "lua"
+starter_code = "local i = 1\nwhile i <= 3 do\n    print(i)\n    i = i + 1\nend"
+answer_output = "1\n2\n3"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Loops"
+mission_description = "Learn how to use for, while, and repeat loops in Lua to iterate over data."
+entry_resource_file = "entry_30_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 30
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

@@ -15,5 +15,6 @@ item_type = "block"
 icon = SubResource("AtlasTexture_cs")
 is_placeable = true
 is_craftable = true
+block_level = 8
 place_scene_path = "res://scenes/objects/CraftingStation.tscn"
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

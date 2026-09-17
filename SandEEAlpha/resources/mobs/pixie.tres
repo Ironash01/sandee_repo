@@ -1,6 +1,6 @@
-[gd_resource type="Resource" script_class="MobCombatData" format=3]
+[gd_resource type="Resource" script_class="MobCombatData" format=3 uid="uid://cn4n5kkb7yuit"]
 
-[ext_resource type="Script" path="res://resources/mobs/combat.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://di4f1xh6lclpd" path="res://resources/mobs/combat.gd" id="1_script"]
 
 [resource]
 script = ExtResource("1_script")
@@ -8,13 +8,6 @@ mob_name = "Pixie"
 ai_type = "PIXIE"
 damage = 10.0
 health = 100.0
-is_boss = false
 speed = 45.0
-spawn_during_day = true
-spawn_during_night = true
-spawn_plains = false
-spawn_desert = false
-spawn_snowy = false
-spawn_ocean = false
 min_spawn = 2
 max_spawn = 5

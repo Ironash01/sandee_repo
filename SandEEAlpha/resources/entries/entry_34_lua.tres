@@ -1,0 +1,24 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Pattern Matching"
+description = "Lua uses string.match with patterns (not regex) to find substrings.
+
+Common pattern classes:
+%d  digits, %a  letters, %s  whitespace, %w  alphanumeric
+
+print(string.match(\"abc123\", \"%d+\"))  -- 123
+print(string.match(\"Hello World\", \"%a+\"))  -- Hello
+
+The + modifier means one or more. You can capture groups:
+
+local _, num = string.match(\"id:42\", \"(%a+):(%d+)\")
+print(num)  -- 42
+
+Lua patterns are simpler than regex but sufficient for most string parsing."
+keyword = "string.match"
+language = "lua"
+category = "Medium"

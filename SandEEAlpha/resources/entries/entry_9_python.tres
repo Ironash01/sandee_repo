@@ -4,4 +4,21 @@
 
 [resource]
 script = ExtResource("1_po8qd")
-metadata/_custom_type_script = "uid://c8mblthys4abt"
+entry_name = "Looping"
+description = "In Python we use loops to repeat a block of code. The while loop repeats as long as its condition stays True, and it stops when the condition becomes False or when we break out of it.
+
+Here is a sample code using a while loop:
+
+number = 0
+while True:
+    print(f\"Number is {number}!\")
+    number += 1
+    if number >= 10:
+        break
+
+We start by declaring number = 0. The condition after while is checked before every repetition, and since it is True the loop keeps running. Inside the loop we print the current number, add 1 to it with number += 1, and once number reaches 10 the if statement runs break, which leaves the loop.
+
+Remember: the body of the loop must be indented, and a loop with a condition that never becomes False runs forever unless you break out of it."
+keyword = "while"
+language = "python"
+category = "Hard"

@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://bxi6jirtf8iif"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_5ptq8"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_e17m5"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_1h3wg"]
+atlas = ExtResource("1_5ptq8")
+region = Rect2(96, 96, 32, 32)
+
+[resource]
+script = ExtResource("1_e17m5")
+item_name = "Iron Sword"
+description = "Made of some very hard ores."
+item_type = "weapon"
+is_sword = true
+sword_level = 30
+icon = SubResource("AtlasTexture_1h3wg")
+stackable = false
+is_craftable = true
+pickaxe_level = 1
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -6,15 +6,17 @@ class_name GrassTuft
 # grass, not how a tuft renders itself). Instantiate via GRASS_SCENE, then
 # call setup() once.
 #
-# Node structure mirrors Tree.tscn's visual/collision parts: Node2D root
-# (this script) + child Sprite2D (visual) + StaticBody2D/CollisionShape2D
-# (solid — grass blocks the player, see world.gd's cutting system). Does
-# NOT have its own InteractArea/Area2D like Tree.tscn does, on purpose —
-# see Cutting below.
+# Node structure: Node2D root (this script) + child Sprite2D (visual).
+# Grass is WALKABLE — no StaticBody2D/CollisionShape2D anymore: the player
+# wades through it with the blades covering their lower body (see the
+# Walkable y-sort section below and world.gd's _update_grass_sort for how
+# the layering works). Does NOT have its own InteractArea/Area2D like
+# Tree.tscn does, on purpose — see Cutting below.
 
 # ── Source art ────────────────────────────────────────────────────
 const GRASS_TEX:    Texture2D = preload("res://sprites/ground/grass.png")
 const GRASS_SHADER: Shader    = preload("res://shaders/grass_sway.gdshader")
+const GRASS_CUT_BURST_SCRIPT: GDScript = preload("res://scripts/grass_cut_burst.gd")
 const FRAME_COUNT:  int = 6   # grass.png is a 576x96 strip, 6 frames of 96x96
 const FRAME_SIZE:   int = 96
 # grass.png has real transparent padding below the visible roots within each
@@ -64,7 +66,7 @@ const SORT_ORIGIN_OFFSET_PX: float = 15.0
 # O(1) dictionary-lookup pattern _destroy_hovered_block() already uses for
 # placed blocks, no physics monitoring involved at all, and the swing is
 # instant (no hold timer) so this tuft just exposes cut() (to remove
-# itself). See world.gd's _try_cut_grass_with_sword.
+# itself). See world.gd's _on_swing_performed / _cut_grass_row.
 
 static var _frames:   Array          = []    # Array[ImageTexture], lazily built, shared
 static var _material: ShaderMaterial = null  # lazily built, shared by every instance
@@ -149,6 +151,22 @@ static func get_grass_material() -> ShaderMaterial:
 
 var _tile: Vector2i = Vector2i.ZERO
 
+# ── Walkable y-sort (driven by world.gd's _update_grass_sort) ─────────
+# Grass has NO collision — the player wades through it, blades covering
+# their lower body. Instead of a StaticBody2D, the world temporarily
+# raises a tuft's z_index above the player's while the player's feet are
+# inside this tuft's blade band AND north of its root line, and restores
+# static_z otherwise. static_z is the bucket this tuft sorts at vs
+# trees/blocks/other tufts whenever the player is not overlapping it.
+var static_z: int = 0
+
+# World-space Y of the visible root line — the sort reference the world
+# compares the player's feet against. World tufts are anchored with their
+# origin AT the ground anchor (see _setup_world_tuft); placed grass is
+# centered on its tile, so its roots sit half a tile lower.
+func root_y() -> float:
+	return global_position.y + (TILE_SIZE * 0.5 if item_data != null else 0.0)
+
 # Set on the block-placement path only — lets world.gd's save/load serialize
 # a player-placed grass tuft like any other placed block (node.get("item_data")).
 # Null for world-gen tufts, which aren't tracked in _placed_blocks at all.
@@ -163,6 +181,7 @@ var item_data: ItemData = null
 #     block anchor. The tuft keeps its 6-frame look variety + sway shader,
 #     with frame/flip picked from the cell once the caller's position lands.
 func setup(ground_anchor: Variant, tile: Vector2i = Vector2i.ZERO) -> void:
+	add_to_group("Grass")   # sword-swing hitbox cuts anything in this group
 	if ground_anchor is ItemData:
 		_setup_placed_block(ground_anchor as ItemData)
 		return
@@ -197,6 +216,7 @@ func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 	var tile_top_y: float = ground_anchor.y - TILE_SIZE - BASE_EXTRA_OFFSET_PX
 	var sort_y:     float = tile_top_y + SORT_ORIGIN_OFFSET_PX
 	z_index = int(sort_y / TILE_SIZE)
+	static_z = z_index
 
 	# One-time write (not per-frame) so the shared shader's ruffle falloff is
 	# measured from this tuft's ground anchor — see grass_sway.gdshader.
@@ -227,9 +247,16 @@ func _finish_placed_block() -> void:
 	_sprite.flip_h  = absi(h >> 8) % 2 == 1
 	_sprite.set_instance_shader_parameter("root_pos", global_position + Vector2(0.0, _sprite.position.y))
 	z_index = int(global_position.y / TILE_SIZE)
+	static_z = z_index
 
 # ── Cutting surface (driven externally by world.gd) ───────────────────
 func cut() -> void:
+	# Green blade burst at the tuft (spawned as a sibling so it survives this
+	# tuft's free).
+	var burst: Node2D = GRASS_CUT_BURST_SCRIPT.new() as Node2D
+	if burst != null and get_parent() != null:
+		get_parent().add_child(burst)
+		burst.global_position = global_position + Vector2(0.0, -12.0)
 	# Use the global reference rather than get_parent() to avoid coupling to
 	# scene structure — same convention tree.gd uses.
 	var world: Node = Global.world_node

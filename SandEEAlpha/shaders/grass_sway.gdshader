@@ -18,7 +18,9 @@ uniform vec2  player_pos                           = vec2(0.0, -100000.0);
 uniform float push_radius : hint_range(0.0, 300.0) = 28.0;
 uniform float push_amount : hint_range(0.0, 150.0) = 42.0;
 uniform float shake_speed : hint_range(0.0, 40.0)  = 20.0;
-uniform float shake_amount : hint_range(0.0, 30.0) = 5.0;
+// Shake is deliberately subtle — a hint of tremble rather than a jitter, so
+// the lean-away reads cleanly on top of the slow wind sway.
+uniform float shake_amount : hint_range(0.0, 30.0) = 2.0;
 
 // Per-instance anchor position, set once at spawn (see world.gd
 // _spawn_grass_at → set_instance_shader_parameter). Falloff MUST be measured

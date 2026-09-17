@@ -1,0 +1,34 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://cd5iptpbbpou4"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+question = "What would be the output of this code?
+
+is_rainy = true
+print(is_rainy)"
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "In this exercise you should declare a variable is_student and put a boolean value true."
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+question = "In this exercise you shall determine the output from the statemenyt below.
+
+Today is a rainy day and I can't go outside.
+
+is_rainy = true
+print(is_rainy)"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "What is boolean?"
+mission_description = "In this dungeon you will know how the boolean keyword works."
+entry_resource_file = "entry_4_python.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 4
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

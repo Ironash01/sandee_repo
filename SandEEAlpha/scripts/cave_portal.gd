@@ -6,7 +6,8 @@ class_name CavePortal
 # the whole entrance, it gets a yellow outline and a left-click on it pops the
 # same confirm dialog (Enter/Cancel) that dispatches to
 # Global.game_node.enter_cave(self). The instant walk-in trigger only remains
-# for the EXIT marker back inside the cave (brown square + "EXIT" label).
+# for the EXIT marker back inside the cave (cave_exit.png sprite + the same
+# yellow highlight).
 #
 # The ENTER portal is invisible — it only supplies the proximity Area2D (sized
 # to the whole entrance structure via set_interact_rect), the highlight and
@@ -18,8 +19,10 @@ enum Mode { ENTER, EXIT }
 
 const TILE_SIZE:    int   = 32
 const COLOR_ENTER:  Color = Color(0.16, 0.55, 0.25, 1.0)
-const COLOR_EXIT:   Color = Color(0.55, 0.30, 0.15, 1.0)
 const RETRIGGER_COOLDOWN: float = 1.0  # guards against re-firing the instant the player spawns back on top of it
+
+# The EXIT marker's sprite (replaces the old orange square + "EXIT" text).
+const CAVE_EXIT_TEX: Texture2D = preload("res://sprites/cave/cave_exit.png")
 
 # ── Whole-entrance highlight ─────────────────────────────────────────
 # Same yellow the dungeon portal uses for its door outline, but drawn around
@@ -28,6 +31,10 @@ const RETRIGGER_COOLDOWN: float = 1.0  # guards against re-firing the instant th
 # structure row and above the player standing on the door row (the same
 # convention dungeon_portal.gd's own door outline uses).
 const C_DOOR_HIGHLIGHT: Color = Color(1.0, 0.9, 0.2, 1.0)
+# The door arch in the cave sprites pokes a few px above the door tile, so the
+# highlight is grown upward by this much — otherwise its top edge cuts straight
+# through the arch and reads as misaligned.
+const DOOR_HIGHLIGHT_GROW_UP: float = 4.0
 
 # ── Confirm dialog theme (matches dungeon_portal.gd — "the same prompt") ─
 const C_PANEL   := Color(0.08, 0.10, 0.20, 0.97)
@@ -65,6 +72,9 @@ var _label_text: String  = "CAVE"
 var _triggered:  bool    = false
 var _player_nearby: bool = false
 var _confirm_ui: Control = null
+# Beckoning animation played on approach; the Enter prompt waits until it ends.
+var _beaconing:  bool = false
+const BEACON_DURATION: float = 0.6
 
 var _area:  Area2D            = null
 var _shape: CollisionShape2D  = null
@@ -80,13 +90,24 @@ func _ready() -> void:
 	_shape.shape = rect
 	_area.add_child(_shape)
 	_area.collision_layer = 0
-	_area.collision_mask  = 1
+	_area.collision_mask  = 4   # player is on layer 4 (see player.tscn)
 	_area.body_entered.connect(_on_body_entered)
 	_area.body_exited.connect(_on_body_exited)
 	add_child(_area)
 
+	if mode == Mode.EXIT:
+		_add_exit_sprite()
+
 	_build_confirm_ui()
 	queue_redraw()
+
+# EXIT marker art — a sprite child so it renders on top of the cave floor
+# while the node's _draw() supplies the yellow highlight around it.
+func _add_exit_sprite() -> void:
+	var s := Sprite2D.new()
+	s.texture = CAVE_EXIT_TEX
+	s.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	add_child(s)
 
 # Called by world.gd once the portal is placed on its entrance structure —
 # expands the proximity area to the whole structure and records the highlight
@@ -109,17 +130,14 @@ func set_highlight_cells(rects: Array[Rect2]) -> void:
 
 func _draw() -> void:
 	if mode == Mode.EXIT:
-		z_index = int(global_position.y / TILE_SIZE)
-		var color: Color = COLOR_EXIT
-		var half: float = TILE_SIZE / 2.0
-		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), color)
-		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), Color(0, 0, 0, 0.6), false, 2.0)
-
-		var font: Font  = ThemeDB.fallback_font
-		var fsize: int  = 8
-		var text_size: Vector2 = font.get_string_size(_label_text, HORIZONTAL_ALIGNMENT_CENTER, -1, fsize)
-		draw_string(font, Vector2(-text_size.x / 2.0, fsize / 2.0), _label_text,
-			HORIZONTAL_ALIGNMENT_CENTER, -1, fsize, Color.WHITE)
+		z_index = int(global_position.y / TILE_SIZE) + 1
+		# Yellow highlight around the exit sprite — same colour the cave
+		# entrances use, so the two markers read as a matched pair. The exit
+		# fires on walk-in, so it is always outlined rather than proximity-lit.
+		var half := Vector2(CAVE_EXIT_TEX.get_width(), CAVE_EXIT_TEX.get_height()) * 0.5
+		var r := Rect2(-half, half * 2.0)
+		draw_rect(r, Color(C_DOOR_HIGHLIGHT.r, C_DOOR_HIGHLIGHT.g, C_DOOR_HIGHLIGHT.b, 0.18), true)
+		draw_rect(r, C_DOOR_HIGHLIGHT, false, 2.0)
 		return
 
 	# ENTER without a structure — fall back to the old colored marker so the
@@ -155,7 +173,9 @@ func _draw() -> void:
 		_draw_cell_highlight(highlight_cells)
 		return
 	var hl_rect: Rect2 = door_rect if door_rect.size != Vector2.ZERO else interact_rect
-	var local_rect := Rect2(hl_rect.position - global_position, hl_rect.size)
+	var local_rect := Rect2(
+		hl_rect.position - global_position - Vector2(0.0, DOOR_HIGHLIGHT_GROW_UP),
+		hl_rect.size + Vector2(0.0, DOOR_HIGHLIGHT_GROW_UP))
 	draw_rect(local_rect, Color(C_DOOR_HIGHLIGHT.r, C_DOOR_HIGHLIGHT.g, C_DOOR_HIGHLIGHT.b, 0.18), true)
 	draw_rect(local_rect, C_DOOR_HIGHLIGHT, false, 2.0)
 
@@ -215,6 +235,9 @@ func _on_body_entered(body: Node) -> void:
 		return
 	_player_nearby = true
 	queue_redraw()
+	# Beckoning pulse first; the Enter prompt is deferred to its end.
+	if not Global.block_mode and not Global.any_ui_open() and not Global.pause_menu_open:
+		_play_beacon()
 
 func _on_body_exited(body: Node) -> void:
 	if mode != Mode.ENTER or not body.is_in_group("Player"):
@@ -224,6 +247,34 @@ func _on_body_exited(body: Node) -> void:
 	if _confirm_ui != null and _confirm_ui.visible:
 		_confirm_ui.visible = false
 		Global.close_ui()
+
+# A beckoning pulse expanding out of the entrance. The prompt only appears
+# once this animation finishes, so walking up never instantly opens a dialog.
+func _play_beacon() -> void:
+	if _beaconing:
+		return
+	_beaconing = true
+	var pulse := Sprite2D.new()
+	pulse.texture = Global.get_smooth_light_texture(128)
+	pulse.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	pulse.modulate = Color(0.75, 0.90, 0.70, 0.85)
+	pulse.scale = Vector2(0.35, 0.35)
+	pulse.z_index = 3
+	add_child(pulse)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(pulse, "scale", Vector2(1.7, 1.7), BEACON_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(pulse, "modulate:a", 0.0, BEACON_DURATION)
+	get_tree().create_timer(BEACON_DURATION).timeout.connect(_on_beacon_done.bind(pulse))
+
+func _on_beacon_done(pulse: Node) -> void:
+	if is_instance_valid(pulse):
+		pulse.queue_free()
+	_beaconing = false
+	if _player_nearby \
+			and not Global.block_mode and not Global.any_ui_open() and not Global.pause_menu_open:
+		_show_confirm()
 
 func _start_cooldown() -> void:
 	var t := Timer.new()
@@ -345,5 +396,6 @@ func _enter_cave() -> void:
 	if _confirm_ui != null:
 		_confirm_ui.visible = false
 		Global.close_ui()
+	Global.complete_mission("enter_cave")
 	if is_instance_valid(Global.game_node) and Global.game_node.has_method("enter_cave"):
 		Global.game_node.call("enter_cave", self)

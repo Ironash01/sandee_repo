@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Tables"
+description = "Lua tables are the only data structure in Lua. They work as both arrays and key-value maps.
+
+Array-style (1-indexed):
+
+local t = {10, 20, 30}
+print(t[1])  -- 10
+
+Key-value style:
+
+local person = {name = \"Alex\", age = 25}
+print(person.name)  -- Alex
+
+You can mix both styles in one table. Tables are reference types, so two variables can point to the same table."
+keyword = "table"
+language = "lua"
+category = "Easy"

@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Modules"
+description = "Lua organizes code into modules using require. A module is a file that returns a table.
+
+Requiring a module:
+
+local math = require(\"math\")\nprint(math.pi)
+
+Creating a module (myfile.lua):
+
+local M = {}\nfunction M.greet(name)\n    return \"Hello \" .. name\nend\nreturn M
+
+Requiring your module:
+
+local myfile = require(\"myfile\")\nprint(myfile.greet(\"World\"))
+
+The module system caches modules, so requiring the same module twice returns the same table."
+keyword = "require"
+language = "lua"
+category = "Medium"

@@ -3,12 +3,13 @@ extends Node2D
 # Spawned by world.gd when the player accepts a dungeon mission (see
 # world.gd's _spawn_dungeon_entrance) — NOT placed by the player anymore
 # (the old "Dungeon Spawner" placeable-item flow was removed).
-# When the player is near the door and left-clicks ON the door sprite, it
-# shows a confirm dialog that dispatches to
+# The entrance structure is a 3x3 sprite; its MIDDLE tile is walkable
+# (no collision) and holds this node. Stepping into that middle tile
+# shows the confirm dialog that dispatches to
 # Global.game_node.enter_dungeon(dungeon_index) — the same parent-scene
 # pattern CavePortal uses, instead of the old change_scene_to_file (which
-# destroyed Player/UI — see game_instance.gd). Walking near alone no longer
-# opens it; the click has to land on the door itself.
+# destroyed Player/UI — see game_instance.gd). A left-click on the tile
+# still works too.
 #
 # Dungeon mapping (matches the currently-shipped missions, backed by
 # DungeonMissionData .tres files):
@@ -19,6 +20,19 @@ const DUNGEON_NAMES: Array = [
 	"Dungeon I  — The Print Room",
 	"Dungeon II — The Variable Vault",
 ]
+
+# ── Glow + luminescent motes ──────────────────────────────────────
+# A pulsing blue PointLight2D on the middle tile, plus drifting glowing
+# motes that float around it. The overworld's WorldEnvironment glow makes
+# both bloom. Purely cosmetic — no gameplay effect.
+const GLOW_COLOR:        Color = Color(0.45, 0.55, 1.0)
+const GLOW_ENERGY_BASE:  float = 1.4
+const GLOW_ENERGY_AMP:   float = 0.55
+const GLOW_PULSE_SPEED:  float = 2.5
+const GLOW_TEXTURE_SCALE: float = 1.1
+const GLOW_TEXTURE_SIZE: int   = 128
+var _glow:      PointLight2D = null
+var _glow_time: float        = 0.0
 
 # ── Theme ─────────────────────────────────────────────────────────
 const C_PANEL   := Color(0.08, 0.10, 0.20, 0.97)
@@ -51,6 +65,10 @@ const C_DOOR_HIGHLIGHT:  Color = Color(1.0, 0.9, 0.2, 1.0)
 var dungeon_index: int = 1      # set by world.gd at spawn
 var _player_nearby:  bool = false
 var _confirm_ui:     Control = null
+# Beckoning animation that plays on approach; the Enter prompt only appears
+# once it has finished (see _play_beacon / _on_beacon_done).
+var _beaconing:      bool = false
+const BEACON_DURATION: float = 0.6
 
 @onready var _interact: Area2D   = $InteractArea
 
@@ -60,7 +78,76 @@ func _ready() -> void:
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
 	_build_confirm_ui()
+	_add_glow()
+	_add_portal_particles()
 	queue_redraw()
+
+# ── Glow pulse ─────────────────────────────────────────────────────
+func _process(delta: float) -> void:
+	if _glow == null:
+		return
+	_glow_time += delta
+	_glow.energy = GLOW_ENERGY_BASE + sin(_glow_time * GLOW_PULSE_SPEED) * GLOW_ENERGY_AMP
+
+# Soft radial light on the middle tile — blooms through the overworld's
+# WorldEnvironment glow so the portal reads as magical.
+func _add_glow() -> void:
+	_glow = PointLight2D.new()
+	_glow.texture       = Global.get_smooth_light_texture(GLOW_TEXTURE_SIZE)
+	_glow.texture_scale = GLOW_TEXTURE_SCALE
+	_glow.color         = GLOW_COLOR
+	_glow.energy        = GLOW_ENERGY_BASE
+	_glow.blend_mode    = Light2D.BLEND_MODE_ADD
+	add_child(_glow)
+
+# Blue luminescent motes that drift out from the middle tile and float
+# upward — each fades in and out across its lifetime.
+func _add_portal_particles() -> void:
+	var p := GPUParticles2D.new()
+	p.name          = "PortalMotes"
+	p.texture       = Global.get_smooth_light_texture(64)
+	p.amount        = 28
+	p.lifetime      = 2.4
+	p.preprocess    = 1.2
+	p.local_coords  = false
+	p.z_index       = 1
+	p.emitting      = true
+
+	var m := ParticleProcessMaterial.new()
+	m.direction             = Vector3(0.0, -1.0, 0.0)
+	m.spread                = 180.0
+	m.gravity               = Vector3(0.0, -10.0, 0.0)
+	m.initial_velocity_min  = 5.0
+	m.initial_velocity_max  = 16.0
+	m.scale_min             = 0.06
+	m.scale_max             = 0.14
+	m.color                 = Color(0.55, 0.70, 1.0, 0.9)
+	m.emission_shape        = ParticleProcessMaterial.EMISSION_SHAPE_RING
+	m.emission_ring_radius  = 14.0
+
+	# Fade in → hold → fade out across the lifetime.
+	var grad := Gradient.new()
+	grad.colors = PackedColorArray([
+		Color(0.55, 0.70, 1.0, 0.0),
+		Color(0.60, 0.80, 1.0, 1.0),
+		Color(0.55, 0.70, 1.0, 0.0),
+	])
+	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = grad
+	m.color_ramp = ramp
+
+	# Each mote grows then shrinks — a breathing pulse.
+	var curve := Curve.new()
+	curve.add_point(Vector2(0.0, 0.35))
+	curve.add_point(Vector2(0.5, 1.0))
+	curve.add_point(Vector2(1.0, 0.35))
+	var curve_tex := CurveTexture.new()
+	curve_tex.curve = curve
+	m.scale_curve = curve_tex
+
+	p.process_material = m
+	add_child(p)
 
 # ── Draw ───────────────────────────────────────────────────────────
 # Recomputed here rather than _ready() — callers set global_position AFTER
@@ -89,10 +176,14 @@ func _click_is_on_door() -> bool:
 	return DOOR_HITBOX.has_point(to_local(get_global_mouse_position()))
 
 # ── Proximity ─────────────────────────────────────────────────────
+# The area is the walkable middle tile — stepping into it plays the beckoning
+# pulse, and the Enter prompt only pops once that pulse has finished.
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = true
 		queue_redraw()
+		if not Global.block_mode and not Global.any_ui_open() and not Global.pause_menu_open:
+			_play_beacon()
 
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("Player"):
@@ -101,6 +192,36 @@ func _on_body_exited(body: Node) -> void:
 		if _confirm_ui != null and _confirm_ui.visible:
 			_confirm_ui.visible = false
 			Global.close_ui()
+
+# A beckoning pulse expanding out of the portal. The prompt is deferred to
+# the end of this animation so stepping in never instantly slams a dialog up.
+func _play_beacon() -> void:
+	if _beaconing:
+		return
+	_beaconing = true
+	var pulse := Sprite2D.new()
+	pulse.texture = Global.get_smooth_light_texture(128)
+	pulse.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	pulse.modulate = Color(0.75, 0.85, 1.0, 0.85)
+	pulse.scale = Vector2(0.35, 0.35)
+	pulse.z_index = z_index + 3
+	add_child(pulse)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(pulse, "scale", Vector2(1.7, 1.7), BEACON_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(pulse, "modulate:a", 0.0, BEACON_DURATION)
+	get_tree().create_timer(BEACON_DURATION).timeout.connect(_on_beacon_done.bind(pulse))
+
+func _on_beacon_done(pulse: Node) -> void:
+	if is_instance_valid(pulse):
+		pulse.queue_free()
+	_beaconing = false
+	# Only prompt if the player is still standing on the tile and nothing else
+	# has taken over the UI meanwhile.
+	if _player_nearby \
+			and not Global.block_mode and not Global.any_ui_open() and not Global.pause_menu_open:
+		_show_confirm()
 
 # ── Confirm UI ────────────────────────────────────────────────────
 func _build_confirm_ui() -> void:

@@ -1,0 +1,41 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b65yb1ubxaiso"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" script_class="DungeonQuestion" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "What would be the output of the following code?\n\ntemp = 40.5"
+answer_a = "temp"
+answer_b = "40"
+answer_c = "="
+answer_d = "40.5"
+correct_index = 3
+
+[sub_resource type="Resource" script_class="DungeonQuestion" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "In this exercise you shall identify what is the float and you shold store it the variable named price.\n\nA simple shirt from the local supermarket cost at 299.75."
+language = "python"
+starter_code = ""
+answer_output = "price = 299.75"
+
+[sub_resource type="Resource" script_class="DungeonQuestion" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 0
+question = "What would be the output of the code:\n\ntotal_cost = 999.9\nprint(total_cost)"
+answer_a = "total_cost"
+answer_b = "print(total_cost_"
+answer_c = "999.9"
+answer_d = "99.99"
+correct_index = 2
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "How to float in python"
+mission_description = "In this dungeon you will know how to use the float keyword in Python."
+entry_resource_file = "entry_3_python.tres"
+questions = Array[DungeonQuestion]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 3
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

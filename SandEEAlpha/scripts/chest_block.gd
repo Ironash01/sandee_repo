@@ -54,17 +54,20 @@ func set_world_cell(cell: Vector2i, world: Node) -> void:
 func has_space() -> bool:
 	for slot in slots:
 		if slot == null: return true
-		if (slot as Dictionary)["quantity"] < Global.MAX_STACK: return true
+		var data: ItemData = (slot as Dictionary)["data"] as ItemData
+		var limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
+		if (slot as Dictionary)["quantity"] < limit: return true
 	return false
 
 func deposit_item(item: Dictionary) -> bool:
 	var data: ItemData = item["data"] as ItemData
 	var qty:  int      = item["quantity"]
+	var limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
 	# Stack onto existing slot
 	for i in range(MAX_SLOTS):
 		if slots[i] == null: continue
 		if (slots[i] as Dictionary)["data"] == data:
-			var space: int = Global.MAX_STACK - (slots[i] as Dictionary)["quantity"]
+			var space: int = limit - (slots[i] as Dictionary)["quantity"]
 			var add:   int = min(qty, space)
 			(slots[i] as Dictionary)["quantity"] += add
 			qty -= add

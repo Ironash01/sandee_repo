@@ -8,5 +8,3 @@
 script = ExtResource("1_00cxx")
 input_item = ExtResource("1_5t5t2")
 output_item = ExtResource("2_7tjnt")
-smelt_time = 5.0
-fuel_level_required = 1

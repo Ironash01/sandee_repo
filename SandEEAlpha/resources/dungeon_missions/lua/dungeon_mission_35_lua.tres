@@ -1,0 +1,45 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua35oop"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "What is used to set up inheritance and operator overloading in Lua OOP?"
+answer_a = "classes"
+answer_b = "prototypes"
+answer_c = "metatables"
+answer_d = "interfaces"
+correct_index = 2
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that creates a table Dog with a bark method using a metatable, creates a Dog instance, and calls bark()."
+language = "lua"
+starter_code = "Dog = {}\nDog.__index = Dog\nfunction Dog:new(name)\n    local obj = setmetatable({}, Dog)\n    obj.name = name\n    return obj\nend\nfunction Dog:bark()\n    print(self.name .. \" says woof\")\nend\nlocal d = Dog:new(\"Rex\")\nd:bark()"
+answer_output = "Rex says woof"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 0
+question = "What does the 'self' keyword refer to in a Lua method?"
+answer_a = "The class itself"
+answer_b = "The current instance"
+answer_c = "The parent class"
+answer_d = "The global table"
+correct_index = 1
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua OOP"
+mission_description = "Learn how to implement object-oriented programming in Lua using metatables and the self keyword."
+entry_resource_file = "entry_35_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 35
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

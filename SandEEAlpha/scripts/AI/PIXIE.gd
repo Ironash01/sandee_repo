@@ -21,6 +21,13 @@ const ATTACK_RANGE:      float = 30.0
 const LOOKAHEAD:         float = 22.0   # px scanned ahead of the move direction
 const ROAM_SPEED_FACTOR: float = 0.5
 const CHASE_MEMORY_TIME: float = 5.0    # seconds of "lost sight" before giving up
+# The player's collision box (PlayerCol: 20x12 at y +17) sits BELOW the chest
+# origin, so rays aimed at the origin itself end short of the shape and never
+# register a hit — LOS/chase checks must aim at the box's center instead.
+const PLAYER_AIM_OFFSET_Y: float = 17.0
+# Close-range sense radius: within this the pixie aggros even without LOS
+# (it can hear/sense the player through the gap it's standing in).
+const SENSE_RANGE:       float = 60.0
 
 var _state:        State   = State.ROAM
 var _roam_dir:     Vector2 = Vector2.ZERO
@@ -42,9 +49,12 @@ func physics_update(mob: CharacterBody2D, speed: float, _tilemap: TileMapLayer, 
 		_state = State.ATTACK
 		return Vector2.ZERO
 
-	# Vision: in range AND a clear line of sight to the player.
+	# Aggro on vision OR close range: either the pixie has a clear line of
+	# sight within aggro range, or the player is close enough to sense without
+	# one. Either refreshes the chase-memory window.
 	var has_vision: bool = dist < AGGRO_RANGE and _has_los(mob, player.global_position)
-	if has_vision:
+	var in_sense_range: bool = dist <= SENSE_RANGE
+	if has_vision or in_sense_range:
 		_chase_memory = CHASE_MEMORY_TIME
 	else:
 		_chase_memory = maxf(0.0, _chase_memory - delta)
@@ -103,12 +113,17 @@ func _path_is_clear(mob: CharacterBody2D, dir: Vector2) -> bool:
 	query.exclude = exclude
 	return space_state.intersect_ray(query).is_empty()
 
-# True when the pixie has a clear line of sight to `target_pos` (the ray
-# reaches it — i.e. no wall/ore between them).
+# True when the pixie has a clear line of sight to the player (the ray
+# reaches them — i.e. no wall/ore between them). The ray aims at the player's
+# collision-shape CENTER (waist box, ~17px below the chest origin) — aiming at
+# the origin would end short of the shape and never register a hit. The mask
+# sees BOTH walls (layer 1) and the player (layer 4): a wall hit blocks LOS, a
+# player hit confirms LOS.
 func _has_los(mob: CharacterBody2D, target_pos: Vector2) -> bool:
 	var space_state := mob.get_world_2d().direct_space_state
-	var query := PhysicsRayQueryParameters2D.create(mob.global_position, target_pos)
-	query.collision_mask = 1
+	var aim: Vector2 = target_pos + Vector2(0.0, PLAYER_AIM_OFFSET_Y)
+	var query := PhysicsRayQueryParameters2D.create(mob.global_position, aim)
+	query.collision_mask = 1 | 4
 	query.exclude = [mob.get_rid()]
 	var result := space_state.intersect_ray(query)
 	if result.is_empty():

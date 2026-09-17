@@ -1,0 +1,35 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Loops"
+description = "Lua provides three loop types: for, while, and repeat.
+
+Numeric for loop:
+
+for i = 1, 5 do
+    print(i)
+end
+
+While loop (checks condition before each iteration):
+
+local i = 1
+while i <= 5 do
+    print(i)
+    i = i + 1
+end
+
+Repeat loop (runs at least once, checks condition at the end):
+
+local i = 1
+repeat
+    print(i)
+    i = i + 1
+until i > 5
+
+All loops are ended with the keyword end, except repeat which uses until."
+keyword = "for"
+language = "lua"
+category = "Easy"

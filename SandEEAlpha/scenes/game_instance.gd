@@ -20,6 +20,9 @@ var _death_overlay:  ColorRect   = null
 var _cave_world:      CaveWorld  = null
 var _pixie_cave_world: PixieCaveWorld = null
 var _dungeon_world:   DungeonWorld = null
+# Full-screen fade used when swapping the world for a cave/pixie cave/dungeon
+# (and back), so those transitions read as a deliberate scene change.
+var _transition_overlay: CanvasLayer = null
 
 func _ready() -> void:
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -63,7 +66,7 @@ func _setup_death_overlay() -> void:
 	$CanvasLayer.add_child(_death_overlay)
 	Global.player_died.connect(_on_player_died)
 
-func _on_player_died() -> void:
+func _on_player_died(_death_position: Vector2 = Vector2.ZERO) -> void:
 	if _death_overlay == null:
 		return
 	var tween := create_tween()
@@ -136,6 +139,13 @@ func _on_generation_complete() -> void:
 func enter_cave(portal: CavePortal) -> void:
 	if _cave_world != null or _pixie_cave_world != null or _dungeon_world != null:
 		return
+	_run_scene_transition(Callable(self, "_do_enter_cave").bind(portal), "Entering cave...")
+
+# Immediate swap (used by _run_scene_transition). A cave is never a dungeon —
+# make sure a leaked is_in_dungeon (e.g. from a prior dungeon visit) can't
+# block the build-mode toggle in here.
+func _do_enter_cave(portal: CavePortal) -> void:
+	Global.is_in_dungeon = false
 	var return_position: Vector2 = _player.global_position
 	remove_child(_world)
 
@@ -162,8 +172,14 @@ func enter_cave(portal: CavePortal) -> void:
 	_player.global_position = _cave_world.get_player_spawn_position()
 
 func exit_cave() -> void:
-	# A pixie cave exits the same way a regular cave does — swap the overworld
-	# back in and free the cave world. Handle whichever kind is currently live.
+	if _pixie_cave_world != null or _cave_world != null:
+		_run_scene_transition(Callable(self, "_do_exit_cave"), "Leaving cave...")
+
+# Immediate swap (used by _run_scene_transition, and directly by the death /
+# menu-cleanup paths where the world must be restored synchronously). A pixie
+# cave exits the same way a regular cave does — swap the overworld back in and
+# free the cave world. Handle whichever kind is currently live.
+func _do_exit_cave() -> void:
 	if _pixie_cave_world != null:
 		var p_return: Vector2 = _pixie_cave_world.overworld_return_position
 		remove_child(_pixie_cave_world)
@@ -201,6 +217,16 @@ func enter_dungeon(dungeon_index: int) -> void:
 	if mission == null:
 		push_warning("enter_dungeon: no DungeonMissionData for index %d" % dungeon_index)
 		return
+	_run_scene_transition(Callable(self, "_do_enter_dungeon").bind(dungeon_index, mission),
+		"Entering dungeon...")
+
+# Immediate swap (used by _run_scene_transition). Same swap-out-$World pattern
+# as _do_enter_cave — the overworld stays alive off-tree, and the dungeon is its
+# own TileMapLayer world (DungeonWorld) built in code from the mission's
+# DungeonMissionData. The layout generates from a seed rolled once on the first
+# mission accept (Global.get_or_create_dungeon_seed), so re-entering always
+# reproduces the same dungeon.
+func _do_enter_dungeon(dungeon_index: int, mission: DungeonMissionData) -> void:
 	var return_position: Vector2 = _player.global_position
 	remove_child(_world)
 
@@ -213,14 +239,28 @@ func enter_dungeon(dungeon_index: int) -> void:
 
 	Global.world_node       = _dungeon_world
 	_player.global_position = _dungeon_world.get_player_spawn_pos()
+	Global.is_in_dungeon = true
+	if Global.block_mode:
+		Global.block_mode = false
+		Global.block_mode_changed.emit(false)
 
 func exit_dungeon() -> void:
+	if _dungeon_world != null:
+		_run_scene_transition(Callable(self, "_do_exit_dungeon"), "Leaving dungeon...")
+
+# Immediate swap (used by _run_scene_transition, and directly by the death /
+# menu-cleanup paths where the world must be restored synchronously).
+func _do_exit_dungeon() -> void:
 	if _dungeon_world == null:
 		return
 	var return_position: Vector2 = _dungeon_world.overworld_return_position
 	remove_child(_dungeon_world)
 	_dungeon_world.queue_free()
 	_dungeon_world = null
+	Global.is_in_dungeon = false
+
+	# Restore the notification log to its default top-left position.
+	_reset_chat_position()
 
 	add_child(_world)
 	move_child(_world, 0)
@@ -232,6 +272,13 @@ func exit_dungeon() -> void:
 	# overworld is back in the tree now, so the save captures real world data.
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
+
+func _reset_chat_position() -> void:
+	for c in $CanvasLayer.get_children():
+		if c is ChatConsole:
+			if c.has_method("reset_position"):
+				c.call("reset_position")
+			break
 
 # Cleanly leave any active cave/pixie cave/dungeon before quitting to the main
 # menu. Tearing the complex cave node tree down through the normal exit path —
@@ -300,6 +347,49 @@ func get_overworld_save_context() -> Dictionary:
 		"player_pos": _player.global_position,
 		"world_data": world_data,
 	}
+
+# ── Scene transition fade ────────────────────────────────────────────────
+# A full-screen fade-to-black loading transition used when swapping the world
+# for a cave/pixie cave/dungeon (and back). Fades in a black overlay with a
+# status label, runs the callback (which swaps $World) while fully black, then
+# fades back out. The swap is synchronous but the fade makes it read as a
+# deliberate scene change rather than a hard cut.
+func _run_scene_transition(callback: Callable, label_text: String) -> void:
+	if _transition_overlay != null:
+		callback.call()
+		return
+	var layer := CanvasLayer.new()
+	layer.layer = 130  # above the loading screen and HUD
+	add_child(layer)
+	_transition_overlay = layer
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.0, 0.0, 0.0, 0.0)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(bg)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(center)
+	var label := Label.new()
+	label.text = label_text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_color_override("font_color", C_TITLE)
+	center.add_child(label)
+
+	var tween := create_tween()
+	tween.tween_property(bg, "color:a", 1.0, 0.28)
+	tween.tween_callback(func() -> void:
+		callback.call()
+	)
+	tween.tween_interval(0.15)
+	tween.tween_property(bg, "color:a", 0.0, 0.35)
+	tween.tween_callback(func() -> void:
+		layer.queue_free()
+		_transition_overlay = null
+	)
 
 # ── Pause button styling ──────────────────────────────────────────────
 func _style_pause_button() -> void:

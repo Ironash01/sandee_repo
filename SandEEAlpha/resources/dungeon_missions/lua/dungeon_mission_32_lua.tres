@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua32art"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that prints the result of 10 + 5."
+language = "lua"
+starter_code = "print(10 + 5)"
+answer_output = "15"
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 0
+question = "Which operator does exponentiation in Lua?"
+answer_a = "^"
+answer_b = "**"
+answer_c = "^^"
+answer_d = "pow"
+correct_index = 0
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that calculates 2 raised to the power of 8 and prints the result."
+language = "lua"
+starter_code = "print(2 ^ 8)"
+answer_output = "256"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Arithmetic"
+mission_description = "Learn how to use arithmetic operators in Lua including addition, subtraction, multiplication, division, modulus, and exponentiation."
+entry_resource_file = "entry_32_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 32
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

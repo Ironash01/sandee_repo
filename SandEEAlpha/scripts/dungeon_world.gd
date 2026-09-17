@@ -75,7 +75,7 @@ class DungeonExit:
 		shape.shape = rect
 		_area.add_child(shape)
 		_area.collision_layer = 0
-		_area.collision_mask  = 1
+		_area.collision_mask  = 4   # player is on layer 4 (see player.tscn)
 		_area.monitoring      = false
 		_area.body_entered.connect(_on_body_entered)
 		add_child(_area)
@@ -164,9 +164,20 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 
 	_paint_tiles()
 	_spawn_altars()
+	_spawn_flares()
 	_spawn_exit_marker()
 	_setup_lighting()
 	_setup_minimap()
+
+# Wall tiles the generator marked as flare hosts get a DungeonFlare overlay
+# (a glowing obstacle that shoots projectiles). The wall itself stays solid.
+func _spawn_flares() -> void:
+	for grid_pos in generator.flare_positions:
+		var flare := DungeonFlare.new()
+		add_child(flare)
+		flare.global_position = _tilemap.to_global(
+			_tilemap.map_to_local(_grid_to_cell(grid_pos as Vector2i)))
+		flare.z_index = int(flare.global_position.y / 32)
 
 # ── Paint the generated grid into the TileMapLayer ─────────────────────
 func _paint_tiles() -> void:
@@ -389,7 +400,7 @@ class DungeonMinimap:
 	extends Control
 
 	const PAD:          float = 10.0
-	const MAX_MAP_PX:   float = 448.0  # cap for the widest 256-cell dimension
+	const FIXED_MAP_SIZE := Vector2(200, 200)  # fixed map area in pixels
 	const C_BG:        Color = Color(0.04, 0.05, 0.09, 0.78)
 	const C_BORDER:    Color = Color(0.40, 0.30, 0.70, 0.9)
 	const C_WALL:      Color = Color(0.38, 0.33, 0.48, 1.0)
@@ -400,17 +411,16 @@ class DungeonMinimap:
 	const C_PLAYER:    Color = Color(0.96, 0.96, 1.00, 1.0)
 
 	var world: DungeonWorld = null
-	var _px: float = 4.0  # pixels per grid cell, shrinks for big dungeons
+	var _px: float = 2.0  # pixels per grid cell, scaled to fit FIXED_MAP_SIZE
 
 	func _init(w: DungeonWorld) -> void:
 		world = w
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var g: DungeonGenerator = world.generator
 		if g != null:
-			_px = minf(4.0, MAX_MAP_PX / maxi(g.width, g.height))
-		var map_px := Vector2(world.generator.width, world.generator.height) * _px
+			_px = minf(FIXED_MAP_SIZE.x / maxi(g.width, 1), FIXED_MAP_SIZE.y / maxi(g.height, 1))
 		position = Vector2(16, 26)
-		size     = map_px + Vector2(PAD, PAD) * 2.0
+		size     = FIXED_MAP_SIZE + Vector2(PAD, PAD) * 2.0
 
 	func _process(_delta: float) -> void:
 		queue_redraw()
@@ -465,3 +475,15 @@ func _setup_minimap() -> void:
 	var map := DungeonMinimap.new(self)
 	map.process_mode = Node.PROCESS_MODE_ALWAYS
 	layer.add_child(map)
+
+	# Reposition the notification log (chat console) below the minimap.
+	var chat = null
+	var canvas_layer = Global.game_node.get_node_or_null("CanvasLayer")
+	if canvas_layer != null:
+		for c in canvas_layer.get_children():
+			if c is ChatConsole:
+				chat = c
+				break
+	if chat != null and chat.has_method("reposition_for_dungeon"):
+		var minimap_bottom: int = int(26 + DungeonMinimap.FIXED_MAP_SIZE.y + DungeonMinimap.PAD * 2.0 + 8)
+		chat.call("reposition_for_dungeon", minimap_bottom)

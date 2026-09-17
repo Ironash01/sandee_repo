@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Boolean Logic"
+description = "Lua has three logical operators: and, or, and not.
+
+and returns the first falsy value, or the last value if all are truthy:
+
+print(true and true)   -- true
+print(true and false)  -- false
+
+or returns the first truthy value, or the last value if all are falsy:
+
+print(false or true)   -- true
+print(false or false)  -- false
+
+not inverts a boolean:
+
+print(not true)   -- false
+print(not false)  -- true
+
+In Lua, only false and nil are falsy. Everything else (including 0 and \"\") is truthy."
+keyword = "and"
+language = "lua"
+category = "Easy"

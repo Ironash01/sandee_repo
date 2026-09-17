@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua37fio"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that opens a file called test.txt in write mode, writes \"Hello File\" to it, and closes the file."
+language = "lua"
+starter_code = "local f = io.open(\"test.txt\", \"w\")\nf:write(\"Hello File\")\nf:close()"
+answer_output = ""
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 0
+question = "Which function opens a file in Lua?"
+answer_a = "file.open"
+answer_b = "io.open"
+answer_c = "fs.open"
+answer_d = "open.file"
+correct_index = 1
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that opens a file called test.txt in read mode, reads its entire contents, prints it, and closes the file."
+language = "lua"
+starter_code = "local f = io.open(\"test.txt\", \"r\")\nlocal content = f:read(\"*a\")\nprint(content)\nf:close()"
+answer_output = "Hello File"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua File I/O"
+mission_description = "Learn how to read and write files in Lua using io.open, read, write, and close."
+entry_resource_file = "entry_37_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 37
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

@@ -1,0 +1,31 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua OOP"
+description = "Lua implements OOP using tables and metatables. There are no built-in classes.
+
+To create a class:
+
+MyClass = {}
+MyClass.__index = MyClass
+
+function MyClass:new(value)
+    local obj = setmetatable({}, MyClass)
+    obj.value = value
+    return obj
+end
+
+function MyClass:method()
+    print(self.value)
+end
+
+local obj = MyClass:new(42)
+obj:method()  -- 42
+
+The self keyword refers to the current instance. The colon syntax automatically passes self."
+keyword = "metatable"
+language = "lua"
+category = "Medium"

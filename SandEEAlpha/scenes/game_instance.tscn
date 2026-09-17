@@ -29,6 +29,8 @@ text = "| | Pause"
 [node name="Control" parent="CanvasLayer" unique_id=1912151607 instance=ExtResource("1_bj3gq")]
 
 [node name="World" parent="." unique_id=98158199 instance=ExtResource("3_kafmv")]
+random_seed = null
+use_experimental_ground = null
 
 [node name="Player" parent="." unique_id=382532469 instance=ExtResource("4_2glxl")]
 texture_filter = 1

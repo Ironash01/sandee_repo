@@ -3,6 +3,7 @@ extends Node2D
 var item_data: ItemData = null
 
 const ITEM_SCENE:         PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
+const OBJECT_BURST_SCRIPT: GDScript  = preload("res://scripts/object_burst.gd")
 const INTERACT_RADIUS_PX: float       = 64.0
 const SHADOW_TEXTURE:     Texture2D   = preload("res://sprites/shadow/shadow_blockbase.png")
 
@@ -12,11 +13,25 @@ var _world_cell:    Vector2i = Vector2i(-99999, -99999)
 var _world_ref:     Node     = null
 
 # ── Breaking state ────────────────────────────────────────────────
+# Break progress is damage measured in seconds of break work. It comes
+# from two sources: holding accumulates delta per frame, and every fresh
+# click adds CLICK_BREAK_SECONDS — so spam clicking works as well as
+# holding. Damage persists PROGRESS_PERSIST_SECONDS after the last hit
+# (click or hold tick) before it's forgotten, but the wobble animation
+# only plays while actively breaking — it stops the instant the player
+# lets go of the mouse.
 var _breaking:       bool  = false
 var _break_duration: float = 1.0
 var _break_elapsed:  float = 0.0
 var _break_progress: float = 0.0
 var _mouse_held:     bool  = false
+var _last_hit_ms:    int   = -1   # wall-clock of the last damage added
+
+const CLICK_BREAK_SECONDS:      float = 0.5   # damage one click adds
+const PROGRESS_PERSIST_SECONDS: float = 2.5   # damage memory window
+const WOBBLE_AMPLITUDE_RAD:     float = 0.045 # ~2.6° snap each side
+const WOBBLE_SNAPS_PER_SEC:     float = 3.0   # full left→right→left cycles per second
+const WOBBLE_FLIP_FRACTION:     float = 0.25  # fraction of each half spent flipping; the rest dwells
 
 @onready var _sprite:   Sprite2D = $Sprite2D
 @onready var _interact: Area2D   = $InteractArea
@@ -71,6 +86,15 @@ func setup(data: ItemData) -> void:
 	if _sprite != null:
 		_apply_sprite()
 
+# Called by world.gd's place_block/restore right after setup: remembers the
+# tile this block occupies and the owning world, so _break() can unregister
+# the exact cell. Without this the block can never free its tile from
+# _placed_blocks (the cell stays occupied, so blocks can't be re-placed on
+# it after breaking, and the freed node's collision is gone).
+func set_world_cell(cell: Vector2i, world: Node) -> void:
+	_world_cell = cell
+	_world_ref  = world
+
 func _apply_sprite() -> void:
 	if item_data == null:
 		return
@@ -124,14 +148,51 @@ func _process(delta: float) -> void:
 	if not _player_nearby:
 		return
 	_update_hover()
+	_tick_progress_expiry()
+	_tick_wobble()
 	if not _mouse_held or not _hovered or not _player_within_radius():
 		_cancel_breaking()
 		return
-	_break_elapsed  = minf(_break_elapsed + delta, _break_duration)
+	_add_break_progress(delta)
+
+# Adds damage (in seconds of break work) from one source — a held frame's
+# delta or a click's flat CLICK_BREAK_SECONDS — then breaks when full.
+func _add_break_progress(seconds: float) -> void:
+	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
+	_last_hit_ms    = Time.get_ticks_msec()
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_break()
+
+# Damage fades from memory PROGRESS_PERSIST_SECONDS after the last hit —
+# until then a returning player (or spam clicker) resumes where they left.
+func _tick_progress_expiry() -> void:
+	if _break_progress <= 0.0:
+		return
+	if Time.get_ticks_msec() - _last_hit_ms < int(PROGRESS_PERSIST_SECONDS * 1000.0):
+		return
+	_break_elapsed  = 0.0
+	_break_progress = 0.0
+	_last_hit_ms    = -1
+	_sprite.rotation = 0.0
+	queue_redraw()
+
+# Snappy left↔right shake, played ONLY while actively breaking (mouse
+# held on the block) — releasing stops it immediately via
+# _cancel_breaking's rotation reset, even mid-flip. The flip is eased-in
+# so it lands hard on the target side, and the shape is continuous across
+# half-cycle boundaries (a half always starts from the side the previous
+# one ended on).
+func _tick_wobble() -> void:
+	if not _breaking:
+		return
+	var u: float = fposmod(Time.get_ticks_msec() / 1000.0 * WOBBLE_SNAPS_PER_SEC, 1.0)
+	var target: float = 1.0 if u < 0.5 else -1.0   # side this half dwells on
+	var source: float = -target                    # side the flip starts from
+	var half: float   = fmod(u, 0.5)               # 0..0.5 into this half
+	var p: float      = clampf(half / (0.5 * WOBBLE_FLIP_FRACTION), 0.0, 1.0)
+	_sprite.rotation = lerpf(source, target, ease(p, 2.0)) * WOBBLE_AMPLITUDE_RAD
 
 func _update_hover() -> void:
 	if _sprite.texture == null:
@@ -145,7 +206,7 @@ func _update_hover() -> void:
 		   and not Global.block_mode
 
 func _draw() -> void:
-	if not _breaking:
+	if _break_progress <= 0.0:
 		return
 	Global.draw_break_bar(self, _break_progress)
 
@@ -167,6 +228,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			_mouse_held = true
 			_try_start_breaking()
+			if _breaking:
+				# Every fresh click is worth CLICK_BREAK_SECONDS of break
+				# work, so spam clicking chips away just like holding does.
+				_add_break_progress(CLICK_BREAK_SECONDS)
 		else:
 			_mouse_held = false
 			if _breaking:
@@ -180,41 +245,66 @@ func _player_within_radius() -> bool:
 func _try_start_breaking() -> void:
 	if _breaking:
 		return
-	var pick_lvl := _get_held_pickaxe_level()
-	if pick_lvl < 0:
-		return  # no pickaxe held
-	var min_lvl  := item_data.min_pickaxe_level if item_data != null else 0
-	if pick_lvl < min_lvl:
-		return  # pickaxe tier too low for this block
-	var block_lvl := item_data.block_level if item_data != null else 0
-	_break_duration = maxf(0.1, float(block_lvl - pick_lvl))
-	_break_elapsed  = 0.0
-	_break_progress = 0.0
-	_breaking       = true
-	queue_redraw()
+	var slot = Global.get_hotbar_item()
+	if slot == null:
+		return
+	var held_data: ItemData = slot["data"] as ItemData
+	if held_data == null:
+		return
+	var held_name: String = held_data.item_name.to_lower()
+	var is_axe: bool      = held_name.contains("axe")
+	var is_pickaxe: bool  = held_name.contains("pickaxe")
+	var is_wood_block: bool = item_data != null and item_data.item_name == "Wood"
+	var block_lvl: int = item_data.block_level if item_data != null else 0
 
+	if is_axe and is_wood_block:
+		# Axes chop wood blocks — no pickaxe tier needed, with a 2x speed
+		# bonus (half the break time). Spam clicking works normally.
+		_break_duration = maxf(0.1, float(block_lvl)) * 0.5
+	elif is_pickaxe:
+		var min_lvl: int = item_data.min_pickaxe_level if item_data != null else 0
+		if held_data.pickaxe_level < min_lvl:
+			return  # pickaxe tier too low for this block
+		_break_duration = maxf(0.1, float(block_lvl - held_data.pickaxe_level))
+	else:
+		return  # no tool that can break this block
+	# The swing animation plays for ANY item used to break — route through the
+	# player so it fires even though this block consumed the click input.
+	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
+		Global.player_node.call("swing_held_item")
+	# Keep damage accumulated within the persist window — a spam clicker (or
+	# a player who walked away and came back) resumes where they left off.
+	if _last_hit_ms < 0 \
+			or Time.get_ticks_msec() - _last_hit_ms >= int(PROGRESS_PERSIST_SECONDS * 1000.0):
+		_break_elapsed  = 0.0
+		_break_progress = 0.0
+	_breaking = true
+
+# Stops active mining only — accumulated damage stays until it expires
+# (see _tick_progress_expiry), so releasing the button doesn't reset it.
+# Rests the sprite immediately so the wobble halts dead on release,
+# hover-loss or walking away, even mid-flip.
 func _cancel_breaking() -> void:
 	if not _breaking:
 		return
-	_breaking       = false
-	_break_elapsed  = 0.0
-	_break_progress = 0.0
-	queue_redraw()
-
-func _get_held_pickaxe_level() -> int:
-	var slot = Global.get_hotbar_item()
-	if slot == null:
-		return -1
-	var data: ItemData = slot["data"] as ItemData
-	if data == null or not data.item_name.to_lower().contains("pickaxe"):
-		return -1
-	return data.pickaxe_level
+	_breaking        = false
+	_sprite.rotation = 0.0
 
 func _break() -> void:
 	_breaking = false
 	var world: Node = _world_ref if _world_ref != null else Global.world_node
 	if world != null and world.has_method("unregister_block"):
 		world.call("unregister_block", _world_cell)
+	# Debris burst coloured like the block, spawned under the world so it
+	# outlives this node.
+	if world != null:
+		var burst: Node2D = OBJECT_BURST_SCRIPT.new() as Node2D
+		if burst != null:
+			var tex: Texture2D = _sprite.texture if _sprite != null else null
+			burst.set("source_texture", tex)
+			burst.set("tint", OBJECT_BURST_SCRIPT.average_color(tex))
+			world.add_child(burst)
+			burst.global_position = global_position + Vector2(0.0, -10.0)
 	if item_data != null:
 		var drop: Node = ITEM_SCENE.instantiate() as Node
 		drop.call("set_item_data", item_data)
@@ -236,5 +326,5 @@ func _on_body_exited(body: Node) -> void:
 		_player_nearby = false
 		_hovered       = false
 		_mouse_held    = false
-		_cancel_breaking()
+		_cancel_breaking()   # also rests the sprite rotation
 		set_process(false)

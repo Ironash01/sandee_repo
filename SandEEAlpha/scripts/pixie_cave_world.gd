@@ -25,6 +25,20 @@ const INTERACT_RADIUS_PX:  float = 64.0
 const ITEM_DROP_SCENE:     PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 const SURROUND_BAND_TILES: int   = 128  # solid pixie-stone band around the grid (matches cave/dungeon)
 
+# ── Build mode (ghost preview + placement, mirrors CaveWorld) ─────────
+# Only floor tiles are buildable (walls/ores are mineable instead). Z-index
+# for placement guides is an arbitrary high value above the player's y-sort
+# buckets (same idea as CaveWorld's PLACEMENT_GUIDE_Z_INDEX).
+const PLACE_RADIUS_TILES:       int   = 6
+const PLACEMENT_GUIDE_Z_INDEX:  int   = 900
+
+var _placed_blocks: Dictionary = {}  # cell -> {"node": Node, "name": String}
+var ghost:           Node2D   = null
+var ghost_sprite:    Sprite2D = null
+var ghost_last_type: String   = ""
+var _grid_overlay: Node2D     = null
+var _cursor_highlight: Node2D = null
+
 # Wall/ore tile type -> the ItemData that renders it, drops when mined, and
 # supplies block_level/min_pickaxe_level for the mining-duration formula
 # (maxf(0.1, block_level - pickaxe_level), same as CaveWorld/placeable_block).
@@ -135,10 +149,19 @@ func setup(seed_value: int, return_position: Vector2) -> void:
 	_spawn_pixies()
 	_spawn_exit_marker()
 	_setup_darkness()
+	_setup_ghost()
+	_setup_grid_overlay()
+	_setup_cursor_highlight()
 
 func _process(delta: float) -> void:
 	_update_mining(delta)
+	_update_ghost()
+	_update_cursor_highlight()
 	_check_ore_regeneration()
+	# The build-mode grid follows the player — redraw every frame while it's
+	# visible so it tracks movement.
+	if _grid_overlay != null and _grid_overlay.visible:
+		_grid_overlay.queue_redraw()
 
 func _check_ore_regeneration() -> void:
 	if _mined_ores.is_empty():
@@ -195,6 +218,15 @@ var _mine_duration: float    = 1.0
 func _input(event: InputEvent) -> void:
 	if Global.any_ui_open() or Global.pause_menu_open:
 		return
+	# Build mode: place blocks on floor tiles (walls/ores are mineable).
+	if Global.block_mode:
+		if event.is_action_pressed("mouse_left"):
+			place_block()
+		return
+	# Shift + left-click: instantly reclaim the nearest placed block.
+	if event.is_action_pressed("mouse_left") and Input.is_key_pressed(KEY_SHIFT):
+		_destroy_hovered_block()
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_try_start_mining()
@@ -221,6 +253,11 @@ func _try_start_mining() -> void:
 	var pick_lvl: int = _get_held_pickaxe_level()
 	if pick_lvl < 0 or pick_lvl < item.min_pickaxe_level:
 		return
+	# The swing plays for ANY item use — mining consumes the click (below), so
+	# route the swing through the player explicitly or the player's own _input
+	# may never see it (input-order dependent).
+	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
+		Global.player_node.call("swing_held_item")
 	get_viewport().set_input_as_handled()
 	_mine_tile     = mouse_cell
 	_mine_duration = maxf(0.1, float(item.block_level - pick_lvl))
@@ -321,6 +358,236 @@ func _get_held_pickaxe_level() -> int:
 	if data == null or not data.item_name.to_lower().contains("pickaxe"):
 		return -1
 	return data.pickaxe_level
+
+# ── Build mode (ghost preview + placement, mirrors CaveWorld) ──────────
+# Only FLOOR tiles are buildable — walls/ores are the mineable resource here.
+# Placement is position-gated off the player (place radius + waist-high
+# footprint) exactly like CaveWorld/world.gd, so the rules match across
+# every world backend.
+func _setup_ghost() -> void:
+	ghost = Node2D.new()
+	ghost.visible = false
+	ghost.z_index = PLACEMENT_GUIDE_Z_INDEX
+	add_child(ghost)
+	ghost_sprite = Sprite2D.new()
+	ghost_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	ghost_sprite.modulate = Color(1, 1, 1, 0.5)
+	ghost.add_child(ghost_sprite)
+
+func _is_placeable_item(item) -> bool:
+	if item == null or not (item is Dictionary) or not item.has("data"):
+		return false
+	return (item["data"] as ItemData).is_placeable
+
+func _update_ghost() -> void:
+	if not Global.block_mode:
+		ghost.visible = false
+		return
+	var item = Global.get_hotbar_item()
+	if not _is_placeable_item(item):
+		ghost.visible = false
+		return
+	var item_key: String = (item["data"] as ItemData).item_name
+	if item_key != ghost_last_type:
+		ghost_last_type = item_key
+		_rebuild_ghost_sprite(item)
+	var cell: Vector2i = _mouse_cell()
+	ghost.position = _tilemap.map_to_local(cell)
+	if not _is_cell_in_place_radius(cell):
+		ghost.visible = false
+		return
+	ghost.visible = true
+	var occupied:    bool = _placed_blocks.has(cell) or _cell_is_wall(cell)
+	var player_here: bool = _cell_blocked_by_player(cell)
+	ghost_sprite.modulate = Color(1.0, 0.3, 0.3, 0.5) if (occupied or player_here) \
+		else Color(1.0, 1.0, 1.0, 0.5)
+
+func _rebuild_ghost_sprite(item: Dictionary) -> void:
+	var data: ItemData = item["data"] as ItemData
+	var tex: Texture2D = data.placeable_sprite if data.placeable_sprite != null else data.icon
+	ghost_sprite.texture  = tex
+	ghost_sprite.hframes  = 1
+	ghost_sprite.vframes  = 1
+	ghost_sprite.frame    = 0
+	ghost_sprite.position = Vector2.ZERO
+
+func place_block() -> void:
+	var item = Global.get_hotbar_item()
+	if not _is_placeable_item(item):
+		return
+	var cell: Vector2i = _mouse_cell()
+	if not _is_cell_in_place_radius(cell):
+		return
+	if _cell_blocked_by_player(cell):
+		return
+	if _placed_blocks.has(cell) or _cell_is_wall(cell):
+		return
+	var item_data: ItemData = item["data"] as ItemData
+	if item_data == null or item_data.place_scene_path == "":
+		return
+	if not ResourceLoader.exists(item_data.place_scene_path):
+		return
+	var obj_scene: PackedScene = load(item_data.place_scene_path)
+	if obj_scene == null:
+		return
+	var obj: Node = obj_scene.instantiate()
+	if obj == null:
+		return
+	if obj.has_method("setup"):
+		obj.call("setup", item_data)
+	_placed_blocks[cell] = {"node": obj, "name": item_data.item_name}
+	if obj.has_method("set_world_cell"):
+		obj.call("set_world_cell", cell, self)
+	add_child(obj)
+	if not is_instance_valid(obj):
+		_placed_blocks.erase(cell)
+		return
+	var world_pos: Vector2 = _tilemap.map_to_local(cell)
+	obj.position = world_pos
+	obj.z_index  = int(world_pos.y / TILE_SIZE)
+	_fix_sprite_offset(obj)
+	if item_data.has_place_animation and item_data.place_animation_name != "":
+		var ap: AnimationPlayer = obj.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		if ap != null:
+			ap.play(item_data.place_animation_name)
+	Global.remove_item(item_data)
+
+func unregister_block(cell: Vector2i) -> void:
+	_placed_blocks.erase(cell)
+
+# Instant reclaim of the nearest placed block (shift+click), mirroring
+# CaveWorld/world.gd's _destroy_hovered_block — a deliberate "reclaim your
+# own placed block" action, not a mining tool.
+func _destroy_hovered_block() -> void:
+	var mouse_pos: Vector2 = get_global_mouse_position()
+	var best_cell: Variant = null
+	var best_dist: float   = INTERACT_RADIUS_PX
+	for cell in _placed_blocks:
+		var entry: Dictionary = _placed_blocks[cell] as Dictionary
+		var node_ref: Variant = entry["node"]
+		if not is_instance_valid(node_ref):
+			continue
+		var node: Node2D = node_ref as Node2D
+		if node == null:
+			continue
+		var dist: float = mouse_pos.distance_to(node.global_position)
+		if dist < best_dist:
+			best_dist = dist
+			best_cell = cell
+	if best_cell == null:
+		return
+	get_viewport().set_input_as_handled()
+	var entry: Dictionary = _placed_blocks[best_cell] as Dictionary
+	var node_ref2: Variant = entry["node"]
+	if is_instance_valid(node_ref2):
+		var node: Node = node_ref2 as Node
+		if node != null:
+			var idata: ItemData = node.get("item_data") as ItemData
+			if idata != null:
+				var drop: Node = ITEM_DROP_SCENE.instantiate()
+				drop.call("set_item_data", idata)
+				add_child(drop)
+				drop.global_position = node.global_position + Vector2(0, -16)
+			node.queue_free()
+	_placed_blocks.erase(best_cell)
+
+func _is_cell_in_place_radius(cell: Vector2i) -> bool:
+	var player: Node2D = Global.player_node as Node2D
+	if player == null:
+		return true
+	var cell_local:   Vector2 = _tilemap.map_to_local(cell)
+	var player_local: Vector2 = _tilemap.to_local(player.global_position)
+	return player_local.distance_to(cell_local) <= PLACE_RADIUS_TILES * TILE_SIZE
+
+# Same waist-high player-footprint dims CaveWorld's own
+# _cell_blocked_by_player uses (PlayerCol: 20x12 at y 17) — keep in sync.
+func _cell_blocked_by_player(cell: Vector2i) -> bool:
+	var player: Node2D = Global.player_node as Node2D
+	if player == null:
+		return false
+	const S: float = 0.980
+	var half_w: float = 10.0 * S + 8.0
+	var half_h: float = 6.0 * S + 8.0
+	var player_local: Vector2 = _tilemap.to_local(player.global_position) + Vector2(0.0, 17.0 * S)
+	var tl: Vector2i = _tilemap.local_to_map(player_local + Vector2(-half_w, -half_h))
+	var br: Vector2i = _tilemap.local_to_map(player_local + Vector2( half_w,  half_h))
+	return cell.x >= mini(tl.x, br.x) and cell.x <= maxi(tl.x, br.x) \
+		and cell.y >= mini(tl.y, br.y) and cell.y <= maxi(tl.y, br.y)
+
+func _fix_sprite_offset(obj: Node) -> void:
+	var sprite: Node = obj.get_node_or_null("Sprite2D")
+	if sprite == null:
+		sprite = obj.get_node_or_null("AnimatedSprite2D")
+	if sprite == null:
+		return
+	var frame_height := 0.0
+	if sprite is Sprite2D and (sprite as Sprite2D).texture != null:
+		frame_height = (sprite as Sprite2D).texture.get_height() / max((sprite as Sprite2D).vframes, 1)
+	elif sprite is AnimatedSprite2D and (sprite as AnimatedSprite2D).sprite_frames != null:
+		var frames: SpriteFrames = (sprite as AnimatedSprite2D).sprite_frames
+		var anim: StringName     = (sprite as AnimatedSprite2D).animation
+		if frames.has_animation(anim) and frames.get_frame_count(anim) > 0:
+			var tex: Texture2D = frames.get_frame_texture(anim, 0)
+			if tex != null:
+				frame_height = tex.get_height()
+	if frame_height > 0.0:
+		sprite.position = Vector2(0.0, (TILE_SIZE / 2.0) - (frame_height / 2.0))
+
+func _setup_grid_overlay() -> void:
+	_grid_overlay = Node2D.new()
+	_grid_overlay.z_index = PLACEMENT_GUIDE_Z_INDEX
+	_grid_overlay.visible = false
+	add_child(_grid_overlay)
+	_grid_overlay.draw.connect(_on_grid_draw)
+	Global.block_mode_changed.connect(func(enabled: bool) -> void:
+		_grid_overlay.visible = enabled
+		if enabled:
+			_grid_overlay.queue_redraw()
+	)
+
+func _on_grid_draw() -> void:
+	var player: Node2D = Global.player_node as Node2D
+	if player == null:
+		return
+	var player_cell: Vector2i = _tilemap.local_to_map(_tilemap.to_local(player.global_position))
+	var half: float = TILE_SIZE * 0.5
+	for dx in range(-PLACE_RADIUS_TILES, PLACE_RADIUS_TILES + 1):
+		for dy in range(-PLACE_RADIUS_TILES, PLACE_RADIUS_TILES + 1):
+			var cell: Vector2i = player_cell + Vector2i(dx, dy)
+			if not _is_cell_in_place_radius(cell):
+				continue
+			if _placed_blocks.has(cell) or _cell_is_wall(cell):
+				continue
+			var cp: Vector2 = _tilemap.map_to_local(cell)
+			var rect := Rect2(cp.x - half, cp.y - half, TILE_SIZE, TILE_SIZE)
+			var color := Color(1.0, 1.0, 1.0, 0.45) \
+				if not (_cell_blocked_by_player(cell)) \
+				else Color(1.0, 0.3, 0.3, 0.45)
+			_grid_overlay.draw_rect(rect, color, false, 1.0)
+
+func _setup_cursor_highlight() -> void:
+	_cursor_highlight = Node2D.new()
+	_cursor_highlight.z_index = PLACEMENT_GUIDE_Z_INDEX
+	_cursor_highlight.visible = false
+	_cursor_highlight.draw.connect(func() -> void:
+		var half: float = TILE_SIZE * 0.5
+		_cursor_highlight.draw_rect(
+			Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
+			Color(1.0, 1.0, 1.0, 0.28), true)
+	)
+	add_child(_cursor_highlight)
+	_cursor_highlight.queue_redraw()
+
+func _update_cursor_highlight() -> void:
+	if _cursor_highlight == null or Global.block_mode:
+		if _cursor_highlight != null:
+			_cursor_highlight.visible = false
+		return
+	var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
+	var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
+	_cursor_highlight.position = _tilemap.map_to_local(cell)
+	_cursor_highlight.queue_redraw()
+	_cursor_highlight.visible = true
 
 func _mouse_cell() -> Vector2i:
 	return _tilemap.local_to_map(_tilemap.to_local(get_global_mouse_position()))

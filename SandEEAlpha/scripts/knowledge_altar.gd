@@ -59,7 +59,7 @@ func _ready() -> void:
 	shape.shape = rect
 	interact.add_child(shape)
 	interact.collision_layer = 0
-	interact.collision_mask  = 1
+	interact.collision_mask  = 4   # player is on layer 4 (see player.tscn)
 	interact.body_entered.connect(_on_body_entered)
 	interact.body_exited.connect(_on_body_exited)
 	add_child(interact)

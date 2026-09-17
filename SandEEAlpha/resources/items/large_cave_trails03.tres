@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://c4evo4dhqlxxw"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_6dcfk"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_nug0c"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_ono8a"]
+atlas = ExtResource("1_6dcfk")
+region = Rect2(160, 320, 32, 32)
+
+[resource]
+script = ExtResource("2_nug0c")
+item_name = "Large Cave Ground Trails 03"
+item_type = "block"
+is_dev_item = true
+icon = SubResource("AtlasTexture_ono8a")
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Strings"
+description = "In Lua, strings are sequences of characters enclosed in double or single quotes. You concatenate strings with the .. operator.
+
+To concatenate two strings:
+
+print(\"Hello\" .. \" \" .. \"World\")  -- Hello World
+
+To get the length of a string, use string.len():
+
+local s = \"Lua\"
+print(string.len(s))  -- 3
+
+You can also use the # operator:
+
+print(#s)  -- 3
+
+Strings in Lua are immutable. Concatenating creates a new string."
+keyword = ".."
+language = "lua"
+category = "Easy"

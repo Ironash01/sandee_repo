@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Variables"
+description = "In Lua, variables declared with local are scoped to the block they are defined in. A variable that has not been assigned a value holds nil.
+
+To declare a local variable:
+
+local x = 10
+
+You can print it:
+
+print(x)
+
+Variables without local are global by default:
+
+y = 20
+
+To check if a variable is nil:
+
+print(x == nil)  -- false
+print(z == nil)  -- true
+
+Lua is dynamically typed, so you do not need to specify the type."
+keyword = "local"
+language = "lua"
+category = "Easy"

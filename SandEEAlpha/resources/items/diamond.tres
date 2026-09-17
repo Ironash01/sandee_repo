@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://b1yrja4i6tt0"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_m7f5g"]
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_ycvbh"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_s026l"]
+atlas = ExtResource("1_ycvbh")
+region = Rect2(320, 64, 32, 32)
+
+[resource]
+script = ExtResource("1_m7f5g")
+item_name = "Diamond"
+description = "The most sinful and lustful resource."
+icon = SubResource("AtlasTexture_s026l")
+max_stack_size = 32
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

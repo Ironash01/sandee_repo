@@ -13,6 +13,7 @@ const C_SEL       := Color(0.25, 0.40, 0.75, 1.00)
 const C_TAB_BG    := Color(0.06, 0.08, 0.17, 1.00)
 const C_CAN_CRAFT := Color(0.15, 0.45, 0.20, 1.00)
 const C_NO_MAT    := Color(0.30, 0.20, 0.20, 1.00)
+const C_RED       := Color(1.00, 0.35, 0.35, 1.00)
 
 const CATEGORIES  := ["Materials", "Blocks", "Weapons & Tools", "Others"]
 
@@ -35,9 +36,9 @@ var _selected_idx: int    = -1
 var _recipe_list:   GridContainer
 var _detail_panel:  Control
 var _detail_name:   Label
-var _detail_ing1:   Label
-var _detail_ing2:   Label
-var _detail_result: Label
+var _detail_ing1:   HBoxContainer
+var _detail_ing2:   HBoxContainer
+var _detail_result: HBoxContainer
 var _craft_btn:     Button
 var _cat_btns:      Dictionary = {}
 var _row_btns:      Array      = []
@@ -231,13 +232,13 @@ func _build_detail(s: float) -> Control:
 	vbox.add_child(_detail_name)
 	_div(vbox)
 	vbox.add_child(_lbl("INGREDIENTS", int(11 * s), C_MUTED))
-	_detail_ing1 = _lbl("", int(13 * s), C_TITLE)
+	_detail_ing1 = _build_icon_row(s)
 	vbox.add_child(_detail_ing1)
-	_detail_ing2 = _lbl("", int(13 * s), C_TITLE)
+	_detail_ing2 = _build_icon_row(s)
 	vbox.add_child(_detail_ing2)
 	_div(vbox)
 	vbox.add_child(_lbl("RESULT", int(11 * s), C_MUTED))
-	_detail_result = _lbl("", int(13 * s), C_EFFECT)
+	_detail_result = _build_icon_row(s)
 	vbox.add_child(_detail_result)
 
 	var spacer := Control.new()
@@ -252,6 +253,31 @@ func _build_detail(s: float) -> Control:
 	vbox.add_child(_craft_btn)
 
 	return root
+
+# A single icon row: a material/result icon followed by a "have/needed" count
+# (e.g. "3/10"). The icon is shown normally when the player has the material,
+# darkened when they have none, and the count is RED when they don't have
+# enough to craft (have < needed). Reused for both ingredients and the result.
+func _build_icon_row(s: float) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(8 * s))
+	row.add_theme_constant_override("alignment", BoxContainer.ALIGNMENT_CENTER)
+
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(26 * s, 26 * s)
+	icon.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.expand_mode          = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	row.add_child(icon)
+
+	var qty := Label.new()
+	qty.add_theme_font_size_override("font_size", int(13 * s))
+	row.add_child(qty)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	# Stash the refs on the row so the filler functions can use them.
+	row.set_meta("icon", icon)
+	row.set_meta("qty", qty)
+	return row
 
 # ── Helpers ───────────────────────────────────────────────────────
 func _sb(bg: Color, border: Color, r: int,
@@ -384,15 +410,37 @@ func _on_select(idx: int) -> void:
 	_selected_idx        = idx
 	var recipe: CraftingRecipe = _filtered[idx] as CraftingRecipe
 	_detail_name.text    = recipe.result_item.item_name
-	_detail_ing1.text    = "• %s ×%d" % [recipe.ingredient_1.item_name, recipe.ingredient_1_quantity]
+	_fill_icon_row(_detail_ing1, recipe.ingredient_1, recipe.ingredient_1_quantity, true)
 	if recipe.ingredient_2 != null:
-		_detail_ing2.text    = "• %s ×%d" % [recipe.ingredient_2.item_name, recipe.ingredient_2_quantity]
+		_fill_icon_row(_detail_ing2, recipe.ingredient_2, recipe.ingredient_2_quantity, true)
 		_detail_ing2.visible = true
 	else:
 		_detail_ing2.visible = false
-	_detail_result.text   = "%s ×%d" % [recipe.result_item.item_name, recipe.result_quantity]
+	# Result is a plain icon + "×quantity" count (always green, no shortage).
+	_fill_icon_row(_detail_result, recipe.result_item, recipe.result_quantity, false)
 	_detail_panel.visible = true
 	_update_craft_btn(recipe)
+
+# Fills an icon row: item icon + a count text. For ingredients (is_ingredient)
+# the icon is shown at full colour when the player has the material and
+# darkened when they have none, and the count is RED when the player doesn't
+# have enough (have < needed); otherwise muted. For the result the icon stays
+# full-colour and the count is always the "×quantity".
+func _fill_icon_row(row: HBoxContainer, data: ItemData, needed: int, is_ingredient: bool) -> void:
+	var icon := row.get_meta("icon") as TextureRect
+	var qty  := row.get_meta("qty") as Label
+	if icon == null or qty == null or data == null:
+		return
+	icon.texture = data.icon if data.icon != null else null
+	var have: int = _count_item(data) if is_ingredient else needed
+	icon.modulate = Color(0.35, 0.35, 0.35, 1.0) if (is_ingredient and have <= 0) else Color.WHITE
+	if is_ingredient:
+		qty.text = "%d/%d" % [have, needed]
+		qty.add_theme_color_override("font_color",
+			C_RED if have < needed else C_MUTED)
+	else:
+		qty.text = "×%d" % needed
+		qty.add_theme_color_override("font_color", C_EFFECT)
 
 func _update_craft_btn(recipe: CraftingRecipe) -> void:
 	var state: CraftState = _craft_state(recipe)
@@ -425,6 +473,27 @@ func _on_craft() -> void:
 			Global.remove_item(recipe.ingredient_2)
 	Global.add_item({"quantity": recipe.result_quantity, "data": recipe.result_item})
 	Global.complete_mission("craft_item")
+	# Check for specific craft missions
+	var item_name: String = recipe.result_item.item_name.to_lower()
+	if item_name.contains("sword"):
+		Global.complete_mission("craft_sword")
+		if item_name.contains("iron"):
+			Global.complete_mission("craft_iron_sword")
+		elif item_name.contains("diamond"):
+			Global.complete_mission("craft_diamond_sword")
+	if item_name.contains("pickaxe"):
+		Global.complete_mission("craft_pickaxe")
+		if item_name.contains("iron"):
+			Global.complete_mission("craft_iron_pickaxe")
+		elif item_name.contains("diamond"):
+			Global.complete_mission("craft_diamond_pickaxe")
+	if item_name.contains("axe"):
+		if item_name.contains("iron"):
+			Global.complete_mission("craft_iron_axe")
+		elif item_name.contains("diamond"):
+			Global.complete_mission("craft_diamond_axe")
+	if item_name == "chest":
+		Global.complete_mission("craft_chest")
 	_update_craft_btn(recipe)
 	_refresh_highlights()
 

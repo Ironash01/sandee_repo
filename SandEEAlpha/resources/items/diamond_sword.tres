@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://byu77yl1hbkv2"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_tm2ew"]
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_vawjj"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_wfjx1"]
+atlas = ExtResource("1_vawjj")
+region = Rect2(192, 96, 32, 32)
+
+[resource]
+script = ExtResource("1_tm2ew")
+item_name = "Diamond Sword"
+description = "The prodigal weapon of murdering."
+item_type = "weapon"
+is_sword = true
+sword_level = 50
+icon = SubResource("AtlasTexture_wfjx1")
+is_craftable = true
+pickaxe_level = 1
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

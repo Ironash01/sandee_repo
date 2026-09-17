@@ -54,6 +54,10 @@ var quiz_room:           Dictionary = {}
 var knowledge_altar_pos: Vector2i = Vector2i.ZERO
 var quiz_altar_pos:      Vector2i = Vector2i.ZERO
 var player_spawn_pos:    Vector2i = Vector2i.ZERO
+# Wall cells chosen to host a DungeonFlare obstacle (dungeon_world spawns
+# one node per entry). Kept as Tile.WALL in the grid so the wall art and
+# collision are unchanged — see _pick_flare_positions().
+var flare_positions:     Array     = []
 
 # altar_amount counts the altar/checkpoint rooms INCLUDING the first knowledge
 # room; chest_amount is pure extra loot rooms. The quiz room is always the
@@ -130,6 +134,28 @@ func generate(seed_value: int, size_tier: int = -1, altar_amount: int = 1, chest
 	knowledge_altar_pos = _room_center(knowledge_room)
 	quiz_altar_pos      = _room_center(quiz_room)
 	_carve_entrance()
+	_pick_flare_positions(rng)
+
+# Wall tiles that face a walkable FLOOR cell become flare host cells. They
+# stay WALL in the grid (collision + wall-variant art untouched); the world
+# just spawns a DungeonFlare node on top of them.
+func _pick_flare_positions(rng: RandomNumberGenerator) -> void:
+	flare_positions = []
+	var wanted: int = clampi((width * height) / 900, 3, 12)
+	var candidates: Array = []
+	for x in range(1, width - 1):
+		for y in range(1, height - 1):
+			if grid[x][y] != Tile.WALL:
+				continue
+			if grid[x - 1][y] == Tile.FLOOR or grid[x + 1][y] == Tile.FLOOR \
+					or grid[x][y - 1] == Tile.FLOOR or grid[x][y + 1] == Tile.FLOOR:
+				candidates.append(Vector2i(x, y))
+	for i in range(wanted):
+		if candidates.is_empty():
+			break
+		var idx: int = rng.randi_range(0, candidates.size() - 1)
+		flare_positions.append(candidates[idx])
+		candidates.remove_at(idx)
 
 func _make_room(rng: RandomNumberGenerator) -> Dictionary:
 	var w := rng.randi_range(ROOM_MIN, ROOM_MAX)

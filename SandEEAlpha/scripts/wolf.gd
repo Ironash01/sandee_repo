@@ -23,6 +23,23 @@ const SEPARATION_STRENGTH: float = 40.0
 var _ai:               RefCounted = null
 var _attack_cooldown:  float      = 0.0
 
+# ── Player-death dispersal ────────────────────────────────────────
+# When the player dies, active wolves scatter outward from the death
+# position for a short duration before resuming normal behavior.
+var _is_dispersing:     bool    = false
+var _disperse_timer:    float   = 0.0
+var _disperse_direction: Vector2 = Vector2.ZERO
+const DISPERSE_DURATION: float = 2.0     # seconds to keep moving away
+const DISPERSE_SPEED:    float = 80.0    # px/s while dispersing
+const DISPERSE_RANDOMNESS: float = 0.4   # angle spread (radians)
+
+# ── Combat (sword hits) ────────────────────────────────────────────
+# Tracks remaining HP from COMBAT_DATA.health; a sword hit calls take_hit()
+# which reduces HP and knocks the wolf back (unless it's a boss).
+var _mob_health:   float  = 0.0
+var _knockback:    Vector2 = Vector2.ZERO
+const KNOCKBACK_DECAY: float = 900.0   # px/s of knockback velocity lost per second
+
 const DIRS: Array = [
 	{"name": "south",      "vec": Vector2( 0,  1)},
 	{"name": "north",      "vec": Vector2( 0, -1)},
@@ -36,8 +53,12 @@ const DIRS: Array = [
 
 const SPRITE_BASE: String = "res://sprites/mobs/wolf/32x32_Simple_white_wolf_with_pixelated_art_style_a"
 const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png")
+const DAMAGE_NUMBER_SCRIPT: GDScript = preload("res://scripts/damage_number.gd")
+const MELLOW_BURST_SCRIPT: GDScript = preload("res://scripts/mellow_burst.gd")
+const MOB_NAME_LABEL_SCRIPT: GDScript = preload("res://scripts/mob_name_label.gd")
 
 var _last_dir: String = "south"
+var _name_label: Node2D = null
 
 @onready var _sprite: AnimatedSprite2D = $AnimatedSprite2D
 var _water_layer: TileMapLayer = null
@@ -70,6 +91,8 @@ func _apply_despawn_zone(zone: int, elapsed: float) -> void:
 
 func _ready() -> void:
 	add_to_group("Wolf")
+	add_to_group("Mob")
+	_mob_health = COMBAT_DATA.health
 	# Same quantized y-sort convention as trees/grass/placed blocks (all use
 	# z_index = int(y / 32)); without this a mob is stuck at z_index 0 and
 	# never sorts against the world — a wolf south of a tree or the player
@@ -81,23 +104,42 @@ func _ready() -> void:
 	_sprite.sprite_frames = _shared_frames
 	_sprite.play("idle_south")
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 5.0), Vector2(0.6, 0.3), 0.35))
+	_add_name_label()
 	_water_layer = get_parent().get_node_or_null("Water") as TileMapLayer
 	var ai_script: Script = AI_SCRIPTS.get(COMBAT_DATA.ai_type)
 	if ai_script != null:
 		_ai = ai_script.new()
+	Global.player_died.connect(_on_player_died)
 
 func _physics_process(delta: float) -> void:
-	# Keep the y-sort bucket fresh as the wolf moves (trees do this once at
-	# spawn since they don't move; wolves roam).
 	z_index = int(global_position.y / 32)
+
+	# Player-death dispersal overrides AI movement
+	if _is_dispersing:
+		_disperse_timer -= delta
+		if _disperse_timer <= 0.0:
+			_is_dispersing = false
+		else:
+			velocity = _disperse_direction * DISPERSE_SPEED
+			velocity += _knockback
+			_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
+			if velocity != Vector2.ZERO:
+				_update_walk_anim(velocity)
+				move_and_slide()
+			return
+
 	if _ai != null:
 		velocity = _ai.call("physics_update", self, COMBAT_DATA.speed, _water_layer, delta)
 	velocity += _apply_separation()
+	velocity += _knockback
+	_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
 	if velocity != Vector2.ZERO:
 		_update_walk_anim(velocity)
 		move_and_slide()
 	else:
 		_play_idle(_last_dir)
+	if _last_damage_ms > 0 and Time.get_ticks_msec() - _last_damage_ms < HP_BAR_SHOW_MS:
+		queue_redraw()
 	_try_attack_player(delta)
 
 # Mobs with damage > 1 hit the player on proximity contact, on a cooldown.
@@ -112,6 +154,102 @@ func _try_attack_player(delta: float) -> void:
 		return
 	_attack_cooldown = ATTACK_COOLDOWN
 	Global.damage_player(COMBAT_DATA.damage, global_position, facing_vector())
+	_show_name_label()
+
+# ── Sword hit ────────────────────────────────────────────────────
+# Called by the player's swing hitbox (see sword_swing_effect.gd) when the
+# blade overlaps this mob. Reduces HP, knocks the wolf back from the hit
+# origin (unless it's a boss), shows the red hit flash + floating damage
+# number, and dies at 0 HP.
+func take_hit(damage: float, source_pos: Vector2) -> void:
+	if damage <= 0.0:
+		return
+	_mob_health = maxf(0.0, _mob_health - damage)
+	_last_damage_ms = Time.get_ticks_msec()
+	var away: Vector2 = global_position - source_pos
+	if away.length_squared() > 0.001:
+		away = away.normalized()
+	if COMBAT_DATA.is_boss:
+		# Bosses shrug off knockback — they take damage but don't get shoved.
+		pass
+	else:
+		var strength: float = 60.0 + damage * 6.0
+		_knockback += away * strength
+	# Hit feedback: red flash for ~1s (Terraria-style), plus the floating
+	# damage number above the head.
+	modulate = Color(1.0, 0.4, 0.4, 1.0)
+	if _sprite != null:
+		var tw := create_tween()
+		tw.tween_interval(1.0)
+		tw.tween_callback(_reset_hit_flash)
+	_spawn_damage_number(damage)
+	_show_name_label()
+	queue_redraw()
+	if _mob_health <= 0.0:
+		_die()
+
+func _reset_hit_flash() -> void:
+	if is_instance_valid(self):
+		modulate = Color.WHITE
+
+func _spawn_damage_number(damage: float) -> void:
+	var n: Node2D = DAMAGE_NUMBER_SCRIPT.new() as Node2D
+	if n == null:
+		return
+	n.set("_text", str(int(round(damage))))
+	n.position = global_position + Vector2(0.0, -24.0)
+	get_parent().add_child(n)
+
+# ── Mob name label (Terraria-style) ───────────────────────────────
+func _add_name_label() -> void:
+	_name_label = MOB_NAME_LABEL_SCRIPT.new() as Node2D
+	if _name_label == null:
+		return
+	_name_label.set("mob_name", COMBAT_DATA.mob_name)
+	add_child(_name_label)
+
+func _show_name_label() -> void:
+	if _name_label != null:
+		_name_label.call("flash")
+
+# ── Autohide health bar (Terraria-style) ──────────────────────────
+# Shown above the mob while it's recently damaged and below full HP; fades
+# out after HP_BAR_SHOW_MS. Drawn in _draw and refreshed via queue_redraw.
+var _last_damage_ms: int = -1
+const HP_BAR_SHOW_MS: float = 3000.0
+const HP_BAR_W: float = 30.0
+const HP_BAR_H: float = 4.0
+const HP_BAR_Y: float = -24.0
+
+func _draw() -> void:
+	if _last_damage_ms < 0:
+		return
+	if Time.get_ticks_msec() - _last_damage_ms > HP_BAR_SHOW_MS:
+		return
+	if _mob_health >= COMBAT_DATA.health:
+		return
+	var frac: float = clampf(_mob_health / COMBAT_DATA.health, 0.0, 1.0)
+	var w := HP_BAR_W
+	var h := HP_BAR_H
+	draw_rect(Rect2(-w * 0.5, HP_BAR_Y, w, h), Color(0.05, 0.05, 0.08, 0.85))
+	draw_rect(Rect2(-w * 0.5, HP_BAR_Y, w * frac, h), Color(0.85, 0.25, 0.25, 1.0))
+
+func _die() -> void:
+	var world: Node = Global.world_node
+	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
+		world.call("notify_mob_killed", self)
+	Global.complete_mission("defeat_wolves")
+	_spawn_death_burst()
+	queue_free()
+
+# Minecraft-style death poof: a burst of mellow puffs at the body's location,
+# spawned as a sibling so it survives this mob's free.
+func _spawn_death_burst() -> void:
+	var b: Node2D = MELLOW_BURST_SCRIPT.new() as Node2D
+	if b == null:
+		return
+	b.position = global_position
+	get_parent().add_child(b)
 
 # The direction the wolf is currently facing (its last movement direction),
 # so knockback on the player reflects which side the hit came from.
@@ -156,6 +294,19 @@ func _update_walk_anim(vec: Vector2) -> void:
 			and _sprite.animation != anim:
 		_sprite.play(anim)
 	_last_dir = best_dir
+
+func _on_player_died(death_position: Vector2) -> void:
+	if _mob_health <= 0.0:
+		return
+	var away: Vector2 = global_position - death_position
+	if away.length_squared() < 1.0:
+		away = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
+	away = away.normalized()
+	# Add controlled random spread so wolves don't all flee in the same line
+	away = away.rotated(randf_range(-DISPERSE_RANDOMNESS, DISPERSE_RANDOMNESS))
+	_disperse_direction = away
+	_disperse_timer = DISPERSE_DURATION
+	_is_dispersing = true
 
 func _build_frames() -> SpriteFrames:
 	var sf := SpriteFrames.new()

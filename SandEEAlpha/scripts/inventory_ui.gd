@@ -13,6 +13,7 @@ const C_TAB_ACT  := Color(0.08, 0.10, 0.20, 0.97)
 const C_TAB_IDLE := Color(0.04, 0.06, 0.12, 0.97)
 const C_CAN_CRAFT := Color(0.15, 0.45, 0.20, 1.00)
 const C_NO_MAT   := Color(0.30, 0.20, 0.20, 1.00)
+const C_RED      := Color(1.00, 0.35, 0.35, 1.00)
 const C_SEL      := Color(0.25, 0.40, 0.75, 1.00)
 
 const COLS       := 5
@@ -47,9 +48,9 @@ var _selected_idx:  int   = -1
 var _craft_list:    GridContainer
 var _craft_detail:  Control
 var _craft_name:    Label
-var _craft_ing1:    Label
-var _craft_ing2:    Label
-var _craft_result:  Label
+var _craft_ing1:    HBoxContainer
+var _craft_ing2:    HBoxContainer
+var _craft_result:  HBoxContainer
 var _craft_btn:     Button
 var _craft_cat_btns: Dictionary = {}
 var _craft_row_btns: Array = []
@@ -383,11 +384,11 @@ func _build_craft_detail(s: float) -> Control:
 	_craft_name   = _lbl("", i(14,s), C_TITLE); vbox.add_child(_craft_name)
 	_div(vbox)
 	vbox.add_child(_lbl("INGREDIENTS", i(10,s), C_MUTED))
-	_craft_ing1   = _lbl("", i(12,s), C_TITLE); vbox.add_child(_craft_ing1)
-	_craft_ing2   = _lbl("", i(12,s), C_TITLE); vbox.add_child(_craft_ing2)
+	_craft_ing1   = _build_craft_icon_row(s); vbox.add_child(_craft_ing1)
+	_craft_ing2   = _build_craft_icon_row(s); vbox.add_child(_craft_ing2)
 	_div(vbox)
 	vbox.add_child(_lbl("RESULT", i(10,s), C_MUTED))
-	_craft_result = _lbl("", i(12,s), C_EFFECT); vbox.add_child(_craft_result)
+	_craft_result = _build_craft_icon_row(s); vbox.add_child(_craft_result)
 
 	var sp := Control.new(); sp.size_flags_vertical = Control.SIZE_EXPAND_FILL; vbox.add_child(sp)
 
@@ -399,6 +400,44 @@ func _build_craft_detail(s: float) -> Control:
 	vbox.add_child(_craft_btn)
 
 	return root
+
+# A single icon row (ingredient/result): item icon + a count text. Ref meta
+# "icon"/"qty" hold the child nodes for _fill_craft_icon_row.
+func _build_craft_icon_row(s: float) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", i(8, s))
+	row.add_theme_constant_override("alignment", BoxContainer.ALIGNMENT_CENTER)
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(i(24, s), i(24, s))
+	icon.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.expand_mode          = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	row.add_child(icon)
+	var qty := Label.new()
+	qty.add_theme_font_size_override("font_size", i(12, s))
+	row.add_child(qty)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.set_meta("icon", icon)
+	row.set_meta("qty", qty)
+	return row
+
+# Fills an icon row: icon + count. For ingredients (is_ingredient) the icon is
+# darkened when the player has none and the count is RED when they don't have
+# enough; for the result it stays full-colour with a ×quantity count.
+func _fill_craft_icon_row(row: HBoxContainer, data: ItemData, needed: int, is_ingredient: bool) -> void:
+	var icon := row.get_meta("icon") as TextureRect
+	var qty  := row.get_meta("qty") as Label
+	if icon == null or qty == null or data == null:
+		return
+	icon.texture = data.icon if data.icon != null else null
+	var have: int = _count_item(data) if is_ingredient else needed
+	icon.modulate = Color(0.35, 0.35, 0.35, 1.0) if (is_ingredient and have <= 0) else Color.WHITE
+	if is_ingredient:
+		qty.text = "%d/%d" % [have, needed]
+		qty.add_theme_color_override("font_color",
+			C_RED if have < needed else C_MUTED)
+	else:
+		qty.text = "×%d" % needed
+		qty.add_theme_color_override("font_color", C_EFFECT)
 
 # ── Crafting logic ────────────────────────────────────────────────
 func _craft_on_cat(cat: String) -> void:
@@ -486,13 +525,13 @@ func _craft_select(idx: int) -> void:
 	_selected_idx = idx
 	var r: CraftingRecipe = _filtered[idx] as CraftingRecipe
 	_craft_name.text  = r.result_item.item_name
-	_craft_ing1.text  = "• %s ×%d" % [r.ingredient_1.item_name, r.ingredient_1_quantity]
+	_fill_craft_icon_row(_craft_ing1, r.ingredient_1, r.ingredient_1_quantity, true)
 	if r.ingredient_2 != null:
-		_craft_ing2.text    = "• %s ×%d" % [r.ingredient_2.item_name, r.ingredient_2_quantity]
+		_fill_craft_icon_row(_craft_ing2, r.ingredient_2, r.ingredient_2_quantity, true)
 		_craft_ing2.visible = true
 	else:
 		_craft_ing2.visible = false
-	_craft_result.text  = "%s ×%d" % [r.result_item.item_name, r.result_quantity]
+	_fill_craft_icon_row(_craft_result, r.result_item, r.result_quantity, false)
 	_craft_detail.visible = true
 	_update_craft_btn(r)
 
@@ -538,7 +577,9 @@ func _refresh_inv() -> void:
 		_active_idx = -1
 		_show_tip_empty()
 	elif _tip_qty != null:
-		_tip_qty.text = "Qty: %d / %d" % [active_item["quantity"], Global.MAX_STACK]
+		var data = active_item["data"] as ItemData
+		var limit = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
+		_tip_qty.text = "Qty: %d / %d" % [active_item["quantity"], limit]
 
 func _on_slot_clicked(idx: int) -> void:
 	if _tip_root == null: return
@@ -549,8 +590,9 @@ func _on_slot_clicked(idx: int) -> void:
 		return
 	_active_idx = idx
 	var data: ItemData = item["data"] as ItemData
+	var limit = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
 	_tip_name.text   = data.item_name
-	_tip_qty.text    = "Qty: %d / %d" % [item["quantity"], Global.MAX_STACK]
+	_tip_qty.text    = "Qty: %d / %d" % [item["quantity"], limit]
 	_tip_type.text   = data.item_type.capitalize()
 	_tip_effect.text = ("+ " + data.effect) if data.effect != "" else ""
 	_tip_desc.text   = data.description

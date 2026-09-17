@@ -4,4 +4,20 @@
 
 [resource]
 script = ExtResource("1_r2qrm")
-metadata/_custom_type_script = "uid://c8mblthys4abt"
+entry_name = "If else statements"
+description = "In Python we use if and else statements to let the program make decisions. The block under if runs only when the condition is True; otherwise the block under else runs.
+
+Here is a sample code using if and else:
+
+age = 18
+if age > 18:
+    print(\"You can vote now\")
+else:
+    print(\"You are too young to vote\")
+
+The condition after if is checked first. When it is True Python runs the indented code under if. When it is False Python skips that code and runs the code under else instead.
+
+Note the colon (:) at the end of the if and else lines, and that the body of each branch must be indented. We also use the comparison operator == to test if two values are equal, while = only assigns a value to a variable."
+keyword = "if else"
+language = "python"
+category = "Medium"

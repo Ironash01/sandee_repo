@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://63t3aoawedra"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_2kwli"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_tvlq5"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_f3gyt"]
+atlas = ExtResource("1_2kwli")
+region = Rect2(256, 96, 32, 32)
+
+[resource]
+script = ExtResource("1_tvlq5")
+item_name = "Diamond Pickaxe"
+description = "The fastest pick."
+icon = SubResource("AtlasTexture_f3gyt")
+is_craftable = true
+pickaxe_level = 10
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

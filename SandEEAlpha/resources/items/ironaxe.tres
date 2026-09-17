@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://c3kbnvup2npo1"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_10uhr"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_81r0e"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_176gl"]
+atlas = ExtResource("1_10uhr")
+region = Rect2(128, 96, 32, 32)
+
+[resource]
+script = ExtResource("1_81r0e")
+item_name = "Iron Axe"
+description = "Chopper"
+icon = SubResource("AtlasTexture_176gl")
+is_craftable = true
+pickaxe_level = 3
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

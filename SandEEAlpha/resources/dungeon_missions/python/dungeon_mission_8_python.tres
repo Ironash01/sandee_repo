@@ -1,0 +1,41 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://blwtsvr8vsjc6"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "Which keyword starts the branch that runs when the if condition is False?"
+answer_a = "else"
+answer_b = "if"
+answer_c = "elif"
+answer_d = "when"
+correct_index = 0
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Print \"You are too young to vote\" when age is not greater than 18, otherwise print \"You can vote now\"."
+language = "python"
+starter_code = "age = 18\nif age > 18:\n    print(\"You can vote now\")\nelse:\n    print(\"You are too young to vote\")"
+answer_output = "You are too young to vote"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 0
+question = "Which operator checks whether two values are equal?"
+answer_a = "=="
+answer_b = "="
+answer_c = ">"
+answer_d = "!="
+correct_index = 0
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Conditionals"
+mission_description = "Learn how if and else statements let the program decide which code to run."
+entry_resource_file = "entry_8_python.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 8
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

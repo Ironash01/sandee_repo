@@ -1,9 +1,0 @@
-[gd_resource type="Resource" script_class="QuizQuestion" format=3 uid="uid://crspbosvdxsbb"]
-
-[ext_resource type="Script" uid="uid://d1g3k0mq7l5wj" path="res://resources/quizzes/quiz_data.gd" id="1_script"]
-
-[resource]
-script = ExtResource("1_script")
-question_name = "print long answer"
-question = "Type the complete print() statement that would display the word Hello on screen."
-answer_long = "print(\"Hello\")"

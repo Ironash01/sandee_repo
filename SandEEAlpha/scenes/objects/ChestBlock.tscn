@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://bi3upwepoqctm"]
+[gd_scene load_steps=6 format=3 uid="uid://bi3upwepoqctm"]
 
 [ext_resource type="Script" uid="uid://i6blennpmucv" path="res://scripts/chest_block.gd" id="1_cb"]
 [ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="2_vfp2l"]
@@ -8,10 +8,10 @@ atlas = ExtResource("2_vfp2l")
 region = Rect2(65, 128, 31, 32)
 
 [sub_resource type="RectangleShape2D" id="RectShape_chest"]
-size = Vector2(28, 24)
+size = Vector2(32, 12)
 
 [sub_resource type="CircleShape2D" id="CircleShape_interact"]
-radius = 64.0
+radius = 40.0
 
 [node name="ChestBlock" type="Node2D" unique_id=1214562577]
 script = ExtResource("1_cb")
@@ -22,9 +22,12 @@ texture = SubResource("AtlasTexture_ytxgs")
 [node name="StaticBody2D" type="StaticBody2D" parent="." unique_id=26842736]
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="StaticBody2D" unique_id=152167382]
+position = Vector2(0, 6)
 shape = SubResource("RectShape_chest")
 
 [node name="InteractArea" type="Area2D" parent="." unique_id=587402087]
+collision_layer = 0
+collision_mask = 4
 
 [node name="InteractShape" type="CollisionShape2D" parent="InteractArea" unique_id=1024927265]
 shape = SubResource("CircleShape_interact")

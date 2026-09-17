@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Conditionals"
+description = "In Lua, conditionals use if/then/else/end. There are no curly braces or parentheses required.
+
+Basic if-else:
+
+local x = 10
+if x > 5 then
+    print(\"big\")
+else
+    print(\"small\")
+end
+
+You can chain with elseif:
+
+if x > 0 then
+    print(\"positive\")
+elseif x == 0 then
+    print(\"zero\")
+else
+    print(\"negative\")
+end
+
+Lua uses elseif (one word), not else if."
+keyword = "if"
+language = "lua"
+category = "Easy"

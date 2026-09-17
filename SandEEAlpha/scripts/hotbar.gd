@@ -40,19 +40,25 @@ var _stuck_label: Label = null
 var _stuck_tween: Tween = null
 const STUCK_POPUP_DURATION := 3.0
 
+# ── Selected item name (above hotbar, shown on scroll) ────────────
+var _selected_name_label: Label = null
+var _selected_name_tween: Tween = null
+const ITEM_NAME_FADE_DURATION: float = 0.3
+const ITEM_NAME_SHOW_DURATION: float = 2.0
+
 func _ready() -> void:
 	var hbox: HBoxContainer = $CanvasLayer/HBoxContainer as HBoxContainer
 	hbox.add_theme_constant_override("separation", 4)
 
-	var slot_idx: int = 0
+	var slot_index: int = 0
 	for child in hbox.get_children():
 		if not (child is TextureRect):
 			continue
 
 		# Attach hotbar_slot.gd so the TextureRect can handle drops
 		child.set_script(SLOT_SCRIPT)
-		child.set("slot_index", slot_idx)
-		slot_idx += 1
+		child.set("slot_index", slot_index)
+		slot_index += 1
 
 		slots.append(child)
 		_style_slot(child as TextureRect)
@@ -123,6 +129,18 @@ func _ready() -> void:
 	_stuck_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	_stuck_label.modulate.a = 0.0
 	canvas.add_child(_stuck_label)
+
+	# ── Selected item name label (above hotbar, updates on scroll) ──
+	_selected_name_label = Label.new()
+	_selected_name_label.name = "SelectedNameLabel"
+	_selected_name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.85, 1.0))
+	_selected_name_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_selected_name_label.add_theme_constant_override("shadow_offset_x", 1)
+	_selected_name_label.add_theme_constant_override("shadow_offset_y", 1)
+	_selected_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_selected_name_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_selected_name_label.visible = false
+	canvas.add_child(_selected_name_label)
 
 	# ── Block hover label (bottom-left) ──────────────────────────
 	_hover_label = Label.new()
@@ -247,6 +265,30 @@ func _highlight_slot(index: int) -> void:
 		if bg != null:
 			bg.color = C_SLOT_SEL
 
+	_update_selected_name()
+
+func _update_selected_name() -> void:
+	if _selected_name_label == null:
+		return
+	# Kill any running fade-out tween so rapid scrolls restart the timer
+	if _selected_name_tween != null and _selected_name_tween.is_valid():
+		_selected_name_tween.kill()
+	if selected_index < 0 or selected_index >= Global.Hotbar.size():
+		_selected_name_label.visible = false
+		return
+	var item: Variant = Global.Hotbar[selected_index]
+	if item != null:
+		var data: ItemData = (item as Dictionary)["data"] as ItemData
+		_selected_name_label.text = data.item_name
+		_selected_name_label.modulate.a = 1.0
+		_selected_name_label.visible = true
+		# Fade out after ITEM_NAME_SHOW_DURATION seconds
+		_selected_name_tween = create_tween()
+		_selected_name_tween.tween_interval(ITEM_NAME_SHOW_DURATION)
+		_selected_name_tween.tween_property(_selected_name_label, "modulate:a", 0.0, ITEM_NAME_FADE_DURATION)
+	else:
+		_selected_name_label.visible = false
+
 func _apply_label_scale() -> void:
 	var s: float = Global.ui_scale
 	var fs_build: int = int(15 * s)
@@ -261,6 +303,10 @@ func _apply_label_scale() -> void:
 		_popup_label.add_theme_font_size_override("font_size", fs_popup)
 		_popup_label.offset_top    = int(-108 * s)
 		_popup_label.offset_bottom = int(-80  * s)
+	if _selected_name_label != null:
+		_selected_name_label.add_theme_font_size_override("font_size", int(13 * s))
+		_selected_name_label.offset_top    = int(-60 * s)
+		_selected_name_label.offset_bottom = int(-42  * s)
 	if _hover_label != null:
 		_hover_label.add_theme_font_size_override("font_size", fs_hover)
 		_hover_label.offset_left   = int(14 * s)
@@ -288,10 +334,10 @@ func _on_hover_label_changed(text: String) -> void:
 	_hover_label.visible = text != ""
 
 # ── Item-description tooltip (hotbar hover) ────────────────────────
-func _on_slot_mouse_entered(slot_idx: int) -> void:
-	if slot_idx < 0 or slot_idx >= Global.Hotbar.size():
+func _on_slot_mouse_entered(slot_index: int) -> void:
+	if slot_index < 0 or slot_index >= Global.Hotbar.size():
 		return
-	var item: Variant = Global.Hotbar[slot_idx]
+	var item: Variant = Global.Hotbar[slot_index]
 	if item == null:
 		_show_item_tip("")
 		return
@@ -398,3 +444,4 @@ func _refresh_hotbar() -> void:
 			icon.texture  = null
 			icon.visible  = false
 			label.visible = false
+	_update_selected_name()

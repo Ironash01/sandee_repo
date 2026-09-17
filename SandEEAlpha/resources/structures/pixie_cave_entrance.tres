@@ -1,18 +1,14 @@
 [gd_resource type="Resource" script_class="GeneratedStructure" format=3 uid="uid://duao802vpjc2o"]
 
 [ext_resource type="Script" uid="uid://cygs5xp1pgiv6" path="res://resources/structures/generated_structure.gd" id="1_pixie"]
-[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="2_846yk"]
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_2lhrg"]
-atlas = ExtResource("2_846yk")
-region = Rect2(56, 408, 200, 72)
+[ext_resource type="Texture2D" uid="uid://c9v7p1x2k4m6n" path="res://sprites/cave/pixie_caves.png" id="2_pixie"]
 
 [resource]
 script = ExtResource("1_pixie")
 name = "Pixie Cave Entrance"
-sprite = SubResource("AtlasTexture_2lhrg")
+sprite = ExtResource("2_pixie")
 type = "pixie cave"
-tile_width = 6
-tile_height = 3
-door_rect = Rect2i(3, 2, 3, 1)
+tile_width = 7
+tile_height = 4
+door_rect = Rect2i(3, 3, 1, 1)
 metadata/_custom_type_script = "uid://cygs5xp1pgiv6"

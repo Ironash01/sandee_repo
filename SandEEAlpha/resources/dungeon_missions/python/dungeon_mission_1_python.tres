@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://dttskvc3sb5rg"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 1
+question = "In this quest, you need to print \"Hello world, this is my first Python code.\""
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Type the complete print() statement that would display the word Hello on screen."
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+question = "What would be the output of this code.
+
+print(\"This is my first python code\")"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "The Python print room"
+mission_description = "Learn what print() does, then prove it at the quiz altar to claim your Lua core."
+entry_resource_file = "entry_1_python.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+size_modifier = 0

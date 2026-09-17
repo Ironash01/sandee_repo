@@ -202,7 +202,7 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 
 # Emitted when the player's health hits zero (the game scene uses this to dim
 # the screen). _handle_player_death immediately respawns the player.
-signal player_died
+signal player_died(death_position: Vector2)
 
 # Player death: notify on the chat bar, teleport back to the world spawn point,
 # and restore full health. Runs synchronously inside damage_player so death is
@@ -214,9 +214,10 @@ func _handle_player_death() -> void:
 	if _death_in_progress:
 		return
 	_death_in_progress = true
-	player_died.emit()
 	log_chat("[color=#ff7777]You died! Respawning in %d seconds...[/color]" % int(DEATH_RESPAWN_TIME))
 	var p: Node2D = player_node as Node2D
+	var death_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
+	player_died.emit(death_pos)
 	if p != null:
 		# Freeze + hide the player while dead — the sprite disappears until the
 		# respawn timer finishes.
@@ -274,6 +275,7 @@ var pause_menu_open:    bool  = false
 var _ui_open_count: int = 0
 var player_near_station: bool  = false
 var block_mode:          bool  = false   # Ctrl toggles (gameplay build mode) — shared across all scripts; /blockmode command also works
+var is_in_dungeon:       bool  = false   # true while inside a dungeon — blocks build mode toggle
 var ui_scale:            float = 1.0
 
 # True while the chat console's text input is focused — gates player movement
@@ -321,21 +323,19 @@ signal mission_completed(mission_id: String)
 var accepted_mission_id: String = ""
 signal mission_accepted(mission_id: String)
 
-# ── Knowledge / quiz / dungeon-mission registries ───────────────────────
-# Data-driven dungeon content lives in three resource folders and is loaded
+# ── Knowledge / dungeon-mission registries ────────────────────────────
+# Data-driven dungeon content lives in two resource folders and is loaded
 # once at startup:
 #   res://resources/entries/        KnowledgeEntry (encyclopedia + keyword)
-#   res://resources/quizzes/        QuizQuestion   (quiz altar questions)
-#   res://resources/dungeon_missions/  DungeonMissionData (glues entry→quizzes)
-# A dungeon mission references the others by FILE NAME (e.g.
-# "entry_1_lua.tres") so the mission author never needs to build node graphs
-# in the editor — just drop a .tres in the right folder and reference it.
+#   res://resources/dungeon_missions/  DungeonMissionData (glues entry→questions;
+#                               the questions are embedded inline, so no quiz files)
+# A dungeon mission references its entry by FILE NAME (e.g. "entry_1_lua.tres")
+# so the mission author never needs to build node graphs in the editor — just
+# drop a .tres in the right folder and reference it.
 const KNOWLEDGE_DIR: String       = "res://resources/entries/"
-const QUIZ_DIR:      String       = "res://resources/quizzes/"
 const DUNGEON_MISSION_DIR: String = "res://resources/dungeon_missions/"
 
 var knowledge_entries: Dictionary = {}  # entry base name -> KnowledgeEntry
-var quiz_questions:    Dictionary = {}  # quiz base name -> QuizQuestion
 var dungeon_missions:  Dictionary = {}  # dungeon_index -> DungeonMissionData
 
 # What the player has actually learned. learned_entries keyed by entry base
@@ -360,10 +360,8 @@ signal dungeon_cleared(dungeon_index: int)
 
 func load_knowledge_data() -> void:
 	knowledge_entries.clear()
-	quiz_questions.clear()
 	dungeon_missions.clear()
 	_load_resource_dir(KNOWLEDGE_DIR, knowledge_entries)
-	_load_resource_dir(QUIZ_DIR,      quiz_questions)
 	var mission_lookup: Dictionary = {}
 	_load_resource_dir(DUNGEON_MISSION_DIR, mission_lookup)
 	for key in mission_lookup:
@@ -379,7 +377,10 @@ func _load_resource_dir(dir_path: String, into: Dictionary) -> void:
 	dir.list_dir_begin()
 	var fname := dir.get_next()
 	while fname != "":
-		if not dir.current_is_dir() and fname.ends_with(".tres"):
+		if dir.current_is_dir() and not fname.begins_with("."):
+			# Recurse into subdirectories (e.g. python/, lua/)
+			_load_resource_dir(dir_path + fname + "/", into)
+		elif not dir.current_is_dir() and fname.ends_with(".tres"):
 			var res: Resource = load(dir_path + fname)
 			if res != null:
 				into[fname.get_basename()] = res
@@ -390,9 +391,6 @@ func _load_resource_dir(dir_path: String, into: Dictionary) -> void:
 
 func get_knowledge_entry_file(fname: String) -> KnowledgeEntry:
 	return knowledge_entries.get(fname.get_basename()) as KnowledgeEntry
-
-func get_quiz_file(fname: String) -> QuizQuestion:
-	return quiz_questions.get(fname.get_basename()) as QuizQuestion
 
 func get_dungeon_mission_for_index(idx: int) -> DungeonMissionData:
 	return dungeon_missions.get(idx) as DungeonMissionData
@@ -482,6 +480,60 @@ func grant_item(item_path: String, quantity: int = 1) -> bool:
 		return false
 	return add_item({"data": data, "quantity": maxi(quantity, 1)})
 
+# Find any ItemData resource under resources/items/ by display name or file
+# base name (case-insensitive, contains match). Returns null when nothing
+# matches. Used by the /inv console command to hand out arbitrary items.
+func find_item_by_name(query: String) -> ItemData:
+	var q: String = query.strip_edges().to_lower()
+	if q.is_empty():
+		return null
+	const ITEMS_DIR: String = "res://resources/items/"
+	var dir := DirAccess.open(ITEMS_DIR)
+	if dir == null:
+		return null
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while fname != "":
+		if not dir.current_is_dir() and fname.ends_with(".tres"):
+			var data: ItemData = load(ITEMS_DIR + fname) as ItemData
+			if data != null:
+				var base: String = fname.get_basename().to_lower()
+				var display: String = data.item_name.to_lower()
+				if base == q or display == q or base.contains(q) or display.contains(q):
+					dir.list_dir_end()
+					return data
+		fname = dir.get_next()
+	dir.list_dir_end()
+	return null
+
+# Every ItemData resource under resources/items/, sorted by display name. Used
+# by the /items console command's picker UI.
+func list_all_items() -> Array[ItemData]:
+	var out: Array[ItemData] = []
+	const ITEMS_DIR: String = "res://resources/items/"
+	var dir := DirAccess.open(ITEMS_DIR)
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while fname != "":
+		if not dir.current_is_dir() and fname.ends_with(".tres"):
+			var data: ItemData = load(ITEMS_DIR + fname) as ItemData
+			if data != null:
+				out.append(data)
+		fname = dir.get_next()
+	dir.list_dir_end()
+	out.sort_custom(func(a: ItemData, b: ItemData) -> bool: return a.item_name < b.item_name)
+	return out
+
+# Grant an item by NAME (see find_item_by_name). allow_dev defaults to true so
+# the /inv debug command can hand out dev-only blocks (grass, ores, etc.).
+func give_item_by_name(query: String, quantity: int = 1) -> bool:
+	var data := find_item_by_name(query)
+	if data == null:
+		return false
+	return add_item({"data": data, "quantity": maxi(quantity, 1)}, true)
+
 # ── Player / world refs ───────────────────────────────────────────
 var player_node: Node = null
 var world_node:  Node = null
@@ -490,6 +542,11 @@ var game_node:   Node = null  # game_instance.gd — CavePortal calls enter_cave
 @onready var inventory_slot_scene: PackedScene = preload("res://scenes/ui/InventorySlot.tscn")
 
 func _ready() -> void:
+	# Global input (Ctrl build toggle, pause/chat shortcuts) must work even when
+	# the SceneTree is paused — a leaked open_ui() leaves get_tree().paused true
+	# while the player (PROCESS_MODE_ALWAYS) still moves, and a pausable Global
+	# would silently stop receiving _input. ALWAYS keeps this responsive.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
 	_init_missions()
@@ -507,6 +564,9 @@ func _input(event: InputEvent) -> void:
 		return
 	var key_event := event as InputEventKey
 	if key_event.keycode == KEY_CTRL and not key_event.shift_pressed:
+		if is_in_dungeon:
+			log_chat("[color=#ff7777]Build mode is disabled inside dungeons.[/color]")
+			return
 		block_mode = not block_mode
 		block_mode_changed.emit(block_mode)
 
@@ -532,6 +592,27 @@ func _init_missions() -> void:
 		{"id": "open_inventory",   "title": "Open your inventory",   "completed": false},
 		{"id": "cut_tree",         "title": "Cut your first tree",   "completed": false},
 		{"id": "craft_item",       "title": "Craft your first item", "completed": false},
+		{"id": "collect_wood",     "title": "Collect 20 wood",       "completed": false},
+		{"id": "craft_sword",      "title": "Craft a wooden sword",  "completed": false},
+		{"id": "craft_pickaxe",    "title": "Craft a wooden pickaxe","completed": false},
+		{"id": "mine_stone",       "title": "Mine 10 stone blocks",  "completed": false},
+		{"id": "place_blocks",     "title": "Place 5 blocks",        "completed": false},
+		{"id": "defeat_wolves",    "title": "Defeat 5 wolves",       "completed": false},
+		{"id": "build_shelter",    "title": "Place 10 blocks",       "completed": false},
+		{"id": "craft_chest",      "title": "Craft a chest",         "completed": false},
+		{"id": "enter_cave",       "title": "Enter a cave",          "completed": false},
+		{"id": "mine_iron",        "title": "Mine 5 iron ore",       "completed": false},
+		{"id": "smelt_iron",       "title": "Smelt 3 iron bars",     "completed": false},
+		{"id": "craft_iron_sword", "title": "Craft an iron sword",   "completed": false},
+		{"id": "craft_iron_pickaxe","title": "Craft an iron pickaxe","completed": false},
+		{"id": "place_torch",      "title": "Place a torch",         "completed": false},
+		{"id": "explore_tiles",    "title": "Explore 500 tiles",     "completed": false},
+		{"id": "survive_days",     "title": "Survive 3 in-game days","completed": false},
+		{"id": "defeat_worms",     "title": "Defeat 10 worms",       "completed": false},
+		{"id": "enter_dungeon",    "title": "Enter your first dungeon","completed": false},
+		{"id": "clear_dungeon",    "title": "Clear a dungeon",       "completed": false},
+		{"id": "learn_entry",      "title": "Learn a knowledge entry","completed": false},
+		{"id": "mine_diamond",     "title": "Mine 3 diamond ore",    "completed": false},
 	]
 
 # Dungeon missions are NOT hardcoded — one is created per DungeonMissionData
@@ -539,7 +620,10 @@ func _init_missions() -> void:
 # list always matches the shipped dungeon content. Called after
 # load_knowledge_data() fills the dungeon_missions registry.
 func _append_dungeon_missions() -> void:
-	const DUNGEON_ROMAN: Array = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+	const DUNGEON_ROMAN: Array = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+		"XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
+		"XXI", "XXII", "XXIII", "XXIV", "XXV", "XXVI", "XXVII", "XXVIII", "XXIX", "XXX",
+		"XXXI", "XXXII", "XXXIII", "XXXIV", "XXXV", "XXXVI", "XXXVII", "XXXVIII", "XXXIX", "XL"]
 	var indexes: Array = dungeon_missions.keys()
 	indexes.sort()
 	for idx in indexes:
@@ -559,11 +643,11 @@ func accept_mission(id: String) -> void:
 		return
 	var m := _find_mission(id)
 	if m.has("dungeon_index"):
-		# Dungeon missions require their content to actually exist: a non-empty
-		# quiz list whose files all resolve, plus a teachable entry. Incomplete
-		# placeholders (e.g. dungeon_mission_6..10) are listed but not
-		# accept-able — otherwise the quiz altar auto-clears an empty quiz list
-		# and the dungeon "completes" with nothing to do.
+		# Dungeon missions require their content to actually exist: at least one
+		# embedded question plus a teachable entry. Incomplete placeholders (e.g.
+		# dungeon_mission_6..10) are listed but not accept-able — otherwise the
+		# quiz altar auto-clears an empty question list and the dungeon "completes"
+		# with nothing to do.
 		if not is_dungeon_mission_ready(int(m["dungeon_index"])):
 			return
 	accepted_mission_id = id
@@ -571,16 +655,13 @@ func accept_mission(id: String) -> void:
 	mission_accepted.emit(id)
 
 # A dungeon mission is accept-able only when its linked content fully resolves:
-# a non-empty quiz_resource_files whose every file loads, and a teachable entry.
+# at least one inline question, and a teachable entry.
 func is_dungeon_mission_ready(idx: int) -> bool:
 	var m := get_dungeon_mission_for_index(idx)
 	if m == null:
 		return false
-	if m.quiz_resource_files.is_empty():
+	if m.questions.is_empty():
 		return false
-	for f in m.quiz_resource_files:
-		if get_quiz_file(f) == null:
-			return false
 	return m.entry() != null
 
 func _find_mission(id: String) -> Dictionary:
@@ -623,47 +704,86 @@ func reset_missions() -> void:
 # ── Add item ──────────────────────────────────────────────────────
 func add_item(item: Dictionary, allow_dev: bool = false) -> bool:
 	var data: ItemData = item["data"] as ItemData
-	# Dev items (cave ore placeholders, grass tufts, etc.) are world-gen /
-	# game-placed only — this is the single funnel every acquisition path
-	# (mining drops, crafting results, chest transfers, starting-item grants)
-	# goes through, so rejecting here is enough to make them un-obtainable
-	# everywhere. The debug shortcut (player.gd's Shift+E) opts into them via
-	# allow_dev so dev-only blocks can actually be handed out for testing.
 	if data != null and data.is_dev_item and not allow_dev:
 		return false
-	# 1. Stack in hotbar
-	for i in range(Hotbar.size()):
-		if Hotbar[i] != null \
-				and Hotbar[i]["data"] == data \
-				and Hotbar[i]["quantity"] < MAX_STACK:
-			Hotbar[i]["quantity"] = min(Hotbar[i]["quantity"] + item["quantity"], MAX_STACK)
+	# Non-stackable items (tools) go straight to an empty slot — never
+	# merge onto an existing stack.
+	var stackable: bool = data.stackable if data != null else true
+	var stack_limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else MAX_STACK
+	var remaining: int = item["quantity"]
+	# 1. Stack in hotbar (only if stackable)
+	if stackable:
+		for i in range(Hotbar.size()):
+			if remaining <= 0:
+				break
+			if Hotbar[i] != null \
+					and Hotbar[i]["data"] == data \
+					and Hotbar[i]["quantity"] < stack_limit:
+				var space: int = stack_limit - Hotbar[i]["quantity"]
+				var add: int = mini(remaining, space)
+				Hotbar[i]["quantity"] += add
+				remaining -= add
+		if remaining <= 0:
 			Hotbar_updated.emit()
 			item_picked_up.emit(data.item_name, data.item_type)
+			_track_craft_missions(data, item["quantity"])
 			return true
-	# 2. Stack in inventory
-	for i in range(Inventory.size()):
-		if Inventory[i] != null \
-				and Inventory[i]["data"] == data \
-				and Inventory[i]["quantity"] < MAX_STACK:
-			Inventory[i]["quantity"] = min(Inventory[i]["quantity"] + item["quantity"], MAX_STACK)
+	# 2. Stack in inventory (only if stackable)
+	if stackable:
+		for i in range(Inventory.size()):
+			if remaining <= 0:
+				break
+			if Inventory[i] != null \
+					and Inventory[i]["data"] == data \
+					and Inventory[i]["quantity"] < stack_limit:
+				var space: int = stack_limit - Inventory[i]["quantity"]
+				var add: int = mini(remaining, space)
+				Inventory[i]["quantity"] += add
+				remaining -= add
+		if remaining <= 0:
 			Inventory_updated.emit()
 			item_picked_up.emit(data.item_name, data.item_type)
+			_track_craft_missions(data, item["quantity"])
 			return true
 	# 3. Empty hotbar slot
 	for i in range(Hotbar.size()):
 		if Hotbar[i] == null:
-			Hotbar[i] = item
+			Hotbar[i] = item.duplicate()
+			Hotbar[i]["quantity"] = remaining
 			Hotbar_updated.emit()
 			item_picked_up.emit(data.item_name, data.item_type)
-			return true
+			_track_craft_missions(data, item["quantity"])
+			remaining = 0
+			break
+	if remaining <= 0:
+		return true
 	# 4. Empty inventory slot
 	for i in range(Inventory.size()):
 		if Inventory[i] == null:
-			Inventory[i] = item
+			Inventory[i] = item.duplicate()
+			Inventory[i]["quantity"] = remaining
 			Inventory_updated.emit()
 			item_picked_up.emit(data.item_name, data.item_type)
-			return true
-	return false
+			_track_craft_missions(data, item["quantity"])
+			remaining = 0
+			break
+	return remaining <= 0
+
+# ── Track wood collection for mission ─────────────────────────────
+func _track_craft_missions(data: ItemData, qty: int) -> void:
+	if data == null:
+		return
+	var name_lower: String = data.item_name.to_lower()
+	if name_lower == "wood":
+		var total := 0
+		for slot in Hotbar:
+			if slot != null and (slot["data"] as ItemData).item_name == "Wood":
+				total += slot["quantity"]
+		for slot in Inventory:
+			if slot != null and (slot["data"] as ItemData).item_name == "Wood":
+				total += slot["quantity"]
+		if total >= 20:
+			complete_mission("collect_wood")
 
 # ── Remove one from an item slot by ItemData reference ────────────
 # Always tries the selected hotbar slot first so the active stack is

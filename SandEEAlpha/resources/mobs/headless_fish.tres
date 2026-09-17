@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="MobCombatData" format=3 uid="uid://hkadjjntcudg"]
+
+[ext_resource type="Script" uid="uid://di4f1xh6lclpd" path="res://resources/mobs/combat.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+mob_name = "Headless Fish"
+ai_type = "HEADLESS_FISH"
+damage = 10.0
+health = 75.0
+speed = 60.0
+spawn_during_day = false
+spawn_plains = true
+spawn_desert = true
+spawn_snowy = true
+spawn_ocean = true
+max_spawn = 2

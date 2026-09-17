@@ -1,0 +1,66 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://uyn5lkk5vn0i"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+question = "What is the right syntax from the arithmetic operation addition?"
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "In this exercise you shall code the numbers that are needed to be added based on the given  below. You will declare a variable called sum that holds all the values. NOTE: The answer in this question is not the total sum of the added numbers.
+
+Clue: Start num1, end num3.
+
+num1 = 10
+num2 = 4
+num3 = 14
+
+How are we going to code this using the addition operation?"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+question = "Identify what arithmetic operator is used in this code.
+
+difference = 500 - 123 - 90
+print(difference)"
+
+[sub_resource type="Resource" id="DungeonQuestion_4"]
+script = ExtResource("2_question")
+question = "Identify if this code is correct or incorrect in terms of using the arithmetic operator (-)
+
+total_price = 999 - 100"
+
+[sub_resource type="Resource" id="DungeonQuestion_5"]
+script = ExtResource("2_question")
+question = "What is the right syntax from the arithmetic operation division?"
+
+[sub_resource type="Resource" id="DungeonQuestion_6"]
+script = ExtResource("2_question")
+question = "In this excercise you will need to look for the right symbol for the division operator to complete the code.
+
+num1 = 24
+num2 = 12
+quo = 24 _ 12
+output: 2"
+
+[sub_resource type="Resource" id="DungeonQuestion_7"]
+script = ExtResource("2_question")
+question = "What is the right symbol for the arithmetic operatore modulo?"
+
+[sub_resource type="Resource" id="DungeonQuestion_8"]
+script = ExtResource("2_question")
+question = "Why do we use the modulo in coding?"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Welcome to Algebra"
+mission_description = "In this dungeon you will know what are the basic different arithmetic expressions in Python."
+entry_resource_file = "entry_5_python.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3"), SubResource("DungeonQuestion_4"), SubResource("DungeonQuestion_5"), SubResource("DungeonQuestion_6"), SubResource("DungeonQuestion_7"), SubResource("DungeonQuestion_8")])
+dungeon_index = 5
+altar_amount = 2
+chest_amount = 3
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

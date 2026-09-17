@@ -1,0 +1,45 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua26var"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "Which keyword declares a local variable in Lua?"
+answer_a = "var"
+answer_b = "local"
+answer_c = "let"
+answer_d = "dim"
+correct_index = 1
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that declares a local variable called x with the value 10 and prints it."
+language = "lua"
+starter_code = "local x = 10\nprint(x)"
+answer_output = "10"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 0
+question = "What value does an unassigned variable hold in Lua?"
+answer_a = "false"
+answer_b = "0"
+answer_c = "nil"
+answer_d = "undefined"
+correct_index = 2
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Variables"
+mission_description = "Learn how to declare local variables and understand nil in Lua, then prove your knowledge at the quiz altar."
+entry_resource_file = "entry_26_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 26
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

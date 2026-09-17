@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://eavb2xel6q4w"]
+
+[ext_resource type="Resource" uid="uid://b8pqqosrxqkwa" path="res://resources/items/stick.tres" id="1_c3mht"]
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_f5wja"]
+[ext_resource type="Resource" uid="uid://b1yrja4i6tt0" path="res://resources/items/diamond.tres" id="2_diamond"]
+[ext_resource type="Resource" uid="uid://byu77yl1hbkv2" path="res://resources/items/diamond_sword.tres" id="3_y1pqs"]
+
+[resource]
+script = ExtResource("1_f5wja")
+result_item = ExtResource("3_y1pqs")
+ingredient_1 = ExtResource("1_c3mht")
+ingredient_1_quantity = 2
+ingredient_2 = ExtResource("2_diamond")
+ingredient_2_quantity = 3
+category = "Weapons & Tools"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

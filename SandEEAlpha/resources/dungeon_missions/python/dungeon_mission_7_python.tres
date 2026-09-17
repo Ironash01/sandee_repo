@@ -1,0 +1,39 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://cd01ufxxpqw57"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 1
+question = "Read the user's name and print a greeting."
+language = "python"
+starter_code = "name = input(\"What is your name?\")\nprint(\"Hi \" + name)"
+answer_output = "Hi "
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 0
+question = "What does input() return?"
+answer_a = "int"
+answer_b = "str"
+answer_c = "bool"
+answer_d = "None"
+correct_index = 1
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 1
+question = "Read a number and print it doubled."
+language = "python"
+starter_code = "x = int(input())\nprint(x * 2)"
+answer_output = "20"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "User Input"
+mission_description = "In this dungeon you will know how to get user inputs in Python."
+entry_resource_file = "entry_7_python.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 7
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

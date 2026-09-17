@@ -1,0 +1,45 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua36crn"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "Which function creates a new coroutine in Lua?"
+answer_a = "coroutine.new"
+answer_b = "coroutine.create"
+answer_c = "coroutine.spawn"
+answer_d = "coroutine.init"
+correct_index = 1
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that creates a coroutine that yields the values 1, 2, 3 one at a time, and resumes it three times printing each result."
+language = "lua"
+starter_code = "local co = coroutine.create(function()\n    coroutine.yield(1)\n    coroutine.yield(2)\n    coroutine.yield(3)\nend)\nprint(coroutine.resume(co))\nprint(coroutine.resume(co))\nprint(coroutine.resume(co))"
+answer_output = "true\t1\ntrue\t2\ntrue\t3"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 0
+question = "What does coroutine.yield do?"
+answer_a = "Destroys the coroutine"
+answer_b = "Pauses execution and returns a value"
+answer_c = "Starts the coroutine"
+answer_d = "Resumes the coroutine"
+correct_index = 1
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Coroutines"
+mission_description = "Learn how to use coroutines in Lua for cooperative multitasking with coroutine.create and coroutine.yield."
+entry_resource_file = "entry_36_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 36
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

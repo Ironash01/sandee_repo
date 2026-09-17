@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua27str"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that concatenates the strings \"Hello\" and \"World\" with a space between them and prints the result."
+language = "lua"
+starter_code = "print(\"Hello\" .. \" \" .. \"World\")"
+answer_output = "Hello World"
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 0
+question = "Which operator is used to concatenate strings in Lua?"
+answer_a = "+"
+answer_b = "&"
+answer_c = ".."
+answer_d = "//"
+correct_index = 2
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that stores \"Lua\" in a variable called lang and prints its length using string.len."
+language = "lua"
+starter_code = "local lang = \"Lua\"\nprint(string.len(lang))"
+answer_output = "3"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Strings"
+mission_description = "Learn how to work with strings in Lua, including concatenation and the string.len function."
+entry_resource_file = "entry_27_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 27
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

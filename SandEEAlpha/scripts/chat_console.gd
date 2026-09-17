@@ -20,6 +20,12 @@ var _entry: LineEdit = null
 var _history: Array = []
 var _completion: VBoxContainer = null
 var _structure_names: Array = []
+var _panel: PanelContainer = null
+var _default_panel_y: int = 0
+
+# ── Item picker (the /items command) ──────────────────────────────
+var _item_picker: Control = null        # root of the picker overlay (null when closed)
+const C_OVERLAY := Color(0.0, 0.0, 0.0, 0.60)
 
 func _ready() -> void:
 	# Full-rect, click-through — the world keeps receiving clicks everywhere
@@ -43,6 +49,8 @@ func _build() -> void:
 	panel.offset_top    = y
 	panel.offset_right  = x + width
 	panel.offset_bottom = y + height
+	_panel = panel
+	_default_panel_y = y
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_BG
 	sb.border_color = C_BORDER
@@ -93,6 +101,11 @@ func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	var key: int = (event as InputEventKey).keycode
+	if _item_picker != null:
+		if key == KEY_ESCAPE:
+			_close_item_picker()
+			get_viewport().set_input_as_handled()
+		return
 	if _entry.visible:
 		if key == KEY_ESCAPE:
 			_close_input()
@@ -252,10 +265,14 @@ func _run_command(line: String) -> void:
 		"nearestcave":  _cmd_dispatch_world("teleport_to_nearest_cave", "Teleported to nearest cave")
 		"blockmode":    _cmd_blockmode()
 		"items":        _cmd_items()
+		"inv":          _cmd_give_item(" ".join(args))
 		"missions":     _cmd_missions()
 		"dungeon":      _cmd_dungeon()
+		"tcm":          _cmd_teleport_current_mission()
 		"daynight":     _cmd_daynight()
+		"shaq":         _cmd_dispatch_world("toggle_shaq_dark", "SHAQ mode toggled")
 		"locate":       _cmd_locate(" ".join(args))
+		"spawn":        _cmd_spawn(" ".join(args))
 		_:
 			add_line("[color=#ff7777]Unknown command: %s[/color] — type /help" % cmd)
 
@@ -264,17 +281,124 @@ func _cmd_dispatch_world(method: String, ok_msg: String) -> void:
 	add_line(ok_msg)
 
 func _cmd_blockmode() -> void:
+	if Global.is_in_dungeon:
+		add_line("[color=#ff7777]Build mode is disabled inside dungeons.[/color]")
+		return
 	Global.block_mode = not Global.block_mode
 	Global.block_mode_changed.emit(Global.block_mode)
 	add_line("Block mode: %s" % ("ON" if Global.block_mode else "OFF"))
 
 func _cmd_items() -> void:
-	var p: Node = Global.player_node
-	if p != null and p.has_method("_give_debug_items"):
-		p.call("_give_debug_items")
-		add_line("Granted debug items")
+	_open_item_picker()
+
+# Opens the /items picker: a full-screen overlay listing every ItemData resource
+# in resources/items/. Clicking a row grants one copy (dev items included) and
+# closes the picker; Esc or the Close button dismisses it without granting.
+func _open_item_picker() -> void:
+	if _item_picker != null:
+		return
+	var s: float = Global.ui_scale
+	var canvas := CanvasLayer.new()
+	canvas.layer        = 20
+	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(canvas)
+
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.process_mode = Node.PROCESS_MODE_ALWAYS
+	canvas.add_child(root)
+	_item_picker = root
+
+	var overlay := ColorRect.new()
+	overlay.color        = C_OVERLAY
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(overlay)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(int(560 * s), int(520 * s))
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.08, 0.16, 0.98); ps.border_color = Color(0.35, 0.45, 0.75, 1.0)
+	ps.set_border_width_all(2); ps.set_corner_radius_all(8)
+	ps.content_margin_left = 18; ps.content_margin_right  = 18
+	ps.content_margin_top  = 14; ps.content_margin_bottom = 14
+	panel.add_theme_stylebox_override("panel", ps)
+	center.add_child(panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	panel.add_child(vbox)
+
+	var hdr := HBoxContainer.new()
+	hdr.add_theme_constant_override("separation", 8)
+	vbox.add_child(hdr)
+	var title := Label.new()
+	title.text = "Item Picker"
+	title.add_theme_font_size_override("font_size", int(17 * s))
+	title.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0, 1.0))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hdr.add_child(title)
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.pressed.connect(_close_item_picker)
+	hdr.add_child(close_btn)
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, int(430 * s))
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 2)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+
+	for item in Global.list_all_items():
+		var data: ItemData = item as ItemData
+		var btn := Button.new()
+		btn.text = "  %s" % data.item_name
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.custom_minimum_size = Vector2(0, int(30 * s))
+		btn.add_theme_font_size_override("font_size", int(13 * s))
+		btn.pressed.connect(_grant_and_close.bind(data))
+		list.add_child(btn)
+
+	# open_ui is deferred so it runs AFTER the chat input's own close_ui() (the
+	# chat closes when a command is submitted) — otherwise the chat's close
+	# would undo the picker's pause and the game would run underneath the modal.
+	call_deferred("_item_picker_pause")
+
+func _item_picker_pause() -> void:
+	if _item_picker != null:
+		Global.open_ui()
+
+func _grant_and_close(data: ItemData) -> void:
+	if data != null:
+		Global.add_item({"quantity": 1, "data": data}, true)
+		add_line("Granted %s" % data.item_name)
+	_close_item_picker()
+
+func _close_item_picker() -> void:
+	if _item_picker == null:
+		return
+	_item_picker.queue_free()
+	_item_picker = null
+	Global.close_ui()
+
+# /inv <item> — grant any item in resources/items/ by name (matches display
+# name or file base name, case-insensitive contains). Dev items included.
+func _cmd_give_item(name: String) -> void:
+	if name.is_empty():
+		add_line("[color=#ff7777]Usage: /inv <item>[/color]")
+		return
+	if Global.give_item_by_name(name):
+		add_line("Granted %s" % name)
 	else:
-		add_line("[color=#ff7777]No player node available[/color]")
+		add_line("[color=#ff7777]No item matches '%s'[/color]" % name)
 
 func _cmd_missions() -> void:
 	var p: Node = Global.player_node
@@ -289,6 +413,17 @@ func _cmd_dungeon() -> void:
 	if p != null and p.has_method("_debug_teleport_to_dungeon"):
 		p.call("_debug_teleport_to_dungeon")
 		add_line("Teleported to dungeon entrance")
+	else:
+		add_line("[color=#ff7777]No player node available[/color]")
+
+# /tcm — teleport to the CURRENT MISSION's location. For a dungeon mission
+# that's its entrance (the guide arrow's target); for non-dungeon missions it
+# falls back to the same helper's "no entrance" warning.
+func _cmd_teleport_current_mission() -> void:
+	var p: Node = Global.player_node
+	if p != null and p.has_method("_debug_teleport_to_dungeon"):
+		p.call("_debug_teleport_to_dungeon")
+		add_line("Teleported to current mission")
 	else:
 		add_line("[color=#ff7777]No player node available[/color]")
 
@@ -318,6 +453,69 @@ func _cmd_locate(name: String) -> void:
 		p.global_position = pos + Vector2(0.0, 32.0)
 	add_line("Located %s at (%.0f, %.0f)" % [name, pos.x, pos.y])
 
+# /spawn [mob_id] — spawn a mob near the player for debugging
+# Available IDs: wolf, worm, pixie, headless_fish
+func _cmd_spawn(arg: String = "") -> void:
+	var world: Node = Global.world_node
+	if world == null:
+		add_line("[color=#ff7777]No world available[/color]")
+		return
+	var p: Node2D = Global.player_node as Node2D
+	if p == null:
+		add_line("[color=#ff7777]No player node available[/color]")
+		return
+
+	# Mob lookup table: id → {scene, data}
+	var mobs: Dictionary = {
+		"wolf": {
+			"scene": preload("res://scenes/mobs/Wolf.tscn"),
+			"data": preload("res://resources/mobs/wolf.tres"),
+		},
+		"worm": {
+			"scene": preload("res://scenes/mobs/Worm.tscn"),
+			"data": preload("res://resources/mobs/worm.tres"),
+		},
+		"pixie": {
+			"scene": preload("res://scenes/mobs/Pixie.tscn"),
+			"data": preload("res://resources/mobs/pixie.tres"),
+		},
+		"headless_fish": {
+			"scene": preload("res://scenes/mobs/HeadlessFish.tscn"),
+			"data": preload("res://resources/mobs/headless_fish.tres"),
+		},
+	}
+
+	var id: String = arg.strip_edges().to_lower()
+	if id.is_empty():
+		# Default to worm for backward compatibility
+		id = "worm"
+
+	if not mobs.has(id):
+		var available: String = ", ".join(mobs.keys())
+		add_line("[color=#ff7777]Unknown mob: %s[/color] — available: %s" % [id, available])
+		return
+
+	var entry: Dictionary = mobs[id]
+	var scene: PackedScene = entry["scene"]
+	var data: MobCombatData = entry["data"]
+
+	# Only actual worms use the special near-player desert spawner.
+	# spawn_desert is a biome flag (the Headless Fish also sets it), so
+	# key off the AI type instead.
+	if data.ai_type == "WORM" and world.has_method("_spawn_desert_worms_near_player"):
+		world.call("_spawn_desert_worms_near_player", scene, data)
+		add_line("Spawned %s near player" % id)
+	else:
+		# Spawn directly at the player
+		var mob = scene.instantiate() as Node2D
+		if mob != null:
+			world.add_child(mob)
+			mob.global_position = p.global_position + Vector2(48.0, 0.0)
+			add_line("Spawned %s at player" % id)
+			print("[Spawn] /spawn ", id, " at ", mob.global_position)
+		else:
+			add_line("[color=#ff7777]Failed to spawn %s[/color]" % id)
+
 func _cmd_help() -> void:
 	for line in [
 		"[color=#ffe27a]Commands:[/color]",
@@ -327,9 +525,45 @@ func _cmd_help() -> void:
 		"  /nearestcave — teleport to nearest cave",
 		"  /locate <structure> — teleport to nearest structure",
 		"  /blockmode — toggle build mode",
-		"  /items — grant debug items",
+		"  /items — open item picker",
+		"  /inv <item> — grant any item by name",
 		"  /missions — reset tutorial missions",
 		"  /dungeon — teleport to dungeon entrance",
+		"  /tcm — teleport to current mission",
 		"  /daynight — toggle day/night",
+		"  /spawn <mob> — spawn mob (wolf, worm, pixie, headless_fish)",
+		"  /shaq — toggle dark mode",
+		"  /shaq — make the cave pitch black (torches only), toggle back",
 	]:
 		add_line(line)
+
+# ── Dungeon repositioning ────────────────────────────────────────
+# Called by dungeon_world.gd to move the notification log below the minimap,
+# and by game_instance.gd to restore the default position on exit.
+func reposition_for_dungeon(minimap_bottom_y: int) -> void:
+	if _panel == null:
+		return
+	var s: float = Global.ui_scale
+	_panel.offset_top    = minimap_bottom_y
+	_panel.offset_bottom = minimap_bottom_y + int(150 * s)
+	_entry.offset_top    = minimap_bottom_y + int(150 * s) + int(4 * s)
+	_entry.offset_bottom = minimap_bottom_y + int(150 * s) + int(4 * s) + int(26 * s)
+	_completion.offset_top = _entry.offset_bottom + int(2 * s)
+
+func reset_position() -> void:
+	if _panel == null:
+		return
+	var s: float = Global.ui_scale
+	var width:  int = int(440 * s)
+	var height: int = int(150 * s)
+	var x: int = int(12 * s)
+	_panel.offset_left   = x
+	_panel.offset_top    = _default_panel_y
+	_panel.offset_right  = x + width
+	_panel.offset_bottom = _default_panel_y + height
+	_entry.offset_left   = x
+	_entry.offset_top    = _default_panel_y + height + int(4 * s)
+	_entry.offset_right  = x + width
+	_entry.offset_bottom = _default_panel_y + height + int(4 * s) + int(26 * s)
+	_completion.offset_left = x
+	_completion.offset_top  = _entry.offset_bottom + int(2 * s)

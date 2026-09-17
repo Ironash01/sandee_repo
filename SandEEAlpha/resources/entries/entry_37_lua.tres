@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua File I/O"
+description = "Lua uses the io library for file operations. io.open returns a file handle.
+
+Writing to a file:
+
+local f = io.open(\"test.txt\", \"w\")\nf:write(\"Hello\")\nf:close()
+
+Reading from a file:
+
+local f = io.open(\"test.txt\", \"r\")\nlocal content = f:read(\"*a\")\nprint(content)\nf:close()
+
+File modes: \"r\" read, \"w\" write, \"a\" append. Always close files when done. You can also use f:read(\"*l\") to read one line."
+keyword = "io.open"
+language = "lua"
+category = "Medium"

@@ -88,7 +88,7 @@ const SHADOW_TEXTURE_PATH: String = "res://sprites/shadow/shadow_base.png"
 # Both are children of CaveWorld, so they're created/destroyed with it
 # automatically (queue_free() on cave exit) — nothing to clean up in
 # game_instance.gd's enter_cave()/exit_cave().
-const CAVE_AMBIENT_COLOR: Color = Color(0.06, 0.06, 0.10, 1.0)  # near-black, faint cool tint
+const CAVE_AMBIENT_COLOR: Color = Color(0.33, 0.33, 0.40, 1.0)  # dim but visible; ~13% darker than before to push torch use
 
 var generator: CaveGenerator = null
 var overworld_return_position: Vector2 = Vector2.ZERO
@@ -98,6 +98,8 @@ var _chunk_border_overlay: Node2D = null
 var _show_chunk_borders:   bool   = false
 var _hitbox_overlay: Node2D = null
 var _show_hitboxes:  bool   = false
+var _ambient:        CanvasModulate = null
+var _shaq_dark:      bool   = false
 
 func setup(seed_value: int, return_position: Vector2) -> void:
 	overworld_return_position = return_position
@@ -131,6 +133,11 @@ func _process(delta: float) -> void:
 	_update_ghost()
 	_update_cursor_highlight()
 	_update_hover()
+	# The build-mode grid follows the player — redraw every frame while it's
+	# visible so it tracks movement (the toggle handler alone leaves it frozen
+	# at the position build mode was enabled).
+	if _grid_overlay != null and _grid_overlay.visible:
+		_grid_overlay.queue_redraw()
 
 func _input(event: InputEvent) -> void:
 	if Global.any_ui_open() or Global.pause_menu_open:
@@ -185,6 +192,11 @@ func _try_start_mining() -> void:
 	var pick_lvl: int = _get_held_pickaxe_level()
 	if pick_lvl < 0 or pick_lvl < item.min_pickaxe_level:
 		return
+	# The swing plays for ANY item use — mining consumes the click (below), so
+	# route the swing through the player explicitly or the player's own _input
+	# may never see it (input-order dependent).
+	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
+		Global.player_node.call("swing_held_item")
 	get_viewport().set_input_as_handled()
 	_mine_tile     = mouse_cell
 	_mine_duration = maxf(0.1, float(item.block_level - pick_lvl))
@@ -282,12 +294,6 @@ var ghost_sprite:    Sprite2D = null
 var ghost_last_type: String   = ""
 var _grid_overlay: Node2D = null
 var _cursor_highlight: Node2D = null
-var _cursor_is_block: bool   = false
-var _hovered_block:   Node   = null
-
-# Highlight range: the block under the cursor must be within 1 tile of the
-# player for the yellow highlight to show.
-const HOVER_PLAYER_RADIUS_PX: float = 32.0
 
 func _setup_ghost() -> void:
 	ghost = Node2D.new()
@@ -432,11 +438,12 @@ func _cell_blocked_by_player(cell: Vector2i) -> bool:
 	var player: Node2D = Global.player_node as Node2D
 	if player == null:
 		return false
-	# Same player-footprint dims world.gd's own _cell_blocked_by_player uses.
+	# Same waist-high player-footprint dims world.gd's own
+	# _cell_blocked_by_player uses (PlayerCol: 20x12 at y 17) — keep in sync.
 	const S: float = 0.980
 	var half_w: float = 10.0 * S + 8.0
-	var half_h: float = 16.5 * S + 8.0
-	var player_local: Vector2 = _tilemap.to_local(player.global_position) + Vector2(0.0, 6.5 * S)
+	var half_h: float = 6.0 * S + 8.0
+	var player_local: Vector2 = _tilemap.to_local(player.global_position) + Vector2(0.0, 17.0 * S)
 	var tl: Vector2i = _tilemap.local_to_map(player_local + Vector2(-half_w, -half_h))
 	var br: Vector2i = _tilemap.local_to_map(player_local + Vector2( half_w,  half_h))
 	return cell.x >= mini(tl.x, br.x) and cell.x <= maxi(tl.x, br.x) \
@@ -498,14 +505,9 @@ func _setup_cursor_highlight() -> void:
 	_cursor_highlight.visible = false
 	_cursor_highlight.draw.connect(func() -> void:
 		var half: float = TILE_SIZE * 0.5
-		if _cursor_is_block:
-			_cursor_highlight.draw_rect(
-				Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
-				Color(1.0, 0.9, 0.2, 0.95), false, 3.0)
-		else:
-			_cursor_highlight.draw_rect(
-				Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
-				Color(1.0, 1.0, 1.0, 0.28), true)
+		_cursor_highlight.draw_rect(
+			Rect2(-half, -half, TILE_SIZE, TILE_SIZE),
+			Color(1.0, 1.0, 1.0, 0.28), true)
 	)
 	add_child(_cursor_highlight)
 	_cursor_highlight.queue_redraw()
@@ -515,28 +517,19 @@ func _update_cursor_highlight() -> void:
 		if _cursor_highlight != null:
 			_cursor_highlight.visible = false
 		return
-	if _hovered_block != null and is_instance_valid(_hovered_block):
-		_cursor_is_block = true
-		_cursor_highlight.global_position = (_hovered_block as Node2D).global_position
-	else:
-		_cursor_is_block = false
-		var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
-		var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
-		_cursor_highlight.position = _tilemap.map_to_local(cell)
+	var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
+	var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
+	_cursor_highlight.position = _tilemap.map_to_local(cell)
 	_cursor_highlight.queue_redraw()
 	_cursor_highlight.visible = true
 
 func _update_hover() -> void:
 	if Global.block_mode:
-		_hovered_block = null
 		Global.set_hover("")
 		return
 	var mouse_pos: Vector2 = get_global_mouse_position()
-	var player: Node2D = Global.player_node as Node2D
 	var best_name: String  = ""
 	var best_name_dist: float = INTERACT_RADIUS_PX
-	var hover: Node = null
-	var hover_dist: float = HOVER_PLAYER_RADIUS_PX  # 1 tile from the player
 	for entry in _placed_blocks.values():
 		var node_ref: Variant = (entry as Dictionary)["node"]
 		if not is_instance_valid(node_ref):
@@ -544,19 +537,10 @@ func _update_hover() -> void:
 		var node: Node2D = node_ref as Node2D
 		if node == null:
 			continue
-		var node_pos: Vector2 = node.global_position
-		var name_dist: float = mouse_pos.distance_to(node_pos)
+		var name_dist: float = mouse_pos.distance_to(node.global_position)
 		if name_dist < best_name_dist:
 			best_name_dist = name_dist
 			best_name = (entry as Dictionary)["name"]
-		# Yellow-highlight only the block under the cursor AND within 1 tile of
-		# the player (single block at a time).
-		if name_dist <= TILE_SIZE and player != null:
-			var player_dist: float = player.global_position.distance_to(node_pos)
-			if player_dist <= HOVER_PLAYER_RADIUS_PX and player_dist < hover_dist:
-				hover_dist = player_dist
-				hover = node
-	_hovered_block = hover
 	Global.set_hover(best_name)
 
 # ── Chunk border debug overlay — mirrors world.gd's own, same chunk-grid
@@ -866,11 +850,18 @@ func _spawn_exit_marker() -> void:
 
 # ── Cave darkness ────────────────────────────────────────────────────────
 func _setup_darkness() -> void:
-	var ambient := CanvasModulate.new()
-	ambient.color = CAVE_AMBIENT_COLOR
-	add_child(ambient)
+	_ambient = CanvasModulate.new()
+	_ambient.color = CAVE_AMBIENT_COLOR
+	add_child(_ambient)
 
 	add_child(_build_glow_environment())
+
+# /shaq cheat: flip the whole cave to pitch black (only PointLight2Ds — torches
+# — light anything). Running it again restores the normal dim ambient.
+func toggle_shaq_dark() -> void:
+	_shaq_dark = not _shaq_dark
+	if _ambient != null:
+		_ambient.color = Color(0.0, 0.0, 0.0, 1.0) if _shaq_dark else CAVE_AMBIENT_COLOR
 
 # Glow is most of what separates a flat radial-gradient light from the
 # punchy, bloom-heavy look of top-down arcade games (Soul Knight etc.) —

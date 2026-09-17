@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://bm500rnofcy64"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_seh5l"]
+
+[resource]
+script = ExtResource("1_seh5l")
+item_name = "Color Crafter"
+description = "Using RGBA values and a cactus"
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

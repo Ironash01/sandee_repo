@@ -1,10 +1,10 @@
 extends Node2D
 class_name QuizAltar
 # ── Quiz Altar (final dungeon room object) ────────────────────────
-# Placed by the dungeon generator in the last room. Presents every
-# QuizQuestion referenced by the mission (quiz_resource_files) one at a
-# time. When the player answers ALL of them correctly the exit opens and
-# the dungeon is cleared: the Lua Core reward is granted, the matching
+# Placed by the dungeon generator in the last room. Presents every question
+# embedded in the mission's `questions` (Array[DungeonQuestion], MCQ or COMPILER)
+# one at a time. When the player answers ALL of them correctly the exit opens
+# and the dungeon is cleared: the reward is granted, the matching
 # Global.mission is marked complete, and dungeon_cleared() fires so the
 # dungeon world can teleport the player out and remove the entrance from
 # the overworld map.
@@ -37,7 +37,7 @@ const GLOW_TEXTURE_SIZE:   int   = 128
 
 var mission:        DungeonMissionData = null
 var _player_nearby: bool = false
-var _questions:     Array[QuizQuestion] = []
+var _questions:     Array[DungeonQuestion] = []
 var _index:         int = 0
 var _cleared:       bool = false
 var _glow:          PointLight2D = null
@@ -50,11 +50,11 @@ var _feedback:   Label = null
 var _controls:   Control = null
 var _close_btn:  Button = null
 
-# ── Compiler (Shape.COMPILER) state ────────────────────────────────
+# ── Compiler (COMPILER) state ─────────────────────────────────────
 var _code_entry:       TextEdit = null
 var _compiler_output:  RichTextLabel = null
 var _lua_state:        Node = null
-var _compiler_q:       QuizQuestion = null
+var _compiler_q:       DungeonQuestion = null
 var _captured_output:  String = ""
 
 func _ready() -> void:
@@ -76,7 +76,7 @@ func _ready() -> void:
 	shape.shape = rect
 	interact.add_child(shape)
 	interact.collision_layer = 0
-	interact.collision_mask  = 1
+	interact.collision_mask  = 4   # player is on layer 4 (see player.tscn)
 	interact.body_entered.connect(_on_body_entered)
 	interact.body_exited.connect(_on_body_exited)
 	add_child(interact)
@@ -117,7 +117,7 @@ func _fix_z_index() -> void:
 func setup(m: DungeonMissionData) -> void:
 	mission = m
 	if mission != null:
-		_questions = mission.quizzes()
+		_questions = mission.questions.duplicate()
 
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("Player"):
@@ -128,7 +128,7 @@ func _on_body_exited(body: Node) -> void:
 		_player_nearby = false
 		if _panel != null and _panel.visible:
 			_panel.visible = false
-			get_tree().paused = false
+			Global.close_ui()
 
 func _input(event: InputEvent) -> void:
 	if _cleared or not _player_nearby or Global.block_mode or Global.any_ui_open():
@@ -140,15 +140,15 @@ func _input(event: InputEvent) -> void:
 
 func _start_quiz() -> void:
 	if _questions.is_empty():
-		if mission != null and mission.quiz_resource_files.is_empty():
-			# Mission with no quizzes is trivially clearable.
+		if mission != null and mission.questions.is_empty():
+			# Mission with no questions is trivially clearable.
 			_complete_dungeon()
 		return
 	_index = 0
 	if _panel == null:
 		_panel = _build_panel()
 	_panel.visible = true
-	get_tree().paused = true
+	Global.open_ui()
 	_show_question()
 
 func _show_question() -> void:
@@ -158,7 +158,7 @@ func _show_question() -> void:
 	_rebuild_controls()
 
 func _rebuild_controls() -> void:
-	var q: QuizQuestion = _questions[_index]
+	var q: DungeonQuestion = _questions[_index]
 	_q_progress.text = "Question %d / %d" % [_index + 1, _questions.size()]
 	_q_text.text = q.question
 
@@ -167,31 +167,18 @@ func _rebuild_controls() -> void:
 
 	if q.is_compiler():
 		_build_compiler_controls(q)
-	elif q.is_short():
-		var opts := q.short_answers()
+	else:
+		# MCQ — one button per non-empty choice, graded by correct_index.
+		var opts := q.options()
 		var labels := ["A", "B", "C", "D"]
 		for i in range(opts.size()):
 			if opts[i].is_empty():
 				continue
-			_controls.add_child(_make_answer_btn(labels[i], str(i + 1), q, opts[i]))
-	else:
-		# Shape.LONG (enumeration) — typed answer. TextEdit is multi-line, so
-		# code-style answers with indentation/line breaks can be typed as-is;
-		# _normalize_answer_text() grades them tolerant of whitespace.
-		var entry := TextEdit.new()
-		entry.custom_minimum_size = Vector2(360, 90)
-		entry.placeholder_text = "Type your answer…"
-		entry.add_theme_font_size_override("font_size", 13)
-		_controls.add_child(entry)
-		var submit := Button.new()
-		submit.text = "Submit"
-		submit.custom_minimum_size = Vector2(0, 34)
-		submit.pressed.connect(func() -> void: _grade(q, entry.text))
-		_controls.add_child(submit)
+			_controls.add_child(_make_answer_btn(labels[i], str(i), q, opts[i]))
 
 	_feedback.text = ""
 
-func _make_answer_btn(label: String, value: String, q: QuizQuestion, opt_text: String = "") -> Button:
+func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text: String = "") -> Button:
 	var btn := Button.new()
 	btn.text = (label + "  —  " + opt_text) if not opt_text.is_empty() else label
 	btn.custom_minimum_size = Vector2(150, 42)
@@ -212,10 +199,11 @@ func _make_answer_btn(label: String, value: String, q: QuizQuestion, opt_text: S
 # plus a live output panel and a Run button. The player's program runs through
 # the game's LuaState compiler (the same interpreter the Lua robot uses); its
 # print() output is captured and compared to answer_output on completion.
-func _build_compiler_controls(q: QuizQuestion) -> void:
+func _build_compiler_controls(q: DungeonQuestion) -> void:
+	var lang: String = q.language
 	var entry := TextEdit.new()
 	entry.custom_minimum_size = Vector2(380, 110)
-	entry.placeholder_text = "-- write your %s code here\nprint(\"...\")" % q.language
+	entry.placeholder_text = "-- write your %s code here\nprint(\"...\")" % lang
 	entry.text = q.starter_code
 	entry.syntax_highlighter = null
 	entry.add_theme_font_size_override("font_size", 13)
@@ -231,26 +219,44 @@ func _build_compiler_controls(q: QuizQuestion) -> void:
 	_controls.add_child(out)
 	_compiler_output = out
 
-	var run_btn := Button.new()
-	run_btn.text = "▶  Run"
-	run_btn.custom_minimum_size = Vector2(140, 38)
-	run_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	run_btn.add_theme_font_size_override("font_size", 13)
+	var is_lua: bool = lang == "lua"
+	if not is_lua:
+		# No interpreter yet for this language (e.g. python): show the editor as
+		# a typed-code answer and grade it by string comparison. A note keeps the
+		# player informed so the dungeon never soft-locks.
+		var note := Label.new()
+		note.text = "[%s] interpreter not available yet — type the correct code and press Check." % lang
+		note.add_theme_font_size_override("font_size", 11)
+		note.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5, 1.0))
+		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_controls.add_child(note)
+
+	var check_btn := Button.new()
+	check_btn.text = "▶  %s" % ("Run" if is_lua else "Check")
+	check_btn.custom_minimum_size = Vector2(140, 38)
+	check_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	check_btn.add_theme_font_size_override("font_size", 13)
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.14, 0.34, 0.20, 1.0); sb.border_color = C_BORDER
 	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
-	run_btn.add_theme_stylebox_override("normal",  sb)
-	run_btn.add_theme_stylebox_override("hover",   sb)
-	run_btn.add_theme_stylebox_override("pressed", sb)
-	run_btn.add_theme_color_override("font_color", Color(0.70, 1.0, 0.80, 1.0))
-	run_btn.pressed.connect(func() -> void: _run_compiler(q, entry.text))
-	_controls.add_child(run_btn)
+	check_btn.add_theme_stylebox_override("normal",  sb)
+	check_btn.add_theme_stylebox_override("hover",   sb)
+	check_btn.add_theme_stylebox_override("pressed", sb)
+	check_btn.add_theme_color_override("font_color", Color(0.70, 1.0, 0.80, 1.0))
+	check_btn.pressed.connect(func() -> void: _run_compiler(q, entry.text))
+	_controls.add_child(check_btn)
 
-func _run_compiler(q: QuizQuestion, code: String) -> void:
+func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	code = code.strip_edges()
 	if code.is_empty():
 		_feedback.text = "✘ Write some code first."
 		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+		return
+	# Non-Lua languages have no interpreter yet — grade the typed code directly
+	# (the answer_output field holds the expected code), matching the old LONG
+	# string-comparison behaviour under the COMPILER type.
+	if q.language != "lua":
+		_grade_code_text(q, code)
 		return
 	# LuaState is the game's Lua compiler (the GDExtension the Lua robot uses).
 	if _lua_state == null:
@@ -289,10 +295,10 @@ func _on_quiz_failed(error: String) -> void:
 		_feedback.text = "✘ " + error
 		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
 
-func _grade_compiler(q: QuizQuestion) -> void:
+func _grade_compiler(q: DungeonQuestion) -> void:
 	if q == null:
 		return
-	if q.is_compiler_output_correct(_captured_output):
+	if _normalize_text(_captured_output) == _normalize_text(q.answer_output):
 		_feedback.text = "✔ Correct!"
 		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
 		_index += 1
@@ -303,8 +309,10 @@ func _grade_compiler(q: QuizQuestion) -> void:
 		_feedback.text = "✘ Not quite — try again."
 		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
 
-func _grade(q: QuizQuestion, input_text: String) -> void:
-	if q.is_answer_correct(input_text):
+# Grades a non-interpreted language's typed code against the expected code in
+# answer_output (normalized comparison) — the old LONG behaviour under COMPILER.
+func _grade_code_text(q: DungeonQuestion, code: String) -> void:
+	if _normalize_text(code) == _normalize_text(q.answer_output):
 		_feedback.text = "✔ Correct!"
 		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
 		_index += 1
@@ -314,6 +322,28 @@ func _grade(q: QuizQuestion, input_text: String) -> void:
 	else:
 		_feedback.text = "✘ Not quite — try again."
 		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+
+# MCQ grading: the button passes the option index (0..3); it's correct when it
+# matches the question's correct_index.
+func _grade(q: DungeonQuestion, input_text: String) -> void:
+	if q.correct_option_index() == input_text.to_int():
+		_feedback.text = "✔ Correct!"
+		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
+		_index += 1
+		await get_tree().create_timer(0.6).timeout
+		if _panel != null and _panel.visible:
+			_show_question()
+	else:
+		_feedback.text = "✘ Not quite — try again."
+		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+
+# Whitespace/case-insensitive comparison for compiler output grading.
+var _ws_re: RegEx = null
+func _normalize_text(text: String) -> String:
+	if _ws_re == null:
+		_ws_re = RegEx.new()
+		_ws_re.compile("\\s+")
+	return _ws_re.sub(text.strip_edges(), " ", true).to_lower()
 
 func _complete_dungeon() -> void:
 	if mission == null:
@@ -321,7 +351,7 @@ func _complete_dungeon() -> void:
 	_cleared = true
 	if _panel != null:
 		_panel.visible = false
-	get_tree().paused = false
+	Global.close_ui()
 
 	Global.grant_item(mission.reward_item_path, 1)
 	var mission_id: String = "dungeon_%d" % mission.dungeon_index
@@ -417,4 +447,4 @@ func _close_quiz() -> void:
 	# resets to question 1 so the player can pick up or restart at will.
 	if _panel != null:
 		_panel.visible = false
-	get_tree().paused = false
+	Global.close_ui()

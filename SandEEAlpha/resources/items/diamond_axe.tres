@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://k7m2pyarw4yq"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_ax3kz"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_bq7mt"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_daxe1"]
+atlas = ExtResource("1_ax3kz")
+region = Rect2(224, 96, 32, 32)
+
+[resource]
+script = ExtResource("1_bq7mt")
+item_name = "Diamond Axe"
+description = "The ultimate chopper."
+icon = SubResource("AtlasTexture_daxe1")
+is_craftable = true
+pickaxe_level = 10
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

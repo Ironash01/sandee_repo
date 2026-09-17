@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="KnowledgeEntry" format=3]
+
+[ext_resource type="Script" uid="uid://c8mblthys4abt" path="res://resources/entries/entry_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+entry_name = "Lua Error Handling"
+description = "Lua uses pcall and xpcall for protected calls that catch errors.
+
+pcall (protected call):
+
+local ok, result = pcall(function()
+    return 10 / 0
+end)
+print(ok)    -- false
+print(result)  -- error message
+
+On success, ok is true and result is the return value. On failure, ok is false and result is the error message.
+
+xpcall is similar but takes an error handler function:
+
+xpcall(function()
+    error(\"oops\")
+end, function(err)
+    print(\"caught: \" .. err)
+end)"
+keyword = "pcall"
+language = "lua"
+category = "Medium"

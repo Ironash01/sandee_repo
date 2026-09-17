@@ -431,8 +431,9 @@ func _collect_drops_nearby() -> void:
 			item_node.queue_free()
 
 func _npc_add_to_inventory(data: ItemData) -> void:
+	var stack_limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
 	for slot in _npc_inventory:
-		if slot["data"] == data and slot["quantity"] < 32:
+		if slot["data"] == data and slot["quantity"] < stack_limit:
 			slot["quantity"] += 1
 			return
 	_npc_inventory.append({"data": data, "quantity": 1})

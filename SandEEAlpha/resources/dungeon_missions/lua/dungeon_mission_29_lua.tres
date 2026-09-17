@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3 uid="uid://b0lua3acnd"]
+
+[ext_resource type="Script" uid="uid://by1htqkv82o6h" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://dc3ix4058j476" path="res://resources/dungeon_missions/dungeon_question.gd" id="2_question"]
+
+[sub_resource type="Resource" id="DungeonQuestion_1"]
+script = ExtResource("2_question")
+type = 0
+question = "Which keywords form an if-else block in Lua?"
+answer_a = "if/then/else/end"
+answer_b = "if/then/else/endif"
+answer_c = "if/do/else/end"
+answer_d = "if/then/else/done"
+correct_index = 0
+
+[sub_resource type="Resource" id="DungeonQuestion_2"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that checks if a variable x equals 5 and prints \"five\" if true, \"not five\" otherwise."
+language = "lua"
+starter_code = "local x = 5\nif x == 5 then\n    print(\"five\")\nelse\n    print(\"not five\")\nend"
+answer_output = "five"
+
+[sub_resource type="Resource" id="DungeonQuestion_3"]
+script = ExtResource("2_question")
+type = 1
+question = "Write a Lua program that uses elseif to print \"positive\" if x is greater than 0, \"zero\" if x is 0, and \"negative\" otherwise. Set x to -3."
+language = "lua"
+starter_code = "local x = -3\nif x > 0 then\n    print(\"positive\")\nelseif x == 0 then\n    print(\"zero\")\nelse\n    print(\"negative\")\nend"
+answer_output = "negative"
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Lua Conditionals"
+mission_description = "Learn how to use if/then/else/end blocks in Lua for conditional logic."
+entry_resource_file = "entry_29_lua.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_index = 29
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 2
+metadata/_custom_type_script = "uid://by1htqkv82o6h"

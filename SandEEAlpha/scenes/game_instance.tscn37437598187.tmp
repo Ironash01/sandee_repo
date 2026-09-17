@@ -1,0 +1,34 @@
+[gd_scene format=3 uid="uid://bixjinhfhauab"]
+
+[ext_resource type="PackedScene" uid="uid://cnc7lnsw45l6i" path="res://scenes/ui/Hotbar.tscn" id="1_bj3gq"]
+[ext_resource type="Script" uid="uid://b6jexka4lcep2" path="res://scenes/game_instance.gd" id="1_egp1g"]
+[ext_resource type="PackedScene" uid="uid://dpm4y6ku1ahlf" path="res://scenes/ui/PauseMenu.tscn" id="2_pause"]
+[ext_resource type="PackedScene" uid="uid://ch5ppikl27a2n" path="res://scenes/world_gen.tscn" id="3_kafmv"]
+[ext_resource type="PackedScene" uid="uid://b2luk2qj6moim" path="res://scenes/player/player.tscn" id="4_2glxl"]
+
+[node name="Game" type="Node2D" unique_id=215356930]
+y_sort_enabled = true
+script = ExtResource("1_egp1g")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=457529082]
+process_mode = 3
+layer = 10
+
+[node name="PauseMenu" parent="CanvasLayer" unique_id=728603994 instance=ExtResource("2_pause")]
+
+[node name="PauseButton" type="Button" parent="CanvasLayer" unique_id=2100391308]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -68.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 34.0
+text = "| | Pause"
+
+[node name="Control" parent="CanvasLayer" unique_id=1912151607 instance=ExtResource("1_bj3gq")]
+
+[node name="World" parent="." unique_id=98158199 instance=ExtResource("3_kafmv")]
+
+[node name="Player" parent="." unique_id=382532469 instance=ExtResource("4_2glxl")]
+texture_filter = 1
