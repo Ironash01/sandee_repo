@@ -14,4 +14,6 @@ description = "Destroys wooden blocks"
 item_type = "weapon"
 icon = SubResource("AtlasTexture_ate3i")
 is_craftable = true
+pickaxe_level = 1
+axe_level = 1
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

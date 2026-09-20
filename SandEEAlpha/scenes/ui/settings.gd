@@ -96,7 +96,8 @@ func _build_settings(panel: ColorRect) -> void:
 
 # ── Handlers ──────────────────────────────────────────────────────
 func _on_ui_scale_changed(v: float) -> void:
-	Global.ui_scale = v
+	Global.ui_scale     = v
+	Global.ui_scale_set = true
 	Global.ui_scale_changed.emit(v)
 	if _ui_scale_lbl != null and is_instance_valid(_ui_scale_lbl):
 		_ui_scale_lbl.text = "UI Scale:  %.2f×" % v

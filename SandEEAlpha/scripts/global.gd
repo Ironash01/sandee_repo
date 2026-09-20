@@ -24,10 +24,51 @@ const BREAK_BAR_FILL:   Color = Color(0.30, 0.90, 0.30, 1.00)
 # Must be called from inside the caller's own _draw() — CanvasItem only
 # allows draw_* calls while that specific node is in its drawing pass.
 func draw_break_bar(ci: CanvasItem, progress: float, y_offset: float = -20.0) -> void:
-	var half_w: float = BREAK_BAR_WIDTH * 0.5
-	ci.draw_rect(Rect2(-half_w, y_offset, BREAK_BAR_WIDTH, BREAK_BAR_HEIGHT), BREAK_BAR_BG)
-	var fill_w: float = BREAK_BAR_WIDTH * clampf(progress, 0.0, 1.0)
-	ci.draw_rect(Rect2(-half_w, y_offset, fill_w, BREAK_BAR_HEIGHT), BREAK_BAR_FILL)
+	# Break bars are a UI readout even though they are drawn over world objects,
+	# so they follow the global UI scale like every other on-screen element.
+	var s: float = ui_scale
+	var w: float = BREAK_BAR_WIDTH * s
+	var h: float = BREAK_BAR_HEIGHT * s
+	var half_w: float = w * 0.5
+	var y: float = y_offset * s
+	ci.draw_rect(Rect2(-half_w, y, w, h), BREAK_BAR_BG)
+	var fill_w: float = w * clampf(progress, 0.0, 1.0)
+	ci.draw_rect(Rect2(-half_w, y, fill_w, h), BREAK_BAR_FILL)
+
+# ── Keyword emphasis (shared by the knowledge altar + encyclopedia) ────
+# A short "pop + colour flash" on a keyword Label when a knowledge entry is
+# first learned: the text scales up with a back-ease overshoot while flashing
+# bright gold, then settles back to its normal size/colour. The colour is
+# tweened through the theme override (NOT modulate) so the base colour is used
+# exactly — modulate would multiply, tinting blue text green during the flash.
+# Caller must give the label a pivot_offset = its size * 0.5 first (so it
+# pops from the centre rather than the top-left corner).
+const KEYWORD_FLASH: Color = Color(1.00, 0.92, 0.45, 1.0)
+
+func emphasize_keyword(label: Label, base_color: Color, base_scale: Vector2 = Vector2.ONE) -> void:
+	if label == null or not is_instance_valid(label):
+		return
+	# Pivot at the centre of the current size so the pop scales from the middle.
+	label.pivot_offset = label.size * 0.5
+	label.scale = base_scale
+	var tw := label.create_tween()
+	# Step 1 — pop out with an overshoot while flashing bright gold.
+	tw.tween_property(label, "scale", base_scale * 1.6, 0.18) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_method(_set_label_color.bind(label), base_color, KEYWORD_FLASH, 0.18)
+	# Step 2 — settle back to normal with a springy ease, fading the flash.
+	tw.tween_property(label, "scale", base_scale, 0.30) \
+		.set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_method(_set_label_color.bind(label), KEYWORD_FLASH, base_color, 0.30)
+	tw.tween_callback(func() -> void:
+		if is_instance_valid(label):
+			label.scale = base_scale
+			label.add_theme_color_override("font_color", base_color))
+
+func _set_label_color(c: Color, label: Label) -> void:
+	if is_instance_valid(label):
+		label.add_theme_color_override("font_color", c)
+
 
 # ── Pixelated light texture ────────────────────────────────────────────
 # Minecraft-style 2D light falloff: a circular pool whose brightness drops in
@@ -174,6 +215,10 @@ const KNOCKBACK_PER_DAMAGE: float = 22.0
 func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = Vector2.ZERO) -> void:
 	if amount <= 0.0:
 		return
+	# Dead (pre-respawn): swallow hits so nothing re-triggers death handling or
+	# knocks the frozen player around while the respawn timer runs.
+	if player_is_dead:
+		return
 	var p: Node2D = player_node as Node2D
 	# Invincibility frames block HP loss (and don't re-grant), but the enemy's
 	# hit still LANDS — knockback keeps applying so enemies keep hitting even
@@ -208,12 +253,17 @@ signal player_died(death_position: Vector2)
 # and restore full health. Runs synchronously inside damage_player so death is
 # only handled once per fatal hit.
 var _death_in_progress: bool = false
+## True from the moment the player dies until respawn completes. Mobs check
+## this (see the AI scripts) so they stop moving toward — and can't damage —
+## the frozen player's death position during the death window.
+var player_is_dead: bool = false
 const DEATH_RESPAWN_TIME: float = 5.0
 
 func _handle_player_death() -> void:
 	if _death_in_progress:
 		return
 	_death_in_progress = true
+	player_is_dead = true
 	log_chat("[color=#ff7777]You died! Respawning in %d seconds...[/color]" % int(DEATH_RESPAWN_TIME))
 	var p: Node2D = player_node as Node2D
 	var death_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
@@ -228,6 +278,7 @@ func _handle_player_death() -> void:
 	await get_tree().create_timer(DEATH_RESPAWN_TIME).timeout
 	if p == null or not is_instance_valid(p):
 		_death_in_progress = false
+		player_is_dead = false
 		return
 	# Prefer the Game scene: it exits any active cave/pixie cave/dungeon first
 	# so the player ALWAYS respawns at the OVERWORLD world spawn — not inside
@@ -247,6 +298,7 @@ func _handle_player_death() -> void:
 	health = max_health
 	health_changed.emit(health, max_health)
 	_death_in_progress = false
+	player_is_dead = false
 
 func _get_respawn_position() -> Vector2:
 	if game_node != null and game_node.has_method("get_world_spawn_position"):
@@ -277,10 +329,33 @@ var player_near_station: bool  = false
 var block_mode:          bool  = false   # Ctrl toggles (gameplay build mode) — shared across all scripts; /blockmode command also works
 var is_in_dungeon:       bool  = false   # true while inside a dungeon — blocks build mode toggle
 var ui_scale:            float = 1.0
+# True once the player has explicitly chosen a scale (pause menu / settings) or
+# one was restored from a save. game_instance only applies its Large default
+# when this is false, so the Small/Medium/Large choice survives scene loads.
+var ui_scale_set:        bool  = false
+
+# Fog of war for the minimap: tiles the player has been near (Vector2i -> true).
+# Session-scoped (the minimap marks a radius around the player as it moves).
+var explored_tiles:      Dictionary = {}
 
 # True while the chat console's text input is focused — gates player movement
 # (and other input) so typing WASD into a command doesn't also walk the player.
 var chat_open: bool = false
+
+# True while ANY text field (TextEdit / CodeEdit / LineEdit) has keyboard focus.
+# Every hotkey handler MUST consult this: input handlers use _input(), which
+# runs BEFORE a focused Control's _gui_input() and therefore still receives the
+# key — so typing "e" in the crafting station or a digit in the Lua editor
+# would otherwise close the panel / change the hotbar. Checked via the viewport
+# focus owner, so it needs no per-panel bookkeeping.
+func is_text_input_focused() -> bool:
+	if chat_open:
+		return true
+	var vp := get_viewport()
+	if vp == null:
+		return false
+	var owner := vp.gui_get_focus_owner()
+	return owner is TextEdit or owner is CodeEdit or owner is LineEdit
 
 # Reference to the overworld's DayNightCycle (set in its _ready) so the chat
 # console's /daynight command can toggle it from anywhere. Null while inside a
@@ -317,11 +392,6 @@ var time_of_day: float = 0.25
 var missions: Array = []
 signal mission_updated
 signal mission_completed(mission_id: String)
-# Only one mission can be accepted at a time — the id of the currently
-# accepted mission, "" when none. Accepting a mission also emits
-# mission_accepted(), which world.gd uses to spawn the dungeon entrance.
-var accepted_mission_id: String = ""
-signal mission_accepted(mission_id: String)
 
 # ── Knowledge / dungeon-mission registries ────────────────────────────
 # Data-driven dungeon content lives in two resource folders and is loaded
@@ -343,6 +413,11 @@ var dungeon_missions:  Dictionary = {}  # dungeon_index -> DungeonMissionData
 # keyword string (drives unlocking the concept in the Lua editor later).
 var learned_entries:  Dictionary = {}  # entry base name -> true
 var learned_keywords: Dictionary = {}  # keyword -> entry base name
+
+# Entries learned but NOT yet viewed in the Encyclopedia — drives the
+# "emphasis" animation (pop + flash) the first time each new entry appears
+# there. Keyed by entry base name; cleared per-entry when it's been shown.
+var unseen_entries:  Dictionary = {}  # entry base name -> true
 
 signal knowledge_updated
 
@@ -402,8 +477,8 @@ func get_dungeon_mission_by_file(fname: String) -> DungeonMissionData:
 			return m
 	return null
 
-# Dungeon seeds are rolled the first time the player accepts the mission
-# (world.gd calls this from _spawn_dungeon_entrance); kept here so the
+# Dungeon seeds are rolled the first time a dungeon's overworld entrance is
+# placed (world.gd calls this from _spawn_dungeon_entrance); kept here so the
 # layout survives re-entry and save/load.
 func get_or_create_dungeon_seed(dungeon_index: int) -> int:
 	if dungeon_seeds.has(dungeon_index):
@@ -441,15 +516,29 @@ func _rebuild_learned_keywords() -> void:
 
 # Called by the knowledge altar. Records the concept in the encyclopedia and
 # unlocks its keyword (the Lua-editor enforcement itself is a later polish).
-func learn_entry(entry: KnowledgeEntry) -> void:
+# Returns true only when this call actually LEARNED something new — the altar
+# uses that to decide whether to play the first-time emphasis animation.
+func learn_entry(entry: KnowledgeEntry) -> bool:
 	if entry == null:
-		return
+		return false
 	if learned_entries.has(entry.id()):
-		return
+		return false
 	learned_entries[entry.id()] = true
+	unseen_entries[entry.id()] = true
 	if not entry.keyword.is_empty():
 		learned_keywords[entry.keyword] = entry.id()
 	knowledge_updated.emit()
+	return true
+
+# True the FIRST time an entry is offered in the encyclopedia — the view
+# plays the emphasis animation for it, then calls mark_entry_seen().
+func is_entry_unseen(entry: KnowledgeEntry) -> bool:
+	return entry != null and unseen_entries.has(entry.id())
+
+func mark_entry_seen(entry: KnowledgeEntry) -> void:
+	if entry == null:
+		return
+	unseen_entries.erase(entry.id())
 
 func has_learned_entry(fname: String) -> bool:
 	return learned_entries.has(fname.get_basename())
@@ -560,6 +649,10 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	if Global.chat_open or Global.pause_menu_open:
 		return
+	# Ctrl is a text-editing modifier (Ctrl+A/C/V/…), so never toggle build mode
+	# while a text field is focused.
+	if Global.is_text_input_focused():
+		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	var key_event := event as InputEventKey
@@ -613,6 +706,7 @@ func _init_missions() -> void:
 		{"id": "clear_dungeon",    "title": "Clear a dungeon",       "completed": false},
 		{"id": "learn_entry",      "title": "Learn a knowledge entry","completed": false},
 		{"id": "mine_diamond",     "title": "Mine 3 diamond ore",    "completed": false},
+		{"id": "run_program",      "title": "Run your first Lua program", "completed": false},
 	]
 
 # Dungeon missions are NOT hardcoded — one is created per DungeonMissionData
@@ -620,42 +714,47 @@ func _init_missions() -> void:
 # list always matches the shipped dungeon content. Called after
 # load_knowledge_data() fills the dungeon_missions registry.
 func _append_dungeon_missions() -> void:
-	const DUNGEON_ROMAN: Array = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
-		"XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
-		"XXI", "XXII", "XXIII", "XXIV", "XXV", "XXVI", "XXVII", "XXVIII", "XXIX", "XXX",
-		"XXXI", "XXXII", "XXXIII", "XXXIV", "XXXV", "XXXVI", "XXXVII", "XXXVIII", "XXXIX", "XL"]
+	# Player-visible title is the mission NAME only — the numbering (Roman
+	# numerals) was dropped so the list reads by name. The index still lives
+	# in "id" and "dungeon_index", which are internal keys, not display text.
 	var indexes: Array = dungeon_missions.keys()
 	indexes.sort()
 	for idx in indexes:
 		var m: DungeonMissionData = dungeon_missions[idx] as DungeonMissionData
 		if m == null:
 			continue
-		var roman: String = DUNGEON_ROMAN[idx] if idx < DUNGEON_ROMAN.size() else str(idx)
 		missions.append({
 			"id": "dungeon_%d" % idx,
-			"title": "Dungeon %s — %s" % [roman, m.mission_name],
+			"title": m.mission_name,
 			"completed": false,
 			"dungeon_index": idx,
 		})
 
-func accept_mission(id: String) -> void:
-	if accepted_mission_id == id:
-		return
-	var m := _find_mission(id)
-	if m.has("dungeon_index"):
-		# Dungeon missions require their content to actually exist: at least one
-		# embedded question plus a teachable entry. Incomplete placeholders (e.g.
-		# dungeon_mission_6..10) are listed but not accept-able — otherwise the
-		# quiz altar auto-clears an empty question list and the dungeon "completes"
-		# with nothing to do.
-		if not is_dungeon_mission_ready(int(m["dungeon_index"])):
-			return
-	accepted_mission_id = id
-	mission_updated.emit()
-	mission_accepted.emit(id)
+# ── Dungeon progression (sequential, no acceptance) ───────────────────
+# There is no "accept a dungeon mission" step anymore. Each language runs as
+# its own strictly sequential track, and the overworld always keeps exactly
+# two entrances alive: the current Lua dungeon and the current Python dungeon
+# (see world.gd's _ensure_current_dungeon_entrances). Clearing one removes its
+# entrance and the next mission in that language's track spawns in its place.
+const DUNGEON_LANGUAGES: Array[String] = ["lua", "python"]
 
-# A dungeon mission is accept-able only when its linked content fully resolves:
-# at least one inline question, and a teachable entry.
+# The language a dungeon belongs to, inferred from the file name of its
+# linked knowledge entry (e.g. "entry_3_python.tres" -> "python").
+func dungeon_language(idx: int) -> String:
+	var m := get_dungeon_mission_for_index(idx)
+	if m == null:
+		return ""
+	var fname: String = m.entry_resource_file
+	if fname.contains("_lua"):
+		return "lua"
+	if fname.contains("_python"):
+		return "python"
+	return ""
+
+# A dungeon mission is playable only when its linked content fully resolves:
+# at least one inline question, and a teachable entry. Incomplete placeholder
+# missions are listed but never made current (otherwise the quiz altar
+# auto-clears an empty question list and the dungeon "completes" doing nothing).
 func is_dungeon_mission_ready(idx: int) -> bool:
 	var m := get_dungeon_mission_for_index(idx)
 	if m == null:
@@ -664,32 +763,52 @@ func is_dungeon_mission_ready(idx: int) -> bool:
 		return false
 	return m.entry() != null
 
+# The current dungeon of a language: its lowest-index incomplete, playable
+# mission. Dungeons are strictly sequential, so at most one is current per
+# language. 0 = that language's track is finished.
+func current_dungeon_index(lang: String) -> int:
+	var best: int = 0
+	for m in missions:
+		if m["completed"] or not m.has("dungeon_index"):
+			continue
+		var idx: int = int(m["dungeon_index"])
+		if dungeon_language(idx) != lang:
+			continue
+		if not is_dungeon_mission_ready(idx):
+			continue
+		if best == 0 or idx < best:
+			best = idx
+	return best
+
+func current_dungeon_mission(lang: String) -> Dictionary:
+	var idx: int = current_dungeon_index(lang)
+	if idx <= 0:
+		return {}
+	for m in missions:
+		if m.has("dungeon_index") and int(m["dungeon_index"]) == idx:
+			return m
+	return {}
+
+# Every dungeon the overworld must currently keep an entrance for (the
+# current mission of each language, skipping finished tracks).
+func current_dungeon_indices() -> Array:
+	var out: Array = []
+	for lang in DUNGEON_LANGUAGES:
+		var idx: int = current_dungeon_index(lang)
+		if idx > 0:
+			out.append(idx)
+	return out
+
 func _find_mission(id: String) -> Dictionary:
 	for m in missions:
 		if m["id"] == id:
 			return m
 	return {}
 
-func get_accepted_mission() -> Dictionary:
-	for m in missions:
-		if m["id"] == accepted_mission_id:
-			return m
-	return {}
-
-# dungeon_index of the currently accepted dungeon mission, or 0 when the
-# accepted mission isn't a dungeon (drives the mission guide arrow).
-func accepted_dungeon_index() -> int:
-	for m in missions:
-		if m["id"] == accepted_mission_id and m.has("dungeon_index"):
-			return int(m["dungeon_index"])
-	return 0
-
 func complete_mission(id: String) -> void:
 	for m in missions:
 		if m["id"] == id and not m["completed"]:
 			m["completed"] = true
-			if accepted_mission_id == id:
-				accepted_mission_id = ""
 			mission_updated.emit()
 			mission_completed.emit(id)
 			return
@@ -697,7 +816,6 @@ func complete_mission(id: String) -> void:
 func reset_missions() -> void:
 	for m in missions:
 		m["completed"] = false
-	accepted_mission_id = ""
 	cleared_dungeons.clear()
 	mission_updated.emit()
 
@@ -817,6 +935,21 @@ func get_hotbar_item() -> Variant:
 	if hotbar_selected < Hotbar.size():
 		return Hotbar[hotbar_selected]
 	return null
+
+# Total quantity of `data` the player is carrying (hotbar + inventory). Single
+# source of truth shared by the crafting menu and the crafting station's
+# automation validation.
+func count_item(data: ItemData) -> int:
+	if data == null:
+		return 0
+	var total: int = 0
+	for slot in Hotbar:
+		if slot != null and (slot as Dictionary)["data"] == data:
+			total += (slot as Dictionary)["quantity"]
+	for slot in Inventory:
+		if slot != null and (slot as Dictionary)["data"] == data:
+			total += (slot as Dictionary)["quantity"]
+	return total
 
 func set_hotbar_selection(index: int) -> void:
 	hotbar_selected = clamp(index, 0, HOTBAR_SIZE - 1)
@@ -980,10 +1113,11 @@ func save_game(slot: int) -> void:
 	for m in missions:
 		missions_save.append({"id": m["id"], "completed": m["completed"]})
 	save_data["missions"] = missions_save
-	save_data["accepted_mission_id"] = accepted_mission_id
 	save_data["time_of_day"] = time_of_day
+	save_data["ui_scale"]    = ui_scale
 	save_data["learned_entries"]  = learned_entries.keys()
 	save_data["learned_keywords"] = learned_keywords.keys()
+	save_data["unseen_entries"]   = unseen_entries.keys()
 	var cleared_save: Array = []
 	for idx in cleared_dungeons:
 		cleared_save.append(int(idx))
@@ -1053,13 +1187,20 @@ func load_game(slot: int) -> void:
 					m["completed"] = bool(entry.get("completed", false))
 					break
 		mission_updated.emit()
-	if data.has("accepted_mission_id"):
-		accepted_mission_id = str(data["accepted_mission_id"])
 	pending_time_of_day = float(data["time_of_day"]) if data.has("time_of_day") else -1.0
+	if data.has("ui_scale"):
+		ui_scale     = float(data["ui_scale"])
+		ui_scale_set = true
 	if data.has("learned_entries") and data["learned_entries"] is Array:
 		for id in (data["learned_entries"] as Array):
 			if not learned_entries.has(id):
 				learned_entries[id] = true
+	# Older saves predate unseen_entries: with nothing stored, treat every
+	# learned entry as already seen (no replay of the intro animation).
+	if data.has("unseen_entries") and data["unseen_entries"] is Array:
+		for id in (data["unseen_entries"] as Array):
+			if learned_entries.has(id):
+				unseen_entries[id] = true
 	_rebuild_learned_keywords()
 	knowledge_updated.emit()
 	if data.has("cleared_dungeons") and data["cleared_dungeons"] is Array:

@@ -1,8 +1,26 @@
 use crate::transpiler::spec::{Arguments, PythonType, Symbol, SymbolsStack};
 use anyhow::{Result, anyhow};
 use godot::prelude::*;
-use ruff_python_ast::{Expr, ExprContext, Number, Operator, Stmt, UnaryOp};
+use ruff_python_ast::{CmpOp, Expr, ExprContext, Number, Operator, Stmt, UnaryOp};
 use ruff_python_parser::{Mode, ParseOptions};
+
+// Python comparison operators -> their GDScript equivalents. `is` / `is not`
+// are identity checks against None in the curriculum, and None -> null, so
+// they map onto equality.
+fn cmp_op_str(op: &CmpOp) -> &'static str {
+    match op {
+        CmpOp::Eq => "==",
+        CmpOp::NotEq => "!=",
+        CmpOp::Lt => "<",
+        CmpOp::LtE => "<=",
+        CmpOp::Gt => ">",
+        CmpOp::GtE => ">=",
+        CmpOp::In => "in",
+        CmpOp::NotIn => "not in",
+        CmpOp::Is => "==",
+        CmpOp::IsNot => "!=",
+    }
+}
 
 #[derive(Default)]
 struct Transpiler {
@@ -36,7 +54,16 @@ impl Transpiler {
     fn transpile_statement(&mut self, statement: &Stmt) -> Result<String> {
         let transpiled = match statement {
             Stmt::FunctionDef(func) => {
-                let mut transpiled = format!("func {}(", func.name.as_str());
+                // GDScript has no nested `func`, so a function defined inside
+                // another — which is exactly what wrapping the player's code in
+                // main() produces — becomes a Callable lambda assignment. It is
+                // registered as a Callable variable so calls become .call(...).
+                let nested = self.indent_level > 0;
+                let mut transpiled = if nested {
+                    format!("var {} = func(", func.name.as_str())
+                } else {
+                    format!("func {}(", func.name.as_str())
+                };
                 let mut args = Vec::with_capacity(func.parameters.len());
                 let mut kwargs = Vec::with_capacity(func.parameters.len());
                 let mut final_args = Vec::with_capacity(func.parameters.len());
@@ -91,6 +118,15 @@ impl Transpiler {
                             .collect(),
                     ),
                 ));
+                if nested {
+                    // Shadow the function symbol: a lambda is a value, not a
+                    // method, so the name resolves to a Callable (see the Call
+                    // expression handler).
+                    self.symbols.add_symbol(Symbol::Variable(
+                        func.name.to_string(),
+                        PythonType::Callable,
+                    ));
+                }
 
                 self.indent();
                 if let Some(kwargs_name) = func.parameters.kwarg.as_ref() {
@@ -324,21 +360,21 @@ impl Transpiler {
                             self.indent();
                             let body = self.transpile_statements(&elif_else.body)?;
                             self.dedent();
-                            Ok(format!("elif {}:\n{}", test, body))
+                            Ok(format!("{}elif {}:\n{}", self.indent_string(), test, body))
                         } else {
                             self.indent();
                             let body = self.transpile_statements(&elif_else.body)?;
                             self.dedent();
-                            Ok(format!("else:\n{}", body))
+                            Ok(format!("{}else:\n{}", self.indent_string(), body))
                         }
                     })
                     .collect();
 
                 Ok(format!(
-                    "if {}:\n{}\n{}",
+                    "if {}:\n{}{}",
                     test,
                     body,
-                    elif_elses?.join("\n")
+                    elif_elses?.join("")
                 ))
             }
             Stmt::Expr(expr) => self.transpile_expression(&expr.value),
@@ -370,13 +406,29 @@ impl Transpiler {
                     self.transpile_expression(&op.left)?,
                     self.transpile_expression(&op.right)?
                 )),
-                _ => Ok(format!(
-                    "{} {} {}",
-                    self.transpile_expression(&op.left)?,
-                    self.transpile_expression(&op.right)?,
-                    op.op.as_str()
-                )),
+                _ => {
+                    // Python order is `left OP right`, so the operands must be
+                    // emitted in that order (this arm previously produced
+                    // `left right OP`, i.e. `x 1 +`, which is not valid).
+                    let left = self.transpile_expression(&op.left)?;
+                    let right = self.transpile_expression(&op.right)?;
+                    Ok(format!("{} {} {}", left, op.op.as_str(), right))
+                }
             },
+            Expr::Compare(compare) => {
+                // Comparison operators (==, !=, <, <=, >, >=, in, not in, is,
+                // is not). Python's chained form (a < b < c) means
+                // `a < b and b < c`, so join the links with `and` rather than
+                // emitting a GDScript chain (which would compare a bool).
+                let mut parts: Vec<String> = Vec::new();
+                let mut left = self.transpile_expression(&compare.left)?;
+                for (op, comparator) in compare.ops.iter().zip(compare.comparators.iter()) {
+                    let right = self.transpile_expression(comparator)?;
+                    parts.push(format!("{} {} {}", left, cmp_op_str(op), right));
+                    left = right;
+                }
+                Ok(parts.join(" and "))
+            }
             Expr::UnaryOp(op) => match op.op {
                 UnaryOp::Not => Ok(format!("not {}", self.transpile_expression(&op.operand)?)),
                 _ => Ok(format!(
@@ -509,15 +561,15 @@ impl Transpiler {
                                 Ok(format!("{}({})", name, final_args.join(", ")))
                             }
                             Symbol::Variable(name, pytype) => match pytype {
+                                // A function value (e.g. a nested def turned
+                                // into a lambda) is a Callable: `name(...)`
+                                // would be resolved as a method on self and
+                                // fail to compile, so invoke it with .call().
                                 PythonType::Callable => {
-                                    let kwargs: Vec<_> =
-                                        kwargs.iter().map(|(_, value)| value.as_str()).collect();
-                                    Ok(format!(
-                                        "{}({}, {})",
-                                        name,
-                                        args.join(", "),
-                                        kwargs.join(", ")
-                                    ))
+                                    let mut all_args: Vec<String> = args.clone();
+                                    all_args
+                                        .extend(kwargs.iter().map(|(_, value)| value.to_string()));
+                                    Ok(format!("{}.call({})", name, all_args.join(", ")))
                                 }
                                 _ => Err(anyhow!("Variable {} is not callable", name)),
                             },
@@ -653,6 +705,12 @@ impl Transpiler {
 
     fn transpile(&mut self, code: &str) -> Result<String> {
         self.symbols.reset();
+        // A failed transpile can return early (via `?`) with indents/symbols
+        // still pushed, so reset the indentation here too. Without this, the
+        // NEXT transpile on the same PythonTranspiler instance starts already
+        // indented and the generated GDScript fails with
+        // "Expected statement, found Indent instead".
+        self.indent_level = 0;
         let ast = ruff_python_parser::parse(code, ParseOptions::from(Mode::Module))?
             .try_into_module()
             .ok_or(anyhow!("Failed to convert into Python module."))?
@@ -691,6 +749,56 @@ impl PythonTranspiler {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_binop_operand_order() -> Result<()> {
+        let mut transpiler = Transpiler::default();
+        let out = transpiler.transpile("def main():\n    x = 1 + 2\n")?;
+        assert!(out.contains("1 + 2"), "operator/operand order wrong: {out}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_compare_and_if_else_indent() -> Result<()> {
+        let mut transpiler = Transpiler::default();
+        let out = transpiler.transpile(
+            "def main():\n    x = 1\n    if x > 2:\n        print(1)\n    else:\n        print(2)\n",
+        )?;
+        assert!(out.contains("if x > 2:"), "comparison not transpiled: {out}");
+        assert!(out.contains("\telse:"), "else must be indented to the if level: {out}");
+        assert!(!out.contains("\nelse:"), "else must not sit at column 0: {out}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_indent_reset_after_failed_transpile() -> Result<()> {
+        let mut transpiler = Transpiler::default();
+        // MatMult is rejected, so this returns Err with the indent still pushed.
+        assert!(transpiler.transpile("def main():\n    x = a @ b\n").is_err());
+        // The next transpile on the same instance must start at column 0 again,
+        // otherwise GDScript fails with `Expected statement, found "Indent"`.
+        let out = transpiler.transpile("def main():\n    print(1)\n")?;
+        assert!(out.starts_with("func main():"), "indent leaked between runs: {out}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_def_becomes_lambda() -> Result<()> {
+        let mut transpiler = Transpiler::default();
+        let out = transpiler.transpile(
+            "def main():\n    def greet(name):\n        return \"Hi \" + name\n    print(greet(\"x\"))\n",
+        )?;
+        assert!(
+            out.contains("var greet = func(name):"),
+            "nested def should become a Callable: {out}"
+        );
+        assert!(
+            out.contains("greet.call("),
+            "calling a lambda must use .call(): {out}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_transpile() -> Result<()> {
         let mut transpiler = Transpiler::default();

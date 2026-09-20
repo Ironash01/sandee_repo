@@ -14,10 +14,31 @@ var _settings_overlay: Control = null
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	_build_all()
+	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
+		Global.ui_scale_changed.connect(_on_ui_scale)
+
+func _build_all() -> void:
 	_build_background()
 	_build_main_ui()
 	_build_slot_overlay()
 	_build_settings_overlay()
+
+# Rebuild the whole menu at the new scale so a Small/Medium/Large change applies
+# live; open overlays keep their visibility.
+func _on_ui_scale(_s: float) -> void:
+	var slot_vis: bool = _slot_overlay != null and _slot_overlay.visible
+	var set_vis:  bool = _settings_overlay != null and _settings_overlay.visible
+	for child in get_children():
+		child.queue_free()
+	_slot_overlay = null
+	_settings_overlay = null
+	await get_tree().process_frame
+	_build_all()
+	if _slot_overlay != null:
+		_slot_overlay.visible = slot_vis
+	if _settings_overlay != null:
+		_settings_overlay.visible = set_vis
 
 # ── Background ────────────────────────────────────────────────────
 func _build_background() -> void:
@@ -28,34 +49,35 @@ func _build_background() -> void:
 
 # ── Main menu ─────────────────────────────────────────────────────
 func _build_main_ui() -> void:
+	var s: float = Global.ui_scale
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
 	var vbox := VBoxContainer.new()
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vbox.add_theme_constant_override("separation", 10)
-	vbox.custom_minimum_size = Vector2(320, 0)
+	vbox.add_theme_constant_override("separation", int(10 * s))
+	vbox.custom_minimum_size = Vector2(int(320 * s), 0)
 	center.add_child(vbox)
 
 	var title := Label.new()
 	title.text = "SandEE"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 72)
+	title.add_theme_font_size_override("font_size", int(72 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
 	var sub := Label.new()
 	sub.text = "Alpha"
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", 16)
+	sub.add_theme_font_size_override("font_size", int(16 * s))
 	sub.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(sub)
 
 	_add_spacer(vbox, 16)
 	var div := ColorRect.new()
 	div.color = C_DIVIDER
-	div.custom_minimum_size = Vector2(0, 1)
+	div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 	_add_spacer(vbox, 16)
 
@@ -72,13 +94,13 @@ func _build_main_ui() -> void:
 	var qs := StyleBoxFlat.new()
 	qs.bg_color = Color(0.18, 0.08, 0.08, 0.97)
 	qs.border_color = Color(0.55, 0.22, 0.22, 1.0)
-	qs.set_border_width_all(1); qs.set_corner_radius_all(4)
-	qs.content_margin_top = 8; qs.content_margin_bottom = 8
+	qs.set_border_width_all(int(1 * s)); qs.set_corner_radius_all(int(4 * s))
+	qs.content_margin_top = int(8 * s); qs.content_margin_bottom = int(8 * s)
 	var qsh := StyleBoxFlat.new()
 	qsh.bg_color = Color(0.28, 0.12, 0.12, 0.97)
 	qsh.border_color = Color(1.0, 0.45, 0.45, 1.0)
-	qsh.set_border_width_all(1); qsh.set_corner_radius_all(4)
-	qsh.content_margin_top = 8; qsh.content_margin_bottom = 8
+	qsh.set_border_width_all(int(1 * s)); qsh.set_corner_radius_all(int(4 * s))
+	qsh.content_margin_top = int(8 * s); qsh.content_margin_bottom = int(8 * s)
 	quit_btn.add_theme_stylebox_override("normal",  qs)
 	quit_btn.add_theme_stylebox_override("hover",   qsh)
 	quit_btn.add_theme_stylebox_override("pressed", qs)
@@ -88,6 +110,7 @@ func _build_main_ui() -> void:
 
 # ── Slot selection overlay ────────────────────────────────────────
 func _build_slot_overlay() -> void:
+	var s: float = Global.ui_scale
 	_slot_overlay = _make_overlay()
 	add_child(_slot_overlay)
 
@@ -96,29 +119,29 @@ func _build_slot_overlay() -> void:
 	_slot_overlay.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(380, 0)
+	panel.custom_minimum_size = Vector2(int(380 * s), 0)
 	_style_panel(panel)
 	center.add_child(panel)
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
+		margin.add_theme_constant_override("margin_" + side, int(24 * s))
 	panel.add_child(margin)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 12)
+	vbox.add_theme_constant_override("separation", int(12 * s))
 	margin.add_child(vbox)
 
 	var title := Label.new()
 	title.text = "Select Save Slot"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_font_size_override("font_size", int(20 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
 	var div := ColorRect.new()
 	div.color = C_DIVIDER
-	div.custom_minimum_size = Vector2(0, 1)
+	div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 
 	for i in range(1, 4):
@@ -129,6 +152,7 @@ func _build_slot_overlay() -> void:
 
 # ── Settings overlay ──────────────────────────────────────────────
 func _build_settings_overlay() -> void:
+	var s: float = Global.ui_scale
 	_settings_overlay = _make_overlay()
 	add_child(_settings_overlay)
 
@@ -137,29 +161,29 @@ func _build_settings_overlay() -> void:
 	_settings_overlay.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(380, 0)
+	panel.custom_minimum_size = Vector2(int(380 * s), 0)
 	_style_panel(panel)
 	center.add_child(panel)
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
+		margin.add_theme_constant_override("margin_" + side, int(24 * s))
 	panel.add_child(margin)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 14)
+	vbox.add_theme_constant_override("separation", int(14 * s))
 	margin.add_child(vbox)
 
 	var title := Label.new()
 	title.text = "Settings"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_font_size_override("font_size", int(20 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
 	var div := ColorRect.new()
 	div.color = C_DIVIDER
-	div.custom_minimum_size = Vector2(0, 1)
+	div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 
 	_add_spacer(vbox, 4)
@@ -194,30 +218,32 @@ func _make_overlay() -> Control:
 	return ctrl
 
 func _style_panel(panel: PanelContainer) -> void:
+	var s: float = Global.ui_scale
 	var ps := StyleBoxFlat.new()
 	ps.bg_color     = C_PANEL
 	ps.border_color = C_BORDER
-	ps.set_border_width_all(1)
-	ps.set_corner_radius_all(6)
+	ps.set_border_width_all(int(1 * s))
+	ps.set_corner_radius_all(int(6 * s))
 	panel.add_theme_stylebox_override("panel", ps)
 
 func _make_menu_btn(label: String, callback: Callable) -> Button:
+	var s: float = Global.ui_scale
 	var btn := Button.new()
 	btn.text = label
-	btn.custom_minimum_size = Vector2(280, 44)
+	btn.custom_minimum_size = Vector2(int(280 * s), int(44 * s))
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", 15)
+	btn.add_theme_font_size_override("font_size", int(15 * s))
 	btn.add_theme_color_override("font_color",         C_TITLE)
 	btn.add_theme_color_override("font_hover_color",   C_TITLE)
 	btn.add_theme_color_override("font_pressed_color", C_MUTED)
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = C_PANEL; normal.border_color = C_BORDER
-	normal.set_border_width_all(1); normal.set_corner_radius_all(4)
-	normal.content_margin_top = 8; normal.content_margin_bottom = 8
+	normal.set_border_width_all(int(1 * s)); normal.set_corner_radius_all(int(4 * s))
+	normal.content_margin_top = int(8 * s); normal.content_margin_bottom = int(8 * s)
 	var hover := StyleBoxFlat.new()
 	hover.bg_color = C_BTN_H; hover.border_color = C_TITLE
-	hover.set_border_width_all(1); hover.set_corner_radius_all(4)
-	hover.content_margin_top = 8; hover.content_margin_bottom = 8
+	hover.set_border_width_all(int(1 * s)); hover.set_corner_radius_all(int(4 * s))
+	hover.content_margin_top = int(8 * s); hover.content_margin_bottom = int(8 * s)
 	btn.add_theme_stylebox_override("normal",  normal)
 	btn.add_theme_stylebox_override("hover",   hover)
 	btn.add_theme_stylebox_override("pressed", normal)
@@ -228,26 +254,27 @@ func _add_menu_btn(parent: Node, label: String, callback: Callable) -> void:
 	parent.add_child(_make_menu_btn(label, callback))
 
 func _add_spacer(parent: Node, height: int) -> void:
-	var s := Control.new()
-	s.custom_minimum_size = Vector2(0, height)
-	parent.add_child(s)
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(0, int(height * Global.ui_scale))
+	parent.add_child(spacer)
 
 func _make_slot_row(slot_idx: int) -> Control:
+	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", int(6 * s))
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	# ── Main slot button ──────────────────────────────────────────
 	var btn := Button.new()
 	btn.text = ""
-	btn.custom_minimum_size = Vector2(0, 70)
+	btn.custom_minimum_size = Vector2(0, int(70 * s))
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = C_PANEL; normal.border_color = C_BORDER
-	normal.set_border_width_all(1); normal.set_corner_radius_all(4)
+	normal.set_border_width_all(int(1 * s)); normal.set_corner_radius_all(int(4 * s))
 	var hover := StyleBoxFlat.new()
 	hover.bg_color = C_BTN_H; hover.border_color = C_TITLE
-	hover.set_border_width_all(1); hover.set_corner_radius_all(4)
+	hover.set_border_width_all(int(1 * s)); hover.set_corner_radius_all(int(4 * s))
 	btn.add_theme_stylebox_override("normal",  normal)
 	btn.add_theme_stylebox_override("hover",   hover)
 	btn.add_theme_stylebox_override("pressed", normal)
@@ -264,7 +291,7 @@ func _make_slot_row(slot_idx: int) -> Control:
 		var lbl := Label.new()
 		lbl.text = "New Game"
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		lbl.add_theme_font_size_override("font_size", 15)
+		lbl.add_theme_font_size_override("font_size", int(15 * s))
 		lbl.add_theme_color_override("font_color", C_MUTED)
 		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		content.add_child(lbl)
@@ -272,7 +299,7 @@ func _make_slot_row(slot_idx: int) -> Control:
 		var name_lbl := Label.new()
 		name_lbl.text = "Slot %d" % slot_idx
 		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		name_lbl.add_theme_font_size_override("font_size", 15)
+		name_lbl.add_theme_font_size_override("font_size", int(15 * s))
 		name_lbl.add_theme_color_override("font_color", C_TITLE)
 		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		content.add_child(name_lbl)
@@ -285,7 +312,7 @@ func _make_slot_row(slot_idx: int) -> Control:
 		var date_lbl := Label.new()
 		date_lbl.text = date_str
 		date_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		date_lbl.add_theme_font_size_override("font_size", 11)
+		date_lbl.add_theme_font_size_override("font_size", int(11 * s))
 		date_lbl.add_theme_color_override("font_color", C_MUTED)
 		date_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		content.add_child(date_lbl)
@@ -296,17 +323,17 @@ func _make_slot_row(slot_idx: int) -> Control:
 	if not info.is_empty():
 		var del_btn := Button.new()
 		del_btn.text = "X"
-		del_btn.custom_minimum_size = Vector2(44, 70)
+		del_btn.custom_minimum_size = Vector2(int(44 * s), int(70 * s))
 		del_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
-		del_btn.add_theme_font_size_override("font_size", 13)
+		del_btn.add_theme_font_size_override("font_size", int(13 * s))
 		var ds := StyleBoxFlat.new()
 		ds.bg_color     = Color(0.18, 0.06, 0.06, 0.97)
 		ds.border_color = Color(0.55, 0.22, 0.22, 1.0)
-		ds.set_border_width_all(1); ds.set_corner_radius_all(4)
+		ds.set_border_width_all(int(1 * s)); ds.set_corner_radius_all(int(4 * s))
 		var dsh := StyleBoxFlat.new()
 		dsh.bg_color     = Color(0.38, 0.10, 0.10, 0.97)
 		dsh.border_color = Color(1.0, 0.40, 0.40, 1.0)
-		dsh.set_border_width_all(1); dsh.set_corner_radius_all(4)
+		dsh.set_border_width_all(int(1 * s)); dsh.set_corner_radius_all(int(4 * s))
 		del_btn.add_theme_stylebox_override("normal",  ds)
 		del_btn.add_theme_stylebox_override("hover",   dsh)
 		del_btn.add_theme_stylebox_override("pressed", ds)
@@ -318,22 +345,23 @@ func _make_slot_row(slot_idx: int) -> Control:
 	return row
 
 func _add_slider_row(parent: Node, label_text: String, init_v: float, callback: Callable) -> void:
+	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", int(10 * s))
 	parent.add_child(row)
 
 	var lbl := Label.new()
 	lbl.text = label_text
-	lbl.custom_minimum_size = Vector2(140, 0)
-	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.custom_minimum_size = Vector2(int(140 * s), 0)
+	lbl.add_theme_font_size_override("font_size", int(13 * s))
 	lbl.add_theme_color_override("font_color", C_TITLE)
 	row.add_child(lbl)
 
 	var val_lbl := Label.new()
 	val_lbl.text = "%d%%" % int(init_v * 100.0)
-	val_lbl.custom_minimum_size = Vector2(44, 0)
+	val_lbl.custom_minimum_size = Vector2(int(44 * s), 0)
 	val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	val_lbl.add_theme_font_size_override("font_size", 13)
+	val_lbl.add_theme_font_size_override("font_size", int(13 * s))
 	val_lbl.add_theme_color_override("font_color", C_MUTED)
 
 	var slider := HSlider.new()

@@ -13,7 +13,10 @@ const AI_SCRIPTS: Dictionary = {
 }
 
 const ATTACK_RANGE:    float = 28.0
-const ATTACK_COOLDOWN: float = 5.0
+# Contact-attack cooldown. Was 5.0 — far longer than every other mob
+# (wolf/pixie 1.0, worm 1.2), so the fish hit once and then went ~5s without
+# ever landing a second bite. Matches wolf/pixie now.
+const ATTACK_COOLDOWN: float = 1.0
 const SHADOW_TEXTURE:  Texture2D = preload("res://sprites/shadow/shadow_base.png")
 const DAMAGE_NUMBER_SCRIPT: GDScript = preload("res://scripts/damage_number.gd")
 const MELLOW_BURST_SCRIPT: GDScript = preload("res://scripts/mellow_burst.gd")
@@ -43,16 +46,30 @@ const DISPERSE_DURATION: float = 2.0
 const DISPERSE_SPEED:    float = 80.0
 const DISPERSE_RANDOMNESS: float = 0.4
 
+# ── Despawn zone (driven by world.gd's periodic distance check) ──────
+# Same contract as wolf.gd/worm.gd: the world ticks this with a zone + elapsed
+# and the fish vanishes once its zone's budget runs out. Day-time mobs cull
+# fast in the outer ring so the ambient director can recycle their slot.
+const ZONE_DESPAWN_TIME := {0: 1800.0, 1: 900.0, 2: 300.0}
+var _despawn_zone: int = -1
+var _despawn_remaining: float = 0.0
+
 @onready var _sprite: AnimatedSprite2D = $AnimatedSprite2D
 
 var _ai: RefCounted = null
 var _tilemap: TileMapLayer = null
 var _last_move_dir: Vector2 = Vector2.DOWN
+# PASSIVE flee-on-hit (see FleeBehavior); HOSTILE mobs never use it.
+var _flee: FleeBehavior = FleeBehavior.new()
 var _name_label: Node2D = null
 
 func _ready() -> void:
 	add_to_group("HeadlessFish")
 	add_to_group("Mob")
+	# Flying mob: FLOATING motion mode. The default GROUNDED mode applies
+	# floor/wall snapping inside move_and_slide, which can visibly pop the fish
+	# around when it brushes geometry (reads as teleporting).
+	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	_mob_health = COMBAT_DATA.health
 	z_index = int(global_position.y / 32)
 
@@ -92,6 +109,17 @@ func _exit_tree() -> void:
 	# Release attack claim if this fish was the attacker
 	HeadlessFishAI._force_release_claim()
 
+# Called by world.gd's distance check. A zone change re-arms the budget; while
+# in a zone the fish counts down and despawns (never teleports).
+func _apply_despawn_zone(zone: int, elapsed: float) -> void:
+	if zone != _despawn_zone:
+		_despawn_zone = zone
+		_despawn_remaining = float(ZONE_DESPAWN_TIME.get(zone, 300.0))
+		return
+	_despawn_remaining -= elapsed
+	if _despawn_remaining <= 0.0:
+		queue_free()
+
 func _on_day_started() -> void:
 	# Despawn when daytime begins
 	if is_instance_valid(self):
@@ -99,6 +127,17 @@ func _on_day_started() -> void:
 
 func _physics_process(delta: float) -> void:
 	z_index = int(global_position.y / 32)
+
+	# PASSIVE flee: fly away from whoever hit us (never teleports).
+	if _flee.tick(delta, global_position, COMBAT_DATA.flee_safe_dist):
+		velocity = _flee.direction(global_position) \
+			* COMBAT_DATA.speed * COMBAT_DATA.flee_speed_mult + _knockback
+		_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
+		move_and_slide()
+		if velocity.length_squared() > 0.01:
+			_last_move_dir = velocity.normalized()
+			_sprite.rotation = lerp_angle(_sprite.rotation, velocity.angle(), 0.35)
+		return
 
 	# Player-death dispersal overrides AI movement
 	if _is_dispersing:
@@ -165,9 +204,19 @@ func take_hit(damage: float, source_pos: Vector2) -> void:
 		tw.tween_callback(_reset_hit_flash)
 	_spawn_damage_number(damage)
 	_show_name_label()
+	_maybe_flee(source_pos)
 	queue_redraw()
 	if _mob_health <= 0.0:
 		_die()
+
+# PASSIVE mobs run from the attacker (see FleeBehavior); HOSTILE mobs fight on.
+func _maybe_flee(source_pos: Vector2) -> void:
+	if COMBAT_DATA.behavior != MobCombatData.Behavior.PASSIVE:
+		return
+	if COMBAT_DATA.flee_health_pct > 0.0 \
+			and _mob_health > COMBAT_DATA.health * COMBAT_DATA.flee_health_pct:
+		return
+	_flee.start(source_pos, COMBAT_DATA.flee_duration)
 
 func _reset_hit_flash() -> void:
 	if is_instance_valid(self):

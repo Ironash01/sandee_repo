@@ -21,6 +21,18 @@ API, not older 4.x). All game code lives under `SandEEAlpha/` — scripts in
   each row sorts correctly against the player (player walks behind the row above, in
   front of the row below). Player origin is at chest height:
   `z_index = int((global_position.y + 23.0 + 16.0) / 32)` (see `player.gd`).
+- Hitboxes are **feet-anchored**, not full-tile: the player's `PlayerCol` is
+  `RectangleShape2D(20, 12)` at `(0, 17)` (below the chest-height origin). Placed
+  blocks (`PlaceableBlock.tscn`) use a **conditional U-shaped** collider — bottom
+  strip `RectangleShape2D(32, 16)` at `(0, 8)` plus `RectangleShape2D(4, 32)` side
+  walls at `x = ±14`. The side walls are **enabled only when the block has a
+  block directly above or below it** (`PlaceableBlock.refresh_u_collision()` asks
+  the owning world's `has_placed_block()`); an isolated block keeps them disabled
+  so the player's feet can still enter its upper half and keep `world.gd`'s
+  "player behind the block" cover y-sort. Worlds call
+  `_refresh_neighbor_u_collision(cell)` on place/unregister/save-restore.
+  **Revert** = delete `SideColL`/`SideColR` + `RectShape_side` and leave the
+  single `(0, 8)` 32x16 strip.
 - Whole-canvas layers (TileMapLayer, a Node2D pinned at World origin) can NOT y-sort.
   Hand-drawn structures are therefore painted as **per-cell Sprite2D nodes**, each
   anchored at its tile center with `z_index = int(global_position.y / TILE_SIZE)`.
@@ -32,6 +44,28 @@ API, not older 4.x). All game code lives under `SandEEAlpha/` — scripts in
 - Godot 4.6 gotcha: `GridContainer` has NO `alignment` property (no
   `GridContainer.ALIGNMENT_CENTER`) — only `BoxContainer` subclasses do. Don't
   use it on grids.
+
+## UI scaling (STANDING RULE — applies to every new UI / UI change)
+
+**Every in-game UI and text MUST respect the global UI scale setting.** If asked
+to add a new UI (or change one), scale it from the start — never hardcode px or
+font sizes. The setting is Small/Medium/Large in the pause menu
+(`pause_menu.gd`, values `0.75 / 1.0 / 1.5`) which writes `Global.ui_scale` and
+emits `Global.ui_scale_changed(scale)`.
+
+Convention (see `inventory_ui.gd`, `crafting_menu.gd`, `lua_editor_ui.gd`,
+`pause_menu.gd`, `knowledge_altar.gd`, `quiz_altar.gd`):
+- At the top of the build function: `var s: float = Global.ui_scale`.
+- Multiply EVERY hardcoded size by `s`: fonts
+  (`add_theme_font_size_override("font_size", int(13 * s))`), panel/slot/icon
+  min-sizes, paddings, margins, separations, border widths, radii.
+- Make it update LIVE: connect `Global.ui_scale_changed` (guard with
+  `is_connected`) to a handler that rebuilds/re-scales the UI, and rebuild only
+  where it already exists/is visible (preserve open state).
+- World-space overlays that draw in `_draw()` (name labels, damage numbers,
+  guide arrows, break bars — `Global.draw_break_bar` is already scaled) read
+  `Global.ui_scale` live at draw time.
+- Don't scale gameplay values — only visual sizing.
 
 ## Cave entrances (overworld)
 
@@ -72,11 +106,66 @@ API, not older 4.x). All game code lives under `SandEEAlpha/` — scripts in
   old fixed 3-wide horizontal arc. No mob-HP system exists yet — damage is only
   a number for future combat to read.
 
+## Mobs
+
+- **Pathfinding is REQUIRED for every mob.** A mob must route AROUND obstacles:
+  trees, placed blocks, cave walls, and blocks the player drops in front of it
+  *while it is moving*. Walking straight at the player and stalling on the
+  first obstacle is a bug (the Headless Fish does exactly this today — it gets
+  stuck when the player places blocks). Follow the `worm.gd` / `lua_npc.gd`
+  pattern: probe a short ray ahead (`_ray_clearance` / `_path_is_clear`), then
+  try a spread of reroute angles (`REROUTE_ANGLES_DEG`) and COMMIT to the best
+  open direction for a short window so it doesn't dither on corners. Obstacles
+  are `StaticBody2D` on physics layer 1.
+- **Movement must look like FLYING, never teleporting.** A mob may change its
+  chosen route freely, but its actual motion has to be smooth: bound the turn
+  rate and speed, and NEVER assign `global_position` to "unstick" or reposition
+  a mob (the player has an unstuck teleport; mobs must not). Steering forces
+  added on top of a base velocity must be speed-capped, otherwise the combined
+  velocity spikes. `HeadlessFishAI` is the reference: `_find_clear_dir` picks
+  the closest open path toward the player, then `TURN_RATE`/`FLIGHT_SPEED_CAP`
+  rotate the heading into it so the fish banks around obstacles. Flying mobs
+  use `motion_mode = CharacterBody2D.MOTION_MODE_FLOATING` (GROUNDED's
+  floor/wall snapping pops them around geometry, which reads as teleporting).
+- Any walking mob re-sorts every frame:
+  `z_index = int(global_position.y / TILE_SIZE)`.
+- **Contact damage**: poll each frame with a per-mob cooldown — never rely on
+  `body_entered` alone (it fires once and won't fire again while overlapping).
+  Canonical shape (`_try_attack_player(delta)` in wolf/pixie/worm/fish):
+  early-out on `COMBAT_DATA.damage <= 1.0` → decrement `_attack_cooldown` →
+  range check → `Global.damage_player(...)`. Keep cooldowns consistent
+  (wolf/pixie 1.0s, worm 1.2s); a 5.0s outlier reads as "it never damages
+  twice". Player i-frames are `player.gd` `INVINCIBILITY_MS = 300` (0.3s) — if
+  a mob looks like it only hits once, check the MOB's cooldown, not i-frames.
+- `_try_attack_player()` must sit on a code path the active state actually
+  reaches. `_physics_process` early-returns per state (the worm's call was in
+  the IDLE-only tail, so an emerged worm never dealt contact damage).
+- Spawn rules live in `resources/mobs/*.tres` (`MobCombatData`:
+  `spawn_during_day`/`spawn_during_night`, biome flags, `spawn_weight`,
+  `behavior` HOSTILE/PASSIVE, flee tuning). The overworld runs an **ambient
+  spawn director** (`world.gd`): a continuous, CAPPED population spawned in a
+  ring 18–44 tiles around the player (`AMBIENT_RING_*`), topped up every tick
+  (`AMBIENT_DAY/NIGHT_INTERVAL`) up to `AMBIENT_DAY/NIGHT_CAP`, with a night
+  ramp via `_night_progress()`. Period flips fill straight to the new cap
+  (`_on_night_started`/`_on_day_started`). Mobs beyond `AMBIENT_DESPAWN_TILES`
+  for `AMBIENT_STRAY_LINGER` are recycled (`_despawn_strays`), and the older
+  30/15/5-min zone timer now runs over the whole `"Mob"` group. PASSIVE mobs
+  flee on `take_hit` via `FleeBehavior` (see `_maybe_flee`). Never teleport.
+
 ## Working style
 
 - NEVER commit unless the user explicitly asks.
-- No Godot binary is on PATH — GDScript is validated by careful review, not a
-  parser. Let the user run the game to test.
+- Godot 4.6 console binary:
+  `C:\portable_programs\Godot_v4.6-stable_win64.exe\Godot_v4.6-stable_win64_console.exe`.
+  Validate every GDScript/resource change headlessly:
+  `& "<console exe>" --headless --editor --quit --path "<SandEEAlpha>"` then grep
+  the output for `SCRIPT ERROR|Parse Error|Compile Error|Failed to load`.
+- Functional tests: write a temporary `_tmp_*.gd` + `_tmp_*.tscn` (root node with
+  the script attached) inside `SandEEAlpha/`, run
+  `& "<console exe>" --headless --path "<SandEEAlpha>" res://_tmp_x.tscn`, then
+  DELETE the pair plus any generated `.uid`. Autoloads (`Global`, singletons) are
+  NOT available under `--script` — run a real scene instead. Use a
+  `CharacterBody2D` (not `Node2D`) as a stub player so physics/RID queries work.
 - This model cannot view images. To inspect a sprite's geometry/colors, analyze
   pixels with PowerShell `System.Drawing` (decode dimensions, alpha, per-pixel
   colors) instead of asking to "look" at the art.

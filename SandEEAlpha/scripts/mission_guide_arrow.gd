@@ -2,15 +2,15 @@ extends Node2D
 class_name MissionGuideArrow
 # ── Mission guide arrow ────────────────────────────────────────────
 # A small gold arrow hovering above the player's head that points at the
-# accepted dungeon's entrance portal and shows the straight-line distance
-# (in blocks/tiles). Added as a child of the player in player.gd.
+# NEAREST live dungeon entrance (one per language) and shows the straight-line
+# distance (in blocks/tiles). Added as a child of the player in player.gd.
 #
 # The target comes from the ACTIVE world: the overworld exposes
 # get_dungeon_guide_target() (world.gd) and the arrow queries it via a
 # has_method() guard, so inside a cave/dungeon (whose worlds don't have that
-# method) the arrow simply hides. It also hides when there's no accepted
-# dungeon mission, when the portal is gone (dungeon cleared), or once the
-# player is right on top of the portal.
+# method) the arrow simply hides. It also hides when no entrance exists (both
+# language tracks finished), when the portal is gone, or once the player is
+# right on top of it.
 
 const COLOR:    Color = Color(1.0, 0.85, 0.20, 1.0)
 const OUTLINE:  Color = Color(0.20, 0.15, 0.00, 0.85)
@@ -86,13 +86,17 @@ func _set_active(active: bool) -> void:
 func _draw() -> void:
 	if not _active:
 		return
-	var tip := _dir * ARROW_LEN
-	var perp := _dir.orthogonal() * ARROW_W
-	var back := -_dir * ARROW_LEN
+	# Read the scale live at draw time so a Small/Medium/Large change applies
+	# immediately (this node redraws every process frame).
+	var s: float = Global.ui_scale
+	var tip := _dir * ARROW_LEN * s
+	var perp := _dir.orthogonal() * ARROW_W * s
+	var back := -_dir * ARROW_LEN * s
 	draw_colored_polygon(PackedVector2Array([tip, back + perp, back - perp]), COLOR)
-	draw_line(back, back - _dir * STALK_LEN, OUTLINE, 2.0)
+	draw_line(back, back - _dir * STALK_LEN * s, OUTLINE, 2.0 * s)
 	var d_text := "%d blocks" % int(round(_distance / 32.0))
 	var font: Font = ThemeDB.fallback_font
-	var tw := font.get_string_size(d_text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
-	draw_string(font, Vector2(-tw * 0.5, STALK_LEN + 16.0), d_text,
-		HORIZONTAL_ALIGNMENT_CENTER, -1, FONT_SIZE, TEXT_COL)
+	var fs: int = int(FONT_SIZE * s)
+	var tw := font.get_string_size(d_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	draw_string(font, Vector2(-tw * 0.5, STALK_LEN * s + 16.0 * s), d_text,
+		HORIZONTAL_ALIGNMENT_CENTER, -1, fs, TEXT_COL)

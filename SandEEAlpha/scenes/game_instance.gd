@@ -8,6 +8,7 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 # preload (not class_name) so the debug chat console can be built even before
 # the editor has re-scanned/registered the new script's class.
 const CHAT_CONSOLE_SCRIPT: Script = preload("res://scripts/chat_console.gd")
+const MINIMAP_SCRIPT: Script = preload("res://scripts/minimap.gd")
 
 @onready var pause_menu: Control         = $CanvasLayer/PauseMenu
 @onready var pause_btn:  Button          = $CanvasLayer/PauseButton
@@ -23,14 +24,42 @@ var _dungeon_world:   DungeonWorld = null
 # Full-screen fade used when swapping the world for a cave/pixie cave/dungeon
 # (and back), so those transitions read as a deliberate scene change.
 var _transition_overlay: CanvasLayer = null
+# Low layer holding the BACKGROUND HUD (minimap, quest list, pause button).
+# Every panel's full-screen dim overlay sits on a higher layer, so opening a
+# station/furnace/chest dims this along with the world. The hotbar is NOT here —
+# it stays on $CanvasLayer (10) so it remains bright and draggable on top.
+var _hud_backdrop: CanvasLayer = null
 
 func _ready() -> void:
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-	Global.ui_scale = 1.5
+	# Large is only the DEFAULT: if the player already chose a scale (persisted
+	# in the save) we keep it, so Small/Medium/Large survives scene loads.
+	if not Global.ui_scale_set:
+		Global.ui_scale     = 1.5
+		Global.ui_scale_set = true
 	Global.ui_scale_changed.emit(Global.ui_scale)
 	Global.game_node = self
 
+	# Background HUD layer (map + quest list + pause button). Layer 1 is BELOW
+	# every panel (2+), so a panel's dim overlay covers and dims it along with
+	# the world — the hotbar stays on $CanvasLayer (10) above the panels.
+	_hud_backdrop = CanvasLayer.new()
+	_hud_backdrop.name         = "HudBackdrop"
+	_hud_backdrop.layer        = 1
+	_hud_backdrop.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_hud_backdrop)
+	pause_btn.reparent(_hud_backdrop)
+
 	pause_btn.pressed.connect(pause_menu.show_menu)
+	# The pause menu + settings are MODALS: move them onto their own CanvasLayer
+	# above every panel (crafting/chest/smelting/editor = layer 2-12, altar and
+	# portal confirm dialogs = 30) so opening the menu over a station shows the
+	# MENU on top instead of the station. Chat stays above at 40.
+	var modal_layer := CanvasLayer.new()
+	modal_layer.layer        = 35
+	modal_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(modal_layer)
+	pause_menu.reparent(modal_layer)
 	_style_pause_button()
 	_start_autosave()
 	_add_mission_ui()
@@ -39,6 +68,9 @@ func _ready() -> void:
 	# added under the UI CanvasLayer, so it layers above the world like the
 	# pause button/hotbar and inherits the layer's PROCESS_MODE_ALWAYS.
 	$CanvasLayer.add_child(CHAT_CONSOLE_SCRIPT.new())
+	# Bottom-left minimap (click / M opens the full map). Background HUD layer,
+	# so panels dim it.
+	_hud_backdrop.add_child(MINIMAP_SCRIPT.new())
 
 	_setup_death_overlay()
 
@@ -307,7 +339,11 @@ func get_world_spawn_position() -> Vector2:
 # ── Autosave ──────────────────────────────────────────────────────────
 func _add_mission_ui() -> void:
 	var ui: Control = load("res://scripts/mission_ui.gd").new() as Control
-	$CanvasLayer.add_child(ui)
+	# Quest list lives on the background HUD layer so panels dim it.
+	if _hud_backdrop != null:
+		_hud_backdrop.add_child(ui)
+	else:
+		$CanvasLayer.add_child(ui)
 
 func _start_autosave() -> void:
 	var timer := Timer.new()

@@ -3,29 +3,33 @@ class_name DungeonProjectile
 
 # ── Dungeon flare projectile ─────────────────────────────────────────
 # Fired by DungeonFlare in a STRAIGHT line. An 8-frame animated sprite
-# (sprites/dungeon/dungeon_projectile.png, 32x32 cells) travels forward
-# and deals DAMAGE to the player on contact, then despawns. It expires on
-# its own after LIFETIME so a stray shot never lingers forever.
+# (sprites/dungeon/dungeon_projectile.png, 32x32 cells) travels forward,
+# carries a small warm light so it reads as a fiery bolt, and deals DAMAGE
+# to the player on contact. Expires on its own after LIFETIME.
+# NOTE: no bonfire artwork here — bonfire_anim.png belongs to the bonfire,
+# not the dungeon.
 
 const PROJ_TEX:   Texture2D = preload("res://sprites/dungeon/dungeon_projectile.png")
-const FLAME_TEX:  Texture2D = preload("res://sprites/items/bonfire_anim.png")
+const MELLOW_BURST_SCRIPT: GDScript = preload("res://scripts/mellow_burst.gd")
 const FRAME_COUNT: int  = 8
 const FRAME_SIZE:  int  = 32
-const FLAME_COUNT: int  = 4
-const FLAME_SIZE:  int  = 32
 const FPS:        float = 12.0
-const FLAME_FPS:  float = 14.0
 const SPEED:      float = 150.0
 const DAMAGE:     float = 40.0
 const LIFETIME:   float = 3.0
 const HIT_RADIUS: float = 7.0
+const GLOW_COLOR: Color = Color(1.0, 0.55, 0.22)
 
 var direction: Vector2 = Vector2.RIGHT
 var _life: float = 0.0
-var _flame: AnimatedSprite2D = null
+var _glow: PointLight2D = null
+var _parried: bool = false
 
 func _ready() -> void:
-	collision_layer = 0
+	# Layer 2 is the "sword-hittable" layer (the swing hitbox masks it), so the
+	# player can PARRY this projectile out of the air. It still scans layer 4
+	# (the player) for the contact hit.
+	collision_layer = 2
 	collision_mask  = 4   # player is on layer 4 (see player.tscn)
 	var shape := CollisionShape2D.new()
 	var circle := CircleShape2D.new()
@@ -34,7 +38,7 @@ func _ready() -> void:
 	add_child(shape)
 	body_entered.connect(_on_body_entered)
 	_add_sprite()
-	_add_flame()
+	_add_glow()
 	rotation = direction.angle()
 
 func _add_sprite() -> void:
@@ -54,49 +58,48 @@ func _add_sprite() -> void:
 	spr.play("fly")
 	add_child(spr)
 
-# A looping bonfire sprite over a small warm light — the "fire effect" is just
-# a PointLight2D with the sprite on top. Counter-rotated every frame so the
-# flame stays upright while the bolt points along its travel direction.
-func _add_flame() -> void:
-	_flame = AnimatedSprite2D.new()
-	_flame.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	var ff := SpriteFrames.new()
-	ff.remove_animation("default")
-	ff.add_animation("burn")
-	ff.set_animation_speed("burn", FLAME_FPS)
-	ff.set_animation_loop("burn", true)
-	for i in range(FLAME_COUNT):
-		var atlas := AtlasTexture.new()
-		atlas.atlas  = FLAME_TEX
-		atlas.region = Rect2(i * FLAME_SIZE, 0, FLAME_SIZE, FLAME_SIZE)
-		ff.add_frame("burn", atlas)
-	_flame.sprite_frames = ff
-	_flame.play("burn")
-	_flame.scale = Vector2(0.9, 0.9)
-	_flame.modulate = Color(1.0, 0.85, 0.5, 0.95)
-	_flame.z_index = 1
-	add_child(_flame)
+# A small warm light so the bolt looks like fire — the "flame" is just a
+# point light (plus its soft pool), no bonfire sprite.
+func _add_glow() -> void:
+	var sprite := Sprite2D.new()
+	sprite.texture = Global.get_smooth_light_texture(64)
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sprite.scale = Vector2(0.5, 0.5)
+	sprite.modulate = Color(1.0, 0.6, 0.25, 0.85)
+	add_child(sprite)
 
-	# Small warm light under the sprite.
-	var light := PointLight2D.new()
-	light.texture       = Global.get_smooth_light_texture(64)
-	light.texture_scale = 0.4
-	light.color         = Color(1.0, 0.6, 0.25)
-	light.energy        = 1.2
-	light.blend_mode    = Light2D.BLEND_MODE_ADD
-	_flame.add_child(light)
+	_glow = PointLight2D.new()
+	_glow.texture       = Global.get_smooth_light_texture(64)
+	_glow.texture_scale = 0.45
+	_glow.color         = GLOW_COLOR
+	_glow.energy        = 1.2
+	_glow.blend_mode    = Light2D.BLEND_MODE_ADD
+	add_child(_glow)
 
 func _physics_process(delta: float) -> void:
+	if _parried:
+		return
 	global_position += direction * SPEED * delta
 	z_index = int(global_position.y / 32)   # y-sort against the player/walls
-	if _flame != null:
-		_flame.rotation = -rotation          # keep the flame upright
 	_life += delta
 	if _life >= LIFETIME:
 		queue_free()
 
 func _on_body_entered(body: Node) -> void:
-	if not body.is_in_group("Player"):
+	if _parried or not body.is_in_group("Player"):
 		return
 	Global.damage_player(DAMAGE, global_position, direction)
+	queue_free()
+
+# Called by the sword swing hitbox when the blade sweeps over this bolt.
+# Parrying destroys it (with a poof) and stops it dealing damage.
+func parry(_source_pos: Vector2) -> void:
+	if _parried:
+		return
+	_parried = true
+	monitoring = false
+	var b: Node2D = MELLOW_BURST_SCRIPT.new() as Node2D
+	if b != null:
+		b.position = global_position
+		get_parent().add_child(b)
 	queue_free()

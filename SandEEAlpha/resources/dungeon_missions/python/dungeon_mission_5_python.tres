@@ -6,19 +6,19 @@
 [sub_resource type="Resource" id="DungeonQuestion_1"]
 script = ExtResource("2_question")
 question = "What is the right syntax from the arithmetic operation addition?"
+answer_a = "+"
+answer_b = "-"
+answer_c = "*"
+answer_d = "/"
+correct_index = 0
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
 type = 1
-question = "In this exercise you shall code the numbers that are needed to be added based on the given  below. You will declare a variable called sum that holds all the values. NOTE: The answer in this question is not the total sum of the added numbers.
-
-Clue: Start num1, end num3.
-
-num1 = 10
-num2 = 4
-num3 = 14
-
-How are we going to code this using the addition operation?"
+question = "Add num1, num2 and num3 together using the addition operator. Store the result in a variable called sum, then print it."
+language = "python"
+starter_code = "num1 = 10\nnum2 = 4\nnum3 = 14\nsum = num1 + num2 + num3\nprint(sum)"
+answer_output = "28"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
 script = ExtResource("2_question")
@@ -26,16 +26,31 @@ question = "Identify what arithmetic operator is used in this code.
 
 difference = 500 - 123 - 90
 print(difference)"
+answer_a = "+"
+answer_b = "-"
+answer_c = "*"
+answer_d = "/"
+correct_index = 1
 
 [sub_resource type="Resource" id="DungeonQuestion_4"]
 script = ExtResource("2_question")
 question = "Identify if this code is correct or incorrect in terms of using the arithmetic operator (-)
 
 total_price = 999 - 100"
+answer_a = "Correct"
+answer_b = "Incorrect"
+answer_c = "Correct, but only inside print()"
+answer_d = "Incorrect, it needs a print() to run"
+correct_index = 0
 
 [sub_resource type="Resource" id="DungeonQuestion_5"]
 script = ExtResource("2_question")
 question = "What is the right syntax from the arithmetic operation division?"
+answer_a = "*"
+answer_b = "%"
+answer_c = "/"
+answer_d = "//"
+correct_index = 2
 
 [sub_resource type="Resource" id="DungeonQuestion_6"]
 script = ExtResource("2_question")
@@ -45,14 +60,29 @@ num1 = 24
 num2 = 12
 quo = 24 _ 12
 output: 2"
+answer_a = "*"
+answer_b = "/"
+answer_c = "+"
+answer_d = "%"
+correct_index = 1
 
 [sub_resource type="Resource" id="DungeonQuestion_7"]
 script = ExtResource("2_question")
 question = "What is the right symbol for the arithmetic operatore modulo?"
+answer_a = "%"
+answer_b = "//"
+answer_c = "mod"
+answer_d = "&"
+correct_index = 0
 
 [sub_resource type="Resource" id="DungeonQuestion_8"]
 script = ExtResource("2_question")
 question = "Why do we use the modulo in coding?"
+answer_a = "To get the remainder of a division"
+answer_b = "To round a number to the nearest whole number"
+answer_c = "To multiply two numbers"
+answer_d = "To convert a number to a string"
+correct_index = 0
 
 [resource]
 script = ExtResource("1_script")

@@ -6,10 +6,10 @@
 [sub_resource type="Resource" id="DungeonQuestion_1"]
 script = ExtResource("2_question")
 type = 1
-question = "Read the user's name and print a greeting."
+question = "Join the first and last name with a space and print the full name."
 language = "python"
-starter_code = "name = input(\"What is your name?\")\nprint(\"Hi \" + name)"
-answer_output = "Hi "
+starter_code = "first = \"Juan\"\nlast = \"Dela Cruz\"\nprint(first + \" \" + last)"
+answer_output = "Juan Dela Cruz"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
@@ -24,10 +24,10 @@ correct_index = 1
 [sub_resource type="Resource" id="DungeonQuestion_3"]
 script = ExtResource("2_question")
 type = 1
-question = "Read a number and print it doubled."
+question = "Convert the text \"21\" to an integer, double it, and print the result."
 language = "python"
-starter_code = "x = int(input())\nprint(x * 2)"
-answer_output = "20"
+starter_code = "x = int(\"21\")\nprint(x * 2)"
+answer_output = "42"
 
 [resource]
 script = ExtResource("1_script")

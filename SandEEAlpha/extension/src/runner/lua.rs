@@ -16,7 +16,17 @@ pub enum LuaSignal {
     Attack,
     Interact,
     DropItem,
+    // Building — place_item(dx, dy) relative, place_at(x, y) absolute tile.
     PlaceItem,
+    PlaceAt,
+    SelectBlock,
+    Withdraw,
+    // Crafting Station automation
+    Craft,
+    SetRecipe,
+    TakeOutput,
+    PutInput,
+    InputSlot,
 }
 
 fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<Table> {
@@ -24,6 +34,17 @@ fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<T
     signal.set("type", signal_type.as_ref())?;
     signal.set("arg", arg)?;
     Ok(signal)
+}
+
+// Lua numbers may arrive as Integer or Number (Luau); coerce either to i32.
+// Non-numeric values become 0 so a bad argument degrades gracefully instead of
+// panicking the whole program.
+fn as_int(v: Value) -> i32 {
+    match v {
+        Value::Integer(i) => i as i32,
+        Value::Number(n) => n as i32,
+        _ => 0,
+    }
 }
 
 fn insert_signal<V: IntoLua>(
@@ -49,6 +70,16 @@ struct LuaState {
     held_item: GString,
     #[var]
     held_item_quantity: u32,
+    // ── Crafting Station automation ────────────────────────────────
+    // Mirror of the station's automation state, published to Lua as globals on
+    // every run (the same pattern `held_item` already uses). The station sets
+    // these before calling run_code().
+    #[var]
+    station_recipe: GString,
+    #[var]
+    station_output_item: GString,
+    #[var]
+    station_output_count: u32,
     lua: Lua,
     base: Base<Node>,
 }
@@ -60,6 +91,9 @@ impl INode for LuaState {
             code: GString::new(),
             held_item: GString::new(),
             held_item_quantity: 0,
+            station_recipe: GString::new(),
+            station_output_item: GString::new(),
+            station_output_count: 0,
             lua: Lua::new(),
             base,
         };
@@ -109,13 +143,51 @@ impl INode for LuaState {
                     }
                 }
                 LuaSignal::PlaceItem => {
-                    let held_item = self.held_item.to_string();
-                    self.signals().signal_place_item().emit(held_item);
-
-                    self.held_item_quantity = self.held_item_quantity.saturating_sub(1);
-                    if self.held_item_quantity == 0 {
-                        self.held_item = GString::new();
-                    }
+                    // arg is a table {dx, dy} (tile offset from the robot).
+                    let arg: Table = signal.get("arg").expect("Failed to get signal argument");
+                    let dx: i32 = arg.get("dx").unwrap_or(0);
+                    let dy: i32 = arg.get("dy").unwrap_or(0);
+                    self.signals().signal_place_item().emit(dx, dy);
+                }
+                LuaSignal::PlaceAt => {
+                    // arg is a table {x, y} (absolute tile coords).
+                    let arg: Table = signal.get("arg").expect("Failed to get signal argument");
+                    let x: i32 = arg.get("x").unwrap_or(0);
+                    let y: i32 = arg.get("y").unwrap_or(0);
+                    self.signals().signal_place_at().emit(x, y);
+                }
+                LuaSignal::SelectBlock => {
+                    let index: i32 = signal.get("arg").expect("Failed to get signal argument");
+                    self.signals().signal_select_block().emit(index);
+                }
+                LuaSignal::Withdraw => {
+                    // arg is a table {name, quantity}.
+                    let arg: Table = signal.get("arg").expect("Failed to get signal argument");
+                    let name: String = arg.get("name").unwrap_or_default();
+                    let quantity: u32 = arg.get("quantity").unwrap_or(1);
+                    self.signals().signal_withdraw().emit(name, quantity);
+                }
+                LuaSignal::Craft => {
+                    let quantity: u32 = signal.get("arg").expect("Failed to get signal argument");
+                    self.signals().signal_craft().emit(quantity);
+                }
+                LuaSignal::SetRecipe => {
+                    let name: String = signal.get("arg").expect("Failed to get signal argument");
+                    self.signals().signal_set_recipe().emit(name);
+                }
+                LuaSignal::TakeOutput => {
+                    self.signals().signal_take_output().emit();
+                }
+                LuaSignal::PutInput => {
+                    // arg is a table {name, quantity}.
+                    let arg: Table = signal.get("arg").expect("Failed to get signal argument");
+                    let name: String = arg.get("name").unwrap_or_default();
+                    let quantity: u32 = arg.get("quantity").unwrap_or(1);
+                    self.signals().signal_put_input().emit(name, quantity);
+                }
+                LuaSignal::InputSlot => {
+                    let quantity: u32 = signal.get("arg").expect("Failed to get signal argument");
+                    self.signals().signal_input_slot().emit(quantity);
                 }
                 _ => (),
             }
@@ -140,8 +212,32 @@ impl LuaState {
     fn signal_interact();
     #[signal]
     fn signal_drop_item(held_item: String, quantity: u32);
+    // Building: place_item(dx, dy) relative tile offset; place_at(x, y)
+    // absolute tile coords; select_block(i) picks the 0-based build-palette
+    // slot; withdraw(name, quantity) pulls items from the nearest chest.
     #[signal]
-    fn signal_place_item(held_item: String);
+    fn signal_place_item(dx: i32, dy: i32);
+    #[signal]
+    fn signal_place_at(x: i32, y: i32);
+    #[signal]
+    fn signal_select_block(index: i32);
+    #[signal]
+    fn signal_withdraw(name: String, quantity: u32);
+    // Crafting Station automation (driven by the craft/set_recipe/take_output
+    // Lua globals registered in prepare_lua_state).
+    #[signal]
+    fn signal_craft(quantity: u32);
+    #[signal]
+    fn signal_set_recipe(name: String);
+    #[signal]
+    fn signal_take_output();
+    // put_input(name, quantity) — move items into the station's input slot.
+    #[signal]
+    fn signal_put_input(name: String, quantity: u32);
+    // input_slot(quantity) — feed N of the robot's SELECTED build-slot item
+    // into the station's input slot (no name needed).
+    #[signal]
+    fn signal_input_slot(quantity: u32);
     // Godot Functions
     #[func]
     fn run_code(&mut self) {
@@ -163,6 +259,11 @@ impl LuaState {
             held_item.set("quantity", self.held_item_quantity)?;
             globals.set("held_item", held_item)?;
         }
+        // Crafting Station state, so a program can read it (station_recipe,
+        // station_output_item, station_output_count) — see LuaState's #[var]s.
+        globals.set("station_recipe", self.station_recipe.to_string())?;
+        globals.set("station_output_item", self.station_output_item.to_string())?;
+        globals.set("station_output_count", self.station_output_count)?;
         self.lua.load(code).exec()?;
         Ok(())
     }
@@ -231,12 +332,126 @@ impl LuaState {
         })?;
         globals.set("drop_item", drop_item_func)?;
 
-        let place_item_func = self.lua.create_function(|state, ()| {
+        let place_item_func = self.lua.create_function(|state, (dx, dy): (Value, Value)| {
             let signals: Table = state.globals().get("GODOT_PROP_signals")?;
-            insert_signal(signals, state, LuaSignal::PlaceItem, Value::Nil)?;
+            let dx = as_int(dx);
+            let dy = as_int(dy);
+            let arg = state.create_table()?;
+            arg.set("dx", dx)?;
+            arg.set("dy", dy)?;
+            insert_signal(signals, state, LuaSignal::PlaceItem, arg)?;
             Ok(())
         })?;
         globals.set("place_item", place_item_func)?;
+
+        // place_at(x, y) — absolute tile coordinates.
+        let place_at_func = self.lua.create_function(|state, (x, y): (Value, Value)| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let x = as_int(x);
+            let y = as_int(y);
+            let arg = state.create_table()?;
+            arg.set("x", x)?;
+            arg.set("y", y)?;
+            insert_signal(signals, state, LuaSignal::PlaceAt, arg)?;
+            Ok(())
+        })?;
+        globals.set("place_at", place_at_func)?;
+
+        // select_block(i) — pick the 0-based build-palette slot place_item uses.
+        let select_block_func = self.lua.create_function(|state, index: Value| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            insert_signal(signals, state, LuaSignal::SelectBlock, as_int(index))?;
+            Ok(())
+        })?;
+        globals.set("select_block", select_block_func)?;
+
+        // withdraw(name, quantity) — pull items from the nearest chest into the
+        // robot's build palette / inventory.
+        let withdraw_func = self.lua.create_function(|state, (name, quantity): (Value, Value)| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let name = match name {
+                Value::String(s) => s.to_str()?.to_string(),
+                _ => String::new(),
+            };
+            let quantity = match as_int(quantity) {
+                q if q > 0 => q as u32,
+                _ => 1,
+            };
+            let arg = state.create_table()?;
+            arg.set("name", name)?;
+            arg.set("quantity", quantity)?;
+            insert_signal(signals, state, LuaSignal::Withdraw, arg)?;
+            Ok(())
+        })?;
+        globals.set("withdraw", withdraw_func)?;
+
+        // ── Crafting Station automation API ──────────────────────
+        // craft(n)         → request n crafts of the station's selected recipe
+        // set_recipe(name) → select a recipe by result item name
+        // take_output()    → move the station's output into the player inventory
+        // Station state is exposed as the globals set in _run_code().
+        let craft_func = self.lua.create_function(|state, quantity: Value| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let quantity = match quantity {
+                Value::Integer(q) => q.max(0) as u32,
+                Value::Number(q) => q.max(0.0) as u32,
+                _ => 1,
+            };
+            insert_signal(signals, state, LuaSignal::Craft, quantity)?;
+            Ok(())
+        })?;
+        globals.set("craft", craft_func)?;
+
+        let set_recipe_func = self.lua.create_function(|state, name: Value| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let name = match name {
+                Value::String(s) => s.to_str()?.to_string(),
+                _ => String::new(),
+            };
+            insert_signal(signals, state, LuaSignal::SetRecipe, name)?;
+            Ok(())
+        })?;
+        globals.set("set_recipe", set_recipe_func)?;
+
+        let take_output_func = self.lua.create_function(|state, ()| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            insert_signal(signals, state, LuaSignal::TakeOutput, Value::Nil)?;
+            Ok(())
+        })?;
+        globals.set("take_output", take_output_func)?;
+
+        // put_input(name, quantity) — move items from the robot's inventory
+        // into the nearest station's input slot for automatic crafting.
+        let put_input_func = self.lua.create_function(|state, (name, quantity): (Value, Value)| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let name = match name {
+                Value::String(s) => s.to_str()?.to_string(),
+                _ => String::new(),
+            };
+            let quantity = match as_int(quantity) {
+                q if q > 0 => q as u32,
+                _ => 1,
+            };
+            let arg = state.create_table()?;
+            arg.set("name", name)?;
+            arg.set("quantity", quantity)?;
+            insert_signal(signals, state, LuaSignal::PutInput, arg)?;
+            Ok(())
+        })?;
+        globals.set("put_input", put_input_func)?;
+
+        // input_slot(n) — feed n of the robot's selected build-slot item into
+        // the nearest station's input slot.
+        let input_slot_func = self.lua.create_function(|state, quantity: Value| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let quantity = match as_int(quantity) {
+                q if q > 0 => q as u32,
+                _ => 1,
+            };
+            insert_signal(signals, state, LuaSignal::InputSlot, quantity)?;
+            Ok(())
+        })?;
+        globals.set("input_slot", input_slot_func)?;
 
         Ok(())
     }

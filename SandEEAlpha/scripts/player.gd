@@ -15,6 +15,10 @@ static var _shared_frames: SpriteFrames = null
 
 var input_direction: Vector2 = Vector2.ZERO
 var _last_dir:   String = "south"   # default facing
+# The VISIBLE facing. Follows the mouse (so the body matches the mouse-aimed
+# swing), falling back to the movement direction when the cursor is on the
+# player. `_last_dir` stays the movement facing.
+var _face_dir:   String = "south"
 
 # Fired whenever a swing animation actually plays. World backends (overworld
 # grass cutting, etc.) connect to this so their swing-coupled gameplay runs
@@ -106,7 +110,6 @@ func _ready() -> void:
 	# (waist-high band, position.y 17, half-height 6) bottoms out at y=23,
 	# same as the sprite's feet.
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 14.0), Vector2(0.8, 0.4), 0.35))
-	add_child(MissionGuideArrow.new())
 	sprite.play("idle_south")
 	Global.request_close_all_ui.connect(_on_close_all_ui)
 	if Global.has_pending_pos:
@@ -202,11 +205,11 @@ const KNOCKBACK_DECAY: float = 800.0  # px/s of knockback velocity lost per seco
 func apply_knockback(direction: Vector2, strength: float) -> void:
 	_knockback = direction.normalized() * strength
 
-# Normalized Vector2 the player is currently facing (from the last movement
-# direction). Knockback pushes the player OPPOSITE this.
+# Normalized Vector2 the player is currently facing (the visible facing, which
+# follows the mouse). Knockback pushes the player OPPOSITE this.
 func facing_vector() -> Vector2:
 	for d in DIRS:
-		if d["name"] == _last_dir:
+		if d["name"] == _face_dir:
 			return (d["vec"] as Vector2).normalized()
 	return Vector2.DOWN
 
@@ -483,10 +486,18 @@ func _get_world_node() -> Node:
 
 # ── Animation ─────────────────────────────────────────────────────
 # Public read of the player's current facing (world.gd's sword grass-cutting
-# needs this to pick which tiles are "in front" — _last_dir itself stays
-# private since nothing outside this file should be able to set it).
+# needs this to pick which tiles are "in front" — _face_dir/_last_dir stay
+# private since nothing outside this file should be able to set them).
 func get_facing_dir() -> String:
-	return _last_dir
+	return _face_dir
+
+# The 8-way facing name for the cursor direction, or "" when the cursor sits on
+# the player (the caller then keeps the movement facing).
+func _mouse_facing_dir() -> String:
+	var aim: Vector2 = get_global_mouse_position() - global_position
+	if aim.length_squared() < 4.0:
+		return ""
+	return _get_closest_dir(aim)
 
 func _get_closest_dir(vec: Vector2) -> String:
 	var best_dir: String = _last_dir
@@ -516,20 +527,22 @@ const SWING_LOCK_MS:     int = 240   # a touch longer than the swing effect
 func swing_held_item() -> bool:
 	var icon: Texture2D = null
 	var damage: float  = 0.0
+	var is_sword: bool = false
 	var held: Variant = Global.get_hotbar_item()
 	if held != null and (held as Dictionary).get("data") != null:
 		var data: ItemData = (held as Dictionary)["data"] as ItemData
 		if data != null:
 			icon = data.icon
-			# Only a sword deals combat damage; the amount scales with the
-			# sword level (see ItemData.sword_damage, = sword_level + 3).
+			# Only a sword deals combat damage AND cuts grass; the damage
+			# amount scales with the sword level (ItemData.sword_damage).
 			if data.is_sword:
+				is_sword = true
 				damage = float(data.sword_damage())
-	return _trigger_swing(icon, damage)
+	return _trigger_swing(icon, damage, is_sword)
 
 # Spawns the swing effect as a child of the player. Returns false if it was
 # ignored — a swing already live, or no icon to swing with.
-func _trigger_swing(icon: Texture2D, damage: float = 0.0) -> bool:
+func _trigger_swing(icon: Texture2D, damage: float = 0.0, is_sword: bool = false) -> bool:
 	# Ignore while a swing is still playing — no overlapping swings.
 	if _active_swing != null and is_instance_valid(_active_swing):
 		return false
@@ -541,6 +554,12 @@ func _trigger_swing(icon: Texture2D, damage: float = 0.0) -> bool:
 	fx.set("_icon", icon)
 	fx.set("_dir", _last_dir)
 	fx.set("_damage", damage)
+	fx.set("_is_sword", is_sword)
+	# Aim the swing at the MOUSE (world space) — swinging where you point is far
+	# more intuitive than the 8-way WASD facing. Falls back to _dir when the
+	# cursor is on the player, so the swing always has a direction.
+	var aim: Vector2 = get_global_mouse_position() - global_position
+	fx.set("_aim", aim if aim.length_squared() > 4.0 else Vector2.ZERO)
 	_active_swing = fx
 	add_child(fx)
 	_swing_lock_until_ms = Time.get_ticks_msec() + SWING_LOCK_MS
@@ -549,16 +568,34 @@ func _trigger_swing(icon: Texture2D, damage: float = 0.0) -> bool:
 
 func _update_animation() -> void:
 	var locked := Time.get_ticks_msec() < _swing_lock_until_ms
+	# Movement facing is the default for a walking body — keeps the feet and
+	# the sprite pointing the same way (no moonwalking) and keeps
+	# facing_vector()/item drops in sync. Frozen during a swing.
+	if input_direction != Vector2.ZERO and not locked:
+		_last_dir = _get_closest_dir(input_direction)
+
+	# Facing rules (top-down):
+	#   • swinging      → lock onto the cursor so the body matches the mouse
+	#                     arc for the duration of the swing
+	#   • walking       → face the MOVEMENT direction (body follows the feet)
+	#   • standing still→ face the cursor, so the character watches your aim
+	var mouse_dir: String = _mouse_facing_dir()
+	if locked:
+		if not mouse_dir.is_empty():
+			_face_dir = mouse_dir
+	elif input_direction == Vector2.ZERO:
+		_face_dir = mouse_dir if not mouse_dir.is_empty() else _last_dir
+	else:
+		_face_dir = _last_dir
+
 	if input_direction == Vector2.ZERO:
 		sprite.speed_scale = 1.0
-		var anim := "idle_" + _last_dir.replace("-", "_")
+		var anim := "idle_" + _face_dir.replace("-", "_")
 		if sprite.animation != anim:
 			sprite.play(anim)
 	else:
 		sprite.speed_scale = SPRINT_MULTIPLIER if _sprinting else 1.0
-		if not locked:
-			_last_dir = _get_closest_dir(input_direction)
-		var anim := "walk_" + _last_dir.replace("-", "_")
+		var anim := "walk_" + _face_dir.replace("-", "_")
 		if sprite.animation != anim:
 			sprite.play(anim)
 
@@ -591,19 +628,18 @@ func _give_debug_items() -> void:
 			# handed out here for block-mode testing — see Global.add_item.
 			Global.add_item({"quantity": 10, "data": data}, true)
 
-# Debug (via the chat console's /dungeon command): teleport to the accepted
-# dungeon's entrance portal. Reuses the guide arrow's world lookup, so it's a
-# no-op with a warning when no dungeon mission is accepted or its entrance
-# doesn't exist yet. The 64px offset drops the player just south of the portal
-# so it doesn't overlap it.
+# Debug (via the chat console's /dungeon command): teleport to the NEAREST
+# dungeon entrance. Reuses the guide arrow's world lookup, so it's a no-op with
+# a warning when neither language has a live entrance. The 64px offset drops
+# the player just south of the portal so it doesn't overlap it.
 func _debug_teleport_to_dungeon() -> void:
 	var world := _get_world_node()
 	if world == null or not world.has_method("get_dungeon_guide_target"):
-		push_warning("DebugTeleport: no dungeon entrance (accept a dungeon mission first)")
+		push_warning("DebugTeleport: no dungeon entrance available")
 		return
 	var target: Vector2 = world.call("get_dungeon_guide_target") as Vector2
 	if target == Vector2.INF:
-		push_warning("DebugTeleport: no dungeon entrance (accept a dungeon mission first)")
+		push_warning("DebugTeleport: no dungeon entrance available")
 		return
 	global_position = target + Vector2(0.0, 64.0)
 	print("DebugTeleport: jumped to dungeon entrance at %s" % str(target))
@@ -623,8 +659,10 @@ func _on_close_all_ui() -> void:
 		Global.inventory_toggled.emit(false)
 
 func _input(event: InputEvent) -> void:
-	# Inventory key: can always close; blocked from opening when another UI is active
-	if event.is_action_pressed("inventory"):
+	# Inventory key: can always close; blocked from opening when another UI is
+	# active. Ignored entirely while a text field is focused — "e" is a typed
+	# character then, not the inventory hotkey.
+	if event.is_action_pressed("inventory") and not Global.is_text_input_focused():
 		if inventory_layer.visible:
 			inventory_layer.visible = false
 			Global.close_ui()
@@ -644,10 +682,12 @@ func _input(event: InputEvent) -> void:
 		return
 	# Plain left-click swings the held item. This runs from the PLAYER, which
 	# exists in every world backend (overworld, cave, pixie cave, dungeon), so
-	# the swing animation plays no matter which scene is active. Shift+click is
-	# reserved for destroying placed blocks/tools, so it doesn't swing.
+	# the swing animation plays no matter which scene is active. Shift does NOT
+	# block it: Shift is the sprint key, so the player must still be able to
+	# swing / use items while sprinting (a shift-click on a block simply also
+	# starts its hold-to-break, handled by the block's own _input).
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-			and event.pressed and not Input.is_key_pressed(KEY_SHIFT):
+			and event.pressed:
 		swing_held_item()
 
 func apply_item_effect(item) -> void:

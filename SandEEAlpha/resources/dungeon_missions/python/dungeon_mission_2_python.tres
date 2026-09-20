@@ -8,11 +8,19 @@ script = ExtResource("2_question")
 question = "What would be the output for this code? 
 age = 21
 print(age)"
+answer_a = "age"
+answer_b = "21"
+answer_c = "print(age)"
+answer_d = "Nothing"
+correct_index = 1
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
 type = 1
 question = "In this exercise you should declare the current year in the keyword int. Use the variable year to hold the current year."
+language = "python"
+starter_code = "year = 2026\nprint(year)"
+answer_output = "2026"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
 script = ExtResource("2_question")
@@ -20,6 +28,11 @@ question = "What would be the output of this?
 
 num_cars = 25
 print(num_cars)"
+answer_a = "num_cars"
+answer_b = "print(num_cars)"
+answer_c = "25"
+answer_d = "0"
+correct_index = 2
 
 [resource]
 script = ExtResource("1_script")

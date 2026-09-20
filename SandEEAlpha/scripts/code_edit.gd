@@ -61,8 +61,11 @@ func load_language_spec(_language_spec: LanguageSpecification) -> void:
 
 	# strings
 	for str_delimiter: String in language_spec.string_delimiters:
+		# add_string_delimiter() ALREADY registers the matching auto-brace
+		# completion pair for the delimiter, so also calling
+		# add_auto_brace_completion_pair() here raised a Godot error per
+		# delimiter ("auto brace completion open key ... already exists").
 		add_string_delimiter(str_delimiter, str_delimiter, true)
-		add_auto_brace_completion_pair(str_delimiter, str_delimiter)
 		syntax_highlighting.add_color_region(str_delimiter, str_delimiter, language_spec.string_color)
 
 	# keywords
@@ -83,7 +86,8 @@ func load_language_spec(_language_spec: LanguageSpecification) -> void:
 
 	# auto-braces
 	for start: String in language_spec.auto_braces:
-		add_auto_brace_completion_pair(start, language_spec.auto_braces[start])
+		if not auto_brace_completion_pairs.has(start):
+			add_auto_brace_completion_pair(start, language_spec.auto_braces[start])
 
 	# set as syntax highlighter
 	syntax_highlighter = syntax_highlighting

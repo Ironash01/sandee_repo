@@ -72,7 +72,8 @@ func _ready() -> void:
 # so this is a no-op — not a double-toggle — if something else already
 # closed it first.
 func _input(event: InputEvent) -> void:
-	if get_parent().visible and event.is_action_pressed("inventory"):
+	if get_parent().visible and event.is_action_pressed("inventory") \
+			and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		_close()
 		Global.inventory_toggled.emit(false)

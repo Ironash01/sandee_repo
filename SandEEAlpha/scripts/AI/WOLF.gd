@@ -19,6 +19,10 @@ func _init() -> void:
 # body (mob.velocity = ...; mob.move_and_slide()) and driving animation off
 # is_walking()/walk_dir() — this object only decides direction/timing.
 func physics_update(mob: CharacterBody2D, speed: float, water_layer: TileMapLayer, delta: float) -> Vector2:
+	# Player dead (pre-respawn): hold still. Dispersal only lasts 2s, so
+	# without this every mob resumes chasing the frozen death position.
+	if Global.player_is_dead:
+		return Vector2.ZERO
 	_timer -= delta
 	if _timer <= 0.0:
 		_pick_new_action()

@@ -6,9 +6,14 @@ extends Node2D
 # world) so it outlives the freed tuft, then frees itself.
 
 const GRASS_TEX: Texture2D = preload("res://sprites/ground/grass.png")
+const SNOWY_GRASS_TEX: Texture2D = preload("res://sprites/ground/snowy_grass.png")
 const FRAME_SIZE: int   = 96
 const AMOUNT:     int   = 12
 const LIFETIME:   float = 0.55
+
+# Set before add_child() by GrassTuft.cut() — snowy tufts burst white-blue
+# instead of green so the effect matches the grass it came from.
+var snow: bool = false
 
 func _ready() -> void:
 	z_index = 40   # above grass/player, like the other burst effects
@@ -22,9 +27,10 @@ func _ready() -> void:
 	p.local_coords  = false
 	p.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
-	# One frame of the grass sheet as the particle art.
+	# One frame of the grass sheet as the particle art — the SNOWY sheet for
+	# snowy tufts (tinting the green art still read as green blades).
 	var at := AtlasTexture.new()
-	at.atlas  = GRASS_TEX
+	at.atlas  = SNOWY_GRASS_TEX if snow else GRASS_TEX
 	at.region = Rect2(0, 0, FRAME_SIZE, FRAME_SIZE)
 	p.texture = at
 
@@ -38,7 +44,7 @@ func _ready() -> void:
 	m.angular_velocity_max = 220.0
 	m.scale_min            = 0.10
 	m.scale_max            = 0.20
-	m.color                = Color(0.55, 1.0, 0.45, 1.0)
+	m.color                = Color(0.90, 0.95, 1.0, 1.0) if snow else Color(0.55, 1.0, 0.45, 1.0)
 	m.emission_shape       = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
 	m.emission_sphere_radius = 6.0
 

@@ -2,12 +2,12 @@
 
 [ext_resource type="Resource" uid="uid://6bk4sjwa0vjn" path="res://resources/items/wood.tres" id="1_g6o6f"]
 [ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_pyrfe"]
-[ext_resource type="Resource" uid="uid://cn28cwotlpqss" path="res://resources/items/silicon.tres" id="2_vs1wg"]
+[ext_resource type="Resource" uid="uid://c8yfxlhehk2es" path="res://resources/items/plains_planks.tres" id="2_planks"]
 
 [resource]
 script = ExtResource("1_pyrfe")
-result_item = ExtResource("2_vs1wg")
+result_item = ExtResource("2_planks")
 result_quantity = 4
 ingredient_1 = ExtResource("1_g6o6f")
-category = "Blocks"
+requires_station = true
 metadata/_custom_type_script = "uid://bfxcb6bsffusb"

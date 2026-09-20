@@ -39,6 +39,11 @@ var _entry:          KnowledgeEntry = null
 var _panel:          Control = null
 var _glow:           PointLight2D = null
 var _glow_time:      float = 0.0
+# True when the panel was opened for an entry the player hadn't learned yet —
+# drives the one-time keyword emphasis animation (see _build_panel).
+var _is_first_time:  bool  = false
+# The keyword Label inside the popup, kept so the animation can target it.
+var _keyword_lbl:    Label = null
 
 func _ready() -> void:
 	add_to_group("KnowledgeAltar")
@@ -64,6 +69,22 @@ func _ready() -> void:
 	interact.body_exited.connect(_on_body_exited)
 	add_child(interact)
 	call_deferred("_fix_z_index")
+	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
+		Global.ui_scale_changed.connect(_on_ui_scale)
+
+# The popup is built at the current UI scale and cached — rebuild it in place
+# (when open) so a Small/Medium/Large change applies live.
+func _on_ui_scale(_s: float) -> void:
+	if _panel == null:
+		return
+	var was_visible: bool = _panel.visible
+	var canvas: Node = _panel.get_parent()
+	if canvas != null:
+		canvas.queue_free()
+	_panel = null
+	_keyword_lbl = null
+	if was_visible:
+		_show()
 
 func _process(delta: float) -> void:
 	if _glow != null:
@@ -124,10 +145,25 @@ func _input(event: InputEvent) -> void:
 func _show() -> void:
 	if _entry == null:
 		_entry = Global.get_knowledge_entry_file(entry_file)
+	# Emphasis fires only the FIRST time this entry is offered — i.e. it isn't
+	# recorded yet. Recomputed on every open, so closing the popup without
+	# pressing Continue and reopening will animate again (nothing was learned).
+	_is_first_time = _entry != null and not Global.has_learned_entry(_entry.id())
 	if _panel == null:
 		_panel = _build_panel()
 	_panel.visible = true
 	get_tree().paused = true
+	if _is_first_time and _keyword_lbl != null:
+		# Defer one frame so the Label has its final laid-out size before the
+		# pop sets its centre pivot (otherwise the pivot is (0,0)).
+		_play_keyword_emphasis.call_deferred()
+
+func _play_keyword_emphasis() -> void:
+	# Wait one frame so the freshly built Label has been laid out — the pop
+	# needs a non-zero size to centre its pivot.
+	await get_tree().process_frame
+	if _keyword_lbl != null and is_instance_valid(_keyword_lbl):
+		Global.emphasize_keyword(_keyword_lbl, _keyword_lbl.get_theme_color("font_color"))
 
 func _finish() -> void:
 	if _panel != null:
@@ -136,8 +172,9 @@ func _finish() -> void:
 	Global.learn_entry(_entry)
 
 func _build_panel() -> Control:
+	var s: float = Global.ui_scale
 	var canvas := CanvasLayer.new()
-	canvas.layer        = 15
+	canvas.layer        = 30
 	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(canvas)
 
@@ -157,65 +194,95 @@ func _build_panel() -> Control:
 	root.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(480, 0)
+	panel.custom_minimum_size = Vector2(int(480 * s), 0)
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
-	ps.set_border_width_all(2); ps.set_corner_radius_all(8)
-	ps.content_margin_left = 24; ps.content_margin_right  = 24
-	ps.content_margin_top  = 20; ps.content_margin_bottom = 20
+	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
+	ps.content_margin_left = int(24 * s); ps.content_margin_right  = int(24 * s)
+	ps.content_margin_top  = int(20 * s); ps.content_margin_bottom = int(20 * s)
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 12)
+	vbox.add_theme_constant_override("separation", int(12 * s))
 	panel.add_child(vbox)
 
 	var hdr := HBoxContainer.new()
-	hdr.add_theme_constant_override("separation", 8)
+	hdr.add_theme_constant_override("separation", int(8 * s))
 	vbox.add_child(hdr)
 	var icon := Label.new()
 	icon.text = "📖"
-	icon.add_theme_font_size_override("font_size", 22)
+	icon.add_theme_font_size_override("font_size", int(22 * s))
 	hdr.add_child(icon)
 	var title := Label.new()
 	var name_text: String = _entry.entry_name if _entry != null else "Knowledge"
 	title.text = name_text
-	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_font_size_override("font_size", int(18 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.add_child(title)
 	var lang := Label.new()
 	lang.text = _entry.language.to_upper() if _entry != null else ""
-	lang.add_theme_font_size_override("font_size", 11)
+	lang.add_theme_font_size_override("font_size", int(11 * s))
 	lang.add_theme_color_override("font_color", C_MUTED)
 	hdr.add_child(lang)
 
 	var div := ColorRect.new()
-	div.color = Color(0.25, 0.35, 0.60, 1.0); div.custom_minimum_size = Vector2(0, 1)
+	div.color = Color(0.25, 0.35, 0.60, 1.0); div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 
 	var body := Label.new()
 	body.text = _entry.description if _entry != null else "This knowledge has been recorded."
-	body.add_theme_font_size_override("font_size", 13)
+	body.add_theme_font_size_override("font_size", int(13 * s))
 	body.add_theme_color_override("font_color", Color(0.85, 0.90, 1.00, 1.0))
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(body)
 
-	var recorded := Label.new()
-	recorded.text = "✔ Recorded in your Encyclopedia" + ((" — “%s” unlocked" % _entry.keyword) if _entry != null and not _entry.keyword.is_empty() else "")
-	recorded.add_theme_font_size_override("font_size", 12)
-	recorded.add_theme_color_override("font_color", Color(0.45, 0.90, 0.55, 1.0))
-	recorded.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(recorded)
+	# "✔ Recorded in your Encyclopedia — "print" unlocked". The keyword is a
+	# SEPARATE Label so it can be animated on its own (first-time emphasis).
+	# Laid out as a centred row: [lead] [keyword] [trail], all inline.
+	var recorded_row := HBoxContainer.new()
+	recorded_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	recorded_row.add_theme_constant_override("separation", int(4 * s))
+	vbox.add_child(recorded_row)
+
+	var lead := Label.new()
+	lead.text = "✔ Recorded in your Encyclopedia"
+	lead.add_theme_font_size_override("font_size", int(12 * s))
+	lead.add_theme_color_override("font_color", Color(0.45, 0.90, 0.55, 1.0))
+	recorded_row.add_child(lead)
+
+	if _entry != null and not _entry.keyword.is_empty():
+		var dash := Label.new()
+		dash.text = "—"
+		dash.add_theme_font_size_override("font_size", int(12 * s))
+		dash.add_theme_color_override("font_color", Color(0.45, 0.90, 0.55, 1.0))
+		recorded_row.add_child(dash)
+
+		_keyword_lbl = Label.new()
+		_keyword_lbl.text = "“%s”" % _entry.keyword
+		_keyword_lbl.add_theme_font_size_override("font_size", int(14 * s))
+		# Base is a bright white-blue; the first-time emphasis flashes it gold
+		# and pops its scale (Global.emphasize_keyword).
+		_keyword_lbl.add_theme_color_override("font_color", Color(0.80, 0.95, 1.00, 1.0))
+		recorded_row.add_child(_keyword_lbl)
+
+		var trail := Label.new()
+		trail.text = "unlocked"
+		trail.add_theme_font_size_override("font_size", int(12 * s))
+		trail.add_theme_color_override("font_color", Color(0.45, 0.90, 0.55, 1.0))
+		recorded_row.add_child(trail)
+	else:
+		_keyword_lbl = null
 
 	var btn := Button.new()
 	btn.text = "  Continue  "
-	btn.custom_minimum_size = Vector2(140, 38)
+	btn.custom_minimum_size = Vector2(int(140 * s), int(38 * s))
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", 13)
+	btn.add_theme_font_size_override("font_size", int(13 * s))
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_OK; es.border_color = C_BORDER
-	es.set_border_width_all(1); es.set_corner_radius_all(4)
+	es.set_border_width_all(int(1 * s)); es.set_corner_radius_all(int(4 * s))
 	btn.add_theme_stylebox_override("normal",  es)
 	btn.add_theme_stylebox_override("hover",   es)
 	btn.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85, 1.0))

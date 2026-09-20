@@ -63,6 +63,13 @@ func is_daytime() -> bool:
 	# sky actually looks like night, not at the mathematical midpoint.
 	return time_of_day < 0.58
 
+# 0.0 right after dusk (time_of_day 0.58) → 1.0 at dawn. Used by the ambient
+# spawn director to ramp night pressure instead of dumping mobs at sunset.
+func night_progress() -> float:
+	if is_daytime():
+		return 0.0
+	return clampf((time_of_day - 0.58) / (1.0 - 0.58), 0.0, 1.0)
+
 # Debug command (/daynight) — instantly snaps to the opposite period's
 # midpoint (noon / midnight) instead of just flipping by 0.5, so the jump is
 # always to the strongest, most visually obvious point of that period.

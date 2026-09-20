@@ -41,8 +41,8 @@ func sword_slash_radius() -> int:
 ## Whether this item can stack in inventory slots
 @export var stackable: bool = true
 
-## Maximum number of items per stack (1-999)
-@export_range(1, 999) var max_stack_size: int = 99
+## Maximum number of items per stack (hard-capped at Global.MAX_STACK)
+@export_range(1, 32) var max_stack_size: int = 32
 
 # ── Placement (block / door only) ────────────────────────────────
 ## Enable to allow this item to be placed in the world
@@ -73,6 +73,12 @@ func sword_slash_radius() -> int:
 ## Visible at night and inside caves where the ambient light is dark.
 @export var is_torch: bool = false
 
+## Torch only: the animation sheet used when this torch is placed directly
+## beside a solid block (a wall-mounted "connected" look). The art is authored
+## for a block on the LEFT; it's flipped horizontally for a block on the right.
+## Null = always use the centred place_animation_sheet.
+@export var torch_connected_sheet: Texture2D = null
+
 # ── Furnace fuel ────────────────────────────────────────────────────
 ## Enable to allow this item to be loaded into a furnace's fuel slot.
 @export var is_fuel: bool = false
@@ -93,9 +99,30 @@ func sword_slash_radius() -> int:
 ## Minimum pickaxe_level required to break this block (0 = any pickaxe works)
 @export_range(0, 10) var min_pickaxe_level: int = 0
 
+## True for wooden blocks (Wood, Planks). Axes chop these without needing a
+## pickaxe tier and get the hidden axe wooden-block speed bonus below.
+@export var wooden_block: bool = false
+
 # ── Pickaxe tier ──────────────────────────────────────────────────
 ## For pickaxe items: mining tier (0 = wooden, higher = faster / unlocks harder blocks)
 @export_range(0, 10) var pickaxe_level: int = 0
+
+# ── Axe tier ──────────────────────────────────────────────────────
+## For axe items: chopping tier (0 = not an axe). Trees and Wood blocks break
+## base / (axe_level + 1) faster — LV1 = 2x, LV2 = 3x, LV3 = 4x.
+@export_range(0, 10) var axe_level: int = 0
+
+# Hidden wooden-block speed bonus — deliberately NOT an inspector field, so all
+# three tiers sit in one easy-to-track table. Keyed by axe_level:
+#   LV1 wooden axe  = +0.30x
+#   LV2 iron axe    = +0.60x
+#   LV3 diamond axe = +1.00x
+# A wooden block's break duration is base / (1 + bonus).
+const AXE_WOOD_BLOCK_BONUS: Dictionary = {1: 0.3, 2: 0.6, 3: 1.0}
+
+## Extra chopping speed vs wooden blocks for this axe (0.0 for non-axes).
+func axe_wood_block_bonus() -> float:
+	return float(AXE_WOOD_BLOCK_BONUS.get(axe_level, 0.0))
 
 # ── World scene ───────────────────────────────────────────────────
 ## Scene instantiated when this item is placed on the map
@@ -105,7 +132,7 @@ func sword_slash_radius() -> int:
 func _validate_property(property: Dictionary) -> void:
 	if property["name"] == "stackable" and stackable:
 		# Tools (weapons, pickaxes, swords) cannot stack
-		if is_sword or sword_level > 0 or pickaxe_level > 0:
+		if is_sword or sword_level > 0 or pickaxe_level > 0 or axe_level > 0:
 			property["value"] = false
 
 # ── Helper: build the inventory dict the game uses internally ─────

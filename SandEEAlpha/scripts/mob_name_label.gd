@@ -46,8 +46,11 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	if mob_name.is_empty() or _alpha <= 0.0:
 		return
+	# Read the scale live at draw time so a Small/Medium/Large change applies
+	# immediately without a signal hookup.
+	var fs: int = int(FONT_SIZE * Global.ui_scale)
 	var font := ThemeDB.fallback_font
-	var w := font.get_string_size(mob_name, HORIZONTAL_ALIGNMENT_CENTER, -1, FONT_SIZE).x
+	var w := font.get_string_size(mob_name, HORIZONTAL_ALIGNMENT_CENTER, -1, fs).x
 	var pos := Vector2(-w * 0.5, OFFSET_Y)
 	var shadow_col := Color(C_SHADOW.r, C_SHADOW.g, C_SHADOW.b, _alpha)
 	var text_col := Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, _alpha)
@@ -57,6 +60,6 @@ func _draw() -> void:
 			if ox == 0 and oy == 0:
 				continue
 			draw_string(font, pos + Vector2(ox, oy), mob_name,
-				HORIZONTAL_ALIGNMENT_CENTER, -1, FONT_SIZE, shadow_col)
+				HORIZONTAL_ALIGNMENT_CENTER, -1, fs, shadow_col)
 	draw_string(font, pos, mob_name,
-		HORIZONTAL_ALIGNMENT_CENTER, -1, FONT_SIZE, text_col)
+		HORIZONTAL_ALIGNMENT_CENTER, -1, fs, text_col)

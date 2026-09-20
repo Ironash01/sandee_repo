@@ -22,6 +22,8 @@ const C_TITLE      := Color(0.90, 0.80, 1.00, 1.00)
 const C_MUTED      := Color(0.65, 0.55, 0.80, 1.00)
 const C_QUESTION   := Color(0.90, 0.93, 1.00, 1.00)
 const C_OVERLAY    := Color(0.00, 0.00, 0.00, 0.60)
+const C_ERROR      := Color(1.00, 0.55, 0.55, 1.00)
+const C_OK         := Color(0.45, 0.95, 0.55, 1.00)
 const SPRITE_TEXTURE: Texture2D = preload("res://sprites/dungeon/SandEE_alpha_dungeontilesets.png")
 
 # ── Altar glow ─────────────────────────────────────────────────────
@@ -51,9 +53,20 @@ var _controls:   Control = null
 var _close_btn:  Button = null
 
 # ── Compiler (COMPILER) state ─────────────────────────────────────
+# The in-dungeon editor reuses the project's existing CodeEdit widget
+# (scripts/code_edit.gd) plus the shared LanguageSpecification resources, so
+# the dungeon gets the same syntax highlighting, auto-indent and brace/code
+# completion the test CodeEditor has — instead of a plain undecorated TextEdit.
+const CODE_EDIT_SCRIPT: GDScript = preload("res://scripts/code_edit.gd")
+const CODE_FONT: FontFile = preload("res://fonts/monogram-extended.ttf")
+const LUA_SPEC:    LanguageSpecification = preload("uid://df7rqt8d0p5if")
+const PYTHON_SPEC: LanguageSpecification = preload("uid://dwisajvglb4eu")
+
 var _code_entry:       TextEdit = null
 var _compiler_output:  RichTextLabel = null
+var _error_label:      Label = null
 var _lua_state:        Node = null
+var _python_state:     PythonState = null
 var _compiler_q:       DungeonQuestion = null
 var _captured_output:  String = ""
 
@@ -81,6 +94,26 @@ func _ready() -> void:
 	interact.body_exited.connect(_on_body_exited)
 	add_child(interact)
 	call_deferred("_fix_z_index")
+	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
+		Global.ui_scale_changed.connect(_on_ui_scale)
+
+# The quiz panel is built at the current UI scale and cached — rebuild it in
+# place (keeping the current question) so a scale change applies live.
+func _on_ui_scale(_s: float) -> void:
+	if _panel == null:
+		return
+	var was_visible: bool = _panel.visible
+	var canvas: Node = _panel.get_parent()
+	if canvas != null:
+		canvas.queue_free()
+	_panel = null
+	_q_progress = null; _q_text = null; _feedback = null
+	_controls = null; _close_btn = null
+	_code_entry = null; _compiler_output = null; _error_label = null
+	if was_visible:
+		_panel = _build_panel()
+		_panel.visible = true
+		_show_question()
 
 func _process(delta: float) -> void:
 	if _glow != null:
@@ -164,6 +197,11 @@ func _rebuild_controls() -> void:
 
 	for child in _controls.get_children().duplicate():
 		child.queue_free()
+	# The nodes just freed are gone at end of frame — drop the references so a
+	# late print/error signal can never touch a freed object.
+	_code_entry      = null
+	_compiler_output = null
+	_error_label     = null
 
 	if q.is_compiler():
 		_build_compiler_controls(q)
@@ -179,14 +217,15 @@ func _rebuild_controls() -> void:
 	_feedback.text = ""
 
 func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text: String = "") -> Button:
+	var s: float = Global.ui_scale
 	var btn := Button.new()
 	btn.text = (label + "  —  " + opt_text) if not opt_text.is_empty() else label
-	btn.custom_minimum_size = Vector2(150, 42)
+	btn.custom_minimum_size = Vector2(int(150 * s), int(42 * s))
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", 13)
+	btn.add_theme_font_size_override("font_size", int(13 * s))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.14, 0.18, 0.34, 1.0); sb.border_color = C_BORDER
-	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
+	sb.set_border_width_all(int(1 * s)); sb.set_corner_radius_all(int(4 * s))
 	btn.add_theme_stylebox_override("normal",  sb)
 	btn.add_theme_stylebox_override("hover",   sb)
 	btn.add_theme_stylebox_override("pressed", sb)
@@ -195,50 +234,83 @@ func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text
 	return btn
 
 # ── Compiler (Shape.COMPILER) controls ─────────────────────────────
-# A code editor (plain TextEdit, prefilled with the question's starter code)
-# plus a live output panel and a Run button. The player's program runs through
-# the game's LuaState compiler (the same interpreter the Lua robot uses); its
-# print() output is captured and compared to answer_output on completion.
+# The code editor (a CodeEdit carrying the language's real syntax
+# highlighting / auto-indent / brace + code completion, prefilled with the
+# question's starter code), the ERROR line directly underneath it, then the
+# live output console and a Run button. The player's program runs through the
+# game's LuaState compiler (the same interpreter the Lua robot uses) or the
+# PythonState transpiler; print() output is captured and compared to
+# answer_output on completion.
 func _build_compiler_controls(q: DungeonQuestion) -> void:
+	var s: float = Global.ui_scale
 	var lang: String = q.language
-	var entry := TextEdit.new()
-	entry.custom_minimum_size = Vector2(380, 110)
+	var entry := CodeEdit.new()
+	entry.set_script(CODE_EDIT_SCRIPT)
+	entry.custom_minimum_size = Vector2(int(440 * s), int(150 * s))
 	entry.placeholder_text = "-- write your %s code here\nprint(\"...\")" % lang
 	entry.text = q.starter_code
-	entry.syntax_highlighter = null
-	entry.add_theme_font_size_override("font_size", 13)
+	entry.add_theme_font_override("font", CODE_FONT)
+	entry.add_theme_font_size_override("font_size", int(14 * s))
+	entry.gutters_draw_line_numbers     = true
+	entry.code_completion_enabled       = true
+	entry.indent_use_spaces             = true
+	entry.indent_automatic              = true
+	entry.auto_brace_completion_enabled = true
+	entry.wrap_mode = TextEdit.LINE_WRAPPING_NONE
+	# Highlighting + completion come from the shared language spec; an unknown
+	# language keeps the plain editor so the question never soft-locks.
+	var spec: LanguageSpecification = null
+	if lang == "lua":
+		spec = LUA_SPEC
+	elif lang == "python":
+		spec = PYTHON_SPEC
+	if spec != null:
+		entry.call("load_language_spec", spec)
+		entry.text_changed.connect(Callable(entry, "code_completion_request"))
 	_controls.add_child(entry)
 	_code_entry = entry
 
+	# ERROR line: sits DIRECTLY under the code box (the panel-bottom _feedback
+	# label is reserved for MCQ answers / rubric results) so a failed compile
+	# is read right where the code was typed.
+	var err := Label.new()
+	err.custom_minimum_size = Vector2(int(440 * s), int(18 * s))
+	err.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	err.add_theme_font_size_override("font_size", int(12 * s))
+	err.add_theme_color_override("font_color", C_ERROR)
+	_controls.add_child(err)
+	_error_label = err
+
 	var out := RichTextLabel.new()
 	out.bbcode_enabled = true
-	out.custom_minimum_size = Vector2(380, 70)
+	out.custom_minimum_size = Vector2(int(440 * s), int(80 * s))
 	out.scroll_following = true
-	out.add_theme_font_size_override("font_size", 13)
+	out.add_theme_font_size_override("font_size", int(13 * s))
 	out.add_theme_color_override("default_color", C_MUTED)
 	_controls.add_child(out)
 	_compiler_output = out
 
-	var is_lua: bool = lang == "lua"
-	if not is_lua:
-		# No interpreter yet for this language (e.g. python): show the editor as
-		# a typed-code answer and grade it by string comparison. A note keeps the
-		# player informed so the dungeon never soft-locks.
+	# Lua runs through LuaState; Python is transpiled to GDScript and run. Both
+	# have a real interpreter now, so both get a "Run" button.
+	var is_interp: bool = lang == "lua" or lang == "python"
+	if not is_interp:
+		# Unknown language: show the editor as a typed-code answer and grade it
+		# by string comparison so the dungeon never soft-locks.
 		var note := Label.new()
 		note.text = "[%s] interpreter not available yet — type the correct code and press Check." % lang
-		note.add_theme_font_size_override("font_size", 11)
+		note.add_theme_font_size_override("font_size", int(11 * s))
 		note.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5, 1.0))
 		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_controls.add_child(note)
 
 	var check_btn := Button.new()
-	check_btn.text = "▶  %s" % ("Run" if is_lua else "Check")
-	check_btn.custom_minimum_size = Vector2(140, 38)
+	check_btn.text = "▶  %s" % ("Run" if is_interp else "Check")
+	check_btn.custom_minimum_size = Vector2(int(140 * s), int(38 * s))
 	check_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	check_btn.add_theme_font_size_override("font_size", 13)
+	check_btn.add_theme_font_size_override("font_size", int(13 * s))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.14, 0.34, 0.20, 1.0); sb.border_color = C_BORDER
-	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
+	sb.set_border_width_all(int(1 * s)); sb.set_corner_radius_all(int(4 * s))
 	check_btn.add_theme_stylebox_override("normal",  sb)
 	check_btn.add_theme_stylebox_override("hover",   sb)
 	check_btn.add_theme_stylebox_override("pressed", sb)
@@ -249,12 +321,16 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	code = code.strip_edges()
 	if code.is_empty():
-		_feedback.text = "✘ Write some code first."
-		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+		_set_status("✘ Write some code first.", C_ERROR)
 		return
-	# Non-Lua languages have no interpreter yet — grade the typed code directly
-	# (the answer_output field holds the expected code), matching the old LONG
-	# string-comparison behaviour under the COMPILER type.
+	_set_status("", C_MUTED)   # a fresh run clears the previous error line
+	# Python is transpiled to GDScript and executed by PythonState (its signals
+	# mirror LuaState's, so the same capture/grade flow below is reused).
+	if q.language == "python":
+		_run_python(q, code)
+		return
+	# Unknown non-interpreted language: grade the typed code directly (the
+	# answer_output field holds the expected code).
 	if q.language != "lua":
 		_grade_code_text(q, code)
 		return
@@ -275,6 +351,23 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	_lua_state.set("code", code)
 	_lua_state.call("run_code")
 
+# Runs Python through the transpiler (PythonState). Same pause/drain/grade
+# flow as the Lua path above.
+func _run_python(q: DungeonQuestion, code: String) -> void:
+	if _python_state == null:
+		_python_state = PythonState.new()
+		add_child(_python_state)
+		_python_state.connect("signal_print", _on_quiz_print)
+		_python_state.connect("code_executed", _on_quiz_executed)
+		_python_state.connect("code_failed", _on_quiz_failed)
+	_compiler_q   = q
+	_captured_output = ""
+	if _compiler_output != null:
+		_compiler_output.text = ""
+	get_tree().paused = false
+	_python_state.set("code", code)
+	_python_state.call("run_code")
+
 func _on_quiz_print(text: String) -> void:
 	_captured_output += text + "\n"
 	if _compiler_output != null:
@@ -292,36 +385,41 @@ func _on_quiz_executed() -> void:
 func _on_quiz_failed(error: String) -> void:
 	if _panel != null and _panel.visible:
 		get_tree().paused = true
-		_feedback.text = "✘ " + error
-		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+		_set_status("✘ " + error, C_ERROR)
+
+# Compiler-question status — errors AND the rubric result — goes to the line
+# directly under the code box, so it appears where the player was typing; MCQ
+# questions (no editor) keep the panel-bottom _feedback label.
+func _set_status(text: String, col: Color) -> void:
+	var lbl: Label = _error_label if _error_label != null else _feedback
+	if lbl == null:
+		return
+	lbl.text = text
+	lbl.add_theme_color_override("font_color", col)
 
 func _grade_compiler(q: DungeonQuestion) -> void:
 	if q == null:
 		return
 	if _normalize_text(_captured_output) == _normalize_text(q.answer_output):
-		_feedback.text = "✔ Correct!"
-		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
+		_set_status("✔ Correct!", C_OK)
 		_index += 1
 		await get_tree().create_timer(0.6).timeout
 		if _panel != null and _panel.visible:
 			_show_question()
 	else:
-		_feedback.text = "✘ Not quite — try again."
-		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+		_set_status("✘ Not quite — try again.", C_ERROR)
 
 # Grades a non-interpreted language's typed code against the expected code in
 # answer_output (normalized comparison) — the old LONG behaviour under COMPILER.
 func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 	if _normalize_text(code) == _normalize_text(q.answer_output):
-		_feedback.text = "✔ Correct!"
-		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
+		_set_status("✔ Correct!", C_OK)
 		_index += 1
 		await get_tree().create_timer(0.6).timeout
 		if _panel != null and _panel.visible:
 			_show_question()
 	else:
-		_feedback.text = "✘ Not quite — try again."
-		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+		_set_status("✘ Not quite — try again.", C_ERROR)
 
 # MCQ grading: the button passes the option index (0..3); it's correct when it
 # matches the question's correct_index.
@@ -362,8 +460,9 @@ func _complete_dungeon() -> void:
 	cleared.emit(mission.dungeon_index)
 
 func _build_panel() -> Control:
+	var s: float = Global.ui_scale
 	var canvas := CanvasLayer.new()
-	canvas.layer        = 15
+	canvas.layer        = 30
 	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(canvas)
 
@@ -383,59 +482,59 @@ func _build_panel() -> Control:
 	root.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(520, 0)
+	panel.custom_minimum_size = Vector2(int(520 * s), 0)
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
-	ps.set_border_width_all(2); ps.set_corner_radius_all(8)
-	ps.content_margin_left = 28; ps.content_margin_right  = 28
-	ps.content_margin_top  = 22; ps.content_margin_bottom = 22
+	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
+	ps.content_margin_left = int(28 * s); ps.content_margin_right  = int(28 * s)
+	ps.content_margin_top  = int(22 * s); ps.content_margin_bottom = int(22 * s)
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 14)
+	vbox.add_theme_constant_override("separation", int(14 * s))
 	panel.add_child(vbox)
 
 	var hdr := HBoxContainer.new()
-	hdr.add_theme_constant_override("separation", 8)
+	hdr.add_theme_constant_override("separation", int(8 * s))
 	vbox.add_child(hdr)
 	var icon := Label.new()
 	icon.text = "❓"
-	icon.add_theme_font_size_override("font_size", 22)
+	icon.add_theme_font_size_override("font_size", int(22 * s))
 	hdr.add_child(icon)
 	var title := Label.new()
 	title.text = "Quiz Altar"
-	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_font_size_override("font_size", int(18 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.add_child(title)
 	_q_progress = Label.new()
-	_q_progress.add_theme_font_size_override("font_size", 12)
+	_q_progress.add_theme_font_size_override("font_size", int(12 * s))
 	_q_progress.add_theme_color_override("font_color", C_MUTED)
 	hdr.add_child(_q_progress)
 
 	var div := ColorRect.new()
-	div.color = Color(0.45, 0.25, 0.55, 1.0); div.custom_minimum_size = Vector2(0, 1)
+	div.color = Color(0.45, 0.25, 0.55, 1.0); div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 
 	_q_text = Label.new()
-	_q_text.add_theme_font_size_override("font_size", 15)
+	_q_text.add_theme_font_size_override("font_size", int(15 * s))
 	_q_text.add_theme_color_override("font_color", C_QUESTION)
 	_q_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_q_text)
 
 	_controls = VBoxContainer.new()
-	_controls.add_theme_constant_override("separation", 10)
+	_controls.add_theme_constant_override("separation", int(10 * s))
 	vbox.add_child(_controls)
 
 	_feedback = Label.new()
 	_feedback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_feedback.add_theme_font_size_override("font_size", 14)
+	_feedback.add_theme_font_size_override("font_size", int(14 * s))
 	vbox.add_child(_feedback)
 
 	_close_btn = Button.new()
 	_close_btn.text = "Close"
-	_close_btn.custom_minimum_size = Vector2(120, 36)
+	_close_btn.custom_minimum_size = Vector2(int(120 * s), int(36 * s))
 	_close_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_close_btn.pressed.connect(_close_quiz)
 	vbox.add_child(_close_btn)

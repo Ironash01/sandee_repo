@@ -32,6 +32,35 @@ var _filtered:     Array  = []
 var _active_cat:   String = "Materials"
 var _selected_idx: int    = -1
 
+# ── Station automation (Crafting / Automation / Programming) ──────
+# `station` is set by CraftingStation before this menu enters the tree. The
+# menu only READS/WRITES station state through the station's Automation API —
+# it never crafts or validates anything itself.
+enum Mode { CRAFTING, AUTOMATION, PROGRAMMING }
+var _mode: int    = Mode.CRAFTING
+var station: Node = null
+
+var _craft_body:     Control
+var _auto_body:      Control
+var _prog_body:      Control
+var _output_section: Control
+var _mode_btns:      Dictionary = {}
+
+var _auto_grid:     GridContainer
+var _auto_selected: Label
+var _auto_status:   Label
+
+var _code_edit: TextEdit
+var _prog_log:  RichTextLabel
+
+var _output_slot:  Button
+var _output_count: Label
+var _output_hint:  Label
+
+var _input_section: Control
+var _input_slot:    Control   # station_input_slot.gd
+var _input_hint:    Label
+
 # ── Node refs ─────────────────────────────────────────────────────
 var _recipe_list:   GridContainer
 var _detail_panel:  Control
@@ -51,6 +80,9 @@ func _ready() -> void:
 	_tree = get_tree()
 	if has_meta("station_mode"):
 		_station_mode = get_meta("station_mode")
+	station = get("station")
+	if station != null and station.has_signal("station_state_changed"):
+		station.station_state_changed.connect(_on_station_state_changed)
 	_load_recipes()
 	_build()
 	Global.Inventory_updated.connect(_refresh_highlights)
@@ -60,6 +92,9 @@ func _ready() -> void:
 
 func _on_ui_scale(_s: float) -> void:
 	var was_visible: bool = visible
+	var was_mode:    int  = _mode
+	# Keep whatever the player typed — the editor widget is about to be rebuilt.
+	_store_program_code()
 	for child in get_children():
 		child.queue_free()
 	_cat_btns.clear()
@@ -67,9 +102,12 @@ func _on_ui_scale(_s: float) -> void:
 	_recipe_list  = null
 	_detail_panel = null
 	_selected_idx = -1
+	_mode_btns.clear()
 	await get_tree().process_frame
 	_build()
 	_filter_and_refresh()
+	# Restore the tab the player was on instead of snapping back to CRAFTING.
+	_set_mode(was_mode)
 	visible = was_visible
 
 func _load_recipes() -> void:
@@ -99,6 +137,9 @@ func open_as_station() -> void:
 	if _detail_panel != null:
 		_detail_panel.visible = false
 	_filter_and_refresh()
+	_refresh_automation()
+	_refresh_input()
+	_refresh_output()
 	show_menu()
 
 # ── Build UI ──────────────────────────────────────────────────────
@@ -150,14 +191,27 @@ func _build() -> void:
 
 	# Main panel
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(760 * s, 520 * s)
+	panel.custom_minimum_size = Vector2(1080 * s, 540 * s)
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(16*s), int(16*s), int(14*s), int(16*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	outer.add_child(panel)
 
+	# Two columns INSIDE the styled panel (same as the Lua editor): the station
+	# content on the left, the player's inventory + hotbar on the right — the
+	# in-world hotbar sits behind this menu, so a usable copy lives here.
+	var panel_row := HBoxContainer.new()
+	panel_row.add_theme_constant_override("separation", int(14 * s))
+	panel.add_child(panel_row)
+
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", int(10 * s))
-	panel.add_child(vbox)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel_row.add_child(vbox)
+	# Inventory only here — the player's on-screen hotbar stays reachable
+	# (this menu's canvas sits below it), so no HOTBAR strip.
+	var items := PlayerItemsPanel.new()
+	items.show_hotbar = false
+	panel_row.add_child(items)
 
 	# Header
 	var header := HBoxContainer.new()
@@ -174,10 +228,81 @@ func _build() -> void:
 
 	_div(vbox)
 
-	# Category tabs
+	# Mode switch — the existing crafting view plus the two new station tabs.
+	_build_mode_row(vbox, s)
+	_div(vbox)
+
+	# Only one body is visible at a time.
+	_craft_body = _build_craft_body(s)
+	vbox.add_child(_craft_body)
+	_auto_body  = _build_automation_body(s)
+	vbox.add_child(_auto_body)
+	_prog_body  = _build_programming_body(s)
+	vbox.add_child(_prog_body)
+
+	# Input + Output slots — shared by Automation and Programming.
+	_input_section = _build_input_section(s)
+	vbox.add_child(_input_section)
+	_output_section = _build_output_section(s)
+	vbox.add_child(_output_section)
+
+	_set_mode(Mode.CRAFTING)
+
+# ── Mode switch ───────────────────────────────────────────────────
+func _build_mode_row(parent: Node, s: float) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(6 * s))
+	parent.add_child(row)
+	for entry in [
+		{"mode": Mode.CRAFTING,    "text": "CRAFTING"},
+		{"mode": Mode.AUTOMATION,  "text": "AUTOMATION"},
+		{"mode": Mode.PROGRAMMING, "text": "PROGRAMMING"},
+	]:
+		var btn := Button.new()
+		btn.text                  = entry["text"]
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.custom_minimum_size   = Vector2(0, int(30 * s))
+		btn.add_theme_font_size_override("font_size", int(12 * s))
+		var m: int = entry["mode"]
+		btn.pressed.connect(func() -> void: _set_mode(m))
+		row.add_child(btn)
+		_mode_btns[m] = btn
+
+func _update_mode_btns() -> void:
+	for m in _mode_btns:
+		var btn: Button  = _mode_btns[m] as Button
+		var active: bool = m == _mode
+		var ps := _sb(C_SEL if active else C_PANEL,
+			C_TITLE if active else C_BORDER, 4, 8, 8, 6, 6)
+		btn.add_theme_stylebox_override("normal",  ps)
+		btn.add_theme_stylebox_override("hover",   ps)
+		btn.add_theme_stylebox_override("pressed", ps)
+		btn.add_theme_color_override("font_color", C_TITLE if active else C_MUTED)
+
+func _set_mode(mode: int) -> void:
+	_mode = mode
+	if _craft_body != null:     _craft_body.visible     = mode == Mode.CRAFTING
+	if _auto_body != null:      _auto_body.visible      = mode == Mode.AUTOMATION
+	if _prog_body != null:      _prog_body.visible      = mode == Mode.PROGRAMMING
+	if _output_section != null: _output_section.visible = mode != Mode.CRAFTING
+	_update_mode_btns()
+	# Leaving the Programming tab keeps the editor text on the station.
+	if mode != Mode.PROGRAMMING:
+		_store_program_code()
+	if mode == Mode.AUTOMATION:
+		_refresh_automation()
+	if mode == Mode.PROGRAMMING:
+		_ensure_program_host()
+
+# ── Crafting body (the original manual crafting view) ─────────────
+func _build_craft_body(s: float) -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", int(10 * s))
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", int(6 * s))
-	vbox.add_child(tabs)
+	root.add_child(tabs)
 	for cat in CATEGORIES:
 		var btn := Button.new()
 		btn.text                  = cat
@@ -188,15 +313,14 @@ func _build() -> void:
 		btn.pressed.connect(func() -> void: _on_category(c))
 		tabs.add_child(btn)
 		_cat_btns[cat] = btn
-	_highlight_tab("Materials")
+	_highlight_tab(_active_cat)
 
-	_div(vbox)
+	_div(root)
 
-	# Body
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", int(12 * s))
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(body)
+	root.add_child(body)
 
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size    = Vector2(int(320 * s), 0)
@@ -218,6 +342,299 @@ func _build() -> void:
 	_detail_panel.visible = false
 
 	_filter_and_refresh()
+	return root
+
+# ── Automation body (configuration only) ──────────────────────────
+func _build_automation_body(s: float) -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", int(8 * s))
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	root.add_child(_lbl("SELECT AUTOMATION RECIPE", int(11 * s), C_MUTED))
+	var hint := _lbl("Selecting a recipe does not craft anything — run a program in the PROGRAMMING tab.",
+		int(10 * s), C_MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(hint)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(scroll)
+
+	_auto_grid = GridContainer.new()
+	_auto_grid.columns = 6
+	_auto_grid.add_theme_constant_override("h_separation", int(8 * s))
+	_auto_grid.add_theme_constant_override("v_separation", int(8 * s))
+	scroll.add_child(_auto_grid)
+
+	_div(root)
+
+	var sel_row := HBoxContainer.new()
+	sel_row.add_theme_constant_override("separation", int(8 * s))
+	root.add_child(sel_row)
+	sel_row.add_child(_lbl("Selected Recipe:", int(12 * s), C_MUTED))
+	_auto_selected = _lbl("(none)", int(12 * s), C_TITLE)
+	_auto_selected.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sel_row.add_child(_auto_selected)
+
+	_auto_status = _lbl("Status: No recipe selected", int(11 * s), C_EFFECT)
+	root.add_child(_auto_status)
+	return root
+
+func _refresh_automation() -> void:
+	if _auto_grid == null or station == null:
+		return
+	for child in _auto_grid.get_children():
+		child.queue_free()
+	var s: float = Global.ui_scale
+	var recipes: Array = station.call("get_station_recipes") if station.has_method("get_station_recipes") else []
+	for r in recipes:
+		var recipe: CraftingRecipe = r as CraftingRecipe
+		var btn := Button.new()
+		btn.custom_minimum_size     = Vector2(Global.ITEM_SLOT_SIZE * s, Global.ITEM_SLOT_SIZE * s)
+		btn.icon                    = recipe.result_item.icon
+		btn.expand_icon             = true
+		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
+		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+		btn.tooltip_text            = recipe.result_item.item_name
+		var rec := recipe
+		btn.pressed.connect(func() -> void: _on_auto_pick(rec))
+		var ps := _sb(C_TIP_BG, C_BORDER, 4, 4, 4, 4, 4)
+		btn.add_theme_stylebox_override("normal",  ps)
+		btn.add_theme_stylebox_override("hover",   ps)
+		btn.add_theme_stylebox_override("pressed", ps)
+		_auto_grid.add_child(btn)
+	_refresh_automation_selection()
+
+func _on_auto_pick(recipe: CraftingRecipe) -> void:
+	if station == null:
+		return
+	station.call("set_automation_recipe", recipe)
+	_refresh_automation_selection()
+
+func _refresh_automation_selection() -> void:
+	if station == null:
+		return
+	var name: String = str(station.call("get_automation_recipe_name"))
+	if _auto_selected != null:
+		_auto_selected.text = name if not name.is_empty() else "(none)"
+	if _auto_status != null:
+		_auto_status.text = "Status: Waiting for program" if not name.is_empty() \
+			else "Status: No recipe selected"
+
+# ── Programming body ──────────────────────────────────────────────
+func _build_programming_body(s: float) -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", int(8 * s))
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	root.add_child(_lbl("PYTHON PROGRAM", int(11 * s), C_MUTED))
+	# Custom (game) API only here — the language's own built-ins are listed in
+	# the Lua robot editor's Encyclopedia, and the two are deliberately kept
+	# apart. Source of truth: scripts/api_reference.gd.
+	var custom: Array = APIReference.CUSTOM_PYTHON_STATION
+	var lines: PackedStringArray = []
+	for e in custom:
+		lines.append("%s — %s" % [str(e["sig"]), str(e["desc"])])
+	var hint := _lbl("Station API:\n" + "\n".join(lines),
+		int(10 * s), C_MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(hint)
+
+	_code_edit = TextEdit.new()
+	_code_edit.custom_minimum_size   = Vector2(0, int(140 * s))
+	_code_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_code_edit.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	_code_edit.add_theme_font_size_override("font_size", int(13 * s))
+	_code_edit.placeholder_text      = "craft(1)"
+	if station != null:
+		_code_edit.text = str(station.get("program_code"))
+	root.add_child(_code_edit)
+
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", int(8 * s))
+	root.add_child(btn_row)
+	btn_row.add_child(_make_action_btn("▶  RUN", Color(0.15, 0.45, 0.20, 1.0),
+		Color(0.80, 1.0, 0.80, 1.0), _on_run_program, s))
+	btn_row.add_child(_make_action_btn("CLEAR", Color(0.20, 0.22, 0.34, 1.0),
+		C_TITLE, _on_clear_program, s))
+
+	_prog_log = RichTextLabel.new()
+	_prog_log.bbcode_enabled      = true
+	_prog_log.scroll_following    = true
+	_prog_log.custom_minimum_size = Vector2(0, int(90 * s))
+	_prog_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_prog_log.add_theme_font_size_override("font_size", int(12 * s))
+	_prog_log.add_theme_color_override("default_color", C_MUTED)
+	root.add_child(_prog_log)
+	return root
+
+func _make_action_btn(text: String, bg: Color, fg: Color, cb: Callable, s: float) -> Button:
+	var btn := Button.new()
+	btn.text = text
+	btn.custom_minimum_size   = Vector2(0, int(36 * s))
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.add_theme_font_size_override("font_size", int(13 * s))
+	var ps := _sb(bg, C_BORDER, 4, 8, 8, 6, 6)
+	btn.add_theme_stylebox_override("normal",  ps)
+	btn.add_theme_stylebox_override("hover",   ps)
+	btn.add_theme_stylebox_override("pressed", ps)
+	btn.add_theme_color_override("font_color", fg)
+	btn.pressed.connect(cb)
+	return btn
+
+# Connects to the station's Python host (the same PythonState the quiz altar
+# uses). is_connected() guards keep this idempotent across UI rebuilds.
+func _ensure_program_host() -> void:
+	if station == null or not station.has_method("get_program_host"):
+		return
+	var host: Node = station.call("get_program_host")
+	if host == null:
+		return
+	if not host.is_connected("signal_print", _on_program_print):
+		host.connect("signal_print", _on_program_print)
+	if not host.is_connected("code_failed", _on_program_error):
+		host.connect("code_failed", _on_program_error)
+	if not host.is_connected("code_executed", _on_program_done):
+		host.connect("code_executed", _on_program_done)
+
+func _on_run_program() -> void:
+	if station == null or _code_edit == null:
+		return
+	var code: String = _code_edit.text.strip_edges()
+	if code.is_empty():
+		return
+	_ensure_program_host()
+	if _prog_log != null:
+		_prog_log.clear()
+	station.call("run_program", code)
+	_refresh_output()
+
+func _on_clear_program() -> void:
+	if _code_edit != null:
+		_code_edit.text = ""
+	_store_program_code()
+
+func _store_program_code() -> void:
+	if station != null and _code_edit != null:
+		station.set("program_code", _code_edit.text)
+
+func _on_program_print(text: String) -> void:
+	if _prog_log != null:
+		_prog_log.append_text("[color=#aaddff]» %s[/color]\n" % text)
+
+func _on_program_error(error: String) -> void:
+	if _prog_log != null:
+		_prog_log.append_text("[color=#ff8888]✗ %s[/color]\n" % error)
+
+func _on_program_done() -> void:
+	if _prog_log != null:
+		_prog_log.append_text("[color=#88ffaa]✓ Program finished[/color]\n")
+	_refresh_output()
+
+# ── Input slot (single) ───────────────────────────────────────────
+# Feed slot for automatic crafting: drag items in (or the Lua robot loads it
+# with put_input()). craft_request() consumes from here before the inventory.
+func _build_input_section(s: float) -> Control:
+	var root := HBoxContainer.new()
+	root.add_theme_constant_override("separation", int(10 * s))
+	root.add_child(_lbl("INPUT", int(11 * s), C_MUTED))
+
+	var slot_script: GDScript = load("res://scripts/station_input_slot.gd")
+	_input_slot = slot_script.new()
+	_input_slot.set("station", station)
+	_input_slot.connect("changed", _on_input_slot_changed)
+	root.add_child(_input_slot)
+
+	_input_hint = _lbl("", int(11 * s), C_MUTED)
+	_input_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_input_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(_input_hint)
+
+	_refresh_input()
+	return root
+
+func _on_station_state_changed() -> void:
+	_refresh_input()
+	_refresh_output()
+
+func _on_input_slot_changed() -> void:
+	_refresh_input()
+
+func _refresh_input() -> void:
+	if _input_slot != null and is_instance_valid(_input_slot):
+		_input_slot.call("refresh")
+	if _input_hint == null or station == null:
+		return
+	var stack: Dictionary = station.call("get_input_stack") if station.has_method("get_input_stack") else {}
+	if stack.is_empty():
+		_input_hint.text = "Empty — drag an ingredient here (or use put_input)"
+	else:
+		var item: ItemData = stack["data"] as ItemData
+		_input_hint.text = "%s ×%d — feeds automatic crafting" % [item.item_name, int(stack["quantity"])]
+
+# ── Output slot (single) ──────────────────────────────────────────
+func _build_output_section(s: float) -> Control:
+	var root := HBoxContainer.new()
+	root.add_theme_constant_override("separation", int(10 * s))
+	root.add_child(_lbl("OUTPUT", int(11 * s), C_MUTED))
+
+	var slot_wrap := Control.new()
+	slot_wrap.custom_minimum_size = Vector2(Global.ITEM_SLOT_SIZE * s, Global.ITEM_SLOT_SIZE * s)
+	root.add_child(slot_wrap)
+
+	_output_slot = Button.new()
+	_output_slot.custom_minimum_size     = Vector2(Global.ITEM_SLOT_SIZE * s, Global.ITEM_SLOT_SIZE * s)
+	_output_slot.expand_icon             = true
+	_output_slot.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
+	_output_slot.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+	_output_slot.tooltip_text            = "Click to take the crafted items"
+	_output_slot.pressed.connect(_on_take_output)
+	var ps := _sb(C_TIP_BG, C_BORDER, 4, 4, 4, 4, 4)
+	_output_slot.add_theme_stylebox_override("normal",  ps)
+	_output_slot.add_theme_stylebox_override("hover",   ps)
+	_output_slot.add_theme_stylebox_override("pressed", ps)
+	slot_wrap.add_child(_output_slot)
+
+	_output_count = Label.new()
+	_output_count.add_theme_font_size_override("font_size", int(13 * s))
+	_output_count.add_theme_color_override("font_color", C_EFFECT)
+	_output_count.position = Vector2(Global.ITEM_SLOT_SIZE * s - 30 * s,
+		Global.ITEM_SLOT_SIZE * s - 22 * s)
+	slot_wrap.add_child(_output_count)
+
+	_output_hint = _lbl("", int(11 * s), C_MUTED)
+	_output_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.add_child(_output_hint)
+
+	_refresh_output()
+	return root
+
+func _refresh_output() -> void:
+	if _output_slot == null or station == null:
+		return
+	var data = station.call("get_output_item")
+	var qty: int = int(station.call("get_output_quantity"))
+	if data == null or qty <= 0:
+		_output_slot.icon     = null
+		_output_slot.disabled = true
+		if _output_count != null: _output_count.text = ""
+		if _output_hint  != null: _output_hint.text  = "Empty — nothing crafted yet"
+	else:
+		var item: ItemData = data as ItemData
+		_output_slot.icon     = item.icon
+		_output_slot.disabled = false
+		if _output_count != null: _output_count.text = "×%d" % qty
+		if _output_hint  != null: _output_hint.text  = "%s ×%d — click to take" % [item.item_name, qty]
+	_refresh_automation_selection()
+
+func _on_take_output() -> void:
+	if station == null:
+		return
+	var taken: int = int(station.call("take_output"))
+	if _prog_log != null and taken > 0:
+		_prog_log.append_text("[color=#88ffaa]Took %d item(s) into your inventory[/color]\n" % taken)
+	_refresh_output()
 
 func _build_detail(s: float) -> Control:
 	var root := PanelContainer.new()
@@ -318,23 +735,13 @@ func _highlight_tab(cat: String) -> void:
 		btn.add_theme_color_override("font_color", C_TITLE if active else C_MUTED)
 
 # ── Crafting state ────────────────────────────────────────────────
-func _count_item(data: ItemData) -> int:
-	var total: int = 0
-	for slot in Global.Hotbar:
-		if slot != null and (slot as Dictionary)["data"] == data:
-			total += (slot as Dictionary)["quantity"]
-	for slot in Global.Inventory:
-		if slot != null and (slot as Dictionary)["data"] == data:
-			total += (slot as Dictionary)["quantity"]
-	return total
-
 enum CraftState { CAN_CRAFT, NO_MATS }
 
 func _craft_state(recipe: CraftingRecipe) -> CraftState:
-	var has_mats: bool = _count_item(recipe.ingredient_1) >= recipe.ingredient_1_quantity
+	var has_mats: bool = Global.count_item(recipe.ingredient_1) >= recipe.ingredient_1_quantity
 	if recipe.ingredient_2 != null:
 		has_mats = has_mats and \
-			_count_item(recipe.ingredient_2) >= recipe.ingredient_2_quantity
+			Global.count_item(recipe.ingredient_2) >= recipe.ingredient_2_quantity
 	return CraftState.CAN_CRAFT if has_mats else CraftState.NO_MATS
 
 # ── Category ──────────────────────────────────────────────────────
@@ -432,7 +839,7 @@ func _fill_icon_row(row: HBoxContainer, data: ItemData, needed: int, is_ingredie
 	if icon == null or qty == null or data == null:
 		return
 	icon.texture = data.icon if data.icon != null else null
-	var have: int = _count_item(data) if is_ingredient else needed
+	var have: int = Global.count_item(data) if is_ingredient else needed
 	icon.modulate = Color(0.35, 0.35, 0.35, 1.0) if (is_ingredient and have <= 0) else Color.WHITE
 	if is_ingredient:
 		qty.text = "%d/%d" % [have, needed]
@@ -505,6 +912,8 @@ func show_menu() -> void:
 func hide_menu() -> void:
 	if not visible:
 		return
+	# Keep the program text on the station so reopening restores it.
+	_store_program_code()
 	visible = false
 	Global.close_ui()
 
@@ -512,10 +921,15 @@ func hide_menu() -> void:
 # inventory panel, this menu isn't a child of the player, so player.gd never
 # sees the re-press to close it (any_ui_open() is already true while this is
 # open, so its own E-toggle branch is a no-op) — it must close itself.
+# The E branch is guarded by is_text_input_focused() so typing "e" into the
+# PROGRAMMING tab's TextEdit doesn't close the panel. Escape is NOT gated: it
+# isn't a typed character, so it stays a universal "close" key.
 func _input(event: InputEvent) -> void:
-	if event.is_action_pressed("escape") and visible:
+	if not visible:
+		return
+	if event.is_action_pressed("escape"):
 		get_viewport().set_input_as_handled()
 		hide_menu()
-	elif event.is_action_pressed("inventory") and visible:
+	elif event.is_action_pressed("inventory") and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		hide_menu()

@@ -20,5 +20,6 @@ icon = SubResource("AtlasTexture_d4cv2")
 is_placeable = true
 placeable_sprite = SubResource("AtlasTexture_hf80f")
 is_craftable = true
+block_level = 7
 place_scene_path = "res://scenes/objects/ChestBlock.tscn"
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

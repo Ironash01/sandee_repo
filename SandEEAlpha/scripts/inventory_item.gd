@@ -34,20 +34,33 @@ func _ready() -> void:
 	if not Engine.is_editor_hint():
 		if item_data != null:
 			icon_sprite.texture = item_data.icon
+		var s: float = Global.ui_scale
 		_qty_label = Label.new()
-		_qty_label.add_theme_font_size_override("font_size", 12)
+		_qty_label.add_theme_font_size_override("font_size", int(12 * s))
 		_qty_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 		_qty_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-		_qty_label.add_theme_constant_override("outline_size", 3)
-		_qty_label.position = Vector2(6, 6)
+		_qty_label.add_theme_constant_override("outline_size", int(3 * s))
+		_qty_label.position = Vector2(6, 6) * s
 		_qty_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(_qty_label)
 		_update_qty_label()
+		if not Global.ui_scale_changed.is_connected(_on_ui_scale):
+			Global.ui_scale_changed.connect(_on_ui_scale)
 		# Never spawn resting inside a placed block or solid wall. Deferred so
 		# the caller's global_position assignment (which happens after
 		# add_child in some drop paths) is already applied when the initial
 		# nudge runs.
 		_repel_from_blocks.call_deferred()
+
+# Re-apply the stack-count label's sizing so a Small/Medium/Large change applies
+# live to items already lying on the ground.
+func _on_ui_scale(_s: float) -> void:
+	if _qty_label == null or not is_instance_valid(_qty_label):
+		return
+	var s: float = Global.ui_scale
+	_qty_label.add_theme_font_size_override("font_size", int(12 * s))
+	_qty_label.add_theme_constant_override("outline_size", int(3 * s))
+	_qty_label.position = Vector2(6, 6) * s
 
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint():

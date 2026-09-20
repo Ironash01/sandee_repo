@@ -100,6 +100,22 @@ func _ready() -> void:
 
 	_build_confirm_ui()
 	queue_redraw()
+	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
+		Global.ui_scale_changed.connect(_on_ui_scale)
+
+# Rebuild the confirm dialog at the new scale (when open) so a Small/Medium/
+# Large change applies live rather than only on the next approach.
+func _on_ui_scale(_s: float) -> void:
+	if _confirm_ui == null:
+		return
+	var was_visible: bool = _confirm_ui.visible
+	var canvas: Node = _confirm_ui.get_parent()
+	if canvas != null:
+		canvas.queue_free()
+	_confirm_ui = null
+	_build_confirm_ui()
+	if _confirm_ui != null:
+		_confirm_ui.visible = was_visible
 
 # EXIT marker art — a sprite child so it renders on top of the cave floor
 # while the node's _draw() supplies the yellow highlight around it.
@@ -129,6 +145,7 @@ func set_highlight_cells(rects: Array[Rect2]) -> void:
 	queue_redraw()
 
 func _draw() -> void:
+	var s: float = Global.ui_scale
 	if mode == Mode.EXIT:
 		z_index = int(global_position.y / TILE_SIZE) + 1
 		# Yellow highlight around the exit sprite — same colour the cave
@@ -137,7 +154,7 @@ func _draw() -> void:
 		var half := Vector2(CAVE_EXIT_TEX.get_width(), CAVE_EXIT_TEX.get_height()) * 0.5
 		var r := Rect2(-half, half * 2.0)
 		draw_rect(r, Color(C_DOOR_HIGHLIGHT.r, C_DOOR_HIGHLIGHT.g, C_DOOR_HIGHLIGHT.b, 0.18), true)
-		draw_rect(r, C_DOOR_HIGHLIGHT, false, 2.0)
+		draw_rect(r, C_DOOR_HIGHLIGHT, false, 2.0 * s)
 		return
 
 	# ENTER without a structure — fall back to the old colored marker so the
@@ -146,9 +163,9 @@ func _draw() -> void:
 		z_index = int(global_position.y / TILE_SIZE)
 		var half: float = TILE_SIZE / 2.0
 		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), COLOR_ENTER)
-		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), Color(0, 0, 0, 0.6), false, 2.0)
+		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), Color(0, 0, 0, 0.6), false, 2.0 * s)
 		var font: Font  = ThemeDB.fallback_font
-		var fsize: int  = 8
+		var fsize: int  = int(8 * s)
 		var text_size: Vector2 = font.get_string_size(_label_text, HORIZONTAL_ALIGNMENT_CENTER, -1, fsize)
 		draw_string(font, Vector2(-text_size.x / 2.0, fsize / 2.0), _label_text,
 			HORIZONTAL_ALIGNMENT_CENTER, -1, fsize, Color.WHITE)
@@ -177,12 +194,13 @@ func _draw() -> void:
 		hl_rect.position - global_position - Vector2(0.0, DOOR_HIGHLIGHT_GROW_UP),
 		hl_rect.size + Vector2(0.0, DOOR_HIGHLIGHT_GROW_UP))
 	draw_rect(local_rect, Color(C_DOOR_HIGHLIGHT.r, C_DOOR_HIGHLIGHT.g, C_DOOR_HIGHLIGHT.b, 0.18), true)
-	draw_rect(local_rect, C_DOOR_HIGHLIGHT, false, 2.0)
+	draw_rect(local_rect, C_DOOR_HIGHLIGHT, false, 2.0 * s)
 
 # Fills each painted cell and outlines ONLY the outer boundary of the painted
 # blob (shared edges between two selected cells are skipped), so a hand-painted
 # mask reads as one solid highlighted shape instead of a grid of boxes.
 func _draw_cell_highlight(rects: Array[Rect2]) -> void:
+	var line_w: float = 2.0 * Global.ui_scale
 	var selected: Dictionary = {}  # Vector2i grid cell -> true
 	var local_rects: Array[Rect2] = []
 	for r in rects:
@@ -197,13 +215,13 @@ func _draw_cell_highlight(rects: Array[Rect2]) -> void:
 		var p := r.position
 		var s := r.size
 		if not selected.has(key + Vector2i.UP):
-			draw_line(p, p + Vector2(s.x, 0.0), C_DOOR_HIGHLIGHT, 2.0)
+			draw_line(p, p + Vector2(s.x, 0.0), C_DOOR_HIGHLIGHT, line_w)
 		if not selected.has(key + Vector2i.DOWN):
-			draw_line(p + Vector2(0.0, s.y), p + s, C_DOOR_HIGHLIGHT, 2.0)
+			draw_line(p + Vector2(0.0, s.y), p + s, C_DOOR_HIGHLIGHT, line_w)
 		if not selected.has(key + Vector2i.LEFT):
-			draw_line(p, p + Vector2(0.0, s.y), C_DOOR_HIGHLIGHT, 2.0)
+			draw_line(p, p + Vector2(0.0, s.y), C_DOOR_HIGHLIGHT, line_w)
 		if not selected.has(key + Vector2i.RIGHT):
-			draw_line(p + Vector2(s.x, 0.0), p + s, C_DOOR_HIGHLIGHT, 2.0)
+			draw_line(p + Vector2(s.x, 0.0), p + s, C_DOOR_HIGHLIGHT, line_w)
 
 func _input(event: InputEvent) -> void:
 	if mode != Mode.ENTER or not _player_nearby:
@@ -289,8 +307,9 @@ func _start_cooldown() -> void:
 
 # ── Confirm UI — same dialog as dungeon_portal.gd ─────────────────────
 func _build_confirm_ui() -> void:
+	var s: float = Global.ui_scale
 	var canvas := CanvasLayer.new()
-	canvas.layer        = 15
+	canvas.layer        = 30
 	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(canvas)
 
@@ -311,57 +330,57 @@ func _build_confirm_ui() -> void:
 	_confirm_ui.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(360, 180)
+	panel.custom_minimum_size = Vector2(int(360 * s), int(180 * s))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
-	ps.set_border_width_all(2); ps.set_corner_radius_all(8)
-	ps.content_margin_left = 20; ps.content_margin_right  = 20
-	ps.content_margin_top  = 16; ps.content_margin_bottom = 16
+	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
+	ps.content_margin_left = int(20 * s); ps.content_margin_right  = int(20 * s)
+	ps.content_margin_top  = int(16 * s); ps.content_margin_bottom = int(16 * s)
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 12)
+	vbox.add_theme_constant_override("separation", int(12 * s))
 	panel.add_child(vbox)
 
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 8)
+	header.add_theme_constant_override("separation", int(8 * s))
 	vbox.add_child(header)
 	var icon_lbl := Label.new()
 	icon_lbl.text = "⛰"
-	icon_lbl.add_theme_font_size_override("font_size", 20)
+	icon_lbl.add_theme_font_size_override("font_size", int(20 * s))
 	header.add_child(icon_lbl)
 	var title := Label.new()
 	title.text = "Large Cave Entrance"
-	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_font_size_override("font_size", int(14 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 
 	var div := ColorRect.new()
-	div.color = Color(0.30, 0.20, 0.55, 1.0); div.custom_minimum_size = Vector2(0, 1)
+	div.color = Color(0.30, 0.20, 0.55, 1.0); div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 
 	var hint := Label.new()
 	hint.text = "Enter the cave?"
-	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_font_size_override("font_size", int(12 * s))
 	hint.add_theme_color_override("font_color", C_MUTED)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(hint)
 
 	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 10)
+	btn_row.add_theme_constant_override("separation", int(10 * s))
 	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	vbox.add_child(btn_row)
 
 	var enter_btn := Button.new()
 	enter_btn.text = "  Enter  "
-	enter_btn.custom_minimum_size = Vector2(120, 36)
-	enter_btn.add_theme_font_size_override("font_size", 13)
+	enter_btn.custom_minimum_size = Vector2(int(120 * s), int(36 * s))
+	enter_btn.add_theme_font_size_override("font_size", int(13 * s))
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_ENTER; es.border_color = C_BORDER
-	es.set_border_width_all(1); es.set_corner_radius_all(4)
-	es.content_margin_top = 6; es.content_margin_bottom = 6
+	es.set_border_width_all(int(1 * s)); es.set_corner_radius_all(int(4 * s))
+	es.content_margin_top = int(6 * s); es.content_margin_bottom = int(6 * s)
 	enter_btn.add_theme_stylebox_override("normal",  es)
 	enter_btn.add_theme_stylebox_override("hover",   es)
 	enter_btn.add_theme_color_override("font_color", Color(0.8, 1.0, 0.8, 1.0))
@@ -370,12 +389,12 @@ func _build_confirm_ui() -> void:
 
 	var cancel_btn := Button.new()
 	cancel_btn.text = "  Cancel  "
-	cancel_btn.custom_minimum_size = Vector2(100, 36)
-	cancel_btn.add_theme_font_size_override("font_size", 13)
+	cancel_btn.custom_minimum_size = Vector2(int(100 * s), int(36 * s))
+	cancel_btn.add_theme_font_size_override("font_size", int(13 * s))
 	var cs := StyleBoxFlat.new()
 	cs.bg_color = C_CANCEL; cs.border_color = C_BORDER
-	cs.set_border_width_all(1); cs.set_corner_radius_all(4)
-	cs.content_margin_top = 6; cs.content_margin_bottom = 6
+	cs.set_border_width_all(int(1 * s)); cs.set_corner_radius_all(int(4 * s))
+	cs.content_margin_top = int(6 * s); cs.content_margin_bottom = int(6 * s)
 	cancel_btn.add_theme_stylebox_override("normal",  cs)
 	cancel_btn.add_theme_stylebox_override("hover",   cs)
 	cancel_btn.add_theme_color_override("font_color", Color(1.0, 0.8, 0.8, 1.0))

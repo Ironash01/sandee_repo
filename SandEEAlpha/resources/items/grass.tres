@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ItemData" format=3]
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://dir5cr2jx80r8"]
 
 [ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_grass"]
 [ext_resource type="Texture2D" uid="uid://e8vgowicxp6h" path="res://sprites/ground/grass.png" id="2_grass"]
@@ -13,7 +13,7 @@ item_name = "Grass"
 description = "A grassy tuft. Dev item — placed by the world generator; not obtainable in normal gameplay."
 item_type = "block"
 is_dev_item = true
-is_placeable = true
 icon = SubResource("AtlasTexture_grass_icon")
+is_placeable = true
 placeable_sprite = SubResource("AtlasTexture_grass_icon")
 place_scene_path = "res://scenes/objects/Grass.tscn"

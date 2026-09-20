@@ -37,24 +37,35 @@ func _ready() -> void:
 	Global.mission_updated.connect(_on_mission_updated)
 	Global.mission_completed.connect(_on_mission_completed)
 	Global.dungeon_cleared.connect(_on_dungeon_cleared)
+	Global.ui_scale_changed.connect(_on_ui_scale)
 	call_deferred("_refit")
 	call_deferred("_refill_pool")
 
+# Rebuild the tracker at the new scale so the font/size change applies live.
+func _on_ui_scale(_s: float) -> void:
+	if _panel != null:
+		_panel.queue_free()
+		_panel = null
+	_row_data.clear()
+	_build_panel()
+
 # ── Build the right-side panel ──────────────────────────────────────
 func _build_panel() -> void:
+	var s: float = Global.ui_scale
 	_panel = PanelContainer.new()
-	_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
+	_panel.custom_minimum_size = Vector2(PANEL_WIDTH * s, 0)
 	# No panel background / border — the tracker's text floats over the world.
 	_panel.add_theme_stylebox_override("panel",
-			_make_sb(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 0, 10, 10, 8, 8))
+			_make_sb(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 0,
+				int(10 * s), int(10 * s), int(8 * s), int(8 * s)))
 	add_child(_panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 6)
+	vbox.add_theme_constant_override("separation", int(6 * s))
 	_panel.add_child(vbox)
 
 	_stars_label = Label.new()
-	_stars_label.add_theme_font_size_override("font_size", 14)
+	_stars_label.add_theme_font_size_override("font_size", int(14 * s))
 	_stars_label.add_theme_color_override("font_color", C_STAR)
 	_stars_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_stars_label.text = _stars_text()
@@ -63,18 +74,19 @@ func _build_panel() -> void:
 	vbox.add_child(HSeparator.new())
 
 	_rows_vbox = VBoxContainer.new()
-	_rows_vbox.add_theme_constant_override("separation", 8)
+	_rows_vbox.add_theme_constant_override("separation", int(8 * s))
 	vbox.add_child(_rows_vbox)
 
 	_rebuild_rows()
 
 # ── Section label helper ──────────────────────────────────────────
 func _add_section(text: String) -> void:
+	var s: float = Global.ui_scale
 	var lbl := Label.new()
 	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_font_size_override("font_size", int(11 * s))
 	lbl.add_theme_color_override("font_color", C_SECTION)
-	lbl.add_theme_constant_override("line_spacing", 1)
+	lbl.add_theme_constant_override("line_spacing", int(1 * s))
 	_rows_vbox.add_child(lbl)
 
 # ── Rebuild rows ──────────────────────────────────────────────────
@@ -83,17 +95,15 @@ func _rebuild_rows() -> void:
 		child.free()
 	_row_data.clear()
 
-	# --- Lua (sequential: show next incomplete) ---
-	var lua_next := _next_dungeon_mission("lua")
-	if lua_next != null:
-		_add_section("LUA")
-		_add_dungeon_row(lua_next)
-
-	# --- Python (sequential: show next incomplete) ---
-	var py_next := _next_dungeon_mission("python")
-	if py_next != null:
-		_add_section("PYTHON")
-		_add_dungeon_row(py_next)
+	# --- Dungeons (sequential per language: the current mission of each) ---
+	# Both entrances already stand in the world; these rows just track
+	# progress. Completing one immediately reveals the next in that track.
+	for lang in Global.DUNGEON_LANGUAGES:
+		var current := Global.current_dungeon_mission(lang)
+		if current.is_empty():
+			continue
+		_add_section(String(lang).to_upper())
+		_add_dungeon_row(current)
 
 	# --- Gameplay (3 active, any order) ---
 	var gameplay := _active_gameplay()
@@ -104,24 +114,6 @@ func _rebuild_rows() -> void:
 
 	_stars_label.text = _stars_text()
 	_refit()
-
-# ── Find the next incomplete dungeon mission for a language ────────
-# Missions are sequential: only the lowest-index incomplete mission
-# is shown. Once completed, the next one appears.
-func _next_dungeon_mission(lang: String) -> Dictionary:
-	for m in Global.missions:
-		if m["completed"]:
-			continue
-		var d_idx: int = int(m.get("dungeon_index", 0))
-		if d_idx <= 0:
-			continue
-		if _mission_language(m) != lang:
-			continue
-		if Global.is_dungeon_mission_ready(d_idx):
-			return m
-		# Not ready yet — skip but don't show future locked ones
-		break
-	return {}
 
 # ── Get up to GAMEPLAY_POOL_SIZE active gameplay missions ──────────
 func _active_gameplay() -> Array:
@@ -137,67 +129,55 @@ func _active_gameplay() -> Array:
 	return result
 
 # ── Add a dungeon mission row ──────────────────────────────────────
+# Informational only — there is no accept/Go step anymore. Each language's
+# current dungeon entrance is already standing in the world (see world.gd's
+# _ensure_current_dungeon_entrances), so the row shows progress: a star for
+# the mission and a second star for clearing the dungeon.
 func _add_dungeon_row(m: Dictionary) -> void:
+	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", int(8 * s))
 	_rows_vbox.add_child(row)
 
 	var d_idx: int = int(m.get("dungeon_index", 0))
 	var cleared: bool = d_idx > 0 and Global.is_dungeon_cleared(d_idx)
 
-	var star_text: String
-	if d_idx > 0:
-		star_text = ("★" if m["completed"] else "☆") + ("★" if cleared else "☆")
-	else:
-		star_text = "★" if m["completed"] else "☆"
+	var star_text: String = ("★" if m["completed"] else "☆") + ("★" if cleared else "☆")
 	var star := Label.new()
 	star.text = star_text
-	star.add_theme_font_size_override("font_size", 14)
+	star.add_theme_font_size_override("font_size", int(14 * s))
 	star.add_theme_color_override("font_color",
 			C_STAR if (m["completed"] or cleared) else C_MUTED)
-	star.custom_minimum_size = Vector2(24, 0)
+	star.custom_minimum_size = Vector2(int(24 * s), 0)
 	row.add_child(star)
 
 	var lbl := Label.new()
 	lbl.text = m["title"]
-	lbl.add_theme_font_size_override("font_size", 12)
+	lbl.add_theme_font_size_override("font_size", int(12 * s))
 	lbl.add_theme_color_override("font_color", C_ACTIVE)
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(lbl)
-
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(56, 0)
-	btn.add_theme_font_size_override("font_size", 10)
-	if m["id"] == Global.accepted_mission_id:
-		btn.text = "Active"
-		btn.disabled = true
-	elif d_idx > 0 and not Global.is_dungeon_mission_ready(d_idx):
-		btn.text = "Locked"
-		btn.disabled = true
-	else:
-		btn.text = "Go"
-		btn.pressed.connect(Global.accept_mission.bind(m["id"]))
-	row.add_child(btn)
 
 	_row_data.append({"label": lbl, "m": m, "row": row})
 
 # ── Add a gameplay mission row ─────────────────────────────────────
 func _add_gameplay_row(m: Dictionary) -> void:
+	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", int(8 * s))
 	_rows_vbox.add_child(row)
 
 	var star := Label.new()
 	star.text = "★" if m["completed"] else "☆"
-	star.add_theme_font_size_override("font_size", 14)
+	star.add_theme_font_size_override("font_size", int(14 * s))
 	star.add_theme_color_override("font_color",
 			C_STAR if m["completed"] else C_MUTED)
-	star.custom_minimum_size = Vector2(24, 0)
+	star.custom_minimum_size = Vector2(int(24 * s), 0)
 	row.add_child(star)
 
 	var lbl := Label.new()
 	lbl.text = m["title"]
-	lbl.add_theme_font_size_override("font_size", 12)
+	lbl.add_theme_font_size_override("font_size", int(12 * s))
 	lbl.add_theme_color_override("font_color",
 			C_DONE if m["completed"] else C_ACTIVE)
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -253,22 +233,6 @@ func _stars_text() -> String:
 	var total: int = Global.missions.size() + Global.clearable_dungeon_count()
 	return "★ %d / %d" % [done, total]
 
-func _mission_language(m: Dictionary) -> String:
-	var d_idx: int = int(m.get("dungeon_index", 0))
-	if d_idx <= 0:
-		return ""
-	var dm := Global.get_dungeon_mission_for_index(d_idx)
-	if dm == null:
-		return ""
-	var fname: String = dm.entry_resource_file if dm != null else ""
-	if fname.is_empty() and dm != null:
-		fname = dm.resource_path
-	if fname.contains("_lua"):
-		return "lua"
-	if fname.contains("_python"):
-		return "python"
-	return ""
-
 func _make_sb(bg: Color, border: Color, bw: int, cr: int,
 		ml: int, mr: int, mt: int, mb: int) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -285,8 +249,9 @@ func _make_sb(bg: Color, border: Color, bw: int, cr: int,
 func _refit() -> void:
 	if _panel == null:
 		return
+	var s: float = Global.ui_scale
 	var vp_w := get_viewport_rect().size.x
-	_panel.position = Vector2(vp_w - PANEL_WIDTH - RIGHT_MARGIN, TOP_OFFSET)
+	_panel.position = Vector2(vp_w - PANEL_WIDTH * s - RIGHT_MARGIN * s, TOP_OFFSET * s)
 	_panel.size = _panel.get_combined_minimum_size()
 
 func _input(event: InputEvent) -> void:

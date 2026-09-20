@@ -12,7 +12,6 @@ script = ExtResource("1_0mhgo")
 item_name = "Cactus"
 description = "Can be used for very colorful purposes."
 icon = SubResource("AtlasTexture_noyac")
-max_stack_size = 32
 is_placeable = true
 placeable_sprite = SubResource("AtlasTexture_noyac")
 is_fuel = true

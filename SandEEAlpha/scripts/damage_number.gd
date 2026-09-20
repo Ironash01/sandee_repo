@@ -23,7 +23,10 @@ func _ready() -> void:
 func _draw() -> void:
 	if _text.is_empty():
 		return
+	# Read the scale live at draw time — damage numbers are short-lived, so no
+	# signal hookup is needed for a Small/Medium/Large change to take effect.
+	var fs: int = int(FONT_SIZE * Global.ui_scale)
 	var font := ThemeDB.fallback_font
-	var w := font.get_string_size(_text, HORIZONTAL_ALIGNMENT_CENTER, -1, FONT_SIZE).x
+	var w := font.get_string_size(_text, HORIZONTAL_ALIGNMENT_CENTER, -1, fs).x
 	draw_string(font, Vector2(-w * 0.5, 0.0), _text,
-		HORIZONTAL_ALIGNMENT_CENTER, -1, FONT_SIZE, C_TEXT)
+		HORIZONTAL_ALIGNMENT_CENTER, -1, fs, C_TEXT)

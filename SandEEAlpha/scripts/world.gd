@@ -8,7 +8,6 @@ const HEADLESS_FISH_SCENE: PackedScene = preload("res://scenes/mobs/HeadlessFish
 const PLAIN_TREE_TEX:  Texture2D   = preload("res://sprites/tree/tree.png")
 const SNOWY_TREE_TEX:  Texture2D   = preload("res://sprites/tree/snowy_tree.png")
 const SHADOW_TEXTURE:  Texture2D   = preload("res://sprites/shadow/shadow_base.png")
-const ITEM_DROP_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 const SWORD_SWING_SCRIPT: GDScript = preload("res://scripts/sword_swing_effect.gd")
 const CACTUS_SCENE:    PackedScene = preload("res://scenes/objects/PlaceableBlock.tscn")
 const CACTUS_DATA:     ItemData    = preload("res://resources/items/cactus.tres")
@@ -70,6 +69,11 @@ const CACTUS_SPAWN_INTERVAL: float = 300.0
 # up after load. Higher = finishes filling in sooner but each yielded frame
 # does more work; lower = smoother but takes longer to fully fill in.
 const GRASS_CHUNKS_PER_FRAME: int = 4
+# Chunks/frame for the INITIAL fill, which now runs behind the loading screen
+# (nothing to keep smooth, so it can afford much bigger bites and fewer
+# yielded frames). Only the loading-screen fill passes this; the default
+# GRASS_CHUNKS_PER_FRAME stays in place for any gentler future caller.
+const GRASS_CHUNKS_PER_FRAME_LOAD: int = 16
 
 # For Large Forest Gen (plains and snowy only)
 const LARGE_FOREST_MIN_SEP:   int   = 100
@@ -163,10 +167,11 @@ var _structure_anchor_tiles:   Array      = []   # top-left tiles, for the min-s
 var _located_structures:        Array      = []   # [{"name": String, "tile": Vector2i}, ...] — every placed structure/entrance, for /locate
 var _structure_sources:        Dictionary = {}   # GeneratedStructure -> source id in the Structures TileSet
 
-# ── Dungeon entrances (spawned on mission accept) ──────────────────────
-# Unlike caves (rolled during world-gen), a dungeon entrance spawns LATER —
-# the first time the player accepts a dungeon mission (see
-# _on_mission_accepted). Its chunk must satisfy every one of:
+# ── Dungeon entrances (one per language, always present) ──────────────
+# Unlike caves (rolled during world-gen), dungeon entrances are placed once
+# the world is built and kept in sync as each track advances (see
+# _ensure_current_dungeon_entrances). A dungeon's chunk must satisfy every
+# one of:
 #   a. no player-placed blocks in it
 #   b. not a cave-claimed chunk
 #   c. not the chunk the player is currently standing in
@@ -175,6 +180,10 @@ const DUNGEON_PORTAL_SCENE: PackedScene = preload("res://scenes/objects/DungeonP
 const DUNGEON_SPAWN_MIN_DIST_TILES: float = 200.0   # tiles (blocks) from world spawn
 const DUNGEON_INVALID_TILE: Vector2i = Vector2i(1 << 20, 1 << 20)  # sentinel, outside any map bounds
 var _dungeon_entrance_tiles: Dictionary = {}  # dungeon_index -> Vector2i tile
+# Entrances may only spawn once world-gen has finished: mission_updated fires
+# for gameplay missions too (e.g. the "move" tutorial), which can land while
+# chunks/terrain/structure claims are still being built.
+var _dungeon_entrances_ready: bool = false
 var _dungeon_portal_nodes:   Dictionary = {}  # dungeon_index -> spawned DungeonPortal (so a cleared dungeon's entrance can be removed)
 var _dungeon_entrance_pool:   Array = []    # cached GeneratedStructure resources with type == "dungeon entrances"
 var _dungeon_entrance_structure_cells: Dictionary = {}  # dungeon_index -> Array[Vector2i] cells painted for the entrance
@@ -187,7 +196,7 @@ var _dungeon_entrance_cells:  Dictionary = {}   # cell (Vector2i) -> true — ev
 # _on_swing_performed below. A grass-scale
 # (thousands of tufts) periodic full-group scan was tried and became the
 # dominant runtime cost; grass cutting is driven centrally instead, same
-# O(1) dictionary-lookup approach _destroy_hovered_block() already uses for
+# O(1) dictionary-lookup approach the _placed_blocks map already uses for
 # placed blocks.
 const TREE_INTERACT_RADIUS: float = 300.0
 # ── Tree leaf-fade (player hides behind the canopy) ──────────────────
@@ -219,10 +228,24 @@ const DESPAWN_INNER_RADIUS: float = 100.0 * TILE_SIZE
 const DESPAWN_SAFE_RADIUS:  float = 200.0 * TILE_SIZE
 const DESPAWN_CHECK_INTERVAL: float = 10.0
 
-# Periodic overworld spawner — a single unified check across every eligible
-# outer chunk, cadence depending on time of day (see Global.is_daytime).
-const OUTER_SPAWN_INTERVAL_DAY:   float = 600.0  # 10 minutes
-const OUTER_SPAWN_INTERVAL_NIGHT: float = 180.0  # 3 minutes
+# ── Ambient spawn director tuning ────────────────────────────────────
+# Continuous, CAPPED population spawned in a ring just around the player
+# (Terraria-style). See _start_ambient_spawn_timer / _run_ambient_spawn.
+const AMBIENT_RING_MIN_TILES: int = 18     # just off-screen — no pop-in
+const AMBIENT_RING_MAX_TILES: int = 44
+const AMBIENT_DESPAWN_TILES:  int = 72     # beyond this for LINGER sec → recycled
+const AMBIENT_STRAY_LINGER:   float = 5.0
+# Small no-spawn bubble around the world spawn tile only. Must stay well under
+# RING_MIN so it never eats the ring when the player is standing at spawn.
+const AMBIENT_SPAWN_SAFE_TILES: int = 10
+const AMBIENT_DAY_CAP:        int = 10
+const AMBIENT_DAY_INTERVAL:   float = 4.0
+const AMBIENT_DAY_ATTEMPTS_MIN: int = 1
+const AMBIENT_DAY_ATTEMPTS_MAX: int = 2
+const AMBIENT_NIGHT_CAP:      int = 14
+const AMBIENT_NIGHT_INTERVAL: float = 2.5
+const AMBIENT_NIGHT_ATTEMPTS_MIN: int = 1
+const AMBIENT_NIGHT_ATTEMPTS_MAX: int = 3
 
 # Pool of mobs the overworld spawner can pick from — each entry pairs a scene
 # with the MobCombatData resource that drives its spawn rules (biome,
@@ -233,6 +256,12 @@ var MOB_SPAWN_POOL: Array = [
 	{"scene": WORM_SCENE, "data": preload("res://resources/mobs/worm.tres")},
 	{"scene": HEADLESS_FISH_SCENE, "data": preload("res://resources/mobs/headless_fish.tres")},
 ]
+
+# The self-rescheduling ambient spawn timer; re-armed on each period flip so
+# the interval follows day/night (see _on_night_started / _on_day_started).
+var _ambient_spawn_timer: Timer = null
+# Stray-recycle bookkeeping: mob instance id -> seconds spent beyond the ring.
+var _ambient_stray: Dictionary = {}
 
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
@@ -351,7 +380,10 @@ func _ready() -> void:
 	_setup_glow_environment()
 	Global.hotbar_selection_changed.connect(_on_hotbar_changed)
 	Global.Hotbar_updated.connect(_on_hotbar_changed)
-	Global.mission_accepted.connect(_on_mission_accepted)
+	Global.mission_updated.connect(_on_mission_updated)
+	# Each period flip refills the ambient ring to that period's cap.
+	Global.night_started.connect(_on_night_started)
+	Global.day_started.connect(_on_day_started)
 	# The swing is owned by the player (it fires in every world backend); this
 	# overworld listens for it to run the sword grass-cut on the same trigger.
 	# Deferred: World's _ready runs before the Player's _ready (sibling order
@@ -377,10 +409,6 @@ func _input(event: InputEvent) -> void:
 	# to Global.block_mode/its own toggle_*() methods now, not detect the
 	# keypresses itself.
 	if not Global.block_mode:
-		# Shift + left-click: instantly destroy the nearest placed block.
-		if event.is_action_pressed("mouse_left") and Input.is_key_pressed(KEY_SHIFT):
-			_destroy_hovered_block()
-			return
 		return
 	if event.is_action_pressed("mouse_left"):
 		place_block()
@@ -389,6 +417,15 @@ func _input(event: InputEvent) -> void:
 # world backend; this overworld reacts to it): if a sword is held, cut the
 # grass row in front of the player.
 func _on_swing_performed() -> void:
+	# The overworld is kept alive (removed from the tree, not freed) while the
+	# player is in a cave or dungeon — and its swing_performed connection
+	# survives that swap, so this can fire for a swing that happened in
+	# ANOTHER world. Ignore it off-tree: acting on it would cut + queue_free
+	# overworld tufts while Global.world_node points at the dungeon, so
+	# notify_grass_removed() never reaches THIS world and _grass_occupied_tiles
+	# keeps a freed entry that crashes the next lookup (see _cut_grass_row).
+	if not is_inside_tree():
+		return
 	var p: Node2D = _get_player()
 	if p == null or not p.has_method("get_facing_dir"):
 		return
@@ -400,11 +437,29 @@ func _on_swing_performed() -> void:
 		return
 	_cut_grass_row(p)
 
+# The tile offset to cut: the nearest table direction to where the player is
+# POINTING (the mouse), falling back to the 8-way WASD facing when the cursor
+# sits on the player. Keeps the grass cut aligned with the mouse-aimed swing.
+func _grass_cut_offset(p: Node2D) -> Vector2i:
+	var aim: Vector2 = p.get_global_mouse_position() - p.global_position
+	if aim.length_squared() < 4.0:
+		return GRASS_CUT_DIR_VECTORS.get(p.call("get_facing_dir"), Vector2i(0, 1)) as Vector2i
+	var want: Vector2 = aim.normalized()
+	var best: Vector2i = Vector2i(0, 1)
+	var best_dot: float = -INF
+	for v in GRASS_CUT_DIR_VECTORS.values():
+		var dv: Vector2i = v as Vector2i
+		var dot: float = want.dot(Vector2(dv).normalized())
+		if dot > best_dot:
+			best_dot = dot
+			best    = dv
+	return best
+
 func _cut_grass_row(p: Node2D) -> void:
 	var held: Variant = Global.get_hotbar_item()
 	if held == null or not (held as Dictionary).has("data"):
 		return
-	var d: Vector2i = GRASS_CUT_DIR_VECTORS.get(p.call("get_facing_dir"), Vector2i(0, 1)) as Vector2i
+	var d: Vector2i = _grass_cut_offset(p)
 	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(p.global_position))
 	var center:      Vector2i = player_tile + d
 	# One tile per swing: the tile directly in front of the player. (The old
@@ -413,44 +468,17 @@ func _cut_grass_row(p: Node2D) -> void:
 	var tile: Vector2i = center
 	
 	# trying to cast freed object.
-	var tuft: GrassTuft = _grass_occupied_tiles.get(tile) as GrassTuft
+	# NOTE: `x as GrassTuft` itself CRASHES on a freed object ("Trying to cast
+	# a freed object") before any is_instance_valid() can run — so validate the
+	# raw Variant FIRST, and erase the stale key so it can't be hit again.
+	var raw: Variant = _grass_occupied_tiles.get(tile)
+	if raw == null or not is_instance_valid(raw):
+		_grass_occupied_tiles.erase(tile)
+		return
+	var tuft: GrassTuft = raw as GrassTuft
 	if tuft != null and is_instance_valid(tuft):
 		tuft.cut()
 		_spawn_sword_effect(tuft.global_position, "puff")
-
-func _destroy_hovered_block() -> void:
-	var mouse_pos: Vector2 = get_global_mouse_position()
-	var best_cell: Variant = null
-	var best_dist: float   = INTERACT_RADIUS_PX
-	for cell in _placed_blocks:
-		var entry: Dictionary = _placed_blocks[cell] as Dictionary
-		var node_ref: Variant = entry["node"]
-		if not is_instance_valid(node_ref):
-			continue
-		var node: Node2D = node_ref as Node2D
-		if node == null:
-			continue
-		var dist: float = mouse_pos.distance_to(node.global_position)
-		if dist < best_dist:
-			best_dist = dist
-			best_cell = cell
-	if best_cell == null:
-		return
-	# Consume the event so the block's own _input doesn't also fire.
-	get_viewport().set_input_as_handled()
-	var entry: Dictionary = _placed_blocks[best_cell] as Dictionary
-	var node_ref2: Variant = entry["node"]
-	if is_instance_valid(node_ref2):
-		var node: Node = node_ref2 as Node
-		if node != null:
-			var idata: ItemData = node.get("item_data") as ItemData
-			if idata != null:
-				var drop: Node = ITEM_DROP_SCENE.instantiate()
-				drop.call("set_item_data", idata)
-				add_child(drop)
-				drop.global_position = node.global_position + Vector2(0, -16)
-			node.queue_free()
-	_placed_blocks.erase(best_cell)
 
 # ── Grass cutting (sword-only, instant, facing-based) ──────────────────
 # Grass can only be cut while the selected hotbar item is a sword
@@ -523,7 +551,15 @@ func _update_grass_sort() -> void:
 	var covered: Array = []
 	for dx in range(-GRASS_SORT_RANGE, GRASS_SORT_RANGE + 1):
 		for dy in range(-GRASS_SORT_RANGE, GRASS_SORT_RANGE + 1):
-			var tuft: GrassTuft = _grass_occupied_tiles.get(feet_tile + Vector2i(dx, dy)) as GrassTuft
+			# Validate the raw Variant before the typed cast — casting a freed
+			# object crashes outright (see _cut_grass_row).
+			var raw: Variant = _grass_occupied_tiles.get(feet_tile + Vector2i(dx, dy))
+			if raw == null:
+				continue
+			if not is_instance_valid(raw):
+				_grass_occupied_tiles.erase(feet_tile + Vector2i(dx, dy))
+				continue
+			var tuft: GrassTuft = raw as GrassTuft
 			if tuft == null or not is_instance_valid(tuft):
 				continue
 			var root: float = tuft.root_y()
@@ -635,9 +671,23 @@ func _check_desert_worm_spawn(_delta: float) -> void:
 	var biome: int = _cell_biome_type(tile)
 
 	if biome == 1 and _last_player_biome != 1:
-		# Player just entered desert — spawn worms immediately (guaranteed)
-		_spawn_desert_worms_near_player(WORM_SCENE, preload("res://resources/mobs/worm.tres"))
+		# Player just entered desert — guarantee a worm encounter right away.
+		_spawn_desert_worms_ambient(3)
 	_last_player_biome = biome
+
+# Guaranteed worm spawns in the ambient ring (used on desert entry). Reuses the
+# director's tile rules so it lands somewhere valid and off-screen.
+func _spawn_desert_worms_ambient(count: int) -> void:
+	var p := _get_player()
+	if p == null:
+		return
+	var data: MobCombatData = preload("res://resources/mobs/worm.tres")
+	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(p.global_position))
+	for _i in range(count):
+		var tile: Variant = _find_ambient_tile(player_tile, data)
+		if tile == null:
+			continue
+		_spawn_mob_at(tile, WORM_SCENE)
 
 # One Vector2 write per frame onto the single shared grass ShaderMaterial —
 # every tuft reads it on the GPU, so this costs the same whether there are
@@ -686,34 +736,35 @@ func _deferred_foliage() -> void:
 	var t0 := Time.get_ticks_msec()
 	_place_foliage()
 	print("[FOLIAGE] total %d trees in %dms" % [_tree_spawn_count, Time.get_ticks_msec() - t0])
-	print("[WORLD] fully loaded in %dms since scene start" % [Time.get_ticks_msec() - _gen_start_ms])
 	if not Global.pending_world_data.is_empty():
 		apply_world_save_data(Global.pending_world_data)
 		Global.pending_world_data.clear()
-	# Repair the state where a dungeon mission is accepted but its entrance
-	# never got recorded — e.g. an old save from before the spawner's all-ocean
-	# chunk fix, or a spawn interrupted by a quit. Re-accepting isn't possible
-	# once the mission UI disables that mission's Accept button, so reconcile
-	# here instead: if the accepted dungeon has no entrance, spawn one now.
-	_ensure_accepted_dungeon_entrance()
+	# Keep one dungeon entrance alive for each language's current mission.
+	# Runs on world ready (including after apply_world_save_data above, which
+	# may have restored saved entrance tiles) and on every later mission
+	# update, so clearing a dungeon immediately posts the next entrance.
+	# The ready flag gates the mission_updated handler so nothing tries to
+	# spawn during world-gen (see the flag's declaration).
+	_dungeon_entrances_ready = true
+	_ensure_current_dungeon_entrances()
 	_start_interaction_updater()
 	_start_despawn_timer()
-	_start_outer_spawn_timer()
+	_start_ambient_spawn_timer()
 	_start_grass_regrow_timer()
 	_start_cactus_spawn_timer()
+	# Fill EVERY grass tuft BEFORE generation_complete comes down, so the world
+	# is fully dressed the instant the loading screen lifts and the player
+	# never watches grass pop in. This yields every few chunks (so the loading
+	# screen keeps rendering and the progress label ticks), hence the await —
+	# it must stay AFTER apply_world_save_data() above (needs _placed_blocks
+	# final so grass doesn't overlap restored structures) and after
+	# _place_foliage() (needs _tree_occupied_tiles final).
+	generation_status_changed.emit("Growing grass...")
+	await _fill_all_chunks_with_grass(GRASS_CHUNKS_PER_FRAME_LOAD)
+	# Everything (terrain, trees, structures, mobs, grass) now exists — the
+	# loading screen can come down.
+	print("[WORLD] fully loaded in %dms since scene start" % [Time.get_ticks_msec() - _gen_start_ms])
 	generation_complete.emit()
-	# Grass fill runs AFTER the player is already free to move, not before —
-	# it's purely decorative and walkable (no collision; the y-sort covering
-	# is handled per-frame by _update_grass_sort), so spawning thousands of
-	# them synchronously here was the main remaining cause of "world loading
-	# feels slow." _fill_all_chunks_with_grass() spreads its own work across
-	# many frames internally (see GRASS_CHUNKS_PER_FRAME), so this call is
-	# deliberately fire-and-forget, not awaited — tiles fill in progressively
-	# in the background while the player is already exploring. Must still run
-	# after _place_foliage() (needs _tree_occupied_tiles final) and after
-	# apply_world_save_data() (needs _placed_blocks final so grass doesn't
-	# overlap restored structures) — both already happened above.
-	_fill_all_chunks_with_grass()
 
 func _start_interaction_updater() -> void:
 	# Immediate pass so trees near spawn are active the moment the player
@@ -725,12 +776,27 @@ func _start_interaction_updater() -> void:
 	t.timeout.connect(_update_tree_interactions)
 	add_child(t)
 
+# get_nodes_in_group() allocates a fresh Array every call; the Tree group is
+# static after generation (trees are only REMOVED when chopped), so cache the
+# array and refresh it once a second instead of rebuilding it every frame —
+# _update_tree_fade runs at 60fps and _update_tree_interactions at 10Hz, so the
+# old code allocated a ~1200-element array ~70 times a second.
+var _tree_cache:    Array = []
+var _tree_cache_ms: int   = -100000
+
+func _get_trees() -> Array:
+	var now: int = Time.get_ticks_msec()
+	if now - _tree_cache_ms >= 1000:
+		_tree_cache = get_tree().get_nodes_in_group("Tree")
+		_tree_cache_ms = now
+	return _tree_cache
+
 func _update_tree_interactions() -> void:
 	var p := _get_player()
 	if p == null:
 		return
 	var player_pos := p.global_position
-	for tree in get_tree().get_nodes_in_group("Tree"):
+	for tree in _get_trees():
 		if not is_instance_valid(tree):
 			continue
 		var t_node := tree as Node2D
@@ -768,7 +834,7 @@ func _update_tree_fade(delta: float) -> void:
 	# keep fading back down for this extra stretch south of it so the tree
 	# has time to return to opaque before it's skipped.
 	const RESET_WINDOW: float = 32.0
-	for tree in get_tree().get_nodes_in_group("Tree"):
+	for tree in _get_trees():
 		if not is_instance_valid(tree):
 			continue
 		var t_node := tree as Node2D
@@ -794,6 +860,10 @@ func _world_spawn_pos() -> Vector2:
 	return to_global(Vector2.ZERO)
 
 # ── Mob despawn timer (inner/safe/outer) ─────────────────────────────
+# Runs over EVERY mob ("Mob" group), not just wolves — worms already expose
+# _apply_despawn_zone() and the fish gained one, so a backstop zone timer now
+# covers everything the ambient director misses. The director's ring recycle
+# (_despawn_strays) is the primary cull; this cleans up far-away stragglers.
 func _start_despawn_timer() -> void:
 	var t := Timer.new()
 	t.wait_time = DESPAWN_CHECK_INTERVAL
@@ -805,7 +875,7 @@ func _update_mob_despawn_timers() -> void:
 	var p := _get_player()
 	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
 	var spawn_pos:  Vector2 = _world_spawn_pos()
-	for mob in get_tree().get_nodes_in_group("Wolf"):
+	for mob in get_tree().get_nodes_in_group("Mob"):
 		if not is_instance_valid(mob):
 			continue
 		var m2d: Node2D = mob as Node2D
@@ -859,22 +929,6 @@ func _mob_allows_biome(data: MobCombatData, biome_code: int) -> bool:
 		-1: return data.spawn_ocean
 	return false
 
-func _random_valid_mob_tile_in_chunk(chunk: Vector2i, data: MobCombatData) -> Variant:
-	var half_w: int = width  / 2
-	var half_h: int = height / 2
-	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
-	for _i in range(20):
-		var tile: Vector2i = tl + Vector2i(rng.randi_range(0, CHUNK_SIZE - 1), rng.randi_range(0, CHUNK_SIZE - 1))
-		var biome: int = _cell_biome_type(tile)
-		if not _mob_allows_biome(data, biome):
-			continue
-		# Land mobs keep a shoreline buffer, same as the old Plains-only rule;
-		# an ocean-eligible mob obviously needs to be allowed on water itself.
-		if biome != -1 and _has_water_nearby(tile, 3):
-			continue
-		return tile
-	return null
-
 func _spawn_mob_at(tile: Vector2i, scene: PackedScene) -> void:
 	var local_pos: Vector2 = ground_layer.map_to_local(tile)
 	var world_pos: Vector2 = ground_layer.to_global(local_pos)
@@ -886,90 +940,187 @@ func _spawn_mob_at(tile: Vector2i, scene: PackedScene) -> void:
 	mob.global_position = world_pos
 	print("[Spawn] Spawned ", mob.name, " at tile=", tile, " pos=", world_pos)
 
-# ── Periodic overworld spawner ───────────────────────────────────────
-# A single unified check, cadence depending on time of day (Global.is_daytime)
-# — every OUTER_SPAWN_INTERVAL_DAY by day, OUTER_SPAWN_INTERVAL_NIGHT by
-# night. One-shot + self-rescheduled (rather than a fixed repeating Timer) so
-# the interval adapts across a day/night crossing instead of being locked in
-# at whatever it was when the Timer started.
-func _start_outer_spawn_timer() -> void:
-	print("[Spawn] _start_outer_spawn_timer called | is_day=", Global.is_daytime)
+# ── Ambient spawn director ───────────────────────────────────────────
+# Terraria-style: a continuous, CAPPED population spawned in a ring just
+# around the player. Every tick it tops the live count back up to the period's
+# cap, ramping as the night deepens; mobs that stray too far are recycled so
+# the budget keeps flowing. Replaces the old "far-away outer chunks every N
+# minutes" pass, which stocked chunks the player never actually saw.
+func _start_ambient_spawn_timer() -> void:
 	var t := Timer.new()
 	t.one_shot = true
-	t.timeout.connect(_run_overworld_spawn.bind(t))
+	t.timeout.connect(_run_ambient_spawn)
 	add_child(t)
-	t.start(OUTER_SPAWN_INTERVAL_DAY if Global.is_daytime else OUTER_SPAWN_INTERVAL_NIGHT)
+	_ambient_spawn_timer = t
+	t.start(_ambient_interval())
 
-# Every eligible outer chunk gets a spawn attempt each time this runs (not
-# just one random chunk) — the timer's own day/night interval is what
-# throttles frequency now, so there's no separate per-chunk cooldown to track.
-func _run_overworld_spawn(t: Timer) -> void:
-	print("[Spawn] _run_overworld_spawn called | is_day=", Global.is_daytime, " pool_size=", MOB_SPAWN_POOL.size())
+func _ambient_interval() -> float:
+	return AMBIENT_DAY_INTERVAL if Global.is_daytime else AMBIENT_NIGHT_INTERVAL
+
+func _ambient_cap() -> int:
+	return AMBIENT_DAY_CAP if Global.is_daytime else AMBIENT_NIGHT_CAP
+
+# Mobs eligible right now (per-mob day/night flags; biome is checked per tile).
+func _ambient_pool() -> Array:
+	var pool: Array = []
+	for entry in MOB_SPAWN_POOL:
+		var data: MobCombatData = entry["data"] as MobCombatData
+		var ok_now: bool = data.spawn_during_day if Global.is_daytime else data.spawn_during_night
+		if ok_now and data.spawn_weight > 0.0:
+			pool.append(entry)
+	return pool
+
+func _run_ambient_spawn() -> void:
 	var p := _get_player()
-	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
-	var spawn_pos:  Vector2 = _world_spawn_pos()
+	if p != null and not Global.player_is_dead:
+		_despawn_strays(p.global_position)
+		_top_up_ambient(p.global_position)
+	if _ambient_spawn_timer != null and is_instance_valid(_ambient_spawn_timer):
+		_ambient_spawn_timer.start(_ambient_interval())
 
-	var eligible: Array[Vector2i] = []
-	for cx in range(_chunk_cols):
-		for cy in range(_chunk_rows):
-			var chunk := Vector2i(cx, cy)
-			if _is_chunk_outer(chunk, player_pos, spawn_pos):
-				eligible.append(chunk)
+# Spawn attempts per tick: flat by day, ramping to the max as night deepens.
+func _ambient_attempts() -> int:
+	if Global.is_daytime:
+		return AMBIENT_DAY_ATTEMPTS_MIN
+	var t: float = _night_progress()
+	return AMBIENT_NIGHT_ATTEMPTS_MIN \
+		+ roundi(t * float(AMBIENT_NIGHT_ATTEMPTS_MAX - AMBIENT_NIGHT_ATTEMPTS_MIN))
 
-	for pool_entry in MOB_SPAWN_POOL:
-		var data: MobCombatData = pool_entry["data"] as MobCombatData
-		var eligible_now: bool = data.spawn_during_day if Global.is_daytime else data.spawn_during_night
-		print("[Spawn] Pool: ", data.mob_name, " | day=", data.spawn_during_day, " night=", data.spawn_during_night, " eligible=", eligible_now, " is_day=", Global.is_daytime)
-		if not eligible_now:
+func _night_progress() -> float:
+	var cyc: Node = Global.day_night_cycle
+	if cyc != null and cyc.has_method("night_progress"):
+		return float(cyc.call("night_progress"))
+	return 0.0
+
+func _top_up_ambient(player_pos: Vector2) -> void:
+	var pool: Array = _ambient_pool()
+	if pool.is_empty():
+		return
+	var live: int = _count_ambient_mobs(player_pos)
+	var cap: int = _ambient_cap()
+	if live >= cap:
+		return
+	var budget: int = mini(_ambient_attempts(), cap - live)
+	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(player_pos))
+	for _i in range(budget):
+		var entry: Dictionary = _pick_ambient_entry(pool)
+		if entry.is_empty():
 			continue
-		# Desert worms use the special near-player spawner.  Keyed off the
-		# AI type, NOT spawn_desert — spawn_desert is a biome-eligibility
-		# flag that other mobs (e.g. the night Headless Fish) also use.
-		if data.ai_type == "WORM":
-			_spawn_desert_worms_near_player(pool_entry["scene"] as PackedScene, data)
+		var tile: Variant = _find_ambient_tile(player_tile, entry["data"] as MobCombatData)
+		if tile == null:
 			continue
-		for chunk in eligible:
-			var count: int = rng.randi_range(data.min_spawn, data.max_spawn)
-			for _n in range(count):
-				var tile = _random_valid_mob_tile_in_chunk(chunk, data)
-				if tile == null:
-					continue
-				_spawn_mob_at(tile, pool_entry["scene"] as PackedScene)
+		_spawn_mob_at(tile, entry["scene"] as PackedScene)
 
-	t.start(OUTER_SPAWN_INTERVAL_DAY if Global.is_daytime else OUTER_SPAWN_INTERVAL_NIGHT)
+func _pick_ambient_entry(pool: Array) -> Dictionary:
+	var total: float = 0.0
+	for e in pool:
+		total += ((e as Dictionary)["data"] as MobCombatData).spawn_weight
+	if total <= 0.0:
+		return {}
+	var roll: float = rng.randf() * total
+	for e in pool:
+		roll -= ((e as Dictionary)["data"] as MobCombatData).spawn_weight
+		if roll <= 0.0:
+			return e as Dictionary
+	return pool[pool.size() - 1] as Dictionary
 
-# ── Desert worm spawner — spawns near the player in desert chunks ──
-func _spawn_desert_worms_near_player(scene: PackedScene, data: MobCombatData) -> void:
+# A random tile in the ring around the player the mob is allowed to stand on.
+func _find_ambient_tile(player_tile: Vector2i, data: MobCombatData) -> Variant:
+	for _i in range(40):
+		var angle: float = rng.randf() * TAU
+		var dist:  float = rng.randf_range(float(AMBIENT_RING_MIN_TILES), float(AMBIENT_RING_MAX_TILES))
+		var tile := Vector2i(
+			player_tile.x + roundi(cos(angle) * dist),
+			player_tile.y + roundi(sin(angle) * dist))
+		if _valid_ambient_tile(tile, data):
+			return tile
+	return null
+
+# Ground rules: biome the mob allows, dry land for land mobs, not on a player
+# placement (keeps bases safe), not on a structure, not right on world spawn.
+func _valid_ambient_tile(tile: Vector2i, data: MobCombatData) -> bool:
+	var biome: int = _cell_biome_type(tile)
+	if not _mob_allows_biome(data, biome):
+		return false
+	if biome != -1 and _has_water_nearby(tile, 3):
+		return false
+	if _placed_blocks.has(tile):
+		return false
+	if structures_layer.get_cell_source_id(tile) != -1:
+		return false
+	var world_pos: Vector2 = ground_layer.to_global(ground_layer.map_to_local(tile))
+	if world_pos.distance_to(_world_spawn_pos()) < float(AMBIENT_SPAWN_SAFE_TILES) * TILE_SIZE:
+		return false
+	return true
+
+# Live ambient mobs within the ring; the director's cap counts only these, so
+# distant/foreign mobs never eat the budget.
+func _count_ambient_mobs(player_pos: Vector2) -> int:
+	var limit: float = float(AMBIENT_RING_MAX_TILES) * TILE_SIZE
+	var n: int = 0
+	for mob in get_tree().get_nodes_in_group("Mob"):
+		if is_instance_valid(mob) \
+				and (mob as Node2D).global_position.distance_to(player_pos) <= limit:
+			n += 1
+	return n
+
+# Recycle mobs that have wandered well past the ring so their slot is freed
+# for a fresh spawn. Never teleports — they despawn and something new arrives.
+func _despawn_strays(player_pos: Vector2) -> void:
+	var limit: float = float(AMBIENT_DESPAWN_TILES) * TILE_SIZE
+	var next: Dictionary = {}
+	for mob in get_tree().get_nodes_in_group("Mob"):
+		if not is_instance_valid(mob):
+			continue
+		var m2d: Node2D = mob as Node2D
+		if m2d.global_position.distance_to(player_pos) <= limit:
+			continue
+		var id: int = m2d.get_instance_id()
+		var t: float = float(_ambient_stray.get(id, 0.0)) + _ambient_interval()
+		if t >= AMBIENT_STRAY_LINGER:
+			mob.queue_free()
+		else:
+			next[id] = t
+	_ambient_stray = next
+
+# ── Dusk / dawn kickstart ────────────────────────────────────────────
+# The moment the period flips, fill the arena straight to the new cap (the
+# Terraria dusk burst), then the director tops it up as mobs die or stray out.
+# Night mobs despawn themselves at day_started, so dawn refills with the day
+# pool and the world never sits empty.
+func _on_night_started() -> void:
+	_fill_ambient_to_cap()
+	_restart_ambient_timer()
+
+func _on_day_started() -> void:
+	_fill_ambient_to_cap()
+	_restart_ambient_timer()
+
+func _restart_ambient_timer() -> void:
+	if _ambient_spawn_timer != null and is_instance_valid(_ambient_spawn_timer):
+		_ambient_spawn_timer.start(_ambient_interval())
+
+func _fill_ambient_to_cap() -> void:
 	var p := _get_player()
 	if p == null:
 		return
-
-	# Count existing worms to cap at max_spawn
-	var worm_count: int = 0
-	for mob in get_tree().get_nodes_in_group("Worm"):
-		if is_instance_valid(mob):
-			worm_count += 1
-	var max_to_spawn: int = mini(data.max_spawn - worm_count, 5)
-	if max_to_spawn <= 0:
+	var pool: Array = _ambient_pool()
+	if pool.is_empty():
 		return
-
-	# Find a desert tile near the player by scanning outward in a spiral
+	var live: int = _count_ambient_mobs(p.global_position)
+	var cap: int = _ambient_cap()
 	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(p.global_position))
-	var spawned := 0
-	for radius in range(3, 50):
-		for _i in range(radius * 4):
-			var angle: float = rng.randf() * TAU
-			var dist:  float = float(radius)
-			var check := Vector2i(
-				player_tile.x + roundi(dist * cos(angle)),
-				player_tile.y + roundi(dist * sin(angle)))
-			if _cell_biome_type(check) == 1 and not _has_water_nearby(check, 3):
-				_spawn_mob_at(check, scene)
-				spawned += 1
-				if spawned >= max_to_spawn:
-					return
-			if spawned >= max_to_spawn:
-				return
+	var guard: int = 0
+	while live < cap and guard < cap * 40:
+		guard += 1
+		var entry: Dictionary = _pick_ambient_entry(pool)
+		if entry.is_empty():
+			break
+		var tile: Variant = _find_ambient_tile(player_tile, entry["data"] as MobCombatData)
+		if tile == null:
+			continue
+		_spawn_mob_at(tile, entry["scene"] as PackedScene)
+		live += 1
 
 # ── Mob preservation (save/load) ─────────────────────────────────────
 func _is_in_preserve_zone(pos: Vector2, player_pos: Vector2) -> bool:
@@ -1246,6 +1397,74 @@ func _is_placeable_item(item) -> bool:
 		return false
 	return (item["data"] as ItemData).is_placeable
 
+# True when a block may legally occupy `cell` — the shared validation used by
+# BOTH the player's place_block() and the Lua robot's placement. Pure query:
+# no side effects, so it can be called to preview/validate a whole build.
+func can_place_at(cell: Vector2i) -> bool:
+	if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
+		return false
+	if _grass_occupied_tiles.has(cell):
+		return false
+	if _is_tree_occupied(cell):
+		return false
+	if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
+		return false
+	if water_layer.get_cell_source_id(cell) != -1:
+		return false
+	return true
+
+# Places `item_data`'s block at `cell` (world/tile coords), skipping the
+# player-specific checks (reach radius, player-overlap). Returns the spawned
+# node, or null when the cell is invalid or the scene can't load. Does NOT
+# touch any inventory — the CALLER decides what to consume. Shared by the
+# player's place_block() and the Lua robot so both obey identical rules.
+func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
+	if item_data == null or item_data.place_scene_path == "":
+		return null
+	if not can_place_at(cell):
+		return null
+	if not ResourceLoader.exists(item_data.place_scene_path):
+		return null
+	var obj_scene: PackedScene = load(item_data.place_scene_path)
+	if obj_scene == null:
+		return null
+	var obj: Node = obj_scene.instantiate()
+	if obj == null:
+		return null
+	if obj.has_method("setup"):
+		obj.call("setup", item_data)
+	_placed_blocks[cell] = {"node": obj, "name": item_data.item_name}
+	if obj.has_method("set_world_cell"):
+		obj.call("set_world_cell", cell, self)
+	add_child(obj)
+	if not is_instance_valid(obj):
+		_placed_blocks.erase(cell)
+		return null
+	var world_pos: Vector2 = editable_layer.map_to_local(cell)
+	obj.position = world_pos
+	obj.z_index  = int(world_pos.y / TILE_SIZE)
+	_fix_sprite_offset(obj)
+	_refresh_neighbor_u_collision(cell)
+	# Debris burst coloured like the block (also the visual feedback the robot's
+	# paced placement rides on).
+	var place_tex: Texture2D = item_data.placeable_sprite if item_data.placeable_sprite != null else item_data.icon
+	var place_burst: Node2D = OBJECT_BURST_SCRIPT.new() as Node2D
+	if place_burst != null:
+		place_burst.set("source_texture", place_tex)
+		place_burst.set("tint", OBJECT_BURST_SCRIPT.average_color(place_tex))
+		place_burst.set("amount", 8)
+		add_child(place_burst)
+		place_burst.global_position = world_pos + Vector2(0.0, -6.0)
+	if item_data.has_place_animation and item_data.place_animation_name != "":
+		var ap: AnimationPlayer = obj.get_node_or_null("AnimationPlayer") as AnimationPlayer
+		if ap != null:
+			ap.play(item_data.place_animation_name)
+	if _placed_blocks.size() >= 5:
+		Global.complete_mission("place_blocks")
+	if _placed_blocks.size() >= 10:
+		Global.complete_mission("build_shelter")
+	return obj
+
 func _update_ghost() -> void:
 	if not Global.block_mode:
 		ghost.visible = false
@@ -1297,71 +1516,49 @@ func place_block() -> void:
 		return
 	if _cell_blocked_by_player(cell):
 		return
-	if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
-		return
-	# Natural grass tufts own their tile just like placed blocks do — no
-	# stacking blocks on top of uncut grass.
-	if _grass_occupied_tiles.has(cell):
-		return
-	if _is_tree_occupied(cell):
-		return
-	if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
-		return
-	if water_layer.get_cell_source_id(cell) != -1:
-		return
-	var world_pos  := editable_layer.map_to_local(cell)
+	# All the terrain/occupancy rules live in place_block_at() → can_place_at()
+	# so the Lua robot places under identical constraints.
 	var item_data: ItemData = item["data"] as ItemData
-	if item_data == null or item_data.place_scene_path == "":
-		return
-	if not ResourceLoader.exists(item_data.place_scene_path):
-		return
-	var obj_scene: PackedScene = load(item_data.place_scene_path)
-	if obj_scene == null:
-		return
-	var obj: Node = obj_scene.instantiate()
+	var obj: Node = place_block_at(cell, item_data)
 	if obj == null:
 		return
-	if obj.has_method("setup"):
-		obj.call("setup", item_data)
-	_placed_blocks[cell] = {"node": obj, "name": item_data.item_name}
-	if obj.has_method("set_world_cell"):
-		obj.call("set_world_cell", cell, self)
-	# Parented to World directly, NOT editable_layer (a TileMapLayer meant
-	# for painted tile cells) — mixing dynamic gameplay nodes into a
-	# TileMapLayer's children is the likely reason placed blocks sorted
-	# incorrectly against the player/grass/trees, which all live directly
-	# under World.
-	add_child(obj)
-	if not is_instance_valid(obj):
-		_placed_blocks.erase(cell)
-		return
-	obj.position = world_pos
-	obj.z_index  = int(world_pos.y / TILE_SIZE)
-	_fix_sprite_offset(obj)
-	# A small debris burst coloured like the block that was just placed.
-	var place_tex: Texture2D = item_data.placeable_sprite if item_data.placeable_sprite != null else item_data.icon
-	var place_burst: Node2D = OBJECT_BURST_SCRIPT.new() as Node2D
-	if place_burst != null:
-		place_burst.set("source_texture", place_tex)
-		place_burst.set("tint", OBJECT_BURST_SCRIPT.average_color(place_tex))
-		place_burst.set("amount", 8)
-		add_child(place_burst)
-		place_burst.global_position = world_pos + Vector2(0.0, -6.0)
-	if item_data.has_place_animation and item_data.place_animation_name != "":
-		var ap: AnimationPlayer = obj.get_node_or_null("AnimationPlayer") as AnimationPlayer
-		if ap != null:
-			ap.play(item_data.place_animation_name)
 	Global.remove_item(item_data)
-	# Track block placement for mission
-	if _placed_blocks.size() >= 5:
-		Global.complete_mission("place_blocks")
-	if _placed_blocks.size() >= 10:
-		Global.complete_mission("build_shelter")
 	if item_data.item_name == "Torch" or item_data.item_name.to_lower().contains("torch"):
 		Global.complete_mission("place_torch")
 
 func unregister_block(cell: Vector2i) -> void:
 	_placed_blocks.erase(cell)
+	# A block vanished — any block stacked above/below it may no longer need
+	# its full-height side walls.
+	_refresh_neighbor_u_collision(cell)
+
+# True when a player-placed block occupies this cell. Used by PlaceableBlock's
+# U-collider toggle to detect vertical stacking.
+func has_placed_block(cell: Vector2i) -> bool:
+	return _placed_blocks.has(cell)
+
+# World position -> tile cell (editable grid). Shared with the Lua robot's
+# placement so it targets the same cells the player's mouse would.
+func world_to_cell(world_pos: Vector2) -> Vector2i:
+	return editable_layer.local_to_map(editable_layer.to_local(world_pos))
+
+# Tile cell -> world (centre) position.
+func cell_to_world(cell: Vector2i) -> Vector2:
+	return editable_layer.to_global(editable_layer.map_to_local(cell))
+
+# Re-evaluate the U-collider of `cell` plus its 4 orthogonal neighbours. Called
+# whenever a block appears or disappears, so a vertical column gains/loses its
+# side walls the moment its neighbour is added or broken.
+func _refresh_neighbor_u_collision(cell: Vector2i) -> void:
+	for off in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+		var c: Vector2i = cell + (off as Vector2i)
+		if not _placed_blocks.has(c):
+			continue
+		var n: Node = (_placed_blocks[c] as Dictionary).get("node")
+		if is_instance_valid(n) and n.has_method("refresh_u_collision"):
+			n.call("refresh_u_collision")
+		if is_instance_valid(n) and n.has_method("refresh_torch_connection"):
+			n.call("refresh_torch_connection")
 
 # Returns a world position on a nearby open tile (no water, tree, placed
 # block, painted cell, or dungeon/cave entrance — grass is walkable so
@@ -1616,10 +1813,13 @@ func _is_tree_occupied(cell: Vector2i) -> bool:
 # ── Grass ─────────────────────────────────────────────────────────────
 # Per-tuft look/sizing/material now lives in scripts/grass.gd (GrassTuft) —
 # world.gd only decides which tiles get grass and instantiates GRASS_SCENE.
+# Grass grows in the PLAINS and SNOWY biomes (snowy tufts are the same art
+# snow-tinted by the shader — see grass_sway.gdshader), never desert/water.
 func _is_valid_grass_tile(tile: Vector2i) -> bool:
 	if _grass_occupied_tiles.has(tile):
 		return false
-	if _cell_biome_type(tile) != 0:  # Plains only
+	var biome: int = _cell_biome_type(tile)
+	if biome != 0 and biome != 2:  # Plains or Snowy only
 		return false
 	if _is_tree_occupied(tile):
 		return false
@@ -1632,6 +1832,11 @@ func _is_valid_grass_tile(tile: Vector2i) -> bool:
 	if _cave_entrance_cells.has(tile) or _dungeon_entrance_cells.has(tile):
 		return false
 	if water_layer.get_cell_source_id(tile) != -1:
+		return false
+	# No grass within 2 tiles of water. A tuft's sprite is ~2.7 tiles wide and
+	# overhangs its tile, so one sitting right on a shoreline visually reads as
+	# growing IN the water — keep a 2-tile dry margin.
+	if _has_water_nearby(tile, 2):
 		return false
 	return true
 
@@ -1765,7 +1970,8 @@ func _fill_chunk_grass(chunk: Vector2i) -> void:
 	var half_h: int = height / 2
 	var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
 
-	# Plains-only — _is_valid_grass_tile rejects Desert/Snowy/Water outright.
+	# Plains/Snowy only — _is_valid_grass_tile rejects Desert/Water outright
+	# (snowy tufts get their snow tint from the shared shader, not new art).
 	var eligible: Array = []
 	for dx in range(CHUNK_SIZE):
 		for dy in range(CHUNK_SIZE):
@@ -1803,21 +2009,22 @@ func _chunk_hash(chunk: Vector2i) -> int:
 	var h: int = chunk.x * 374761393 + chunk.y * 668265263
 	return h & 0x7FFFFFFF
 
-# Spread across many frames (GRASS_CHUNKS_PER_FRAME chunks at a time, then
-# yield) instead of one long synchronous burst — called fire-and-forget
-# after generation_complete has already fired (see _deferred_foliage), so
-# this running in the background doesn't block or hitch anything the player
-# is doing. Contains an await, so GDScript treats it as a coroutine
-# automatically; callers that don't need to wait for full completion (the
-# normal case) just call it without awaiting.
-func _fill_all_chunks_with_grass() -> void:
+# Spread across many frames (chunks_per_frame chunks at a time, then yield)
+# instead of one long synchronous burst. The INITIAL fill is awaited by
+# _deferred_foliage() so the loading screen stays up until every tuft exists
+# (the player never sees grass popping in after the transition); the yields
+# keep the loading screen rendering and the progress label ticking. Contains
+# an await, so GDScript treats it as a coroutine automatically.
+func _fill_all_chunks_with_grass(chunks_per_frame: int = GRASS_CHUNKS_PER_FRAME) -> void:
 	var t0: int = Time.get_ticks_msec()
+	var total: int = _chunk_cols * _chunk_rows
 	var processed: int = 0
 	for cx in range(_chunk_cols):
 		for cy in range(_chunk_rows):
 			_fill_chunk_grass(Vector2i(cx, cy))
 			processed += 1
-			if processed % GRASS_CHUNKS_PER_FRAME == 0:
+			if processed % max(1, chunks_per_frame) == 0:
+				generation_status_changed.emit("Growing grass... %d%%" % int(100.0 * processed / max(1, total)))
 				await get_tree().process_frame
 				# This await resumes on the SceneTree's own signal, which
 				# fires every frame regardless of whether World is still in
@@ -1830,7 +2037,7 @@ func _fill_all_chunks_with_grass() -> void:
 				# World is back in the tree.
 				if not is_inside_tree():
 					return
-	print("[GRASS] spawned %d tufts in %dms (background-filled after load)" % [_grass_spawn_count, Time.get_ticks_msec() - t0])
+	print("[GRASS] spawned %d tufts in %dms" % [_grass_spawn_count, Time.get_ticks_msec() - t0])
 
 # ── Grass regrowth — every 10 minutes, per chunk ────────────────────────
 func _start_grass_regrow_timer() -> void:
@@ -1869,6 +2076,7 @@ func _spawn_cactus() -> void:
 		return
 	obj.position = world_pos
 	obj.z_index = int(world_pos.y / TILE_SIZE)
+	_refresh_neighbor_u_collision(cell)
 
 # A random desert (biome == 1) land tile that is clear of water, trees,
 # grass, structures, caves, dungeons and already-placed blocks. Returns a
@@ -1904,17 +2112,27 @@ func _tile_to_chunk(tile: Vector2i) -> Vector2i:
 # is skipped entirely: a "developed" chunk shouldn't spontaneously regrow.
 # Everything else gets topped back up toward its target coverage — a no-op
 # if it's already there, since _fill_chunk_grass only fills what's missing.
+#
+# Spread across frames (same GRASS_CHUNKS_PER_FRAME batching as the initial
+# fill): running all ~1024 chunks in the timer callback froze the game for a
+# few hundred ms every 10 minutes. Yielding keeps it hitch-free.
 func _regrow_grass() -> void:
 	var occupied_chunks: Dictionary = {}
 	for cell in _placed_blocks:
 		occupied_chunks[_tile_to_chunk(cell as Vector2i)] = true
 
+	var processed: int = 0
 	for cx in range(_chunk_cols):
 		for cy in range(_chunk_rows):
 			var chunk := Vector2i(cx, cy)
 			if occupied_chunks.has(chunk):
 				continue
 			_fill_chunk_grass(chunk)
+			processed += 1
+			if processed % GRASS_CHUNKS_PER_FRAME == 0:
+				await get_tree().process_frame
+				if not is_inside_tree():
+					return
 
 func _place_foliage() -> void:
 	var cell_offset: Vector2i = Vector2i(width, height) / 2
@@ -3226,25 +3444,32 @@ func teleport_to_nearest_cave() -> void:
 	var target: Vector2 = ground_layer.to_global(ground_layer.map_to_local(best_tile + Vector2i(0, 1)))
 	p.global_position = target
 
-# ── Dungeon entrance spawning (mission-accept driven) ───────────────────
-# Called when Global.mission_accepted fires. Only dungeon missions (those
-# with a dungeon_index in Global.missions) spawn an entrance; each dungeon
-# spawns at most one, so re-accepting / repeated calls never duplicate it.
-func _on_mission_accepted(mission_id: String) -> void:
-	for m in Global.missions:
-		if m["id"] == mission_id and m.has("dungeon_index"):
-			_spawn_dungeon_entrance(int(m["dungeon_index"]))
-			return
+# ── Dungeon entrance spawning (one per language, always present) ───────
+# Called on every Global.mission_updated (mission cleared, dungeon cleared,
+# reset, load). Ensures the current mission of each language track has a live
+# entrance; _spawn_dungeon_entrance is idempotent, so repeated calls never
+# duplicate one.
+func _on_mission_updated() -> void:
+	_ensure_current_dungeon_entrances()
 
-# Spawns the entrance for the currently accepted dungeon mission if it's
-# missing (see the call in _deferred_foliage for why reconciliation is needed).
-func _ensure_accepted_dungeon_entrance() -> void:
-	var idx: int = Global.accepted_dungeon_index()
-	if idx <= 0 or Global.is_dungeon_cleared(idx):
+# Keeps exactly one live entrance per language: spawns one for the current
+# mission of each track, and frees any entrance that is no longer current
+# (e.g. after a mission reset). Idempotent, so it is safe to call on every
+# mission update.
+func _ensure_current_dungeon_entrances() -> void:
+	if not _dungeon_entrances_ready:
 		return
-	if _dungeon_entrance_tiles.has(idx):
-		return
-	_spawn_dungeon_entrance(idx)
+	var wanted: Array = Global.current_dungeon_indices()
+	for idx in _dungeon_entrance_tiles.keys():
+		if not wanted.has(int(idx)):
+			remove_dungeon_entrance(int(idx))
+	for idx in wanted:
+		var di: int = int(idx)
+		if Global.is_dungeon_cleared(di):
+			continue
+		if _dungeon_entrance_tiles.has(di):
+			continue
+		_spawn_dungeon_entrance(di)
 
 func _spawn_dungeon_entrance(dungeon_index: int) -> void:
 	if _dungeon_entrance_tiles.has(dungeon_index):
@@ -3279,8 +3504,8 @@ func _spawn_dungeon_entrance(dungeon_index: int) -> void:
 		if tile == DUNGEON_INVALID_TILE:
 			continue
 		_dungeon_entrance_tiles[dungeon_index] = tile
-		# The layout's seed is rolled HERE — the first time the player accepts
-		# the mission — then persisted in Global, so the dungeon is "generated"
+		# The layout's seed is rolled HERE — the first time the entrance is
+		# placed — then persisted in Global, so the dungeon is "generated"
 		# once and re-entering always reproduces the same layout.
 		Global.get_or_create_dungeon_seed(dungeon_index)
 		_spawn_dungeon_portal_at(tile, dungeon_index)
@@ -3379,17 +3604,36 @@ func remove_dungeon_entrance(dungeon_index: int) -> void:
 			_structure_claimed_chunks.erase(_tile_to_chunk(c))
 		_dungeon_entrance_structure_cells.erase(dungeon_index)
 
-# World position the mission guide arrow points at — the accepted dungeon's
-# entrance portal. Vector2.INF means "no active target" (the arrow hides):
-# no dungeon mission accepted, the entrance was removed (dungeon cleared),
-# or this is called while inside a cave/dungeon (those worlds don't have this
-# method, and the arrow's has_method() guard handles that).
-func get_dungeon_guide_target() -> Vector2:
-	var idx: int = Global.accepted_dungeon_index()
+# World position of the live entrance for a language's current dungeon
+# ("lua"/"python"), or Vector2.INF when that track is finished or its
+# entrance hasn't been placed. Used by /locate dungeon entrance <lang>.
+func get_dungeon_entrance_target(lang: String) -> Vector2:
+	var idx: int = Global.current_dungeon_index(lang)
 	if idx <= 0 or not _dungeon_entrance_tiles.has(idx) or Global.is_dungeon_cleared(idx):
 		return Vector2.INF
 	var tile: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i
 	return ground_layer.to_global(ground_layer.map_to_local(tile))
+
+# World position the mission guide arrow points at: the NEAREST of the live
+# dungeon entrances (one per language). Vector2.INF means "no target" (the
+# arrow hides): no entrance currently exists, or this is called while inside a
+# cave/dungeon (those worlds don't have this method, and the arrow's
+# has_method() guard handles that).
+func get_dungeon_guide_target() -> Vector2:
+	var player: Node2D = _get_player()
+	if player == null:
+		return Vector2.INF
+	var best: Vector2 = Vector2.INF
+	var best_dist: float = INF
+	for lang in Global.DUNGEON_LANGUAGES:
+		var pos: Vector2 = get_dungeon_entrance_target(String(lang))
+		if pos == Vector2.INF:
+			continue
+		var dist: float = player.global_position.distance_to(pos)
+		if dist < best_dist:
+			best_dist = dist
+			best = pos
+	return best
 
 # ── Tree removal tracking ────────────────────────────────────────────
 func notify_tree_removed(tree: Node2D) -> void:
@@ -3450,6 +3694,9 @@ func get_world_save_data() -> Dictionary:
 		var di = node.get("dungeon_index")
 		if di != null:
 			block_entry["dungeon_index"] = int(di)
+		# Crafting Station automation state (selected recipe / program / output).
+		if node.has_method("get_station_save_data"):
+			block_entry["station"] = node.call("get_station_save_data")
 		data["placed_blocks"].append(block_entry)
 	return data
 
@@ -3480,12 +3727,13 @@ func apply_world_save_data(data: Dictionary) -> void:
 			var de: Dictionary = entry as Dictionary
 			var idx: int  = int(de.get("index", 1))
 			var tile := Vector2i(int(de.get("x", 0)), int(de.get("y", 0)))
-			# Entrances only belong to the world while their dungeon mission is
-			# ACCEPTED — restoring them unconditionally respawned entrances for
-			# missions the player had already completed or never accepted.
-			if Global.accepted_dungeon_index() != idx:
-				continue
+			# Only restore entrances that are still playable (their dungeon
+			# hasn't been cleared and its mission content still resolves);
+			# _ensure_current_dungeon_entrances then fills in any the saved
+			# data predates.
 			if Global.is_dungeon_cleared(idx):
+				continue
+			if not Global.is_dungeon_mission_ready(idx):
 				continue
 			if _dungeon_entrance_tiles.has(idx):
 				continue
@@ -3546,3 +3794,13 @@ func apply_world_save_data(data: Dictionary) -> void:
 		var di = bd.get("dungeon_index", null)
 		if di != null:
 			obj.set("dungeon_index", int(di))
+		# Restore Crafting Station automation state, if this block had any.
+		var station_data = bd.get("station", null)
+		if station_data is Dictionary and obj.has_method("set_station_save_data"):
+			obj.call("set_station_save_data", station_data)
+
+	# Restored columns need their U-colliders re-evaluated now that every
+	# neighbour exists (each block's _ready ran before the rest of its column
+	# was restored, so it saw no vertical neighbour yet).
+	for cell in _placed_blocks.keys():
+		_refresh_neighbor_u_collision(cell as Vector2i)

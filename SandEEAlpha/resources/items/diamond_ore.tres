@@ -15,4 +15,5 @@ icon = SubResource("AtlasTexture_1fjr0")
 is_placeable = true
 block_level = 10
 min_pickaxe_level = 3
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -28,7 +28,7 @@ texture = SubResource("AtlasTexture_beacon")
 shape = SubResource("RectShape_station")
 
 [node name="ClickArea" type="Area2D" parent="." unique_id=555000002]
-collision_layer = 0
+collision_layer = 8
 collision_mask = 4
 input_pickable = true
 

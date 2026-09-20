@@ -15,6 +15,14 @@ const C_BORDER: Color = Color(0.35, 0.35, 0.45, 0.80)
 
 const LOG_MAX_LINES: int = 60
 
+# Extra /locate suggestions beyond world.gd's structure names: dungeon
+# entrances aren't GeneratedStructure names, they're the two live per-language
+# portals (see _locate_dungeon_entrance).
+const LOCATE_DUNGEON_FORMS: Array = [
+	"dungeon entrance lua",
+	"dungeon entrance python",
+]
+
 var _log: RichTextLabel = null
 var _entry: LineEdit = null
 var _history: Array = []
@@ -62,6 +70,9 @@ func _build() -> void:
 	sb.content_margin_bottom = int(6 * s)
 	panel.add_theme_stylebox_override("panel", sb)
 	add_child(panel)
+	# Auto-hidden by default; _open_input() reveals it. The log still collects
+	# every line while hidden, so history is there once summoned.
+	panel.visible = false
 
 	_log = RichTextLabel.new()
 	_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -121,6 +132,10 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _open_input(prefill: String) -> void:
+	# The whole console is hidden until summoned — "/" (or T) reveals the log
+	# panel + input line, Esc/click-away hides it again.
+	if _panel != null:
+		_panel.visible = true
 	_entry.visible = true
 	_entry.text = prefill
 	_entry.grab_focus()
@@ -135,6 +150,8 @@ func _close_input() -> void:
 	_entry.text = ""
 	if _completion != null:
 		_completion.visible = false
+	if _panel != null:
+		_panel.visible = false
 	if _entry.has_focus():
 		_entry.release_focus()
 	Global.chat_open = false
@@ -187,11 +204,8 @@ func _update_completion(text: String) -> void:
 		return
 	if _structure_names.is_empty():
 		_refresh_structure_names()
-	if _structure_names.is_empty():
-		_completion.visible = false
-		return
 	var shown: int = 0
-	for n in _structure_names:
+	for n in _locate_candidates():
 		if (n as String).to_lower().begins_with(prefix):
 			_completion.add_child(_make_completion_btn(n as String))
 			shown += 1
@@ -201,6 +215,11 @@ func _refresh_structure_names() -> void:
 	var world: Node = Global.world_node
 	if world != null and world.has_method("get_available_structure_names"):
 		_structure_names = world.call("get_available_structure_names") as Array
+
+# Everything /locate can jump to: the placed-structure names plus the
+# dungeon-entrance special forms.
+func _locate_candidates() -> Array:
+	return _structure_names + LOCATE_DUNGEON_FORMS
 
 func _make_completion_btn(name: String) -> Button:
 	var s: float = Global.ui_scale
@@ -242,7 +261,7 @@ func _tab_complete() -> void:
 		prefix = text.substr("/locate ".length()).to_lower()
 	if _structure_names.is_empty():
 		_refresh_structure_names()
-	for n in _structure_names:
+	for n in _locate_candidates():
 		if (n as String).to_lower().begins_with(prefix):
 			_entry.text = "/locate " + (n as String) + " "
 			_entry.caret_column = _entry.text.length()
@@ -299,7 +318,7 @@ func _open_item_picker() -> void:
 		return
 	var s: float = Global.ui_scale
 	var canvas := CanvasLayer.new()
-	canvas.layer        = 20
+	canvas.layer        = 40
 	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(canvas)
 
@@ -436,9 +455,16 @@ func _cmd_daynight() -> void:
 
 # /locate <structure> — teleport to (and report) the nearest placed structure
 # matching the name. Autocompleted from world.gd's structure pool.
+# /locate dungeon entrance <lua|python> — the live entrance of a language's
+# current dungeon (both tracks always have one, so this picks which to visit).
 func _cmd_locate(name: String) -> void:
 	if name.is_empty():
 		add_line("[color=#ff7777]Usage: /locate <structure>[/color]")
+		add_line("[color=#ff7777]       /locate dungeon entrance <lua|python>[/color]")
+		return
+	var lower: String = name.to_lower()
+	if lower.begins_with("dungeon") or lower == "lua" or lower == "python" or lower == "py":
+		_locate_dungeon_entrance(lower)
 		return
 	var world: Node = Global.world_node
 	if world == null or not world.has_method("locate_nearest_structure"):
@@ -452,6 +478,32 @@ func _cmd_locate(name: String) -> void:
 	if p != null:
 		p.global_position = pos + Vector2(0.0, 32.0)
 	add_line("Located %s at (%.0f, %.0f)" % [name, pos.x, pos.y])
+
+# Teleports to the live overworld entrance of a language's current dungeon.
+# The language may be given anywhere in the argument, so all of
+# /locate dungeon entrance python, /locate dungeon python and /locate python
+# resolve to the same portal.
+func _locate_dungeon_entrance(arg: String) -> void:
+	var lang: String = ""
+	for token in arg.split(" ", false):
+		if token == "lua" or token == "python" or token == "py":
+			lang = "python" if token == "py" else token
+			break
+	if lang.is_empty():
+		add_line("[color=#ff7777]Usage: /locate dungeon entrance <lua|python>[/color]")
+		return
+	var world: Node = Global.world_node
+	if world == null or not world.has_method("get_dungeon_entrance_target"):
+		add_line("[color=#ff7777]Dungeon entrances are only in the overworld[/color]")
+		return
+	var pos: Vector2 = world.call("get_dungeon_entrance_target", lang) as Vector2
+	if pos == Vector2.INF:
+		add_line("[color=#ff7777]No live %s dungeon entrance[/color]" % lang)
+		return
+	var p: Node2D = Global.player_node as Node2D
+	if p != null:
+		p.global_position = pos + Vector2(0.0, 64.0)
+	add_line("Located %s dungeon entrance at (%.0f, %.0f)" % [lang, pos.x, pos.y])
 
 # /spawn [mob_id] — spawn a mob near the player for debugging
 # Available IDs: wolf, worm, pixie, headless_fish
@@ -524,6 +576,7 @@ func _cmd_help() -> void:
 		"  /chunkborders — toggle chunk borders",
 		"  /nearestcave — teleport to nearest cave",
 		"  /locate <structure> — teleport to nearest structure",
+		"  /locate dungeon entrance <lua|python> — teleport to a dungeon entrance",
 		"  /blockmode — toggle build mode",
 		"  /items — open item picker",
 		"  /inv <item> — grant any item by name",

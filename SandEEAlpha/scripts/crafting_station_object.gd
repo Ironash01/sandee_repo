@@ -6,6 +6,35 @@ var _world_cell:    Vector2i = Vector2i(-99999, -99999)
 var _world_ref:     Node     = null
 var item_data:      ItemData = null
 
+# ── Automation / programming state ────────────────────────────────
+# The station owns this state; the UI only reads/writes it through the methods
+# below (see the "Automation API" section at the bottom). Nothing here crafts
+# on its own — craft_request() only runs when a program asks for it.
+signal station_state_changed
+
+const STATION_PYTHON_HOST_SCRIPT: GDScript = preload("res://scripts/station_python_host.gd")
+const STATION_RECIPE_DIR: String = "res://resources/recipes/"
+
+## Recipe the player picked in the Automation tab (configuration only).
+var automation_recipe: CraftingRecipe = null
+## Player's Python program, kept on the station so it survives UI rebuilds.
+var program_code: String = ""
+## Which language the Programming tab runs: "python" or "lua".
+var program_language: String = "python"
+## The station's single output slot.
+var output_item:     ItemData = null
+var output_quantity: int      = 0
+## The station's single INPUT slot: items loaded here (by the player or the Lua
+## robot) feed automatic crafting. A single stack; craft_request() consumes from
+## here FIRST, then falls back to the player's inventory for the rest.
+var input_item:      ItemData = null
+var input_quantity:  int      = 0
+
+var _program_host: Node = null
+var _lua_host:     Node = null
+# Recipe set is fixed at runtime, so discovery happens once for all stations.
+static var _station_recipe_cache: Array = []
+
 # ── Shift-click breaking (respects the mining mechanic) ───────────
 # Shift + left-click doesn't INSTANTLY destroy anymore — it runs the same
 # hold-to-break mechanic as placed blocks: duration = block_level -
@@ -44,6 +73,9 @@ func set_world_cell(cell: Vector2i, world: Node) -> void:
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# Lets nearby Lua robots find this station (see lua_npc.gd's
+	# nearest_crafting_station), so their craft()/set_recipe() calls land here.
+	add_to_group("CraftingStation")
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
 	Global.request_close_all_ui.connect(_on_close_all_ui)
@@ -58,6 +90,9 @@ func _ready() -> void:
 	add_child(canvas)
 	_ui = menu_scene.instantiate() as Control
 	_ui.set_meta("station_mode", true)
+	# Give the menu its station reference BEFORE it enters the tree so _ready()
+	# can wire itself up without a fragile parent-depth walk.
+	_ui.set("station", self)
 	canvas.add_child(_ui)
 	_ui.visible = false
 
@@ -210,3 +245,324 @@ func _on_body_exited(body: Node) -> void:
 		if _ui != null and _ui.visible:
 			_ui.hide_menu()
 		_cancel_breaking()
+
+# ══════════════════════════════════════════════════════════════════
+# AUTOMATION API
+# The station is the single owner of automation state and the only thing that
+# validates/performs program-requested crafting. The UI and player programs
+# both go through these methods; neither touches the fields directly.
+# ══════════════════════════════════════════════════════════════════
+
+# ── Automation recipe ─────────────────────────────────────────────
+# Every CraftingRecipe that requires a station — the same set the station's
+# crafting tab offers. Discovered once and shared (the recipe set is fixed).
+func get_station_recipes() -> Array:
+	if _station_recipe_cache.is_empty():
+		_station_recipe_cache = _discover_station_recipes()
+	return _station_recipe_cache
+
+static func _discover_station_recipes() -> Array:
+	var out: Array = []
+	var dir := DirAccess.open(STATION_RECIPE_DIR)
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var fname: String = dir.get_next()
+	while fname != "":
+		if not dir.current_is_dir() and fname.ends_with(".tres"):
+			var res: Resource = load(STATION_RECIPE_DIR + fname)
+			if res is CraftingRecipe:
+				var r: CraftingRecipe = res as CraftingRecipe
+				if r.requires_station and r.result_item != null \
+						and r.result_item.is_craftable and not r.result_item.is_dev_item:
+					out.append(r)
+		fname = dir.get_next()
+	dir.list_dir_end()
+	return out
+
+func get_automation_recipe() -> CraftingRecipe:
+	return automation_recipe
+
+func get_automation_recipe_name() -> String:
+	if automation_recipe == null or automation_recipe.result_item == null:
+		return ""
+	return automation_recipe.result_item.item_name
+
+# Selecting a recipe is CONFIGURATION ONLY — it never crafts anything.
+func set_automation_recipe(recipe: CraftingRecipe) -> bool:
+	if recipe != null and not recipe.requires_station:
+		return false
+	automation_recipe = recipe
+	_notify_state_changed()
+	return true
+
+# Select by result item name (case-insensitive) — used by the set_recipe() API.
+func set_automation_recipe_by_name(name: String) -> bool:
+	var want: String = name.strip_edges().to_lower()
+	if want.is_empty():
+		return false
+	for r in get_station_recipes():
+		var recipe: CraftingRecipe = r as CraftingRecipe
+		if recipe.result_item != null and recipe.result_item.item_name.to_lower() == want:
+			automation_recipe = recipe
+			_notify_state_changed()
+			return true
+	return false
+
+# ── Output slot (single) ──────────────────────────────────────────
+func get_output_item() -> ItemData:
+	return output_item
+
+func get_output_quantity() -> int:
+	return output_quantity
+
+# {"data": ItemData, "quantity": int} or {} when empty — same shape the chest
+# and inventory slots use.
+func get_output_stack() -> Dictionary:
+	if output_item == null or output_quantity <= 0:
+		return {}
+	return {"data": output_item, "quantity": output_quantity}
+
+# Stack ceiling for one item: the item's own limit (or the global default),
+# and 1 for non-stackable items (tools) — the same rule Global.add_item uses.
+func _stack_limit(data: ItemData) -> int:
+	if data == null:
+		return 1
+	if not data.stackable:
+		return 1
+	return data.max_stack_size if data.max_stack_size > 0 else Global.MAX_STACK
+
+# ── Input slot (single) ───────────────────────────────────────────
+func get_input_item() -> ItemData:
+	return input_item
+
+func get_input_quantity() -> int:
+	return input_quantity
+
+func get_input_stack() -> Dictionary:
+	if input_item == null or input_quantity <= 0:
+		return {}
+	return {"data": input_item, "quantity": input_quantity}
+
+# Deposit into the input slot (single stack, one item type at a time). Returns
+# how many were ACCEPTED (0 when the slot holds a different item or is full).
+func put_input(data: ItemData, quantity: int) -> int:
+	if data == null or quantity <= 0:
+		return 0
+	if input_item != null and input_item != data:
+		return 0
+	var space: int = _stack_limit(data) - input_quantity
+	var add: int = mini(quantity, space)
+	if add <= 0:
+		return 0
+	input_item      = data
+	input_quantity += add
+	_notify_state_changed()
+	return add
+
+# Remove up to `quantity` of `data` from the input slot; returns how many left.
+func take_input(data: ItemData, quantity: int) -> int:
+	if data == null or quantity <= 0 or input_item != data or input_quantity <= 0:
+		return 0
+	var take: int = mini(quantity, input_quantity)
+	input_quantity -= take
+	if input_quantity <= 0:
+		input_quantity = 0
+		input_item     = null
+	_notify_state_changed()
+	return take
+
+# ── Craft request (the ONLY crafting entry point for programs) ─────
+# Validates recipe + ingredients + output space, consumes the ingredients from
+# the player's inventory, and stores the result in the station's output slot.
+# All-or-nothing: returns the number of CRAFTS performed (== amount) on
+# success, or 0 on any failure with the reason printed to the program console.
+func craft_request(amount: int) -> int:
+	if automation_recipe == null:
+		return _craft_fail("No recipe selected")
+	if amount <= 0:
+		return _craft_fail("Invalid craft amount")
+	var result: ItemData = automation_recipe.result_item
+	if result == null or automation_recipe.ingredient_1 == null:
+		return _craft_fail("Recipe is incomplete")
+	if output_item != null and output_item != result:
+		return _craft_fail("Output contains incompatible item")
+	var per_craft: int  = maxi(1, automation_recipe.result_quantity)
+	var produced:  int  = per_craft * amount
+	var space:     int  = _stack_limit(result) - output_quantity
+	if produced > space:
+		return _craft_fail("Output slot full")
+	if not _has_ingredients(automation_recipe, amount):
+		return _craft_fail("Insufficient ingredients")
+	# Consume ingredients — the input slot FIRST, then the player's inventory —
+	# using the same per-item remove_item calls the manual CRAFT button makes,
+	# so automation can't bypass the inventory rules.
+	_consume_ingredient(automation_recipe.ingredient_1, automation_recipe.ingredient_1_quantity * amount)
+	if automation_recipe.ingredient_2 != null:
+		_consume_ingredient(automation_recipe.ingredient_2, automation_recipe.ingredient_2_quantity * amount)
+	output_item     = result
+	output_quantity += produced
+	_notify_state_changed()
+	return amount
+
+# Pull `count` of `data` from the input slot first, then the player inventory.
+func _consume_ingredient(data: ItemData, count: int) -> void:
+	if data == null or count <= 0:
+		return
+	var from_slot: int = take_input(data, count)
+	for _i in range(count - from_slot):
+		Global.remove_item(data)
+
+func _has_ingredients(recipe: CraftingRecipe, crafts: int) -> bool:
+	if recipe.ingredient_1 != null \
+			and _ingredient_available(recipe.ingredient_1) < recipe.ingredient_1_quantity * crafts:
+		return false
+	if recipe.ingredient_2 != null \
+			and _ingredient_available(recipe.ingredient_2) < recipe.ingredient_2_quantity * crafts:
+		return false
+	return true
+
+# Total of `data` available to the station: its input slot + the player's
+# inventory (hotbar included).
+func _ingredient_available(data: ItemData) -> int:
+	var n: int = Global.count_item(data)
+	if input_item == data:
+		n += input_quantity
+	return n
+
+# Move the output into the player's inventory ONE ITEM AT A TIME so a full
+# inventory can never destroy items (Global.add_item returns false when it
+# can't place one). Returns how many were taken.
+func take_output() -> int:
+	if output_item == null or output_quantity <= 0:
+		return 0
+	var taken: int = 0
+	for _i in range(output_quantity):
+		if not Global.add_item({"quantity": 1, "data": output_item}):
+			break
+		taken += 1
+	output_quantity -= taken
+	if output_quantity <= 0:
+		output_quantity = 0
+		output_item     = null
+	if taken > 0:
+		_notify_state_changed()
+	return taken
+
+# Remove the whole output stack from the station and return it ({"data", "quantity"}
+# or {}), WITHOUT touching any inventory. The Lua robot uses this so a craft's
+# result lands in its OWN build slots rather than the player's inventory.
+func take_output_stack() -> Dictionary:
+	if output_item == null or output_quantity <= 0:
+		return {}
+	var stack: Dictionary = {"data": output_item, "quantity": output_quantity}
+	output_item     = null
+	output_quantity = 0
+	_notify_state_changed()
+	return stack
+
+# ── Program execution ─────────────────────────────────────────────
+# Lazily creates the Python host. The host is a child of THIS station, not of
+# the UI, so program state outlives the menu and the UI never runs anything by
+# itself — it just calls run_program().
+func get_program_host() -> Node:
+	if _program_host == null or not is_instance_valid(_program_host):
+		_program_host = STATION_PYTHON_HOST_SCRIPT.new()
+		_program_host.set("station", self)
+		add_child(_program_host)
+	return _program_host
+
+# True while the host has a program mid-execution. Python runs synchronously,
+# so this only matters if a program is somehow polled re-entrantly.
+func is_program_running() -> bool:
+	return false
+
+# Runs the player's program. Stored on the station so it survives UI rebuilds.
+func run_program(source: String) -> void:
+	program_code = source
+	var host: Node = get_program_host()
+	host.set("code", source)
+	host.call("run_code")
+
+# ── Lua host (same LuaState the Lua robot uses — not a second interpreter) ──
+func is_lua_available() -> bool:
+	return ClassDB.class_exists("LuaState")
+
+func get_lua_host() -> Node:
+	if _lua_host == null or not is_instance_valid(_lua_host):
+		_lua_host = LuaState.new()
+		add_child(_lua_host)
+		_lua_host.connect("signal_craft", _on_lua_craft)
+		_lua_host.connect("signal_set_recipe", _on_lua_set_recipe)
+		_lua_host.connect("signal_take_output", _on_lua_take_output)
+	return _lua_host
+
+# Publishes the station's automation state as Lua globals and runs the program.
+# craft(n) / set_recipe(name) / take_output() arrive as LuaState signals and
+# are routed through the same validated methods the Python API uses.
+func run_lua_program(source: String) -> void:
+	program_code = source
+	var host: Node = get_lua_host()
+	host.set("station_recipe", get_automation_recipe_name())
+	host.set("station_output_item", output_item.item_name if output_item != null else "")
+	host.set("station_output_count", output_quantity)
+	host.set("code", source)
+	host.call("run_code")
+
+func _on_lua_craft(quantity: int) -> void:
+	craft_request(int(quantity))
+
+func _on_lua_set_recipe(name: String) -> void:
+	set_automation_recipe_by_name(name)
+
+func _on_lua_take_output() -> void:
+	take_output()
+
+# ── Persistence ───────────────────────────────────────────────────
+func get_station_save_data() -> Dictionary:
+	return {
+		"recipe_path":      automation_recipe.resource_path if automation_recipe != null else "",
+		"code":             program_code,
+		"language":         program_language,
+		"output_path":      output_item.resource_path if output_item != null else "",
+		"output_quantity":  output_quantity,
+		"input_path":       input_item.resource_path if input_item != null else "",
+		"input_quantity":   input_quantity,
+	}
+
+func set_station_save_data(data: Dictionary) -> void:
+	var recipe_path: String = str(data.get("recipe_path", ""))
+	if not recipe_path.is_empty() and ResourceLoader.exists(recipe_path):
+		set_automation_recipe(load(recipe_path) as CraftingRecipe)
+	program_code = str(data.get("code", ""))
+	var lang: String = str(data.get("language", "python"))
+	program_language = lang if lang in ["python", "lua"] else "python"
+	var output_path: String = str(data.get("output_path", ""))
+	if not output_path.is_empty() and ResourceLoader.exists(output_path):
+		output_item     = load(output_path) as ItemData
+		output_quantity = int(data.get("output_quantity", 0))
+	else:
+		output_item     = null
+		output_quantity = 0
+	var input_path: String = str(data.get("input_path", ""))
+	if not input_path.is_empty() and ResourceLoader.exists(input_path):
+		input_item     = load(input_path) as ItemData
+		input_quantity = int(data.get("input_quantity", 0))
+	else:
+		input_item     = null
+		input_quantity = 0
+	_notify_state_changed()
+
+# ── Internals ─────────────────────────────────────────────────────
+func _notify_state_changed() -> void:
+	station_state_changed.emit()
+
+# Reports a rejected request both to the program console (when a host exists)
+# and the Godot log, so failures are never silent.
+func _craft_fail(reason: String) -> int:
+	var msg: String = "[craft] " + reason
+	if _program_host != null and is_instance_valid(_program_host):
+		_program_host.emit_signal("signal_print", msg)
+	else:
+		print("[CraftingStation] ", msg)
+	return 0

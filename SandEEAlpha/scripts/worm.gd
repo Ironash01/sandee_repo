@@ -363,7 +363,6 @@ func _physics_process(delta: float) -> void:
 	else:
 		_sand_particles.set_buried()
 
-	_try_attack_player(delta)
 	_update_segments()
 
 func _process_state(delta: float) -> void:
@@ -444,6 +443,11 @@ func _process_state(delta: float) -> void:
 
 			move_and_slide()
 			_record_path()
+			# ── Contact damage ──────────────────────────────────────
+			# Above ground only, and it has to live HERE: _physics_process
+			# returns early for every non-IDLE state, so the old IDLE-only
+			# call could never fire while the worm was actually emerged.
+			_try_attack_player(delta)
 			# Subtle sand kicked up while dashing above ground
 			if velocity.length_squared() > 1.0:
 				_sand_particles.set_normal()
@@ -539,6 +543,13 @@ func _set_worm_visible(vis: bool) -> void:
 	_head_sprite.visible = vis
 	for seg in _segment_nodes:
 		seg.visible = vis
+
+# Physical truth for the AI: ATTACKING is the only state where the worm is
+# actually out of the ground. The AI polls this so its own _burrowing toggle
+# can't drift out of sync when emergence came from the surface timer rather
+# than from the AI (which used to cause an emerge → instant re-burrow).
+func is_above_ground() -> bool:
+	return _state == State.ATTACKING
 
 func _spawn_sand_full() -> void:
 	var cloud: Node2D = SAND_FULL_SCENE.instantiate() as Node2D

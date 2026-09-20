@@ -6,18 +6,29 @@
 [sub_resource type="Resource" id="DungeonQuestion_1"]
 script = ExtResource("2_question")
 type = 1
-question = "In this quest, you need to print \"Hello world, this is my first Python code.\""
+question = "Print \"Hello world, this is my first Python code.\""
+language = "python"
+starter_code = "print(\"Hello world, this is my first Python code.\")"
+answer_output = "Hello world, this is my first Python code."
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
 type = 1
 question = "Type the complete print() statement that would display the word Hello on screen."
+language = "python"
+starter_code = "print(\"Hello\")"
+answer_output = "Hello"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
 script = ExtResource("2_question")
 question = "What would be the output of this code.
 
 print(\"This is my first python code\")"
+answer_a = "print(\"This is my first python code\")"
+answer_b = "\"This is my first python code\""
+answer_c = "This is my first python code"
+answer_d = "Error"
+correct_index = 2
 
 [resource]
 script = ExtResource("1_script")

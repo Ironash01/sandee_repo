@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3 uid="uid://clnbp8no8xgby"]
+
+[ext_resource type="Resource" uid="uid://bkrjukhmv86em" path="res://resources/items/Torch.tres" id="1_ix4kc"]
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_vdusv"]
+[ext_resource type="Resource" uid="uid://6bk4sjwa0vjn" path="res://resources/items/wood.tres" id="2_14nxc"]
+[ext_resource type="Resource" uid="uid://c266usflkjfjx" path="res://resources/items/bonfire.tres" id="3_kox7k"]
+
+[resource]
+script = ExtResource("1_vdusv")
+result_item = ExtResource("3_kox7k")
+ingredient_1 = ExtResource("1_ix4kc")
+ingredient_1_quantity = 2
+ingredient_2 = ExtResource("2_14nxc")
+ingredient_2_quantity = 3
+category = "Blocks"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

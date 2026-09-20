@@ -182,13 +182,14 @@ func _cancel_breaking() -> void:
 	# it expires via _tick_progress_expiry.
 	queue_redraw()
 
-# Returns break duration with 2x speed bonus if player holds an axe.
+# Chopping is faster with an axe: base / (axe_level + 1), so LV1 = 2x,
+# LV2 = 3x, LV3 = 4x. Reads ItemData.axe_level instead of the item's name.
 func _get_break_duration(base: float) -> float:
 	var held: Variant = Global.get_hotbar_item()
 	if held != null and (held as Dictionary).has("data"):
 		var data: ItemData = (held as Dictionary)["data"] as ItemData
-		if data != null and data.item_name.to_lower().contains("axe"):
-			return base * 0.5  # 2x speed bonus
+		if data != null and data.axe_level > 0:
+			return base / float(data.axe_level + 1)
 	return base
 
 # ── Leaf fade (called each frame by world.gd's _update_tree_fade) ────

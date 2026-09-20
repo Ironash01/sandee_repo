@@ -146,17 +146,9 @@ func _input(event: InputEvent) -> void:
 		if event.is_action_pressed("mouse_left"):
 			place_block()
 		return
-	# Shift + left-click: instantly destroy the nearest cave-placed block —
-	# same unleveled shortcut world.gd's _destroy_hovered_block() is (a
-	# deliberate "reclaim your own placed block" action, not a mining tool).
-	if event.is_action_pressed("mouse_left") and Input.is_key_pressed(KEY_SHIFT):
-		_destroy_hovered_block()
-		return
-	# Plain left-click (hold): mining — needs press AND release, unlike the
-	# instant actions above, so this checks the raw mouse event rather than
-	# just is_action_pressed().
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-			and not Input.is_key_pressed(KEY_SHIFT):
+	# Left-click (hold): mining — needs press AND release, so this checks the
+	# raw mouse event rather than just is_action_pressed().
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_try_start_mining()
 		else:
@@ -242,10 +234,13 @@ func _draw() -> void:
 	var tile_world: Vector2 = _tilemap.to_global(_tilemap.map_to_local(_mine_tile))
 	var pos: Vector2         = to_local(tile_world)
 	var progress: float      = _mine_elapsed / _mine_duration if _mine_duration > 0.0 else 1.0
-	var half_w: float        = Global.BREAK_BAR_WIDTH * 0.5
-	var y_offset: float      = -20.0
-	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, Global.BREAK_BAR_WIDTH, Global.BREAK_BAR_HEIGHT), Global.BREAK_BAR_BG)
-	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, Global.BREAK_BAR_WIDTH * clampf(progress, 0.0, 1.0), Global.BREAK_BAR_HEIGHT), Global.BREAK_BAR_FILL)
+	var s: float             = Global.ui_scale
+	var bar_w: float         = Global.BREAK_BAR_WIDTH * s
+	var bar_h: float         = Global.BREAK_BAR_HEIGHT * s
+	var half_w: float        = bar_w * 0.5
+	var y_offset: float      = -20.0 * s
+	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, bar_w, bar_h), Global.BREAK_BAR_BG)
+	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, bar_w * clampf(progress, 0.0, 1.0), bar_h), Global.BREAK_BAR_FILL)
 
 func _break_tile(cell: Vector2i) -> void:
 	var grid_pos: Vector2i = _cell_to_grid(cell)
@@ -381,6 +376,7 @@ func place_block() -> void:
 	obj.position = world_pos
 	obj.z_index  = int(world_pos.y / TILE_SIZE)
 	_fix_sprite_offset(obj)
+	_refresh_neighbor_u_collision(cell)
 	if item_data.has_place_animation and item_data.place_animation_name != "":
 		var ap: AnimationPlayer = obj.get_node_or_null("AnimationPlayer") as AnimationPlayer
 		if ap != null:
@@ -389,42 +385,25 @@ func place_block() -> void:
 
 func unregister_block(cell: Vector2i) -> void:
 	_placed_blocks.erase(cell)
+	_refresh_neighbor_u_collision(cell)
 
-# No pickaxe/leveling check, unlike mining — intentional, mirrors world.gd's
-# own _destroy_hovered_block() exactly (confirmed: instant reclaim of your
-# own placed block is deliberate there, not an oversight, so this matches).
-func _destroy_hovered_block() -> void:
-	var mouse_pos: Vector2 = get_global_mouse_position()
-	var best_cell: Variant = null
-	var best_dist: float   = INTERACT_RADIUS_PX
-	for cell in _placed_blocks:
-		var entry: Dictionary = _placed_blocks[cell] as Dictionary
-		var node_ref: Variant = entry["node"]
-		if not is_instance_valid(node_ref):
+# True when a player-placed block occupies this cell (PlaceableBlock's
+# U-collider toggle checks vertical neighbours via this).
+func has_placed_block(cell: Vector2i) -> bool:
+	return _placed_blocks.has(cell)
+
+# Re-evaluate the U-collider of `cell` plus its 4 orthogonal neighbours so a
+# vertical column gains/loses its side walls when a block appears/disappears.
+func _refresh_neighbor_u_collision(cell: Vector2i) -> void:
+	for off in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+		var c: Vector2i = cell + (off as Vector2i)
+		if not _placed_blocks.has(c):
 			continue
-		var node: Node2D = node_ref as Node2D
-		if node == null:
-			continue
-		var dist: float = mouse_pos.distance_to(node.global_position)
-		if dist < best_dist:
-			best_dist = dist
-			best_cell = cell
-	if best_cell == null:
-		return
-	get_viewport().set_input_as_handled()
-	var entry: Dictionary = _placed_blocks[best_cell] as Dictionary
-	var node_ref2: Variant = entry["node"]
-	if is_instance_valid(node_ref2):
-		var node: Node = node_ref2 as Node
-		if node != null:
-			var idata: ItemData = node.get("item_data") as ItemData
-			if idata != null:
-				var drop: Node = ITEM_DROP_SCENE.instantiate()
-				drop.call("set_item_data", idata)
-				add_child(drop)
-				drop.global_position = node.global_position + Vector2(0, -16)
-			node.queue_free()
-	_placed_blocks.erase(best_cell)
+		var n: Node = (_placed_blocks[c] as Dictionary).get("node")
+		if is_instance_valid(n) and n.has_method("refresh_u_collision"):
+			n.call("refresh_u_collision")
+		if is_instance_valid(n) and n.has_method("refresh_torch_connection"):
+			n.call("refresh_torch_connection")
 
 func _is_cell_in_place_radius(cell: Vector2i) -> bool:
 	var player: Node2D = Global.player_node as Node2D

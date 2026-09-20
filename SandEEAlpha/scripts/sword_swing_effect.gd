@@ -74,20 +74,34 @@ const ARM_ORIGINS: Dictionary = {
 var _icon:       Texture2D = null
 # Facing dir name — set by the spawner so the chop respects the facing side.
 var _dir:        String = "south"
+# World-space aim direction (player -> mouse). When non-zero the swing points
+# THIS way instead of using the 8-way _dir — mouse aiming. Vector2.ZERO falls
+# back to _dir (mouse centred on the player).
+var _aim:        Vector2 = Vector2.ZERO
 # Combat damage this swing deals to mobs (0 for a non-weapon swing). Set by
 # the player's _trigger_swing from the held item's sword_damage().
 var _damage:     float  = 0.0
+# True when the swing came from a SWORD. Only swords cut grass: every other
+# held item still plays the swing animation, but must never clear tufts.
+var _is_sword:   bool   = false
 # "swing" = item sweep + tip arc + puff burst (a player swing); "puff" =
 # grass-break particle only, spawned at the cut site. Set by the spawner.
 var _mode:       String = "swing"
 
 func _ready() -> void:
-	z_index = 40  # above the player sprite (child of the player)
+	# Y-sort with the world instead of a fixed "above everything" layer: a
+	# swing made while standing behind a tree/block must be occluded by it
+	# just like the player is. This effect is a CHILD of the player, so its
+	# z_index is relative by default — turn that off and reuse the player's
+	# own quantized row. At an equal z a child draws after its parent, so the
+	# swing still sits over the player sprite itself.
+	z_as_relative = false
+	_update_sort_row()
 	var lifespan: float = 0.1
 
 	# Left and right are the SAME swing, mirrored on X (never rotated 180°),
 	# so a west-facing player sees an identical-but-flipped crescent.
-	var v: Vector2 = DIR_VEC.get(_dir, Vector2(1, 0))
+	var v: Vector2 = _aim_vec()
 	scale = Vector2(-1.0 if v.x < 0.0 else 1.0, 1.0)
 
 	if _mode == "swing":
@@ -95,15 +109,17 @@ func _ready() -> void:
 		add_child(pivot)
 		lifespan = maxf(lifespan, SWING_DURATION)
 
-		# Arc + puff burst at the blade tip, parented under the pivot so they
-		# travel with the blade as it sweeps.
-		var tip := Vector2(ITEM_TIP + ITEM_TIP_GAP, 0.0)
-		var arc := _build_anim_sprite(SWING_TEX, SWING_FRAME, SWING_COUNT, SWING_FPS)
-		arc.position = tip
-		arc.scale = Vector2(SWING_ARC_SCALE, SWING_ARC_SCALE)
-		pivot.add_child(arc)
-		lifespan = maxf(lifespan, SWING_COUNT / SWING_FPS)
-		_spawn_mellow_burst(pivot, tip)
+		# The sword-swing flourish (crescent arc + burst at the blade tip) is
+		# SWORD-ONLY. Mining/chopping still sweeps the held tool sprite, but
+		# must not fire a blade effect — only an actual sword swing does.
+		if _is_sword:
+			var tip := Vector2(ITEM_TIP + ITEM_TIP_GAP, 0.0)
+			var arc := _build_anim_sprite(SWING_TEX, SWING_FRAME, SWING_COUNT, SWING_FPS)
+			arc.position = tip
+			arc.scale = Vector2(SWING_ARC_SCALE, SWING_ARC_SCALE)
+			pivot.add_child(arc)
+			lifespan = maxf(lifespan, SWING_COUNT / SWING_FPS)
+			_spawn_mellow_burst(pivot, tip)
 		# The hitbox is spawned for EVERY swing (not just damaging ones) so it
 		# is active the whole animation and cuts grass as well as mobs.
 		_spawn_hitbox(pivot)
@@ -140,10 +156,12 @@ func _spawn_mellow_burst(parent: Node2D, at_pos: Vector2, count: int = MELLOW_PU
 var _hitbox_active: bool = false
 var _hitbox_area:  Area2D = null
 var _hit_mobs:     Array  = []
+var _parried_areas: Array = []
 var _cut_grass:    Array  = []
 
 func _spawn_hitbox(pivot: Node2D) -> void:
 	_hit_mobs.clear()
+	_parried_areas.clear()
 	_cut_grass.clear()
 	var area := Area2D.new()
 	area.collision_layer = 0
@@ -167,20 +185,53 @@ func _spawn_hitbox(pivot: Node2D) -> void:
 			body.call("take_hit", _damage, global_position)
 	)
 
+	# Parryable areas (e.g. the dungeon flare projectile) that enter the blade.
+	area.area_entered.connect(func(other: Area2D) -> void:
+		_try_parry(other)
+	)
+
 	# Also check every frame so mobs already overlapping (or caught mid-sweep)
 	# are hit immediately — the hitbox is active throughout the ENTIRE animation.
 	_hitbox_active = true
 
 # Runs every frame for the WHOLE swing: mobs caught anywhere along the sweep
-# are hit immediately, and any grass tuft the blade passes over is cut.
+# are hit immediately, parryable projectiles are deflected, and any grass tuft
+# the blade passes over is cut.
 func _process(_delta: float) -> void:
+	# The player can walk a sort row during the brief swing — keep the effect
+	# on the row it should be occluded at for the whole animation.
+	_update_sort_row()
 	if not _hitbox_active or _hitbox_area == null or not is_instance_valid(_hitbox_area):
 		return
 	for body in _hitbox_area.get_overlapping_bodies():
 		if body.has_method("take_hit") and not _hit_mobs.has(body):
 			_hit_mobs.append(body)
 			body.call("take_hit", _damage, global_position)
+	for other in _hitbox_area.get_overlapping_areas():
+		_try_parry(other)
 	_cut_overlapping_grass()
+
+# Same sort row as whatever this effect rides on:
+#   • "swing" (child of the player) → the player's own quantized row, so a
+#     tree/block in front of the player occludes the swing too.
+#   • "puff" (child of the World, spawned at a grass tile) → the row of its
+#     own world position, so it lands at the tuft's level.
+func _update_sort_row() -> void:
+	var parent_ci: CanvasItem = get_parent() as CanvasItem
+	if _mode == "swing" and parent_ci != null:
+		z_index = parent_ci.z_index
+	else:
+		z_index = int(global_position.y / 32.0)
+
+# Deflects a parryable area (anything exposing parry()). Debounced per swing so
+# it can only be parried once.
+func _try_parry(other: Node) -> void:
+	if other == null or not is_instance_valid(other):
+		return
+	if _parried_areas.has(other) or not other.has_method("parry"):
+		return
+	_parried_areas.append(other)
+	other.call("parry", global_position)
 
 # Cuts every GrassTuft whose ground anchor falls inside the blade rectangle
 # (BLADE_BASE..BLADE_BASE+BLADE_LEN along the pivot's +x, |y| <= BLADE_W/2),
@@ -188,6 +239,9 @@ func _process(_delta: float) -> void:
 # sweep. Uses the hitbox's global transform so it tracks the sweep in any
 # direction.
 func _cut_overlapping_grass() -> void:
+	# Grass is sword-only: a normal held item plays the swing but never cuts.
+	if not _is_sword:
+		return
 	var xf: Transform2D = _hitbox_area.global_transform
 	for node in get_tree().get_nodes_in_group("Grass"):
 		var tuft := node as Node2D
@@ -251,18 +305,25 @@ func _build_anim_sprite(tex: Texture2D, frame: int, count: int, fps: float) -> A
 	sprite.play("effect")
 	return sprite
 
+# The unit direction the swing points: the mouse aim when we have one, else the
+# spawner's 8-way facing name.
+func _aim_vec() -> Vector2:
+	if _aim.length_squared() > 0.0001:
+		return _aim.normalized()
+	return (DIR_VEC.get(_dir, Vector2(1, 0)) as Vector2).normalized()
+
 func _base_rotation_rad() -> float:
 	# Only the VERTICAL component rotates: atan2(y, |x|) is 0 for east/west
 	# (the node's X mirror handles left/right), ±45° for diagonals and ±90°
-	# for north/south.
-	var v: Vector2 = DIR_VEC.get(_dir, Vector2(1, 0))
+	# for north/south — and any angle in between for a mouse aim.
+	var v: Vector2 = _aim_vec()
 	return atan2(v.y, absf(v.x))
 
 # Arm origin in the un-mirrored frame (+x = right). A west facing returns the
 # east origin — the node's X mirror flips it into place, so left/right stay
-# the same swing mirrored. Diagonal facings reuse the nearest cardinal.
+# the same swing mirrored. Diagonal/analog aims reuse the nearest cardinal.
 func _arm_origin() -> Vector2:
-	var v: Vector2 = DIR_VEC.get(_dir, Vector2(1, 0))
+	var v: Vector2 = _aim_vec()
 	if absf(v.x) >= absf(v.y):
 		return ARM_ORIGINS["east"]
 	if v.y > 0.0:

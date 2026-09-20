@@ -68,6 +68,8 @@ func _build_visuals() -> void:
 func set_item(new_item: Dictionary) -> void:
 	item = new_item
 	var data: ItemData = new_item["data"] as ItemData
+	if _icon == null:
+		return   # visuals not built yet (called before _ready)
 	_icon.texture = data.icon
 	_icon.visible = true
 	_qty.visible  = new_item["quantity"] > 1
@@ -76,6 +78,8 @@ func set_item(new_item: Dictionary) -> void:
 
 func set_empty() -> void:
 	item          = null
+	if _icon == null:
+		return
 	_icon.texture = null
 	_icon.visible = false
 	_qty.visible  = false

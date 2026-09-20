@@ -21,8 +21,42 @@ var _stop_btn:  Button
 var _body:      Control   # code + output view
 var _encycl:    Control   # encyclopedia view
 var _knowledge_box: VBoxContainer   # unlocked dungeon-knowledge entries
+# entry id -> its keyword Label, so the "just learned" emphasis can target the
+# right label when the encyclopedia is (re)opened. Rebuilt by _refresh_knowledge_section.
+var _knowledge_keyword_labels: Dictionary = {}
+# entry id -> its "NEW" badge, hidden once the emphasis has played.
+var _knowledge_new_badges:     Dictionary = {}
 var _lua_state: Node
 var _running:   bool = false
+var _build_slots: Array = []   # the 3 lua_build_slot.gd Controls
+
+# ── Example snippets (shown in the SNIPPETS column) ───────────────
+# Click one to drop its code into the editor. The first is BOUND TO A MISSION
+# ("run_program") so it works as a tutorial: inserting it arms the mission, and
+# a successful run completes it via the normal mission system.
+const SNIPPETS: Array = [
+	{"name": "1. Hello (tutorial)", "mission": "run_program",
+		"code": "-- Tutorial: make the robot say something.\nprint(\"Hello, SandEE!\")"},
+	{"name": "2. Auto work", "mission": "",
+		"code": "-- Chop nearby trees, deliver the wood to a chest, then return home.\nauto_work()"},
+	{"name": "3. Craft planks", "mission": "",
+		"code": "-- Load 5 of the selected build-slot item into the station, then craft\n-- planks and collect them. Give the robot wood first (drag it into BUILD\n-- SLOTS, or withdraw/chop it).\nselect_block(0)\ninput_slot(5)\nset_recipe(\"Planks\")\ncraft(5)\ntake_output()"},
+	{"name": "4. Build a wall", "mission": "",
+		"code": "-- Place a wall of blocks from build slot 0.\nselect_block(0)\nbuild_line(0, 1, 5, 1)"},
+	{"name": "5. Chest contents", "mission": "",
+		"code": "-- Print what is inside the nearest chest.\nchest_contents()"},
+]
+
+# Mission armed by the tutorial snippet; completed on a successful run.
+var _pending_mission: String = ""
+
+# Player item panels shown INSIDE this editor (the full-screen overlay blocks
+# the on-screen hotbar/inventory, so drag sources must live here).
+const INVENTORY_SLOT_SCENE: PackedScene = preload("res://scenes/ui/InventorySlot.tscn")
+const HOTBAR_SLOT_SCRIPT:   GDScript    = preload("res://scripts/hotbar_slot.gd")
+const INV_COLUMNS: int = 4
+var _inv_slots:    Array = []
+var _hotbar_slots: Array = []
 
 # ── Lifecycle ─────────────────────────────────────────────────────
 func _ready() -> void:
@@ -30,8 +64,19 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build()
 	call_deferred("_find_lua_state")
+	call_deferred("_wire_build_palette")
 	Global.ui_scale_changed.connect(_on_ui_scale)
 	Global.knowledge_updated.connect(_refresh_knowledge_section)
+
+# Connects the robot's build-palette signal (so slots update when the robot
+# fills them itself) and paints the current contents. Deferred because the
+# NPC parent is resolved by walking up the tree.
+func _wire_build_palette() -> void:
+	var npc: Node = _find_npc()
+	if npc != null and npc.has_signal("build_palette_changed") \
+			and not npc.is_connected("build_palette_changed", _on_build_palette_changed):
+		npc.connect("build_palette_changed", _on_build_palette_changed)
+	_refresh_build_palette()
 
 func _on_ui_scale(_s: float) -> void:
 	var saved_code: String = _code_edit.text if _code_edit != null else ""
@@ -42,16 +87,42 @@ func _on_ui_scale(_s: float) -> void:
 	await get_tree().process_frame
 	_build()
 	_code_edit.text = saved_code
-	if _running:
-		_run_btn.disabled   = true
-		_stop_btn.disabled  = false
-		_code_edit.editable = false
+	_sync_running_from_npc()
+	_wire_build_palette()
 	if was_encycl:
 		_toggle_encyclopedia()
 	visible = was_visible
 
+# Walks up from this UI to the LuaNPC (the node exposing stop_work), so the
+# lookup doesn't depend on a fixed parent depth.
+func _find_npc() -> Node:
+	var n: Node = get_parent()
+	while n != null and not n.has_method("stop_work"):
+		n = n.get_parent()
+	return n
+
+# Re-syncs the RUN/STOP buttons (and editor editability) with the robot's
+# ACTUAL running state. _running only remembers what THIS panel session did,
+# but closing the panel deliberately leaves the robot working — without this,
+# reopening showed STOP disabled and a running robot could not be stopped.
+func _sync_running_from_npc() -> void:
+	var npc: Node = _find_npc()
+	_running = npc != null and npc.has_method("is_working") and bool(npc.call("is_working"))
+	_run_btn.disabled   = _running
+	_stop_btn.disabled  = not _running
+	_code_edit.editable = not _running
+
+# Called by the LuaNPC when the player clicks the station.
+func open_panel() -> void:
+	visible = true
+	_sync_running_from_npc()
+	_refresh_build_palette()
+
 func _find_lua_state() -> void:
-	var npc: Node = get_parent().get_parent()
+	var npc: Node = _find_npc()
+	if npc == null:
+		_print_output("[color=#ff8888]LuaNPC not found.[/color]")
+		return
 	_lua_state = npc.get_node_or_null("LuaState")
 	if _lua_state == null:
 		_print_output("[color=#ff8888]LuaState not found on NPC.[/color]")
@@ -77,7 +148,7 @@ func _build() -> void:
 	add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(i(960, s), i(620, s))
+	panel.custom_minimum_size = Vector2(i(1280, s), i(720, s))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
@@ -149,6 +220,12 @@ func _build_body(s: float) -> Control:
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", i(14, s))
 
+	# Snippets column (left of the code editor).
+	body.add_child(_build_snippets(s))
+
+	# Player inventory + hotbar (drag items straight into the BUILD SLOTS).
+	body.add_child(_build_player_items(s))
+
 	# Code editor
 	var ed_wrap := VBoxContainer.new()
 	ed_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -175,6 +252,11 @@ func _build_body(s: float) -> Control:
 	_code_edit.add_theme_color_override("font_color", C_TITLE)
 	_code_edit.add_theme_font_size_override("font_size", i(14, s))
 	ed_wrap.add_child(_code_edit)
+
+	# Build palette — the 3 slots the robot places FROM. Drag a block from the
+	# inventory/hotbar into a slot to give it to the robot; the robot also
+	# fills them itself (chopping wood, or withdraw() from a chest).
+	ed_wrap.add_child(_build_palette_row(s))
 
 	# Buttons: RUN  STOP  CLEAR
 	var btn_row := HBoxContainer.new()
@@ -230,7 +312,194 @@ func _build_body(s: float) -> Control:
 
 	return body
 
+# ── Snippets column ───────────────────────────────────────────────
+# A narrow column of example programs. Clicking one replaces the editor's
+# contents with that example (the tutorial one also arms its mission).
+func _build_snippets(s: float) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", i(6, s))
+	col.custom_minimum_size = Vector2(i(160, s), 0)
+
+	var lbl := Label.new()
+	lbl.text = "SNIPPETS"
+	lbl.add_theme_font_size_override("font_size", i(11, s))
+	lbl.add_theme_color_override("font_color", C_MUTED)
+	col.add_child(lbl)
+
+	var hint := Label.new()
+	hint.text = "Click to load an example into the editor."
+	hint.add_theme_font_size_override("font_size", i(9, s))
+	hint.add_theme_color_override("font_color", C_MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(hint)
+
+	for i in range(SNIPPETS.size()):
+		var snip: Dictionary = SNIPPETS[i]
+		var btn := Button.new()
+		btn.text = str(snip["name"])
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.add_theme_font_size_override("font_size", i(11, s))
+		btn.custom_minimum_size = Vector2(0, i(30, s))
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.12, 0.16, 0.32, 1.0); sb.border_color = C_BORDER
+		sb.set_border_width_all(1); sb.set_corner_radius_all(4)
+		sb.content_margin_left = i(8, s); sb.content_margin_right = i(8, s)
+		btn.add_theme_stylebox_override("normal",  sb)
+		btn.add_theme_stylebox_override("hover",   sb)
+		btn.add_theme_stylebox_override("pressed", sb)
+		btn.add_theme_color_override("font_color", C_TITLE)
+		btn.tooltip_text = str(snip["code"])
+		btn.pressed.connect(_on_snippet_pressed.bind(i))
+		col.add_child(btn)
+	return col
+
+func _on_snippet_pressed(index: int) -> void:
+	if index < 0 or index >= SNIPPETS.size():
+		return
+	var snip: Dictionary = SNIPPETS[index]
+	# The example is placed in the editor as-is; _run_code prepends the helper
+	# preamble at run time, so examples that call chop_trees()/auto_work() etc.
+	# still resolve.
+	_code_edit.text = str(snip["code"])
+	var mission: String = str(snip.get("mission", ""))
+	if not mission.is_empty():
+		_pending_mission = mission
+		_print_output("[color=#88ffaa]Tutorial loaded — run it to complete \"%s\".[/color]" % mission)
+	else:
+		_pending_mission = ""
+	_print_output("[color=#aaddff]Loaded snippet: %s[/color]" % str(snip["name"]))
+
+# ── Player items column (inventory + hotbar) ──────────────────────
+# Both are DRAG SOURCES for the build slots. The editor's full-screen overlay
+# covers the in-world hotbar, so a copy lives here too. Slots are the same
+# controls the inventory/hotbar use, so their drag data ("inventory"/"hotbar")
+# is exactly what lua_build_slot.gd accepts.
+func _build_player_items(s: float) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", i(6, s))
+	col.custom_minimum_size = Vector2(i(INV_COLUMNS * (Global.ITEM_SLOT_SIZE + 12) + 8, s), 0)
+
+	var inv_lbl := Label.new()
+	inv_lbl.text = "INVENTORY"
+	inv_lbl.add_theme_font_size_override("font_size", i(11, s))
+	inv_lbl.add_theme_color_override("font_color", C_MUTED)
+	col.add_child(inv_lbl)
+
+	var inv_hint := Label.new()
+	inv_hint.text = "Drag items into the BUILD SLOTS."
+	inv_hint.add_theme_font_size_override("font_size", i(9, s))
+	inv_hint.add_theme_color_override("font_color", C_MUTED)
+	inv_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(inv_hint)
+
+	var grid := GridContainer.new()
+	grid.columns = INV_COLUMNS
+	grid.add_theme_constant_override("h_separation", i(6, s))
+	grid.add_theme_constant_override("v_separation", i(6, s))
+	col.add_child(grid)
+	_inv_slots.clear()
+	for idx in range(Global.INVENTORY_SIZE):
+		var slot: Control = INVENTORY_SLOT_SCENE.instantiate()
+		slot.set("slot_index", idx)
+		grid.add_child(slot)
+		_inv_slots.append(slot)
+
+	var hb_lbl := Label.new()
+	hb_lbl.text = "HOTBAR"
+	hb_lbl.add_theme_font_size_override("font_size", i(11, s))
+	hb_lbl.add_theme_color_override("font_color", C_MUTED)
+	col.add_child(hb_lbl)
+
+	var hb_row := HBoxContainer.new()
+	hb_row.add_theme_constant_override("separation", i(4, s))
+	col.add_child(hb_row)
+	_hotbar_slots.clear()
+	for idx in range(Global.HOTBAR_SIZE):
+		var tslot := TextureRect.new()
+		tslot.set_script(HOTBAR_SLOT_SCRIPT)
+		tslot.set("slot_index", idx)
+		tslot.custom_minimum_size = Vector2(i(34, s), i(34, s))
+		tslot.expand_mode         = TextureRect.EXPAND_IGNORE_SIZE
+		tslot.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		var bg := ColorRect.new()
+		bg.color = Color(0.11, 0.15, 0.26, 1.0)
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+		tslot.add_child(bg)
+		tslot.move_child(bg, 0)
+		hb_row.add_child(tslot)
+		_hotbar_slots.append(tslot)
+
+	if not Global.Inventory_updated.is_connected(_refresh_player_items):
+		Global.Inventory_updated.connect(_refresh_player_items)
+	if not Global.Hotbar_updated.is_connected(_refresh_player_items):
+		Global.Hotbar_updated.connect(_refresh_player_items)
+	# Deferred: the freshly instantiated slots build their child visuals in
+	# _ready, which hasn't run at the point this column is assembled.
+	_refresh_player_items.call_deferred()
+	return col
+
+func _refresh_player_items() -> void:
+	for i in range(_inv_slots.size()):
+		var slot: Control = _inv_slots[i]
+		if not is_instance_valid(slot):
+			continue
+		var item: Variant = Global.Inventory[i] if i < Global.Inventory.size() else null
+		if item == null:
+			slot.call("set_empty")
+		else:
+			slot.call("set_item", item)
+	for i in range(_hotbar_slots.size()):
+		var slot: TextureRect = _hotbar_slots[i]
+		if not is_instance_valid(slot):
+			continue
+		var item: Variant = Global.Hotbar[i] if i < Global.Hotbar.size() else null
+		slot.texture = ((item as Dictionary)["data"] as ItemData).icon if item != null else null
+
+# ── Build palette row (robot's 3 block slots) ─────────────────────
+func _build_palette_row(s: float) -> Control:
+	var row := VBoxContainer.new()
+	row.add_theme_constant_override("separation", i(4, s))
+
+	var lbl := Label.new()
+	lbl.text = "BUILD SLOTS  (drag blocks in — the robot places from these)"
+	lbl.add_theme_font_size_override("font_size", i(10, s))
+	lbl.add_theme_color_override("font_color", C_MUTED)
+	row.add_child(lbl)
+
+	var slots := HBoxContainer.new()
+	slots.add_theme_constant_override("separation", i(6, s))
+	row.add_child(slots)
+
+	_build_slots.clear()
+	var slot_script: GDScript = load("res://scripts/lua_build_slot.gd")
+	for i in range(3):
+		var slot: Control = slot_script.new()
+		slot.set("slot_index", i)
+		slot.connect("slot_changed", _on_build_slot_changed)
+		slots.add_child(slot)
+		_build_slots.append(slot)
+	return row
+
+func _on_build_slot_changed() -> void:
+	_refresh_build_palette()
+
+# Pushes the robot's current palette contents into the slot visuals.
+func _refresh_build_palette() -> void:
+	var npc: Node = _find_npc()
+	for slot in _build_slots:
+		if is_instance_valid(slot):
+			slot.set("_npc", npc)
+			slot.call("refresh")
+
+func _on_build_palette_changed() -> void:
+	_refresh_build_palette()
+
 # ── Encyclopedia ──────────────────────────────────────────────────
+# Two clearly separated groups (see APIReference):
+#   • CUSTOM FUNCTIONS — THIS GAME  (robot + station APIs), split by language
+#   • BUILT-IN FUNCTIONS — LANGUAGE (standard library), split by language
+# so the game's own API is never mixed in with the language's built-ins.
 func _build_encyclopedia(s: float) -> Control:
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", i(10, s))
@@ -253,31 +522,13 @@ func _build_encyclopedia(s: float) -> Control:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(list)
 
-	_enc_section(list, "HIGH-LEVEL HELPERS", s)
-	_enc_entry(list, "auto_work()",
-		"Full work cycle: chop all trees in radius → deposit collected items into the nearest chest → return to station.", s)
-	_enc_entry(list, "chop_trees(radius)",
-		"Chop every tree within radius blocks of the station (defaults to 20 if omitted). Collects dropped items after each tree, then walks home.", s)
-	_enc_entry(list, "deposit_chest()",
-		"Walk to the nearest chest within radius, deposit everything in the robot's inventory, then return to the station.", s)
-	_enc_entry(list, "chest_contents()",
-		"Print the contents of the nearest chest to the output panel. Outputs each item and quantity, or a message if the chest is empty or out of range.", s)
-	_enc_entry(list, "return_to_spawn()",
-		"Walk the robot directly back to the station and stop. Use this to abort a long task or reset position.", s)
-
-	_divider(list)
-
-	_enc_section(list, "LOW-LEVEL PRIMITIVES", s)
-	_enc_entry(list, "move(x, y)",
-		"Set the robot's movement velocity to (x, y) pixels per second. Positive x = east, positive y = south. Call move(0, 0) to stop. Note: sequences of move() calls all fire instantly — only the last value takes effect.", s)
-	_enc_entry(list, "interact()",
-		"Execute the pending action. With no sentinel move() before it, defaults to chopping all trees then returning home. Only one action runs at a time — calls while the robot is busy are ignored.", s)
-	_enc_entry(list, "drop_item(\"name\", qty)",
-		"Drop qty copies of the named item at the robot's current position. Example: drop_item(\"Wood\", 5). The item must be in the robot's inventory.", s)
-	_enc_entry(list, "print(val)",
-		"Print a value to the output panel. Accepts strings, numbers, and booleans. Output stays visible while the panel is open.", s)
-
-	_divider(list)
+	for group in APIReference.groups():
+		_enc_group_header(list, str(group["title"]), str(group["note"]), s)
+		for lang in group["languages"]:
+			_enc_section(list, str(lang["name"]), s)
+			for e in lang["entries"]:
+				_enc_entry(list, str(e["sig"]), str(e["desc"]), s)
+		_divider(list)
 
 	_enc_section(list, "DUNGEON KNOWLEDGE (unlocked)", s)
 	_knowledge_box = VBoxContainer.new()
@@ -287,11 +538,29 @@ func _build_encyclopedia(s: float) -> Control:
 
 	return root
 
+# Big group banner (CUSTOM vs BUILT-IN) — brighter than a language heading so
+# the two top-level categories read as distinct at a glance.
+func _enc_group_header(parent: Node, text: String, note: String, s: float) -> void:
+	var title := Label.new()
+	title.text = text
+	title.add_theme_font_size_override("font_size", i(13, s))
+	title.add_theme_color_override("font_color", C_TITLE)
+	parent.add_child(title)
+	if not note.is_empty():
+		var sub := Label.new()
+		sub.text = note
+		sub.add_theme_font_size_override("font_size", i(11, s))
+		sub.add_theme_color_override("font_color", C_MUTED)
+		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		parent.add_child(sub)
+
 func _refresh_knowledge_section() -> void:
 	if _knowledge_box == null:
 		return
 	for child in _knowledge_box.get_children().duplicate():
 		child.free()
+	_knowledge_keyword_labels.clear()
+	_knowledge_new_badges.clear()
 	var entries := Global.all_learned_entries()
 	if entries.is_empty():
 		var none := Label.new()
@@ -302,7 +571,64 @@ func _refresh_knowledge_section() -> void:
 		_knowledge_box.add_child(none)
 		return
 	for e in entries:
-		_enc_entry(_knowledge_box, e.entry_name, e.description, Global.ui_scale)
+		_enc_knowledge_entry(_knowledge_box, e, Global.ui_scale)
+
+# A learned-entry block: entry name (+ optional NEW badge) and description. The
+# entry name doubles as the keyword label targeted by the first-time emphasis
+# (see _emphasize_unseen_knowledge). The animation is NOT played here — the
+# section is built while hidden, so playing it now would run off-screen; it's
+# deferred to _toggle_encyclopedia when the view actually becomes visible.
+func _enc_knowledge_entry(parent: Node, e: KnowledgeEntry, s: float) -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", i(4, s))
+	parent.add_child(box)
+
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", i(6, s))
+	box.add_child(name_row)
+
+	var name_lbl := Label.new()
+	name_lbl.text = e.entry_name
+	name_lbl.add_theme_font_size_override("font_size", i(14, s))
+	name_lbl.add_theme_color_override("font_color", Color(0.55, 0.90, 1.00, 1.0))
+	name_row.add_child(name_lbl)
+
+	var unseen: bool = Global.is_entry_unseen(e)
+	if unseen:
+		var badge := Label.new()
+		badge.text = "NEW"
+		badge.add_theme_font_size_override("font_size", i(9, s))
+		badge.add_theme_color_override("font_color", Global.KEYWORD_FLASH)
+		name_row.add_child(badge)
+		_knowledge_new_badges[e.id()] = badge
+
+	var desc_lbl := Label.new()
+	desc_lbl.text = e.description
+	desc_lbl.add_theme_font_size_override("font_size", i(12, s))
+	desc_lbl.add_theme_color_override("font_color", C_MUTED)
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(desc_lbl)
+
+	if unseen:
+		_knowledge_keyword_labels[e.id()] = name_lbl
+
+# Plays the emphasis for every entry learned since it was last viewed, then
+# marks them seen (and hides their NEW badges). Called when the encyclopedia
+# becomes visible so the tween runs on laid-out, on-screen labels.
+func _emphasize_unseen_knowledge() -> void:
+	if _knowledge_keyword_labels.is_empty():
+		return
+	for e in Global.all_learned_entries():
+		var lbl: Label = _knowledge_keyword_labels.get(e.id()) as Label
+		if lbl == null or not is_instance_valid(lbl):
+			continue
+		Global.emphasize_keyword(lbl, lbl.get_theme_color("font_color"))
+		var badge: Label = _knowledge_new_badges.get(e.id()) as Label
+		if badge != null and is_instance_valid(badge):
+			badge.visible = false
+		Global.mark_entry_seen(e)
+	_knowledge_keyword_labels.clear()
+	_knowledge_new_badges.clear()
 
 func _enc_section(parent: Node, text: String, s: float) -> void:
 	var lbl := Label.new()
@@ -333,6 +659,11 @@ func _enc_entry(parent: Node, sig: String, desc: String, s: float) -> void:
 func _toggle_encyclopedia() -> void:
 	_encycl.visible = not _encycl.visible
 	_body.visible   = not _encycl.visible
+	if _encycl.visible:
+		# Rebuild so any entry learned since the last look is present, then
+		# (after a frame, so labels are laid out) play the first-time emphasis.
+		_refresh_knowledge_section()
+		_emphasize_unseen_knowledge.call_deferred()
 
 func _run_code() -> void:
 	if _lua_state == null:
@@ -364,6 +695,100 @@ function chest_contents()
     move(0, -5)
     interact()
 end
+function craft_example()
+    -- Chops trees, delivers the wood, then turns it into 2 chests at the
+    -- nearest Crafting Station. 2 chests = 20 planks = 5 wood, so it only
+    -- ever requests 5 planks-crafts and 2 chest-crafts -- never more.
+    chop_trees()
+    deposit_chest()
+    return_to_spawn()
+    set_recipe("Planks")
+    craft(5)
+    take_output()
+    set_recipe("Chest")
+    craft(2)
+    take_output()
+end
+
+-- ── BUILD HELPERS ────────────────────────────────────────────────
+-- The robot places from its 3 build slots. select_block(i) picks the slot
+-- (0, 1 or 2); place_item(dx, dy) places one block at a tile offset from the
+-- robot; place_at(x, y) uses absolute tile coords. Fill the slots by dragging
+-- blocks in, by chopping (wood), or with withdraw("Wood", 10) from a chest.
+-- Each place_* call is one block, played out a frame at a time, so a loop of
+-- 40 calls visibly builds over ~40 frames.
+
+-- Gap-free straight line between two offsets (Bresenham). A plain y = m*x
+-- would skip tiles on diagonals; this steps one tile at a time.
+function build_line(x0, y0, x1, y1)
+    local dx = math.abs(x1 - x0)
+    local dy = -math.abs(y1 - y0)
+    local sx = (x0 < x1) and 1 or -1
+    local sy = (y0 < y1) and 1 or -1
+    local err = dx + dy
+    while true do
+        place_item(x0, y0)
+        if x0 == x1 and y0 == y1 then break end
+        local e2 = 2 * err
+        if e2 >= dy then err = err + dy; x0 = x0 + sx end
+        if e2 <= dx then err = err + dx; y0 = y0 + sy end
+    end
+end
+
+-- Rectangle: w by h tiles, top-left at offset (x0, y0). filled = solid slab,
+-- otherwise just the border.
+function build_rect(x0, y0, w, h, filled)
+    for x = 0, w - 1 do
+        for y = 0, h - 1 do
+            if filled or x == 0 or y == 0 or x == w - 1 or y == h - 1 then
+                place_item(x0 + x, y0 + y)
+            end
+        end
+    end
+end
+
+-- Circle centred on the robot: filled disc (filled = true) or outline.
+-- Uses the integer distance test x*x + y*y <= r*r, so no trig and no gaps.
+function build_circle(r, filled)
+    for x = -r, r do
+        for y = -r, r do
+            local d2 = x * x + y * y
+            if d2 <= r * r and (filled or d2 > (r - 1) * (r - 1)) then
+                place_item(x, y)
+            end
+        end
+    end
+end
+
+-- Hollow ring of radius r.
+function build_ring(r)
+    build_circle(r, false)
+end
+
+-- Archimedean spiral r = a + b*angle, out to radius r over `turns` turns.
+function build_spiral(r, turns)
+    local total = turns * 2 * math.pi
+    local steps = math.floor(r * turns * 10)
+    for i = 0, steps do
+        local ang = total * (i / steps)
+        local rad = r * (ang / total)
+        place_item(math.floor(math.cos(ang) * rad + 0.5), math.floor(math.sin(ang) * rad + 0.5))
+    end
+end
+
+-- Sine-wave fence: `len` tiles long, `amp` tiles tall.
+function build_wave(len, amp)
+    for x = 0, len - 1 do
+        place_item(x, math.floor(amp * math.sin(x * 0.5) + 0.5))
+    end
+end
+
+-- Diagonal staircase of n steps.
+function build_stairs(n)
+    for i = 0, n - 1 do
+        place_item(i, i)
+    end
+end
 """
 	_lua_state.set("code", preamble + code)
 	_lua_state.call("run_code")
@@ -377,8 +802,8 @@ end
 	_print_output("[color=#88ffaa]▶ Running...[/color]")
 
 func _stop_code() -> void:
-	var npc: Node = get_parent().get_parent()
-	if npc.has_method("stop_work"):
+	var npc: Node = _find_npc()
+	if npc != null:
 		npc.call("stop_work")
 
 	_running = false
@@ -392,13 +817,11 @@ func _clear_code() -> void:
 	_code_edit.text = ""
 
 func _close() -> void:
-	# Reset UI state but do NOT stop the robot — it keeps running after the panel closes
-	_running            = false
-	_run_btn.disabled   = false
-	_stop_btn.disabled  = true
-	_code_edit.editable = true
+	# Closing does NOT stop the robot — it keeps running — so re-sync rather
+	# than forcing STOP disabled; open_panel() re-syncs again on reopen.
 	Global.close_ui()
 	visible = false
+	_sync_running_from_npc()
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape") and visible:
@@ -414,6 +837,11 @@ func _on_lua_move(vec: Vector2) -> void:
 
 func _on_code_executed() -> void:
 	_print_output("[color=#88ffaa]✓ Code executed[/color]")
+	# Tutorial snippet ran cleanly → complete its mission (idempotent).
+	if not _pending_mission.is_empty():
+		Global.complete_mission(_pending_mission)
+		_print_output("[color=#ffd76a]★ Tutorial complete![/color]")
+		_pending_mission = ""
 
 func _on_code_failed(error: String) -> void:
 	_print_output("[color=#ff8888]✗ %s[/color]" % error)

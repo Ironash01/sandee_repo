@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://_tmp_repro.gd" id="1_tmp"]
+
+[node name="TmpRepro" type="Node"]
+script = ExtResource("1_tmp")
+

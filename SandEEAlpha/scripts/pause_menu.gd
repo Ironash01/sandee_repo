@@ -266,7 +266,8 @@ func _on_pause_inventory_toggled(pressed: bool) -> void:
 	Global.pause_on_inventory = pressed
 
 func _on_ui_scale_preset(scale_val: float) -> void:
-	Global.ui_scale = scale_val
+	Global.ui_scale     = scale_val
+	Global.ui_scale_set = true
 	Global.ui_scale_changed.emit(scale_val)
 
 func _on_fullscreen_toggled(pressed: bool) -> void:

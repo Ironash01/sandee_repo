@@ -7,13 +7,21 @@
 script = ExtResource("2_question")
 question = "What would be the output of this code?
 
-is_rainy = true
+is_rainy = True
 print(is_rainy)"
+answer_a = "True"
+answer_b = "true"
+answer_c = "is_rainy"
+answer_d = "Error"
+correct_index = 0
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
 type = 1
-question = "In this exercise you should declare a variable is_student and put a boolean value true."
+question = "In this exercise you should declare a variable is_student with the boolean value True, then print it."
+language = "python"
+starter_code = "is_student = True\nprint(is_student)"
+answer_output = "True"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
 script = ExtResource("2_question")
@@ -21,8 +29,13 @@ question = "In this exercise you shall determine the output from the statemenyt 
 
 Today is a rainy day and I can't go outside.
 
-is_rainy = true
+is_rainy = True
 print(is_rainy)"
+answer_a = "True"
+answer_b = "true"
+answer_c = "Today is a rainy day and I can't go outside."
+answer_d = "Error"
+correct_index = 0
 
 [resource]
 script = ExtResource("1_script")

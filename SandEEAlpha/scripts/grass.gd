@@ -63,7 +63,7 @@ const SORT_ORIGIN_OFFSET_PX: float = 15.0
 # scanning every tuft in the world 10x/second was fine at tree-scale
 # (hundreds) but not at grass-scale (many thousands), especially with a
 # mobile port in mind. Instead, world.gd drives cutting centrally — same
-# O(1) dictionary-lookup pattern _destroy_hovered_block() already uses for
+# O(1) dictionary-lookup pattern the _placed_blocks map already uses for
 # placed blocks, no physics monitoring involved at all, and the swing is
 # instant (no hold timer) so this tuft just exposes cut() (to remove
 # itself). See world.gd's _on_swing_performed / _cut_grass_row.
@@ -87,10 +87,28 @@ static var _material: ShaderMaterial = null  # lazily built, shared by every ins
 const SHADOW_TEXTURE_PATH: String = "res://sprites/shadow/shadow_base.png"
 static var _shadow_overlay_image: Image = null
 
+# ── Biome sprite sets ──────────────────────────────────────────────
+# The snowy biome uses its OWN sheet (snowy_grass.png) instead of shader-tinting
+# the green one. Same layout (576x96 = 6 frames of 96x96, same bottom padding),
+# so it's built and sliced identically, shadow and all.
+const SNOWY_GRASS_TEX: Texture2D = preload("res://sprites/ground/snowy_grass.png")
+static var _snowy_frames: Array = []
+
 static func get_grass_frames() -> Array:
-	if not _frames.is_empty():
-		return _frames
-	var full_img: Image = GRASS_TEX.get_image()
+	if _frames.is_empty():
+		_frames = _build_frame_textures(GRASS_TEX)
+	return _frames
+
+static func get_snowy_grass_frames() -> Array:
+	if _snowy_frames.is_empty():
+		_snowy_frames = _build_frame_textures(SNOWY_GRASS_TEX)
+	return _snowy_frames
+
+# Slices a horizontal sheet into FRAME_SIZE frames and bakes the ground shadow
+# under each. Shared by the plains and snowy sheets.
+static func _build_frame_textures(tex: Texture2D) -> Array:
+	var out: Array = []
+	var full_img: Image = tex.get_image()
 	var shadow: Image   = _get_shadow_overlay_image()
 	for i in range(FRAME_COUNT):
 		var region := Rect2i(i * FRAME_SIZE, 0, FRAME_SIZE, FRAME_SIZE)
@@ -109,8 +127,8 @@ static func get_grass_frames() -> Array:
 			composite.blend_rect(shadow, Rect2i(Vector2i.ZERO, shadow.get_size()), shadow_pos)
 			composite.blend_rect(frame_img, Rect2i(Vector2i.ZERO, Vector2i(FRAME_SIZE, FRAME_SIZE)), Vector2i.ZERO)
 			frame_img = composite
-		_frames.append(ImageTexture.create_from_image(frame_img))
-	return _frames
+		out.append(ImageTexture.create_from_image(frame_img))
+	return out
 
 # Built once and cached — scaled down to a flat oval sized for a single
 # grass frame (not a full tile, since a tuft's visible root cluster is
@@ -189,7 +207,9 @@ func setup(ground_anchor: Variant, tile: Vector2i = Vector2i.ZERO) -> void:
 
 func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 	_tile = tile
-	var frames: Array = get_grass_frames()
+	# The snowy biome uses its OWN sprite sheet (snowy_grass.png).
+	var snowy: bool = _tile_biome() == 2
+	var frames: Array = get_snowy_grass_frames() if snowy else get_grass_frames()
 	var h: int = int(tile.x) * 374761393 ^ int(tile.y) * 668265263
 	_sprite.texture  = frames[absi(h) % frames.size()] as Texture2D
 	_sprite.material = get_grass_material()
@@ -218,10 +238,6 @@ func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 	z_index = int(sort_y / TILE_SIZE)
 	static_z = z_index
 
-	# One-time write (not per-frame) so the shared shader's ruffle falloff is
-	# measured from this tuft's ground anchor — see grass_sway.gdshader.
-	_sprite.set_instance_shader_parameter("root_pos", ground_anchor)
-
 # Block-placement path (place_block in world.gd/cave_world.gd). The caller
 # anchors this node at the tile center and runs _fix_sprite_offset() for the
 # standard bottom-center block anchor, so no world-tuft anchoring happens
@@ -242,19 +258,33 @@ func _finish_placed_block() -> void:
 		return
 	var cell := Vector2i(floori(global_position.x / TILE_SIZE), floori(global_position.y / TILE_SIZE))
 	var h: int = int(cell.x) * 374761393 ^ int(cell.y) * 668265263
-	var frames: Array = get_grass_frames()
+	var snowy: bool = _tile_biome() == 2
+	var frames: Array = get_snowy_grass_frames() if snowy else get_grass_frames()
 	_sprite.texture = frames[absi(h) % frames.size()] as Texture2D
 	_sprite.flip_h  = absi(h >> 8) % 2 == 1
-	_sprite.set_instance_shader_parameter("root_pos", global_position + Vector2(0.0, _sprite.position.y))
 	z_index = int(global_position.y / TILE_SIZE)
 	static_z = z_index
+
+# Biome code at this tuft's tile (0=Plain, 1=Desert, 2=Snowy, -1=none/water)
+# via the world's own _cell_biome_type, so grass.gd doesn't duplicate the
+# atlas-coordinate lookup. Defaults to plain (0) when there is no world or the
+# world predates this method.
+func _tile_biome() -> int:
+	var world: Node = Global.world_node
+	if world == null or not world.has_method("_cell_biome_type"):
+		return 0
+	var tile: Vector2i = _tile
+	if tile == Vector2i.ZERO and item_data != null:
+		tile = Vector2i(floori(global_position.x / TILE_SIZE), floori(global_position.y / TILE_SIZE))
+	return int(world.call("_cell_biome_type", tile))
 
 # ── Cutting surface (driven externally by world.gd) ───────────────────
 func cut() -> void:
 	# Green blade burst at the tuft (spawned as a sibling so it survives this
-	# tuft's free).
+	# tuft's free). Snowy tufts burst white-blue to match their snow cover.
 	var burst: Node2D = GRASS_CUT_BURST_SCRIPT.new() as Node2D
 	if burst != null and get_parent() != null:
+		burst.set("snow", _tile_biome() == 2)
 		get_parent().add_child(burst)
 		burst.global_position = global_position + Vector2(0.0, -12.0)
 	# Use the global reference rather than get_parent() to avoid coupling to

@@ -100,7 +100,10 @@ impl PythonType {
                 .ok_or(anyhow!("Cannot find type of {:?}", name)),
             Expr::Tuple(_) => Ok(Self::Tuple),
             Expr::Call(_) => Ok(Self::Any),
-            _ => Err(anyhow!("Cannot transform {:?} to a type", value)),
+            // Anything else (BinOp, Compare, ...) only feeds attribute lookups,
+            // so fall back to Any rather than failing the whole transpile —
+            // `total = a + b` is valid Python and must not error here.
+            _ => Ok(Self::Any),
         }
     }
 
@@ -269,6 +272,36 @@ impl SymbolsStack {
             Symbol::Function(
                 "pow".to_string(),
                 Arguments::new(false, false, 2, Vec::new()),
+            ),
+            // ── Crafting Station automation API ──────────────────────
+            // Implemented by resources/godot_station_base.gd (the base used by
+            // a Crafting Station's Python host). Seeding them here lets the
+            // transpiler accept the calls; a program that uses them outside a
+            // station host compiles against that host's base and reports a
+            // normal "function not found" error instead.
+            Symbol::Function(
+                "craft".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "get_recipe".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "set_recipe".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "output_item".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "output_count".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "take_output".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
             ),
         ]]
     }

@@ -77,7 +77,7 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape"):
 		get_viewport().set_input_as_handled()
 		hide_menu()
-	elif event.is_action_pressed("inventory"):
+	elif event.is_action_pressed("inventory") and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		hide_menu()
 

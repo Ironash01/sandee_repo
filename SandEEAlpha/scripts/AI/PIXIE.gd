@@ -35,6 +35,10 @@ var _roam_timer:   float   = 0.0
 var _chase_memory: float   = 0.0
 
 func physics_update(mob: CharacterBody2D, speed: float, _tilemap: TileMapLayer, delta: float) -> Vector2:
+	# Player dead (pre-respawn): hold still. Dispersal only lasts 2s, so
+	# without this every mob resumes chasing the frozen death position.
+	if Global.player_is_dead:
+		return Vector2.ZERO
 	var player: Node2D = Global.player_node as Node2D
 	if player == null or not is_instance_valid(player):
 		return _roam(mob, speed, delta)

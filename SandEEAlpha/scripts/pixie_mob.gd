@@ -126,9 +126,22 @@ static func _get_glow_texture() -> Texture2D:
 	return Global.get_smooth_light_texture(256)
 
 var _last_move_dir: Vector2 = Vector2.DOWN  # last non-zero flying direction (knockback facing)
+# PASSIVE flee-on-hit (see FleeBehavior); HOSTILE mobs never use it.
+var _flee: FleeBehavior = FleeBehavior.new()
 
 func _physics_process(delta: float) -> void:
 	z_index = int(global_position.y / 32)
+
+	# PASSIVE flee: run from whoever hit us (never teleports).
+	if _flee.tick(delta, global_position, COMBAT_DATA.flee_safe_dist):
+		velocity = _flee.direction(global_position) \
+			* COMBAT_DATA.speed * COMBAT_DATA.flee_speed_mult + _knockback
+		_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
+		move_and_slide()
+		if velocity.length_squared() > 0.01:
+			_last_move_dir = velocity.normalized()
+			_sprite.rotation = lerp_angle(_sprite.rotation, velocity.angle(), 0.35)
+		return
 
 	# Player-death dispersal overrides AI movement
 	if _is_dispersing:
@@ -198,9 +211,19 @@ func take_hit(damage: float, source_pos: Vector2) -> void:
 		tw.tween_callback(_reset_hit_flash)
 	_spawn_damage_number(damage)
 	_show_name_label()
+	_maybe_flee(source_pos)
 	queue_redraw()
 	if _mob_health <= 0.0:
 		_die()
+
+# PASSIVE mobs run from the attacker (see FleeBehavior); HOSTILE mobs fight on.
+func _maybe_flee(source_pos: Vector2) -> void:
+	if COMBAT_DATA.behavior != MobCombatData.Behavior.PASSIVE:
+		return
+	if COMBAT_DATA.flee_health_pct > 0.0 \
+			and _mob_health > COMBAT_DATA.health * COMBAT_DATA.flee_health_pct:
+		return
+	_flee.start(source_pos, COMBAT_DATA.flee_duration)
 
 func _reset_hit_flash() -> void:
 	if is_instance_valid(self):

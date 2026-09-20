@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://do0g86fam0wrl"]
+
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_6bgea"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_6bgea"]
+[ext_resource type="Texture2D" uid="uid://hh5xx0sf8oo6" path="res://sprites/items/torch_animation_sideconnected.png" id="2_avboc"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_tk5nc"]
+atlas = ExtResource("1_6bgea")
+region = Rect2(288, 128, 24, 32)
+
+[resource]
+script = ExtResource("2_6bgea")
+item_name = "Torch"
+description = "A flickering torch that lights up the dark."
+item_type = "block"
+is_dev_item = true
+icon = SubResource("AtlasTexture_tk5nc")
+is_placeable = true
+has_place_animation = true
+place_animation_sheet = ExtResource("2_avboc")
+place_animation_frame_count = 8
+is_torch = true
+block_level = 1
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

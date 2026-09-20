@@ -126,6 +126,11 @@ hotbar_9={
 [physics]
 
 3d/physics_engine="Jolt Physics"
+; Match the physics tick to a 120Hz display so the camera (a child of the
+; physics-driven player) updates every rendered frame. At the default 60Hz the
+; whole scene moved in 60Hz steps while rendering at ~110-120fps, which read as
+; judder/stutter on a high-refresh monitor.
+common/physics_ticks_per_second=120
 
 [rendering]
 

@@ -27,6 +27,8 @@ var _attack_cooldown:  float      = 0.0
 # When the player dies, active wolves scatter outward from the death
 # position for a short duration before resuming normal behavior.
 var _is_dispersing:     bool    = false
+# PASSIVE flee-on-hit (see FleeBehavior); HOSTILE mobs never use it.
+var _flee: FleeBehavior = FleeBehavior.new()
 var _disperse_timer:    float   = 0.0
 var _disperse_direction: Vector2 = Vector2.ZERO
 const DISPERSE_DURATION: float = 2.0     # seconds to keep moving away
@@ -114,6 +116,17 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	z_index = int(global_position.y / 32)
 
+	# PASSIVE flee: run away from whoever hit us. Never teleports — it just
+	# out-runs them, then resumes normal AI.
+	if _flee.tick(delta, global_position, COMBAT_DATA.flee_safe_dist):
+		velocity = _flee.direction(global_position) \
+			* COMBAT_DATA.speed * COMBAT_DATA.flee_speed_mult + _knockback
+		_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
+		if velocity != Vector2.ZERO:
+			_update_walk_anim(velocity)
+			move_and_slide()
+		return
+
 	# Player-death dispersal overrides AI movement
 	if _is_dispersing:
 		_disperse_timer -= delta
@@ -184,9 +197,19 @@ func take_hit(damage: float, source_pos: Vector2) -> void:
 		tw.tween_callback(_reset_hit_flash)
 	_spawn_damage_number(damage)
 	_show_name_label()
+	_maybe_flee(source_pos)
 	queue_redraw()
 	if _mob_health <= 0.0:
 		_die()
+
+# PASSIVE mobs run from the attacker (see FleeBehavior); HOSTILE mobs fight on.
+func _maybe_flee(source_pos: Vector2) -> void:
+	if COMBAT_DATA.behavior != MobCombatData.Behavior.PASSIVE:
+		return
+	if COMBAT_DATA.flee_health_pct > 0.0 \
+			and _mob_health > COMBAT_DATA.health * COMBAT_DATA.flee_health_pct:
+		return
+	_flee.start(source_pos, COMBAT_DATA.flee_duration)
 
 func _reset_hit_flash() -> void:
 	if is_instance_valid(self):

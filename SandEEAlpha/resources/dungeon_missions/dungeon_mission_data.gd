@@ -26,7 +26,7 @@ class_name DungeonMissionData
 @export var entry_resource_file: String = ""     # file name, e.g. "entry_1_lua.tres"
 @export var questions: Array[DungeonQuestion] = []  # inline quiz questions (MCQ / COMPILER)
 @export var dungeon_index: int = 1               # matches the mission's dungeon_index in Global.missions
-@export var reward_item_path: String = "res://resources/items/lua_core.tres"
+@export var reward_item_path: String = "res://resources/items/lua.tres"
 @export_enum("64x64", "128x128", "256x256") var size_modifier: int = 1
 @export_range(1, 8, 1) var altar_amount: int = 1
 @export_range(0, 16, 1) var chest_amount: int = 2

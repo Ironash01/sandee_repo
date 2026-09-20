@@ -5,6 +5,19 @@ extends Node2D
 # The robot is a child Node2D that moves relative to the station.
 # ─────────────────────────────────────────────────────────────────
 
+# Fired when the robot's build palette contents change (player drag, chest
+# withdraw, or a placement consuming a block) so the editor UI can refresh.
+signal build_palette_changed
+
+# The ItemData this station was placed from (the "LUA" item). world.gd's save
+# routine reads node.item_data to persist placed blocks, and place_block_at()
+# calls setup() — without both, the station (and its Robot child) was never
+# saved and vanished on reload.
+var item_data: ItemData = null
+
+func setup(data: ItemData) -> void:
+	item_data = data
+
 const TILE_SIZE:          float = 32.0
 const CHOP_RADIUS_BLOCKS: int   = 20
 const CHOP_RADIUS_PX:     float = CHOP_RADIUS_BLOCKS * TILE_SIZE  # 640 px
@@ -13,6 +26,17 @@ const CHOP_DELAY:         float = 0.25
 const PICKUP_DELAY:       float = 0.4
 const NPC_SPEED:          float = 90.0
 const SHADOW_TEXTURE:     Texture2D = preload("res://sprites/shadow/shadow_base.png")
+
+# ── Y-sort (robot visual) ────────────────────────────────────────
+# The robot sprite is CENTERED on the Robot node, so the node origin sits at
+# the sprite's middle, not its feet. Sorting on the origin (the old behaviour)
+# put the robot half a tile too high, so it drew behind trees/blocks it was
+# standing in front of. Offset to the FEET line, then add the same half-tile
+# tiebreak the player uses so the robot wins ties against an object's base the
+# same way. ROBOT_FEET_OFFSET = (visible feet pixel row - frame centre) *
+# sprite scale: measured 11px below centre in the 36px frames, x1.6 scale.
+const ROBOT_FEET_OFFSET: float = 17.6
+const YSORT_TIEBREAK:    float = 16.0   # half a tile — matches player.gd
 
 # ── Obstacle avoidance / stuck detection ─────────────────────────
 # Trees, placed blocks, chests, etc. are all StaticBody2D on the default
@@ -54,6 +78,15 @@ var _last_dir:        String  = "south"
 var _robot_vel:       Vector2 = Vector2.ZERO
 var _npc_inventory:   Array   = []       # [{data: ItemData, quantity: int}, ...]
 
+# ── Build palette (robot's 3-slot block supply) ───────────────────
+# A small hotbar the robot places FROM. Three STACK slots; select_block(i)
+# chooses which one place_item() uses. Filled by the player dragging a block
+# into a slot (LuaEditorUI) or by the robot itself — chop/collect adds wood,
+# withdraw(name, n) pulls from the nearest chest.
+const BUILD_SLOTS: int = 3
+var _build_palette: Array = []           # [ {data, quantity} | null, x3 ]
+var _selected_slot: int   = 0            # 0-based; the slot place_item uses
+
 # ── Node refs ─────────────────────────────────────────────────────
 var _lua_state:    Node    = null
 var _ui:           Control = null
@@ -61,6 +94,7 @@ var _ui:           Control = null
 @onready var _robot:        CharacterBody2D  = $Robot
 @onready var _robot_sprite: AnimatedSprite2D = $Robot/RobotSprite
 @onready var _click_area:   Area2D           = $ClickArea
+@onready var _beacon:       Sprite2D         = $BeaconSprite
 
 # Shared across every Lua station robot — built once instead of per-instance
 # when multiple stations are placed.
@@ -69,6 +103,7 @@ static var _shared_frames: SpriteFrames = null
 # ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_build_palette.resize(BUILD_SLOTS)
 
 	if _shared_frames == null:
 		_shared_frames = _build_frames()
@@ -77,10 +112,26 @@ func _ready() -> void:
 	# Attached to _robot (not the station) so it moves with the robot as it walks.
 	_robot.add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 5.0), Vector2(0.6, 0.3), 0.35))
 
+	# ── Y-sorting ─────────────────────────────────────────────────
+	# place_block() stamps a static z_index on this node from the tile it was
+	# placed on, but the robot WALKS away from that spot (and the node is moved
+	# into position AFTER _ready). Both visuals get z_as_relative = false and
+	# have their z recomputed each frame from their OWN base line, using the
+	# same int(y / TILE_SIZE) buckets the player, mobs, trees and grass use.
+	# The robot sorts from its FEET (origin + ROBOT_FEET_OFFSET + tiebreak),
+	# not its origin, so it overlaps trees/blocks the same way the player does.
+	_robot.z_as_relative  = false
+	_beacon.z_as_relative = false
+
 	_click_area.body_entered.connect(_on_body_entered)
 	_click_area.body_exited.connect(_on_body_exited)
 	_click_area.input_event.connect(_on_station_input_event)
 	_click_area.input_pickable = true
+	# Mouse picking needs BOTH input_pickable AND a non-zero collision_layer:
+	# an area on layer 0 is invisible to the viewport's point query, so
+	# input_event would never fire. Layer 8 is unused by everything else, so
+	# enabling picking here can't be caught by any gameplay collision mask.
+	_click_area.collision_layer = 8
 	Global.request_close_all_ui.connect(_on_close_all_ui)
 
 	# LuaState GDExtension
@@ -92,7 +143,17 @@ func _ready() -> void:
 	_lua_state.connect("signal_attack",     _on_lua_attack)
 	_lua_state.connect("signal_drop_item",  _on_lua_drop_item)
 	_lua_state.connect("signal_place_item", _on_lua_place_item)
+	_lua_state.connect("signal_place_at",   _on_lua_place_at)
+	_lua_state.connect("signal_select_block", _on_lua_select_block)
+	_lua_state.connect("signal_withdraw",   _on_lua_withdraw)
 	_lua_state.connect("signal_print",      _on_lua_print)
+	# Crafting Station API (craft/set_recipe/take_output) — routed to the
+	# nearest placed Crafting Station so a Lua program can drive one.
+	_lua_state.connect("signal_craft",       _on_lua_craft)
+	_lua_state.connect("signal_set_recipe",  _on_lua_set_recipe)
+	_lua_state.connect("signal_take_output", _on_lua_take_output)
+	_lua_state.connect("signal_put_input",   _on_lua_put_input)
+	_lua_state.connect("signal_input_slot",  _on_lua_input_slot)
 
 	# Code editor UI
 	var ui_scene: PackedScene = load("res://scenes/ui/LuaEditorUI.tscn") as PackedScene
@@ -124,6 +185,14 @@ func _draw() -> void:
 # the walk helpers picks a clear direction, but this is what actually stops
 # it from ever tunnelling through an obstacle the steering missed.
 func _physics_process(_delta: float) -> void:
+	# Sort by each visual's own feet line every frame — the robot walks far
+	# from the station's fixed bucket, so a static z_index would leave it drawn
+	# behind trees/blocks it is standing in front of (and vice versa). The
+	# robot sprite is centered on the Robot node, so add ROBOT_FEET_OFFSET to
+	# reach the feet, plus the player's half-tile tiebreak. The beacon is
+	# recomputed too because the node is positioned after _ready.
+	_robot.z_index  = int((_robot.global_position.y + ROBOT_FEET_OFFSET + YSORT_TIEBREAK) / TILE_SIZE)
+	_beacon.z_index = int(global_position.y / TILE_SIZE)
 	if _robot_vel != Vector2.ZERO:
 		_robot.velocity = _robot_vel
 		_robot.move_and_slide()
@@ -142,7 +211,13 @@ func _on_station_input_event(_viewport, event: InputEvent, _shape) -> void:
 	elif event.button_index == MOUSE_BUTTON_LEFT and _player_nearby and not Global.block_mode:
 		if _ui != null and not _ui.visible and not Global.pause_menu_open:
 			Global.open_ui()
-			_ui.visible = true
+			# open_panel() re-syncs RUN/STOP with the robot's real state —
+			# plainly setting visible=true would leave STOP disabled (and a
+			# still-running robot unstoppable) after a close/reopen.
+			if _ui.has_method("open_panel"):
+				_ui.call("open_panel")
+			else:
+				_ui.visible = true
 
 # ── Player proximity ──────────────────────────────────────────────
 func _on_body_entered(body: Node) -> void:
@@ -184,8 +259,316 @@ func _on_lua_interact() -> void:
 	_pending_action = "chop"
 
 func _on_lua_attack()                            -> void: pass
-func _on_lua_place_item(_n: String)              -> void: pass
-func _on_lua_print(_t: String)                   -> void: pass
+func _on_lua_print(_t: String) -> void: pass
+
+# ── Building (place_item / place_at / select_block / withdraw) ─────
+# The robot places from its 3-slot build palette. Every placement reuses the
+# world's own validity rules (World.can_place_at), so the robot obeys exactly
+# the same water/tree/grass/occupancy constraints the player does. Calls drain
+# ONE PER PHYSICS FRAME (see LuaState.physics_process), so a Lua loop that
+# places 40 blocks visibly builds them over ~40 frames — paced for free.
+
+func _on_lua_select_block(index: int) -> void:
+	_selected_slot = clampi(index, 0, BUILD_SLOTS - 1)
+
+# Relative: place at (robot_tile + dx, robot_tile + dy).
+func _on_lua_place_item(dx: int, dy: int) -> void:
+	var world: Node = Global.world_node
+	if world == null or not world.has_method("world_to_cell"):
+		return
+	var robot_cell: Vector2i = world.call("world_to_cell", _robot.global_position)
+	_place_from_palette(world, robot_cell + Vector2i(dx, dy))
+
+# Absolute: place at tile (x, y).
+func _on_lua_place_at(x: int, y: int) -> void:
+	var world: Node = Global.world_node
+	if world == null or not world.has_method("can_place_at"):
+		return
+	_place_from_palette(world, Vector2i(x, y))
+
+# Shared: consume one from the selected slot and place it, if legal + in range.
+func _place_from_palette(world: Node, cell: Vector2i) -> bool:
+	var slot: Variant = _build_palette[_selected_slot] if _selected_slot < _build_palette.size() else null
+	if slot == null:
+		_build_warn("Build slot %d is empty — give the robot blocks first (drag them in, or withdraw(\"Wood\", n))." % [_selected_slot + 1])
+		return false
+	var data: ItemData = (slot as Dictionary)["data"] as ItemData
+	if data == null or not data.is_placeable:
+		_build_warn("The selected build slot does not hold a placeable block.")
+		return false
+	# Reach: same radius the robot works within, measured from the STATION.
+	if cell_to_world_dist(world, cell, global_position) > CHOP_RADIUS_PX:
+		_build_warn("Placement out of range (further than the work radius).")
+		return false
+	if world.has_method("can_place_at") and not world.call("can_place_at", cell):
+		_build_warn("Cannot place there — the tile is blocked.")
+		return false
+	var obj: Node = null
+	if world.has_method("place_block_at"):
+		obj = world.call("place_block_at", cell, data)
+	if obj == null:
+		return false
+	# Consume one from the slot.
+	var qty: int = int((slot as Dictionary)["quantity"]) - 1
+	if qty <= 0:
+		_build_palette[_selected_slot] = null
+	else:
+		(slot as Dictionary)["quantity"] = qty
+	build_palette_changed.emit()
+	return true
+
+# Build failures fire once per placement, which a 40-block loop would spam — so
+# throttle notices to one every 1.5s.
+var _last_build_warn_ms: int = 0
+
+func _build_warn(msg: String) -> void:
+	var now: int = Time.get_ticks_msec()
+	if now - _last_build_warn_ms < 1500:
+		return
+	_last_build_warn_ms = now
+	_lua_notice(msg)
+
+# Distance (px) from a tile cell to a world point — the tile's CENTRE.
+func cell_to_world_dist(world: Node, cell: Vector2i, from: Vector2) -> float:
+	if not world.has_method("cell_to_world"):
+		return 0.0
+	return (world.call("cell_to_world", cell) as Vector2).distance_to(from)
+
+# withdraw(name, quantity): walk to the nearest chest and pull that item into
+# the build palette (then the leftover into the general robot inventory).
+func _on_lua_withdraw(name: String, quantity: int) -> void:
+	_withdraw_from_chest.call_deferred(name, maxi(quantity, 1))
+
+func _withdraw_from_chest(name: String, quantity: int) -> void:
+	if _is_working:
+		return
+	_is_working = true
+	var chest: Node = _nearest_chest_in_radius()
+	if chest != null and is_instance_valid(chest):
+		if not await _walk_to_node(chest as Node2D):
+			_is_working = false
+			return
+		var data := _find_item_data_by_name(name)
+		if data != null:
+			var taken: int = _take_from_chest(chest, data, quantity)
+			if taken > 0:
+				_npc_add_to_palette(data, taken)
+	_abort_work()
+
+# Removes up to `quantity` of `data` from a chest and returns how many were
+# actually removed, via the chest's own take_item() (no reaching into its slots).
+func _take_from_chest(chest: Node, data: ItemData, quantity: int) -> int:
+	if not chest.has_method("take_item"):
+		return 0
+	return int(chest.call("take_item", data, quantity))
+
+# Adds `count` of `data` to the first build-palette slot that already holds it,
+# else the first empty slot. Falls back to the general inventory when full.
+func _npc_add_to_palette(data: ItemData, count: int) -> void:
+	var remaining: int = count
+	var stack_limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
+	for i in range(_build_palette.size()):
+		if remaining <= 0:
+			break
+		var slot: Variant = _build_palette[i]
+		if slot == null:
+			continue
+		if (slot as Dictionary)["data"] == data and int((slot as Dictionary)["quantity"]) < stack_limit:
+			var space: int = stack_limit - int((slot as Dictionary)["quantity"])
+			var add: int = mini(remaining, space)
+			(slot as Dictionary)["quantity"] = int((slot as Dictionary)["quantity"]) + add
+			remaining -= add
+	for i in range(_build_palette.size()):
+		if remaining <= 0:
+			break
+		if _build_palette[i] == null:
+			var add: int = mini(remaining, stack_limit)
+			_build_palette[i] = {"data": data, "quantity": add}
+			remaining -= add
+	# Overflow (all 3 slots full) goes to the general inventory — RAW add, so
+	# it can't route back here and recurse.
+	if remaining > 0:
+		_inventory_add_raw(data, remaining)
+	build_palette_changed.emit()
+
+# Public (used by LuaEditorUI when the player drags a block into a slot).
+func set_build_slot(index: int, data: ItemData, quantity: int) -> void:
+	if index < 0 or index >= _build_palette.size():
+		return
+	_build_palette[index] = null if data == null else {"data": data, "quantity": maxi(quantity, 1)}
+	build_palette_changed.emit()
+
+func get_build_palette() -> Array:
+	return _build_palette
+
+
+# ── Crafting Station bridge ───────────────────────────────────────
+# The nearest placed Crafting Station within range, or null. Stations are
+# grouped by crafting_station_object.gd.
+func nearest_crafting_station() -> Node:
+	if not is_inside_tree():
+		return null
+	var best: Node = null
+	var best_d: float = CHOP_RADIUS_PX
+	for n in get_tree().get_nodes_in_group("CraftingStation"):
+		if not (n is Node2D):
+			continue
+		var d: float = (n as Node2D).global_position.distance_to(global_position)
+		if d < best_d:
+			best_d = d
+			best = n
+	return best
+
+# ── Station jobs: WALK to the nearest station, then act ────────────
+# craft()/set_recipe()/take_output()/put_input() are emitted as separate
+# signals (one per frame), but walking is asynchronous — so they're QUEUED and
+# run one at a time, each after the robot has walked to the station. That is
+# what makes the robot visibly travel to a station to craft, exactly like
+# deposit_chest() does for chests. Nothing is silent: with no station in range
+# (or an empty build slot) a message goes to the program's output.
+var _station_queue: Array = []
+
+func _on_lua_craft(quantity: int) -> void:
+	_queue_station_job("craft", int(quantity))
+
+func _on_lua_set_recipe(name: String) -> void:
+	_queue_station_job("set_recipe", name)
+
+func _on_lua_take_output() -> void:
+	_queue_station_job("take_output", 0)
+
+# put_input(name, qty): walk to the nearest station and move that item from the
+# robot's own stores (build palette + inventory) into the station's input slot.
+func _on_lua_put_input(name: String, quantity: int) -> void:
+	_queue_station_job("put_input", {"name": name, "quantity": maxi(quantity, 1)})
+
+# input_slot(qty): same, but the item is whatever the SELECTED build slot holds,
+# so a program doesn't need to name it.
+func _on_lua_input_slot(quantity: int) -> void:
+	_queue_station_job("input_slot", maxi(quantity, 1))
+
+func _queue_station_job(action: String, arg: Variant) -> void:
+	_station_queue.append({"action": action, "arg": arg})
+	if not _is_working:
+		_run_station_jobs.call_deferred()
+
+func _run_station_jobs() -> void:
+	if _is_working:
+		return
+	_is_working = true
+	while not _station_queue.is_empty():
+		if _stop_requested or not is_inside_tree():
+			break
+		var job: Dictionary = _station_queue.pop_front()
+		var station: Node = nearest_crafting_station()
+		if station == null or not is_instance_valid(station):
+			_lua_notice("No crafting station in range.")
+			continue
+		if not await _walk_to_node(station as Node2D):
+			break
+		_apply_station_job(station, job)
+	_abort_work()
+
+func _apply_station_job(station: Node, job: Dictionary) -> void:
+	match str(job["action"]):
+		"craft":
+			var n: int = int(job["arg"])
+			var made: int = int(station.call("craft_request", n))
+			if made <= 0:
+				_lua_notice("Craft failed — check the recipe, ingredients and output space.")
+		"set_recipe":
+			if not bool(station.call("set_automation_recipe_by_name", str(job["arg"]))):
+				_lua_notice("Unknown recipe: %s" % str(job["arg"]))
+		"take_output":
+			# A robot's craft result goes to the ROBOT's 3 build slots (falling
+			# back to its inventory when full) — not the player's inventory.
+			var stack: Dictionary = {}
+			if station.has_method("take_output_stack"):
+				stack = station.call("take_output_stack")
+			if stack.is_empty():
+				_lua_notice("Nothing to collect.")
+				return
+			_npc_add_to_palette(stack["data"] as ItemData, int(stack["quantity"]))
+		"put_input":
+			var d: Dictionary = job["arg"]
+			var data := _find_item_data_by_name(str(d["name"]))
+			if data == null:
+				_lua_notice("Unknown item: %s" % str(d["name"]))
+				return
+			var give: int = mini(int(d["quantity"]), _count_robot_item(data))
+			if give <= 0:
+				_lua_notice("The robot is not carrying any %s." % str(d["name"]))
+				return
+			var accepted: int = int(station.call("put_input", data, give))
+			if accepted > 0:
+				_remove_robot_item(data, accepted)
+		"input_slot":
+			# Feed from the SELECTED build slot — no item name needed.
+			var slot: Variant = _build_palette[_selected_slot] if _selected_slot < _build_palette.size() else null
+			if slot == null:
+				_lua_notice("Build slot %d is empty — nothing to load into the station." % [_selected_slot + 1])
+				return
+			var data2: ItemData = (slot as Dictionary)["data"] as ItemData
+			if data2 == null:
+				return
+			var give2: int = mini(int(job["arg"]), _count_robot_item(data2))
+			if give2 <= 0:
+				_lua_notice("The robot is not carrying any %s." % data2.item_name)
+				return
+			var accepted2: int = int(station.call("put_input", data2, give2))
+			if accepted2 > 0:
+				_remove_robot_item(data2, accepted2)
+
+# Sends a status line to the Lua editor's output panel (the LuaState's
+# signal_print is what the editor listens to).
+func _lua_notice(msg: String) -> void:
+	if _lua_state != null and is_instance_valid(_lua_state):
+		_lua_state.emit_signal("signal_print", msg)
+	else:
+		print("[Lua] ", msg)
+
+
+# Total of `data` the robot is holding (build palette + general inventory).
+func _count_robot_item(data: ItemData) -> int:
+	var total: int = 0
+	for slot in _build_palette:
+		if slot != null and (slot as Dictionary)["data"] == data:
+			total += int((slot as Dictionary)["quantity"])
+	for slot in _npc_inventory:
+		if slot != null and slot["data"] == data:
+			total += int(slot["quantity"])
+	return total
+
+# Removes up to `count` of `data` from the robot's stores (palette first).
+func _remove_robot_item(data: ItemData, count: int) -> void:
+	var remaining: int = count
+	for i in range(_build_palette.size()):
+		if remaining <= 0:
+			break
+		var slot: Variant = _build_palette[i]
+		if slot == null or (slot as Dictionary)["data"] != data:
+			continue
+		var take: int = mini(remaining, int((slot as Dictionary)["quantity"]))
+		(slot as Dictionary)["quantity"] = int((slot as Dictionary)["quantity"]) - take
+		remaining -= take
+		if int((slot as Dictionary)["quantity"]) <= 0:
+			_build_palette[i] = null
+	if remaining != count:
+		build_palette_changed.emit()
+	# Iterate the inventory in REVERSE so removing an emptied slot is safe —
+	# _npc_inventory holds only real entries (no nulls), so it must be erased,
+	# not set to null.
+	for i in range(_npc_inventory.size() - 1, -1, -1):
+		if remaining <= 0:
+			break
+		var slot: Variant = _npc_inventory[i]
+		if slot == null or slot["data"] != data:
+			continue
+		var take: int = mini(remaining, int(slot["quantity"]))
+		slot["quantity"] = int(slot["quantity"]) - take
+		remaining -= take
+		if int(slot["quantity"]) <= 0:
+			_npc_inventory.remove_at(i)
 
 func _on_lua_drop_item(name: String, qty: int) -> void:
 	var data := _find_item_data_by_name(name)
@@ -198,9 +581,32 @@ func _on_lua_drop_item(name: String, qty: int) -> void:
 		get_parent().add_child(inst)
 
 # ── Public: called by the Lua editor Stop button ──────────────────
+# True while a dispatched job (auto_work / chop / walk) is still running. The
+# editor UI uses this to re-sync its RUN/STOP buttons whenever it reopens,
+# since closing the panel deliberately leaves the robot working.
+func is_working() -> bool:
+	return _is_working
+
 func stop_work() -> void:
 	_stop_requested = true
 	_robot_vel      = Vector2.ZERO
+	# Nothing is running, so no loop will consume the flag — clear it now or
+	# the next job would abort the instant it starts.
+	if not _is_working:
+		_abort_work()
+
+# Clears the "a job is running" state. Called when a job is interrupted by
+# STOP (or by the station leaving the tree), so _on_lua_interact's
+# _is_working guard can't latch and a stale _stop_requested can't make every
+# future job bail out immediately.
+func _abort_work() -> void:
+	_robot_vel      = Vector2.ZERO
+	_stop_requested = false
+	_is_working     = false
+	# A finished job may have queued station work behind it (e.g. chop_trees()
+	# then input_slot()/craft()) — kick that queue now that we're free.
+	if not _station_queue.is_empty():
+		_run_station_jobs.call_deferred()
 
 # ─────────────────────────────────────────────────────────────────
 # ── AUTONOMOUS BEHAVIOURS ─────────────────────────────────────────
@@ -301,6 +707,12 @@ func _walk_to_node(target: Node2D) -> bool:
 	var last_dist:     float = INF
 	var stuck_since_ms: int  = -1
 	while is_instance_valid(target):
+		# STOP pressed mid-walk, or the station left the tree (the overworld is
+		# swapped out when the player enters a cave/dungeon) — abandon the walk
+		# instead of marching on or touching a null physics world.
+		if _stop_requested or not is_inside_tree():
+			_abort_work()
+			return false
 		var dist: float = _robot.global_position.distance_to(target.global_position)
 		if dist <= APPROACH_PX:
 			_robot_vel = Vector2.ZERO
@@ -330,6 +742,9 @@ func _walk_to_spawn() -> bool:
 	var last_dist:     float = INF
 	var stuck_since_ms: int  = -1
 	while _robot.position.length() > 8.0:
+		if _stop_requested or not is_inside_tree():
+			_abort_work()
+			return false
 		var dist: float = _robot.position.length()
 
 		var desired: Vector2 = (_robot.position * -1.0).normalized()
@@ -357,7 +772,15 @@ func _walk_to_spawn() -> bool:
 func _path_is_clear(from: Vector2, dir: Vector2, exclude_rids: Array) -> bool:
 	if dir == Vector2.ZERO:
 		return true
-	var space_state := get_world_2d().direct_space_state
+	# get_world_2d() is null whenever this station is outside the tree (e.g. a
+	# walk was in flight when the overworld was swapped for a cave/dungeon).
+	# Report "blocked" so callers stop steering instead of dereferencing null.
+	if not is_inside_tree():
+		return false
+	var world_2d := get_world_2d()
+	if world_2d == null:
+		return false
+	var space_state := world_2d.direct_space_state
 	var query := PhysicsRayQueryParameters2D.create(from, from + dir.normalized() * OBSTACLE_LOOKAHEAD_PX)
 	query.collision_mask = OBSTACLE_MASK
 	query.exclude        = exclude_rids
@@ -395,6 +818,8 @@ func _handle_stuck() -> void:
 
 # Nearest tree within CHOP_RADIUS_PX of the STATION (not the robot).
 func _nearest_tree_in_radius() -> Node2D:
+	if not is_inside_tree():
+		return null
 	var best:  Node2D = null
 	var best2: float  = CHOP_RADIUS_PX * CHOP_RADIUS_PX
 	for node in get_tree().get_nodes_in_group("Tree"):
@@ -407,6 +832,8 @@ func _nearest_tree_in_radius() -> Node2D:
 
 # Nearest chest with space within station radius.
 func _nearest_chest_in_radius() -> Node:
+	if not is_inside_tree():
+		return null
 	var best:  Node  = null
 	var best2: float = CHOP_RADIUS_PX * CHOP_RADIUS_PX
 	for node in get_tree().get_nodes_in_group("Chest"):
@@ -419,6 +846,8 @@ func _nearest_chest_in_radius() -> Node:
 	return best
 
 func _collect_drops_nearby() -> void:
+	if not is_inside_tree():
+		return
 	for item_node in get_tree().get_nodes_in_group("items"):
 		if not (item_node is Node2D): continue
 		var dist: float = (item_node as Node2D).global_position.distance_to(_robot.global_position)
@@ -431,12 +860,32 @@ func _collect_drops_nearby() -> void:
 			item_node.queue_free()
 
 func _npc_add_to_inventory(data: ItemData) -> void:
-	var stack_limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
+	# Placeable items (wood, planks, stone, …) go to the BUILD palette first,
+	# so a robot that chops trees can immediately build with the wood. The
+	# palette falls back to the raw inventory when all 3 slots are full.
+	if data != null and data.is_placeable:
+		_npc_add_to_palette(data, 1)
+		return
+	_inventory_add_raw(data, 1)
+
+# The original stacking rule, with no palette routing — the palette's own
+# overflow fallback calls THIS (routing would recurse forever).
+func _inventory_add_raw(data: ItemData, count: int) -> void:
+	if data == null:
+		return
+	var stack_limit: int = data.max_stack_size if data.max_stack_size > 0 else Global.MAX_STACK
+	var remaining: int = count
 	for slot in _npc_inventory:
+		if remaining <= 0:
+			break
 		if slot["data"] == data and slot["quantity"] < stack_limit:
-			slot["quantity"] += 1
-			return
-	_npc_inventory.append({"data": data, "quantity": 1})
+			var add: int = mini(remaining, stack_limit - int(slot["quantity"]))
+			slot["quantity"] += add
+			remaining -= add
+	while remaining > 0:
+		var add: int = mini(remaining, stack_limit)
+		_npc_inventory.append({"data": data, "quantity": add})
+		remaining -= add
 
 func _deposit_to_chest(chest: Node) -> void:
 	var to_remove: Array = []

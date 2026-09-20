@@ -98,7 +98,7 @@ class DungeonExit:
 		draw_rect(Rect2(-half, -half, 32, 32), COLOR)
 		draw_rect(Rect2(-half, -half, 32, 32), Color(0, 0, 0, 0.6), false, 2.0)
 		var font: Font = ThemeDB.fallback_font
-		var fsize: int = 8
+		var fsize: int = int(8 * Global.ui_scale)
 		var text_size := font.get_string_size("EXIT", HORIZONTAL_ALIGNMENT_CENTER, -1, fsize)
 		draw_string(font, Vector2(-text_size.x / 2.0, fsize / 2.0), "EXIT",
 			HORIZONTAL_ALIGNMENT_CENTER, -1, fsize, Color.WHITE)
@@ -411,16 +411,34 @@ class DungeonMinimap:
 	const C_PLAYER:    Color = Color(0.96, 0.96, 1.00, 1.0)
 
 	var world: DungeonWorld = null
-	var _px: float = 2.0  # pixels per grid cell, scaled to fit FIXED_MAP_SIZE
+	var _px: float = 2.0  # pixels per grid cell, scaled to fit the (scaled) map area
+	var _pad: float = PAD
+	var _map_size: Vector2 = FIXED_MAP_SIZE
 
 	func _init(w: DungeonWorld) -> void:
 		world = w
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_apply_scale()
+
+	func _ready() -> void:
+		if not Global.ui_scale_changed.is_connected(_on_ui_scale):
+			Global.ui_scale_changed.connect(_on_ui_scale)
+
+	# Recompute the map's pixel size / position from the global UI scale so a
+	# Small/Medium/Large change resizes the minimap live.
+	func _apply_scale() -> void:
+		var s: float = Global.ui_scale
+		_pad = PAD * s
+		_map_size = FIXED_MAP_SIZE * s
 		var g: DungeonGenerator = world.generator
 		if g != null:
-			_px = minf(FIXED_MAP_SIZE.x / maxi(g.width, 1), FIXED_MAP_SIZE.y / maxi(g.height, 1))
-		position = Vector2(16, 26)
-		size     = FIXED_MAP_SIZE + Vector2(PAD, PAD) * 2.0
+			_px = minf(_map_size.x / maxi(g.width, 1), _map_size.y / maxi(g.height, 1))
+		position = Vector2(16, 26) * s
+		size     = _map_size + Vector2(_pad, _pad) * 2.0
+
+	func _on_ui_scale(_s: float) -> void:
+		_apply_scale()
+		queue_redraw()
 
 	func _process(_delta: float) -> void:
 		queue_redraw()
@@ -430,12 +448,12 @@ class DungeonMinimap:
 			return
 		var g: DungeonGenerator = world.generator
 		draw_rect(Rect2(Vector2.ZERO, size), C_BG)
-		draw_rect(Rect2(Vector2.ZERO, size), C_BORDER, false, 2.0)
+		draw_rect(Rect2(Vector2.ZERO, size), C_BORDER, false, 2.0 * Global.ui_scale)
 
 		for x in range(g.width):
 			for y in range(g.height):
 				var wall: bool = g.grid[x][y] == DungeonGenerator.Tile.WALL
-				var cell_rect := Rect2(PAD + x * _px, PAD + y * _px, _px, _px)
+				var cell_rect := Rect2(_pad + x * _px, _pad + y * _px, _px, _px)
 				draw_rect(cell_rect, C_WALL if wall else C_FLOOR)
 
 		var dot_r := _px * 0.5 + 0.5
@@ -449,7 +467,7 @@ class DungeonMinimap:
 			_draw_marker(_grid_from_world(player.global_position), C_PLAYER, dot_r + 1.0)
 
 	func _draw_marker(grid_pos: Vector2i, color: Color, r: float) -> void:
-		var center := Vector2(PAD, PAD) + Vector2(grid_pos) * _px + Vector2(_px, _px) * 0.5
+		var center := Vector2(_pad, _pad) + Vector2(grid_pos) * _px + Vector2(_px, _px) * 0.5
 		draw_circle(center, r, color)
 
 	# World position -> generator grid coords (inverse of _grid_to_cell).
@@ -459,31 +477,53 @@ class DungeonMinimap:
 		var cell: Vector2i = world._tilemap.local_to_map(world._tilemap.to_local(world_pos))
 		return cell + Vector2i(world.generator.width / 2, world.generator.height / 2)
 
+var _minimap_title: Label = null
+var _dungeon_chat: Node = null
+
 func _setup_minimap() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 4
 	layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(layer)
 
-	var title := Label.new()
-	title.text = "Dungeon Map"
-	title.position = Vector2(18, 8)
-	title.add_theme_font_size_override("font_size", 12)
-	title.add_theme_color_override("font_color", Color(0.80, 0.70, 1.00, 0.9))
-	layer.add_child(title)
+	var s: float = Global.ui_scale
+	_minimap_title = Label.new()
+	_minimap_title.text = "Dungeon Map"
+	_minimap_title.position = Vector2(18, 8) * s
+	_minimap_title.add_theme_font_size_override("font_size", int(12 * s))
+	_minimap_title.add_theme_color_override("font_color", Color(0.80, 0.70, 1.00, 0.9))
+	layer.add_child(_minimap_title)
 
 	var map := DungeonMinimap.new(self)
 	map.process_mode = Node.PROCESS_MODE_ALWAYS
 	layer.add_child(map)
 
 	# Reposition the notification log (chat console) below the minimap.
-	var chat = null
 	var canvas_layer = Global.game_node.get_node_or_null("CanvasLayer")
 	if canvas_layer != null:
 		for c in canvas_layer.get_children():
 			if c is ChatConsole:
-				chat = c
+				_dungeon_chat = c
 				break
-	if chat != null and chat.has_method("reposition_for_dungeon"):
-		var minimap_bottom: int = int(26 + DungeonMinimap.FIXED_MAP_SIZE.y + DungeonMinimap.PAD * 2.0 + 8)
-		chat.call("reposition_for_dungeon", minimap_bottom)
+	_reposition_dungeon_chat()
+
+	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
+		Global.ui_scale_changed.connect(_on_ui_scale)
+
+# Keep the minimap title and the chat log's docked position in step with the
+# UI scale (the map control re-scales itself via its own signal handler).
+func _on_ui_scale(_s: float) -> void:
+	var s: float = Global.ui_scale
+	if _minimap_title != null and is_instance_valid(_minimap_title):
+		_minimap_title.position = Vector2(18, 8) * s
+		_minimap_title.add_theme_font_size_override("font_size", int(12 * s))
+	_reposition_dungeon_chat()
+
+func _reposition_dungeon_chat() -> void:
+	if _dungeon_chat == null or not is_instance_valid(_dungeon_chat):
+		return
+	if _dungeon_chat.has_method("reposition_for_dungeon"):
+		var s: float = Global.ui_scale
+		var minimap_bottom: int = int((26.0 + DungeonMinimap.FIXED_MAP_SIZE.y
+				+ DungeonMinimap.PAD * 2.0 + 8.0) * s)
+		_dungeon_chat.call("reposition_for_dungeon", minimap_bottom)

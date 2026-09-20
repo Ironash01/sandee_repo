@@ -237,6 +237,12 @@ func _on_lua_stuck_notice(message: String) -> void:
 	_stuck_tween.tween_property(_stuck_label, "modulate:a", 0.0, 0.30)
 
 func _input(event: InputEvent) -> void:
+	# Never react while a panel is open: number keys are text while typing, and
+	# a mouse wheel used to scroll a UI's ScrollContainer must not also cycle
+	# the hotbar (this handler runs in _input(), before the GUI consumes the
+	# wheel in _gui_input(), so without this guard both happened at once).
+	if Global.any_ui_open() or Global.pause_menu_open or Global.is_text_input_focused():
+		return
 	for i in range(9):
 		if event.is_action_pressed("hotbar_%d" % (i + 1)):
 			Global.set_hotbar_selection(i)

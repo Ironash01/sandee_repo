@@ -39,4 +39,18 @@ func godot_print(sep, end, ...objects: Array):
 	
 func create(object: String):
 	get_parent().signal_create.emit(object)
+
+# Python len() -> GDScript. Strings use length(), containers use size().
+func len(object: Variant) -> int:
+	match typeof(object):
+		TYPE_STRING, TYPE_STRING_NAME:
+			return (object as String).length()
+		TYPE_ARRAY, TYPE_DICTIONARY, TYPE_PACKED_BYTE_ARRAY, \
+		TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_INT64_ARRAY, \
+		TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY, \
+		TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_VECTOR2_ARRAY, \
+		TYPE_PACKED_VECTOR3_ARRAY, TYPE_PACKED_COLOR_ARRAY:
+			return object.size()
+		_:
+			return 0
 	

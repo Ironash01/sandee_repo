@@ -22,16 +22,23 @@ uniform float shake_speed : hint_range(0.0, 40.0)  = 20.0;
 // the lean-away reads cleanly on top of the slow wind sway.
 uniform float shake_amount : hint_range(0.0, 30.0) = 2.0;
 
-// Per-instance anchor position, set once at spawn (see world.gd
-// _spawn_grass_at → set_instance_shader_parameter). Falloff MUST be measured
-// from this, not from each vertex's own world position: the top two vertices
-// (which carry all the bend weight below) sit ~half the sprite's height above
-// the tuft's own anchor, so measuring distance per-vertex left them outside
-// push_radius even when the player was standing right on top of the tuft —
-// that mismatch is why the effect was barely perceptible before.
-instance uniform vec2 root_pos = vec2(0.0, 0.0);
-
+// Per-tuft anchor, taken from the item's OWN transform (MODEL_MATRIX's
+// translation) instead of an instance uniform. Instance shader variables live
+// in a small global buffer (rendering/limits/global_shader_variables/
+// buffer_size, 4096 here); one slot per grass tuft exhausted it at world scale
+// and leaked on cut/regrow, spamming global_shader_parameters_instance_allocate
+// ("Too many instances..."). MODEL_MATRIX yields the same point for free, so
+// grass now uses ZERO instance-buffer slots.
+//
+// The falloff MUST be measured from this anchor, not from each vertex's own
+// world position: the top two vertices (which carry all the bend weight below)
+// sit ~half the sprite's height above the tuft's own anchor, so per-vertex
+// distance left them outside push_radius even when the player stood right on
+// top of the tuft. player_pos is in the same space because the World node is
+// pinned at the origin.
 void vertex() {
+	vec2 root_pos = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xy;
+
 	float phase = root_pos.x * sway_freq + root_pos.y * sway_freq * 0.5;
 	// UV.y is 0 at the top of the sprite (blades) and 1 at the bottom (roots) —
 	// bend increases toward the top so the base stays anchored to the ground.

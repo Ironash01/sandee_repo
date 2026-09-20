@@ -7,6 +7,10 @@ const OBJECT_BURST_SCRIPT: GDScript  = preload("res://scripts/object_burst.gd")
 const INTERACT_RADIUS_PX: float       = 64.0
 const SHADOW_TEXTURE:     Texture2D   = preload("res://sprites/shadow/shadow_blockbase.png")
 
+# Pickaxes are the wrong tool for wood-tagged blocks (ItemData.wooden_block):
+# they take a 75% speed penalty, i.e. the block is 4x harder to a pickaxe.
+const PICKAXE_WOOD_PENALTY: float = 0.75
+
 var _player_nearby: bool     = false
 var _hovered:       bool     = false
 var _world_cell:    Vector2i = Vector2i(-99999, -99999)
@@ -55,6 +59,8 @@ func _ready() -> void:
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 10.0), Vector2(0.8, 0.4), 0.35))
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
+	refresh_u_collision()
+	refresh_torch_connection()
 
 # Lazy-create (once per world) the TorchLights manager under the world that
 # owns this block, then register. _world_ref is set by set_world_cell() BEFORE
@@ -95,6 +101,27 @@ func set_world_cell(cell: Vector2i, world: Node) -> void:
 	_world_cell = cell
 	_world_ref  = world
 
+# ── U-collider toggle ─────────────────────────────────────────────
+# The full-height SIDE walls (SideColL/SideColR) only help when another block
+# sits directly above or below this one — a vertical column, where nothing can
+# step into the block's upper half anyway. On an isolated block they would stop
+# the player entering that upper half, which world.gd's "player behind the
+# block" cover y-sort depends on, so they stay disabled.
+# Called on _ready, on placement, and whenever an orthogonal neighbour changes.
+func refresh_u_collision() -> void:
+	var side_l: CollisionShape2D = get_node_or_null("StaticBody2D/SideColL") as CollisionShape2D
+	var side_r: CollisionShape2D = get_node_or_null("StaticBody2D/SideColR") as CollisionShape2D
+	if side_l == null or side_r == null:
+		return
+	var stacked: bool = false
+	var world: Node = _world_ref if _world_ref != null else Global.world_node
+	if world != null and world.has_method("has_placed_block") and _world_cell.x != -99999:
+		stacked = bool(world.call("has_placed_block", _world_cell + Vector2i(0, -1))) \
+			or bool(world.call("has_placed_block", _world_cell + Vector2i(0, 1)))
+	# set_deferred: collision state can't be flipped mid physics flush.
+	side_l.set_deferred("disabled", not stacked)
+	side_r.set_deferred("disabled", not stacked)
+
 func _apply_sprite() -> void:
 	if item_data == null:
 		return
@@ -102,9 +129,10 @@ func _apply_sprite() -> void:
 	# it into 32x32 frames, then advance `frame` on a timer. (hframes is also
 	# what _update_hover uses for the block's click bounds, so hover stays
 	# correct per frame.)
-	if item_data.has_place_animation and item_data.place_animation_sheet != null \
+	var sheet: Texture2D = _active_sheet()
+	if item_data.has_place_animation and sheet != null \
 			and item_data.place_animation_frame_count > 1:
-		_sprite.texture = item_data.place_animation_sheet
+		_sprite.texture = sheet
 		_sprite.hframes = item_data.place_animation_frame_count
 		_sprite.vframes = 1
 		_sprite.frame   = 0
@@ -116,6 +144,37 @@ func _apply_sprite() -> void:
 	_sprite.hframes = 1
 	_sprite.vframes = 1
 	_stop_sheet_animation()
+
+# ── Connected torch ───────────────────────────────────────────────
+# A torch placed directly beside a solid block uses the "connected" sheet,
+# which is authored hugging the LEFT edge of its tile (for a block on the
+# left) — so a block on the RIGHT flips it. Recomputed whenever an orthogonal
+# neighbour changes (world.gd calls this alongside refresh_u_collision).
+var _torch_connected: bool = false
+
+func refresh_torch_connection() -> void:
+	if item_data == null or not item_data.is_torch:
+		return
+	if item_data.torch_connected_sheet == null:
+		return
+	var world: Node = _world_ref if _world_ref != null else Global.world_node
+	if world == null or not world.has_method("has_placed_block") or _world_cell.x == -99999:
+		return
+	var left:  bool = bool(world.call("has_placed_block", _world_cell + Vector2i(-1, 0)))
+	var right: bool = bool(world.call("has_placed_block", _world_cell + Vector2i( 1, 0)))
+	var connected: bool = left or right
+	_sprite.flip_h = right and not left
+	if connected == _torch_connected:
+		return
+	_torch_connected = connected
+	_apply_sprite()
+
+# The animation sheet to draw: the connected sheet while wall-mounted, else the
+# normal centred sheet.
+func _active_sheet() -> Texture2D:
+	if _torch_connected and item_data.torch_connected_sheet != null:
+		return item_data.torch_connected_sheet
+	return item_data.place_animation_sheet
 
 func _start_sheet_animation() -> void:
 	if _anim_timer != null and _anim_timer.is_inside_tree():
@@ -252,20 +311,29 @@ func _try_start_breaking() -> void:
 	if held_data == null:
 		return
 	var held_name: String = held_data.item_name.to_lower()
-	var is_axe: bool      = held_name.contains("axe")
+	var is_axe: bool      = held_data.axe_level > 0
 	var is_pickaxe: bool  = held_name.contains("pickaxe")
-	var is_wood_block: bool = item_data != null and item_data.item_name == "Wood"
+	var is_wood_block: bool = item_data != null and item_data.wooden_block
 	var block_lvl: int = item_data.block_level if item_data != null else 0
 
 	if is_axe and is_wood_block:
-		# Axes chop wood blocks — no pickaxe tier needed, with a 2x speed
-		# bonus (half the break time). Spam clicking works normally.
-		_break_duration = maxf(0.1, float(block_lvl)) * 0.5
+		# Axes chop wooden blocks — no pickaxe tier needed. Speed comes from the
+		# axe's hidden wooden-block bonus (LV1 +0.3x, LV2 +0.6x, LV3 +1.0x).
+		# Spam clicking works normally.
+		_break_duration = maxf(0.1, float(block_lvl)) / (1.0 + held_data.axe_wood_block_bonus())
 	elif is_pickaxe:
 		var min_lvl: int = item_data.min_pickaxe_level if item_data != null else 0
 		if held_data.pickaxe_level < min_lvl:
 			return  # pickaxe tier too low for this block
-		_break_duration = maxf(0.1, float(block_lvl - held_data.pickaxe_level))
+		# Wood-tagged blocks penalise a pickaxe by 75% (speed x0.25). The
+		# penalty is applied to the block's HARDNESS rather than to the clamped
+		# seconds: a high pickaxe tier already floors the time at 0.1s, so
+		# multiplying afterwards would leave iron/diamond pickaxes untouched and
+		# the penalty would never bite.
+		var hardness: float = float(block_lvl)
+		if is_wood_block:
+			hardness /= (1.0 - PICKAXE_WOOD_PENALTY)
+		_break_duration = maxf(0.1, hardness - float(held_data.pickaxe_level))
 	else:
 		return  # no tool that can break this block
 	# The swing animation plays for ANY item used to break — route through the

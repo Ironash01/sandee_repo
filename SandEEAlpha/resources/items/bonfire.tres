@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://c266usflkjfjx"]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_3qjin"]
+[ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_h1r20"]
+[ext_resource type="Texture2D" uid="uid://d1uepav2u52kq" path="res://sprites/items/bonfire_anim.png" id="2_6kuyk"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_6ffcy"]
+atlas = ExtResource("1_h1r20")
+region = Rect2(224, 128, 32, 32)
+
+[resource]
+script = ExtResource("1_3qjin")
+item_name = "Bonfire"
+description = "Sets your spawn point anywhere in the world."
+item_type = "block"
+icon = SubResource("AtlasTexture_6ffcy")
+stackable = false
+max_stack_size = 1
+is_placeable = true
+has_place_animation = true
+place_animation_sheet = ExtResource("2_6kuyk")
+place_animation_frame_count = 4
+is_torch = true
+is_craftable = true
+block_level = 10
+min_pickaxe_level = 1
+wooden_block = true
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"
