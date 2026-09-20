@@ -6,8 +6,9 @@ reloadable = true
 [libraries]
 linux.debug.x86_64 =     "res://ext_bin/release/libinterpreter.so"
 linux.release.x86_64 =   "res://ext_bin/release/libinterpreter.so"
-windows.debug.x86_64 = "res://ext_bin/x86_64-pc-windows-gnu/release/interpreter.dll"
-windows.release.x86_64 = "res://ext_bin/x86_64-pc-windows-gnu/release/interpreter.dll"
+windows.debug.x86_64 = "res://ext_bin/release/interpreter.dll"
+windows.release.x86_64 = "res://ext_bin/release/interpreter.dll"
 
 [icons]
 LuaState = "res://extension/lua.svg"
+PythonTranspiler = "res://extension/python-config.svg"

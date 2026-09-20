@@ -1,7 +1,9 @@
 mod runner;
+mod transpiler;
 mod utils;
 use godot::prelude::*;
 use runner::prelude::*;
+use transpiler::prelude::*;
 
 struct InterpreterExtension;
 

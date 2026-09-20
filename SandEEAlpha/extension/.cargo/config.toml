@@ -1,13 +1,5 @@
-[package]
-name = "interpreter"
-version = "0.1.0"
-edition = "2024"
+[build]
+target-dir = "../ext_bin/"
 
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-anyhow = "1.0.102"
-godot = "0.4.8"                  # ← was 0.4.5, now matches Godot 4.6
-mlua = { version = "0.11.6", features = ["lua51", "send", "error-send", "anyhow", "vendored"] }
-strum = { version = "0.28.0", features = ["derive"] }
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android36-clang"
