@@ -111,22 +111,16 @@ func _on_ui_scale(_s: float) -> void:
 	visible = was_visible
 
 func _load_recipes() -> void:
-	var dir := DirAccess.open(RECIPE_DIR)
-	if dir == null:
-		push_error("CraftingMenu: cannot open recipe dir: " + RECIPE_DIR)
-		return
-	dir.list_dir_begin()
-	var fname: String = dir.get_next()
-	while fname != "":
-		if not dir.current_is_dir() and fname.ends_with(".tres"):
+	# ResourceLoader.list_directory (not DirAccess) so this survives export —
+	# see Global._load_resource_dir for why DirAccess misses .tres there.
+	for fname in ResourceLoader.list_directory(RECIPE_DIR):
+		if fname.ends_with(".tres"):
 			var res: Resource = load(RECIPE_DIR + fname) as Resource
 			if res != null and res is CraftingRecipe:
 				var recipe: CraftingRecipe = res as CraftingRecipe
 				if recipe.result_item != null and recipe.result_item.is_craftable \
 						and not recipe.result_item.is_dev_item:
 					_recipes.append(recipe)
-		fname = dir.get_next()
-	dir.list_dir_end()
 
 # ── Public: open this menu in station mode ─────────────────────────
 func open_as_station() -> void:

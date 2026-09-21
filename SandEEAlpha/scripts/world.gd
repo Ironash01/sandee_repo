@@ -3162,20 +3162,15 @@ func _is_entrance_structure_type(structure_type: String) -> bool:
 
 func _scan_structure_dir() -> Array:
 	var out: Array = []
-	var dir := DirAccess.open(STRUCTURES_DIR)
-	if dir == null:
-		return out
-	dir.list_dir_begin()
-	var file_name: String = dir.get_next()
-	while file_name != "":
-		if not dir.current_is_dir() and file_name.ends_with(".tres"):
+	# ResourceLoader.list_directory (not DirAccess) so this survives export —
+	# see Global._load_resource_dir for why DirAccess misses .tres there.
+	for file_name in ResourceLoader.list_directory(STRUCTURES_DIR):
+		if file_name.ends_with(".tres"):
 			var res: Resource = load(STRUCTURES_DIR + file_name)
 			if res is GeneratedStructure:
 				var s := res as GeneratedStructure
 				if s.is_valid():
 					out.append(s)
-		file_name = dir.get_next()
-	dir.list_dir_end()
 	return out
 
 # Each structure's sprite becomes a TileSetAtlasSource (32x32 cells) in the

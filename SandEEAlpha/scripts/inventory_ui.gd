@@ -83,22 +83,16 @@ func _on_ui_scale(_s: float) -> void:
 
 func _load_recipes() -> void:
 	_recipes.clear()
-	var dir := DirAccess.open(RECIPE_DIR)
-	if dir == null:
-		push_error("InventoryUI: cannot open recipe dir: " + RECIPE_DIR)
-		return
-	dir.list_dir_begin()
-	var fname: String = dir.get_next()
-	while fname != "":
-		if not dir.current_is_dir() and fname.ends_with(".tres"):
+	# ResourceLoader.list_directory (not DirAccess) so this survives export —
+	# see Global._load_resource_dir for why DirAccess misses .tres there.
+	for fname in ResourceLoader.list_directory(RECIPE_DIR):
+		if fname.ends_with(".tres"):
 			var res: Resource = load(RECIPE_DIR + fname) as Resource
 			if res != null and res is CraftingRecipe:
 				var r: CraftingRecipe = res as CraftingRecipe
 				# Inventory crafting: only hand-craftable (no station required)
 				if r.result_item != null and r.result_item.is_craftable and not r.requires_station:
 					_recipes.append(r)
-		fname = dir.get_next()
-	dir.list_dir_end()
 
 # ── Build ─────────────────────────────────────────────────────────
 func _rebuild() -> void:

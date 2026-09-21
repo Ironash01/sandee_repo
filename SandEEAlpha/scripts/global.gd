@@ -445,24 +445,22 @@ func load_knowledge_data() -> void:
 			dungeon_missions[m.dungeon_index] = m
 
 func _load_resource_dir(dir_path: String, into: Dictionary) -> void:
-	var dir := DirAccess.open(dir_path)
-	if dir == null:
-		push_warning("Global: cannot open resource folder %s" % dir_path)
-		return
-	dir.list_dir_begin()
-	var fname := dir.get_next()
-	while fname != "":
-		if dir.current_is_dir() and not fname.begins_with("."):
+	# ResourceLoader.list_directory (NOT DirAccess) so this also works in an
+	# EXPORTED build: text resources are converted to binary on export and the
+	# original .tres is replaced by a .tres.remap stub, which DirAccess lists
+	# instead of the .tres name — so the scan silently found nothing and the
+	# encyclopedia/dungeon lists came up empty. list_directory reports the
+	# original editor-side names in both cases (subdirs get a trailing "/").
+	for fname in ResourceLoader.list_directory(dir_path):
+		if fname.ends_with("/"):
 			# Recurse into subdirectories (e.g. python/, lua/)
-			_load_resource_dir(dir_path + fname + "/", into)
-		elif not dir.current_is_dir() and fname.ends_with(".tres"):
+			_load_resource_dir(dir_path + fname, into)
+		elif fname.ends_with(".tres"):
 			var res: Resource = load(dir_path + fname)
 			if res != null:
 				into[fname.get_basename()] = res
 			else:
 				push_warning("Global: failed to load %s%s" % [dir_path, fname])
-		fname = dir.get_next()
-	dir.list_dir_end()
 
 func get_knowledge_entry_file(fname: String) -> KnowledgeEntry:
 	return knowledge_entries.get(fname.get_basename()) as KnowledgeEntry
@@ -577,22 +575,14 @@ func find_item_by_name(query: String) -> ItemData:
 	if q.is_empty():
 		return null
 	const ITEMS_DIR: String = "res://resources/items/"
-	var dir := DirAccess.open(ITEMS_DIR)
-	if dir == null:
-		return null
-	dir.list_dir_begin()
-	var fname := dir.get_next()
-	while fname != "":
-		if not dir.current_is_dir() and fname.ends_with(".tres"):
+	for fname in ResourceLoader.list_directory(ITEMS_DIR):
+		if fname.ends_with(".tres"):
 			var data: ItemData = load(ITEMS_DIR + fname) as ItemData
 			if data != null:
 				var base: String = fname.get_basename().to_lower()
 				var display: String = data.item_name.to_lower()
 				if base == q or display == q or base.contains(q) or display.contains(q):
-					dir.list_dir_end()
 					return data
-		fname = dir.get_next()
-	dir.list_dir_end()
 	return null
 
 # Every ItemData resource under resources/items/, sorted by display name. Used
@@ -600,18 +590,11 @@ func find_item_by_name(query: String) -> ItemData:
 func list_all_items() -> Array[ItemData]:
 	var out: Array[ItemData] = []
 	const ITEMS_DIR: String = "res://resources/items/"
-	var dir := DirAccess.open(ITEMS_DIR)
-	if dir == null:
-		return out
-	dir.list_dir_begin()
-	var fname := dir.get_next()
-	while fname != "":
-		if not dir.current_is_dir() and fname.ends_with(".tres"):
+	for fname in ResourceLoader.list_directory(ITEMS_DIR):
+		if fname.ends_with(".tres"):
 			var data: ItemData = load(ITEMS_DIR + fname) as ItemData
 			if data != null:
 				out.append(data)
-		fname = dir.get_next()
-	dir.list_dir_end()
 	out.sort_custom(func(a: ItemData, b: ItemData) -> bool: return a.item_name < b.item_name)
 	return out
 

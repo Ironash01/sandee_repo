@@ -97,19 +97,13 @@ func hide_menu() -> void:
 
 # ── Recipe loading ─────────────────────────────────────────────────
 func _load_recipes() -> void:
-	var dir := DirAccess.open(RECIPE_DIR)
-	if dir == null:
-		return
-	dir.list_dir_begin()
-	while true:
-		var fname: String = dir.get_next()
-		if fname == "":
-			break
+	# ResourceLoader.list_directory (not DirAccess) so this survives export —
+	# see Global._load_resource_dir for why DirAccess misses .tres there.
+	for fname in ResourceLoader.list_directory(RECIPE_DIR):
 		if fname.ends_with(".tres"):
 			var r: Resource = load(RECIPE_DIR + fname)
 			if r is SmeltingRecipe:
 				_recipes.append(r)
-	dir.list_dir_end()
 
 func _recipe_for(item: ItemData) -> SmeltingRecipe:
 	if item == null:

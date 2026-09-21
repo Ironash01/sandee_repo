@@ -263,21 +263,16 @@ func get_station_recipes() -> Array:
 
 static func _discover_station_recipes() -> Array:
 	var out: Array = []
-	var dir := DirAccess.open(STATION_RECIPE_DIR)
-	if dir == null:
-		return out
-	dir.list_dir_begin()
-	var fname: String = dir.get_next()
-	while fname != "":
-		if not dir.current_is_dir() and fname.ends_with(".tres"):
+	# ResourceLoader.list_directory (not DirAccess) so this survives export —
+	# see Global._load_resource_dir for why DirAccess misses .tres there.
+	for fname in ResourceLoader.list_directory(STATION_RECIPE_DIR):
+		if fname.ends_with(".tres"):
 			var res: Resource = load(STATION_RECIPE_DIR + fname)
 			if res is CraftingRecipe:
 				var r: CraftingRecipe = res as CraftingRecipe
 				if r.requires_station and r.result_item != null \
 						and r.result_item.is_craftable and not r.result_item.is_dev_item:
 					out.append(r)
-		fname = dir.get_next()
-	dir.list_dir_end()
 	return out
 
 func get_automation_recipe() -> CraftingRecipe:
