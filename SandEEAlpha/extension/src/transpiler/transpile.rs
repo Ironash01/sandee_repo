@@ -1,13 +1,36 @@
 use crate::transpiler::spec::{Arguments, PythonType, Symbol, SymbolsStack};
 use anyhow::{Result, anyhow};
 use godot::prelude::*;
-use ruff_python_ast::{Expr, ExprContext, Number, Operator, Stmt, UnaryOp};
+use ruff_python_ast::{
+    Expr, ExprContext, Identifier, Number, Operator, Stmt, StmtFunctionDef, UnaryOp,
+    visitor::Visitor,
+};
 use ruff_python_parser::{Mode, ParseOptions};
 
 #[derive(Default)]
 struct Transpiler {
     indent_level: usize,
     symbols: SymbolsStack,
+}
+
+#[derive(Default)]
+struct SelfExtractor {
+    selves: Vec<String>,
+}
+
+impl Visitor<'_> for SelfExtractor {
+    fn visit_expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Attribute(attr) => {
+                if let Some(name) = attr.value.as_name_expr() {
+                    if name.id.as_str() == "self" {
+                        self.selves.push(attr.attr.to_string())
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
 }
 
 impl Transpiler {
@@ -25,7 +48,7 @@ impl Transpiler {
         self.symbols.pop();
     }
 
-    fn transpile_statements(&mut self, statements: &[Stmt]) -> Result<String> {
+    fn transpile_statements(&mut self, statements: &mut [Stmt]) -> Result<String> {
         let mut transpiled = String::new();
         for statement in statements {
             transpiled.push_str(&self.transpile_statement(statement)?);
@@ -33,64 +56,83 @@ impl Transpiler {
         Ok(transpiled)
     }
 
-    fn transpile_statement(&mut self, statement: &Stmt) -> Result<String> {
+    fn build_function_args<'a, 'b>(
+        &'b self,
+        func: &'a StmtFunctionDef,
+    ) -> (
+        Vec<&'a str>,
+        Vec<(&'a str, &'a Expr)>,
+        Vec<String>,
+        Arguments,
+    ) {
+        let mut args = Vec::with_capacity(func.parameters.len());
+        let mut kwargs = Vec::with_capacity(func.parameters.len());
+        let mut final_args = Vec::with_capacity(func.parameters.len());
+
+        func.parameters
+            .posonlyargs
+            .iter()
+            .chain(func.parameters.args.iter())
+            .for_each(|arg| {
+                if let Some(default) = arg.default() {
+                    kwargs.push((arg.name().as_str(), default));
+                } else {
+                    args.push(arg.name().as_str());
+                }
+            });
+
+        func.parameters.kwonlyargs.iter().for_each(|kwarg| {
+            if let Some(default) = kwarg.default() {
+                kwargs.push((kwarg.name().as_str(), default));
+            }
+        });
+
+        if let Some(kwargs_name) = func.parameters.kwarg.as_ref() {
+            final_args.push(format!(
+                "{}: Dictionary[String, Variant]",
+                kwargs_name.name().as_str()
+            ));
+        }
+
+        args.iter().for_each(|arg| final_args.push(arg.to_string()));
+
+        kwargs
+            .iter()
+            .for_each(|(kwarg, _)| final_args.push(format!("{}", kwarg)));
+
+        if let Some(vararg) = func.parameters.vararg.as_ref() {
+            final_args.push(format!("...{}: Array", vararg.name().as_str()));
+        }
+
+        let args_len = final_args.len();
+        let kwargs_spec = kwargs
+            .iter()
+            .map(|(kwargs, _)| kwargs.to_string())
+            .collect();
+        (
+            args,
+            kwargs,
+            final_args,
+            Arguments::new(
+                func.parameters.kwarg.is_some(),
+                func.parameters.vararg.is_some(),
+                args_len,
+                kwargs_spec,
+            ),
+        )
+    }
+
+    fn transpile_statement(&mut self, statement: &mut Stmt) -> Result<String> {
         let transpiled = match statement {
             Stmt::FunctionDef(func) => {
                 let mut transpiled = format!("func {}(", func.name.as_str());
-                let mut args = Vec::with_capacity(func.parameters.len());
-                let mut kwargs = Vec::with_capacity(func.parameters.len());
-                let mut final_args = Vec::with_capacity(func.parameters.len());
-
-                func.parameters
-                    .posonlyargs
-                    .iter()
-                    .chain(func.parameters.args.iter())
-                    .for_each(|arg| {
-                        if let Some(default) = arg.default() {
-                            kwargs.push((arg.name().as_str(), default));
-                        } else {
-                            args.push(arg.name().as_str());
-                        }
-                    });
-
-                func.parameters.kwonlyargs.iter().for_each(|kwarg| {
-                    if let Some(default) = kwarg.default() {
-                        kwargs.push((kwarg.name().as_str(), default));
-                    }
-                });
-
-                if let Some(kwargs_name) = func.parameters.kwarg.as_ref() {
-                    final_args.push(format!(
-                        "{}: Dictionary[String, Variant]",
-                        kwargs_name.name().as_str()
-                    ));
-                }
-
-                args.iter().for_each(|arg| final_args.push(arg.to_string()));
-
-                kwargs
-                    .iter()
-                    .for_each(|(kwarg, _)| final_args.push(format!("{}", kwarg)));
-
-                if let Some(vararg) = func.parameters.vararg.as_ref() {
-                    final_args.push(format!("...{}: Array", vararg.name().as_str()));
-                }
+                let (args, kwargs, final_args, args_spec) = self.build_function_args(func);
 
                 transpiled.push_str(&final_args.join(", "));
                 transpiled.push_str("):\n");
 
-                self.symbols.add_symbol(Symbol::Function(
-                    func.name.to_string(),
-                    Arguments::new(
-                        func.parameters.kwarg.is_some(),
-                        func.parameters.vararg.is_some(),
-                        final_args.len(),
-                        kwargs
-                            .iter()
-                            .map(|(kwargs, _)| kwargs.to_string())
-                            .collect(),
-                    ),
-                ));
+                self.symbols
+                    .add_symbol(Symbol::Function(func.name.to_string(), args_spec));
 
                 self.indent();
                 if let Some(kwargs_name) = func.parameters.kwarg.as_ref() {
@@ -127,9 +169,65 @@ impl Transpiler {
                     ));
                 }
 
-                transpiled.push_str(&self.transpile_statements(&func.body)?);
+                transpiled.push_str(&self.transpile_statements(&mut func.body)?);
                 self.dedent();
 
+                Ok(transpiled)
+            }
+            Stmt::ClassDef(cls) => {
+                let mut transpiled = format!("class {}", cls.name);
+
+                if let Some(args) = &cls.arguments {
+                    if args.args.len() > 1 {
+                        return Err(anyhow!("Only one base class is supported"));
+                    }
+                    if !args.keywords.is_empty() {
+                        return Err(anyhow!("Keyword nodes are not supported"));
+                    }
+
+                    let base = args.args.first().ok_or(anyhow!(
+                        "{} has no base class despite the parser saying so.",
+                        cls.name
+                    ))?;
+                    let base = self.transpile_expression(base)?;
+
+                    transpiled.push_str(&format!(" extends {}", base));
+                }
+                transpiled.push_str(":\n");
+
+                let mut cls_args = Arguments::new(false, false, 0, Vec::new());
+                cls.body.iter_mut().for_each(|stmt| match stmt {
+                    Stmt::FunctionDef(func) => {
+                        if !func.parameters.posonlyargs.is_empty() {
+                            func.parameters.posonlyargs.remove(0);
+                        } else {
+                            func.parameters.args.remove(0);
+                        }
+
+                        if func.name.as_str() == "__init__" {
+                            func.name = Identifier::new("_init", func.name.range);
+                            let (_, _, _, args_spec) = self.build_function_args(func);
+                            cls_args = args_spec;
+                        }
+                    }
+                    _ => (),
+                });
+
+                self.symbols
+                    .add_symbol(Symbol::Class(cls.name.to_string(), cls_args));
+                self.indent();
+                self.symbols
+                    .add_symbol(Symbol::Variable("self".to_string(), PythonType::Any));
+                let mut selves = SelfExtractor::default();
+                for stmt in cls.body.iter() {
+                    selves.visit_stmt(stmt);
+                }
+
+                selves.selves.iter().for_each(|var| {
+                    transpiled.push_str(&format!("{}var {}\n", self.indent_string(), var));
+                });
+                transpiled.push_str(&self.transpile_statements(&mut cls.body)?);
+                self.dedent();
                 Ok(transpiled)
             }
             Stmt::Return(ret) => Ok(if let Some(value) = ret.value.as_ref() {
@@ -290,7 +388,7 @@ impl Transpiler {
                             .symbols
                             .add_symbol(Symbol::Variable(target.clone(), PythonType::Any)),
                     }
-                    let body = self.transpile_statements(&stmt_for.body)?;
+                    let body = self.transpile_statements(&mut stmt_for.body)?;
                     self.dedent();
 
                     Ok(format!("for {} in {}:\n{}", target, iter, body))
@@ -302,7 +400,7 @@ impl Transpiler {
                 let test = self.transpile_expression(&stmt_while.test)?;
 
                 self.indent();
-                let body = self.transpile_statements(&stmt_while.body)?;
+                let body = self.transpile_statements(&mut stmt_while.body)?;
                 self.dedent();
 
                 Ok(format!("while {}:\n{}", test, body))
@@ -311,23 +409,23 @@ impl Transpiler {
                 let test = self.transpile_expression(&stmt_if.test)?;
 
                 self.indent();
-                let body = self.transpile_statements(&stmt_if.body)?;
+                let body = self.transpile_statements(&mut stmt_if.body)?;
                 self.dedent();
 
                 let elif_elses: Result<Vec<_>> = stmt_if
                     .elif_else_clauses
-                    .iter()
+                    .iter_mut()
                     .map(|elif_else| {
                         if let Some(test) = elif_else.test.as_ref() {
                             let test = self.transpile_expression(test)?;
 
                             self.indent();
-                            let body = self.transpile_statements(&elif_else.body)?;
+                            let body = self.transpile_statements(&mut elif_else.body)?;
                             self.dedent();
                             Ok(format!("elif {}:\n{}", test, body))
                         } else {
                             self.indent();
-                            let body = self.transpile_statements(&elif_else.body)?;
+                            let body = self.transpile_statements(&mut elif_else.body)?;
                             self.dedent();
                             Ok(format!("else:\n{}", body))
                         }
@@ -373,8 +471,8 @@ impl Transpiler {
                 _ => Ok(format!(
                     "{} {} {}",
                     self.transpile_expression(&op.left)?,
+                    op.op.as_str(),
                     self.transpile_expression(&op.right)?,
-                    op.op.as_str()
                 )),
             },
             Expr::UnaryOp(op) => match op.op {
@@ -440,7 +538,7 @@ impl Transpiler {
 
                     if let Some(symbol) = self.symbols.find(name) {
                         match symbol {
-                            Symbol::Function(name, func_args) => {
+                            Symbol::Function(name, func_args) | Symbol::Class(name, func_args) => {
                                 let name = if name == "print" { "godot_print" } else { name };
                                 println!("Found function: {}, {:?}", name, func_args);
                                 let mut final_args = Vec::with_capacity(func_args.num_args);
@@ -506,7 +604,14 @@ impl Transpiler {
                                     }
                                 }
 
-                                Ok(format!("{}({})", name, final_args.join(", ")))
+                                Ok(format!(
+                                    "{}({})",
+                                    match symbol {
+                                        Symbol::Class(_, _) => format!("{}.new", name),
+                                        _ => name.to_string(),
+                                    },
+                                    final_args.join(", ")
+                                ))
                             }
                             Symbol::Variable(name, pytype) => match pytype {
                                 PythonType::Callable => {
@@ -521,7 +626,6 @@ impl Transpiler {
                                 }
                                 _ => Err(anyhow!("Variable {} is not callable", name)),
                             },
-                            _ => Err(anyhow!("TO IMPLEMENT")),
                         }
                     } else {
                         Err(anyhow!("No callable {} found", name))
@@ -653,11 +757,12 @@ impl Transpiler {
 
     fn transpile(&mut self, code: &str) -> Result<String> {
         self.symbols.reset();
-        let ast = ruff_python_parser::parse(code, ParseOptions::from(Mode::Module))?
+        let mut ast = ruff_python_parser::parse(code, ParseOptions::from(Mode::Module))?
             .try_into_module()
             .ok_or(anyhow!("Failed to convert into Python module."))?
             .into_suite();
-        let transpiled = self.transpile_statements(ast.as_slice())?;
+        let slice = ast.as_mut_slice();
+        let transpiled = self.transpile_statements(slice)?;
         if self.symbols.exists("main") {
             Ok(transpiled)
         } else {
@@ -695,13 +800,20 @@ mod test {
     fn test_transpile() -> Result<()> {
         let mut transpiler = Transpiler::default();
         let code = indoc::indoc! {"
-            def baz(arg1, arg2, /, *args):
-                pass
+            class Foo:
+                def __init__(self):
+                    self.bar = True
+
+                def baz(self):
+                    print(self.bar)
+
+            class Bar(Foo):
+                def __init__(self):
+                    self.boo = 'bruh'
+
             def main():
-                foo = ['1', '2', '3']
-                bar = '   test   '.upper()
-                for i in range(3):
-                    print(i)
+                foo = Foo()
+                test = 'waow'.endswith('w')
             "};
         let transpiled = transpiler.transpile(code)?;
         println!(

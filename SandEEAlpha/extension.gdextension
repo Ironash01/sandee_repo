@@ -6,7 +6,9 @@ reloadable = true
 [libraries]
 linux.debug.x86_64 =     "res://ext_bin/release/libinterpreter.so"
 linux.release.x86_64 =   "res://ext_bin/release/libinterpreter.so"
-windows.debug.x86_64 = "res://ext_bin/release/interpreter.dll"
+android.debug.arm64 =    "res://ext_bin/aarch64-linux-android/release/libinterpreter.so"
+android.release.arm64 =  "res://ext_bin/aarch64-linux-android/release/libinterpreter.so"
+windows.debug.x86_64 =   "res://ext_bin/release/interpreter.dll"
 windows.release.x86_64 = "res://ext_bin/release/interpreter.dll"
 
 [icons]

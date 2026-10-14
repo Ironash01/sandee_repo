@@ -88,7 +88,7 @@ impl PythonType {
             Expr::List(_) | Expr::ListComp(_) => Ok(Self::List),
             Expr::FString(_) | Expr::TString(_) | Expr::StringLiteral(_) => Ok(Self::String),
             Expr::NumberLiteral(_) => Ok(Self::Number),
-            Expr::BooleanLiteral(_) => Ok(Self::Bool),
+            Expr::BooleanLiteral(_) | Expr::BoolOp(_) => Ok(Self::Bool),
             Expr::NoneLiteral(_) => Ok(Self::None),
             Expr::Name(name) => symbols
                 .find(&name.id)
@@ -99,8 +99,9 @@ impl PythonType {
                 })
                 .ok_or(anyhow!("Cannot find type of {:?}", name)),
             Expr::Tuple(_) => Ok(Self::Tuple),
-            Expr::Call(_) => Ok(Self::Any),
-            _ => Err(anyhow!("Cannot transform {:?} to a type", value)),
+            Expr::BinOp(op) => PythonType::from_expr(&op.left, &symbols),
+            Expr::UnaryOp(op) => PythonType::from_expr(&op.operand, &symbols),
+            _ => Ok(Self::Any),
         }
     }
 
@@ -196,6 +197,11 @@ impl SymbolsStack {
     }
 
     pub fn exists(&self, name: &str) -> bool {
+        let name = if let Some(idx) = name.find(".") {
+            &name[..idx]
+        } else {
+            name
+        };
         self.stack
             .iter()
             .any(|frame| frame.iter().any(|sym| sym == name))
