@@ -9,8 +9,9 @@ class_name DungeonWorld
 # the floor (picked deterministically per tile), the eight dungeon_wall_*
 # sprites auto-tiled by wall adjacency (see _wall_variant) with native
 # per-tile collision — plus the mission's KnowledgeAltar in the first room,
-# the QuizAltar in the final room, bright uniform lighting (no flashlight),
-# and a whole-layout minimap (see _setup_minimap) that only exists in dungeons.
+# the QuizAltar in the final room, and bright uniform lighting (no flashlight).
+# The dungeon map is the shared Minimap (minimap.gd), which swaps to this
+# world's grid content while Global.world_node is a DungeonWorld.
 #
 # Clearing flow: the QuizAltar emits cleared once every question is right,
 # which grants the reward + completes the mission + records the clear star
@@ -165,9 +166,9 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 	_paint_tiles()
 	_spawn_altars()
 	_spawn_flares()
+	_spawn_traps()
 	_spawn_exit_marker()
 	_setup_lighting()
-	_setup_minimap()
 
 # Wall tiles the generator marked as flare hosts get a DungeonFlare overlay
 # (a glowing obstacle that shoots projectiles). The wall itself stays solid.
@@ -178,6 +179,16 @@ func _spawn_flares() -> void:
 		flare.global_position = _tilemap.to_global(
 			_tilemap.map_to_local(_grid_to_cell(grid_pos as Vector2i)))
 		flare.z_index = int(flare.global_position.y / 32)
+
+# Corridor FLOOR tiles the generator marked as trap hosts get a persistent
+# DungeonTrap (a pressure-plate hazard that detonates explosions when stepped
+# on). It never despawns.
+func _spawn_traps() -> void:
+	for grid_pos in generator.trap_positions:
+		var trap := DungeonTrap.new()
+		add_child(trap)
+		trap.global_position = _tilemap.to_global(
+			_tilemap.map_to_local(_grid_to_cell(grid_pos as Vector2i)))
 
 # ── Paint the generated grid into the TileMapLayer ─────────────────────
 func _paint_tiles() -> void:
@@ -281,6 +292,10 @@ func _on_dungeon_cleared(_index: int) -> void:
 	# its tile so it never reappears (persisted on the next overworld save).
 	if _overworld != null and _overworld.has_method("remove_dungeon_entrance"):
 		_overworld.call("remove_dungeon_entrance", _dungeon_index)
+
+# Not the overworld — a Bonfire here must not set the respawn point.
+func is_overworld() -> bool:
+	return false
 
 func get_player_spawn_pos() -> Vector2:
 	return _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(generator.player_spawn_pos)))
@@ -389,141 +404,3 @@ func _build_glow_environment() -> WorldEnvironment:
 	env.glow_blend_mode    = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	world_env.environment = env
 	return world_env
-
-# ── Dungeon minimap (whole-layout map, left side, dungeons only) ────────
-# A small always-on panel rendering the ENTIRE dungeon grid: walls as filled
-# cells, walkable floor dim, knowledge (cyan) / quiz (purple) altars and the
-# EXIT (gold, once active) as dots, and the player as a bright dot. Owned by
-# this world — a child of DungeonWorld — so it appears ONLY while inside a
-# dungeon and is freed automatically on exit_dungeon().
-class DungeonMinimap:
-	extends Control
-
-	const PAD:          float = 10.0
-	const FIXED_MAP_SIZE := Vector2(200, 200)  # fixed map area in pixels
-	const C_BG:        Color = Color(0.04, 0.05, 0.09, 0.78)
-	const C_BORDER:    Color = Color(0.40, 0.30, 0.70, 0.9)
-	const C_WALL:      Color = Color(0.38, 0.33, 0.48, 1.0)
-	const C_FLOOR:     Color = Color(0.13, 0.14, 0.18, 1.0)
-	const C_KNOWLEDGE: Color = Color(0.30, 0.80, 0.95, 1.0)
-	const C_QUIZ:      Color = Color(0.80, 0.45, 0.95, 1.0)
-	const C_EXIT:      Color = Color(0.90, 0.75, 0.25, 1.0)
-	const C_PLAYER:    Color = Color(0.96, 0.96, 1.00, 1.0)
-
-	var world: DungeonWorld = null
-	var _px: float = 2.0  # pixels per grid cell, scaled to fit the (scaled) map area
-	var _pad: float = PAD
-	var _map_size: Vector2 = FIXED_MAP_SIZE
-
-	func _init(w: DungeonWorld) -> void:
-		world = w
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_apply_scale()
-
-	func _ready() -> void:
-		if not Global.ui_scale_changed.is_connected(_on_ui_scale):
-			Global.ui_scale_changed.connect(_on_ui_scale)
-
-	# Recompute the map's pixel size / position from the global UI scale so a
-	# Small/Medium/Large change resizes the minimap live.
-	func _apply_scale() -> void:
-		var s: float = Global.ui_scale
-		_pad = PAD * s
-		_map_size = FIXED_MAP_SIZE * s
-		var g: DungeonGenerator = world.generator
-		if g != null:
-			_px = minf(_map_size.x / maxi(g.width, 1), _map_size.y / maxi(g.height, 1))
-		position = Vector2(16, 26) * s
-		size     = _map_size + Vector2(_pad, _pad) * 2.0
-
-	func _on_ui_scale(_s: float) -> void:
-		_apply_scale()
-		queue_redraw()
-
-	func _process(_delta: float) -> void:
-		queue_redraw()
-
-	func _draw() -> void:
-		if world == null or world.generator == null:
-			return
-		var g: DungeonGenerator = world.generator
-		draw_rect(Rect2(Vector2.ZERO, size), C_BG)
-		draw_rect(Rect2(Vector2.ZERO, size), C_BORDER, false, 2.0 * Global.ui_scale)
-
-		for x in range(g.width):
-			for y in range(g.height):
-				var wall: bool = g.grid[x][y] == DungeonGenerator.Tile.WALL
-				var cell_rect := Rect2(_pad + x * _px, _pad + y * _px, _px, _px)
-				draw_rect(cell_rect, C_WALL if wall else C_FLOOR)
-
-		var dot_r := _px * 0.5 + 0.5
-		_draw_marker(g.knowledge_altar_pos, C_KNOWLEDGE, dot_r)
-		_draw_marker(g.quiz_altar_pos, C_QUIZ, dot_r)
-		if world._exit_marker != null and world._exit_marker._active:
-			_draw_marker(g.quiz_altar_pos + Vector2i(0, 2), C_EXIT, dot_r)
-
-		var player: Node2D = Global.player_node as Node2D
-		if player != null:
-			_draw_marker(_grid_from_world(player.global_position), C_PLAYER, dot_r + 1.0)
-
-	func _draw_marker(grid_pos: Vector2i, color: Color, r: float) -> void:
-		var center := Vector2(_pad, _pad) + Vector2(grid_pos) * _px + Vector2(_px, _px) * 0.5
-		draw_circle(center, r, color)
-
-	# World position -> generator grid coords (inverse of _grid_to_cell).
-	func _grid_from_world(world_pos: Vector2) -> Vector2i:
-		if world == null or world._tilemap == null:
-			return Vector2i.ZERO
-		var cell: Vector2i = world._tilemap.local_to_map(world._tilemap.to_local(world_pos))
-		return cell + Vector2i(world.generator.width / 2, world.generator.height / 2)
-
-var _minimap_title: Label = null
-var _dungeon_chat: Node = null
-
-func _setup_minimap() -> void:
-	var layer := CanvasLayer.new()
-	layer.layer = 4
-	layer.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(layer)
-
-	var s: float = Global.ui_scale
-	_minimap_title = Label.new()
-	_minimap_title.text = "Dungeon Map"
-	_minimap_title.position = Vector2(18, 8) * s
-	_minimap_title.add_theme_font_size_override("font_size", int(12 * s))
-	_minimap_title.add_theme_color_override("font_color", Color(0.80, 0.70, 1.00, 0.9))
-	layer.add_child(_minimap_title)
-
-	var map := DungeonMinimap.new(self)
-	map.process_mode = Node.PROCESS_MODE_ALWAYS
-	layer.add_child(map)
-
-	# Reposition the notification log (chat console) below the minimap.
-	var canvas_layer = Global.game_node.get_node_or_null("CanvasLayer")
-	if canvas_layer != null:
-		for c in canvas_layer.get_children():
-			if c is ChatConsole:
-				_dungeon_chat = c
-				break
-	_reposition_dungeon_chat()
-
-	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
-		Global.ui_scale_changed.connect(_on_ui_scale)
-
-# Keep the minimap title and the chat log's docked position in step with the
-# UI scale (the map control re-scales itself via its own signal handler).
-func _on_ui_scale(_s: float) -> void:
-	var s: float = Global.ui_scale
-	if _minimap_title != null and is_instance_valid(_minimap_title):
-		_minimap_title.position = Vector2(18, 8) * s
-		_minimap_title.add_theme_font_size_override("font_size", int(12 * s))
-	_reposition_dungeon_chat()
-
-func _reposition_dungeon_chat() -> void:
-	if _dungeon_chat == null or not is_instance_valid(_dungeon_chat):
-		return
-	if _dungeon_chat.has_method("reposition_for_dungeon"):
-		var s: float = Global.ui_scale
-		var minimap_bottom: int = int((26.0 + DungeonMinimap.FIXED_MAP_SIZE.y
-				+ DungeonMinimap.PAD * 2.0 + 8.0) * s)
-		_dungeon_chat.call("reposition_for_dungeon", minimap_bottom)

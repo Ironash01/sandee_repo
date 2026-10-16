@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="225" viewBox="0 0 400 225" role="img" aria-label="Screenshot: a Lua-powered robot mining and building">
+  <rect width="400" height="225" fill="#0d1226"/>
+  <rect x="0" y="158" width="400" height="67" fill="#232945"/>
+  <rect x="0" y="158" width="400" height="7" fill="#333c66"/>
+
+  <!-- scattered blocks being placed -->
+  <g>
+    <rect x="40" y="140" width="22" height="22" fill="#e6c98a" stroke="#05070f" stroke-width="2"/>
+    <rect x="70" y="140" width="22" height="22" fill="#e6c98a" stroke="#05070f" stroke-width="2"/>
+    <rect x="100" y="118" width="22" height="22" fill="#e6c98a" stroke="#05070f" stroke-width="2"/>
+    <rect x="70" y="118" width="22" height="22" fill="#e6c98a" stroke="#05070f" stroke-width="2"/>
+    <rect x="100" y="96" width="22" height="22" fill="#e6c98a" stroke="#05070f" stroke-width="2"/>
+    <rect x="130" y="118" width="22" height="22" fill="#9c6b3f" stroke="#05070f" stroke-width="2"/>
+  </g>
+
+  <!-- robot -->
+  <g>
+    <rect x="176" y="112" width="5" height="12" fill="#0a0e1c"/>
+    <rect x="174" y="104" width="9" height="8" fill="#ff5959"/>
+    <rect x="166" y="122" width="34" height="24" fill="#63c8f0" stroke="#05070f" stroke-width="2"/>
+    <rect x="172" y="130" width="22" height="10" fill="#0a0e1c"/>
+    <rect x="175" y="132" width="5" height="5" fill="#ffcc66"/>
+    <rect x="187" y="132" width="5" height="5" fill="#ffcc66"/>
+    <rect x="166" y="146" width="34" height="26" fill="#478cbf" stroke="#05070f" stroke-width="2"/>
+    <rect x="172" y="152" width="22" height="12" fill="#8ce69a"/>
+    <rect x="168" y="172" width="12" height="14" fill="#2f3f6e"/>
+    <rect x="186" y="172" width="12" height="14" fill="#2f3f6e"/>
+  </g>
+
+  <!-- Lua code panel -->
+  <g>
+    <rect x="232" y="40" width="150" height="122" fill="#141a33" stroke="#2f3f6e" stroke-width="3"/>
+    <rect x="232" y="40" width="150" height="16" fill="#223058"/>
+    <rect x="240" y="46" width="6" height="6" fill="#ff5959"/>
+    <rect x="252" y="46" width="6" height="6" fill="#ffcc66"/>
+    <rect x="264" y="46" width="6" height="6" fill="#8ce69a"/>
+    <!-- code lines -->
+    <g>
+      <rect x="242" y="68" width="18" height="6" fill="#8ce69a"/>
+      <rect x="266" y="68" width="46" height="6" fill="#63c8f0"/>
+      <rect x="242" y="82" width="30" height="6" fill="#8ce69a"/>
+      <rect x="278" y="82" width="24" height="6" fill="#e6c98a"/>
+      <rect x="308" y="82" width="18" height="6" fill="#63c8f0"/>
+      <rect x="250" y="96" width="52" height="6" fill="#63c8f0"/>
+      <rect x="308" y="96" width="30" height="6" fill="#8ce69a"/>
+      <rect x="250" y="110" width="24" height="6" fill="#e6c98a"/>
+      <rect x="280" y="110" width="40" height="6" fill="#63c8f0"/>
+      <rect x="242" y="124" width="14" height="6" fill="#8ce69a"/>
+      <rect x="242" y="138" width="34" height="6" fill="#8ca6d9"/>
+    </g>
+  </g>
+</svg>

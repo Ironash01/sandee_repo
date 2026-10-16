@@ -47,6 +47,16 @@ const GRASS_CUT_PAD:     float     = 14.0
 const SWING_START_DEG:   float     = -110.0
 const SWING_END_DEG:     float     = 70.0
 
+# ── Magical summon motes ──────────────────────────────────────────
+# The item is (canonically) SUMMONED, not drawn from a sheath, so a swirl of
+# arcane motes trails out of it through the whole sweep. GPUParticles2D
+# (`_build_summon_particles`) is used where available; a tweened fallback of a
+# few mellow sprites runs if the backend can't spawn GPU particles.
+const SUMMON_GLOW:       Texture2D = preload("res://sprites/particles_effects/mellow_effect.png")
+const SUMMON_GLOW_SIZE:  int       = 16
+const SUMMON_FRAMES:     int       = 5
+const SUMMON_BLEND_COLOR: Color    = Color(1.00, 0.82, 1.00, 1.0)   # arcane violet
+
 # Arc size relative to the authored sprite (raised again so the swing reads
 # clearly at gameplay scale).
 const SWING_ARC_SCALE:   float     = 2.5
@@ -277,6 +287,9 @@ func _build_item_swing() -> Node2D:
 	item.position = Vector2(ITEM_GAP + ITEM_HALF, 0.0)
 	pivot.add_child(item)
 
+	# Magical summon motes around the item, following it as the blade sweeps.
+	_spawn_summon_magic(item)
+
 	var tw := create_tween()
 	tw.tween_property(pivot, "rotation", base + deg_to_rad(SWING_START_DEG), 0.0)
 	tw.tween_property(pivot, "rotation", base + deg_to_rad(SWING_END_DEG), SWING_DURATION) \
@@ -329,3 +342,87 @@ func _arm_origin() -> Vector2:
 	if v.y > 0.0:
 		return ARM_ORIGINS["south"]
 	return ARM_ORIGINS["north"]
+
+# ── Magical summon magic ──────────────────────────────────────────
+# A violet swirl of motes that streams out of the held item for the whole
+# sweep, so the item reads as being conjured rather than carried.
+func _spawn_summon_magic(item: Sprite2D) -> void:
+	if item == null:
+		return
+	_spawn_summon_flash(item)
+	if _build_summon_particles(item):
+		return
+	_spawn_summon_fallback(item)
+
+# A bright violet flash that blooms out of the item at the start of the swing,
+# so the magic reads at a glance — the motes alone were too subtle.
+func _spawn_summon_flash(item: Sprite2D) -> void:
+	var flash := Sprite2D.new()
+	flash.texture = Global.get_smooth_light_texture(64)
+	flash.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	flash.modulate = Color(1.0, 0.85, 1.0, 0.95)
+	flash.scale = Vector2(0.5, 0.5)
+	flash.z_index = 1
+	item.add_child(flash)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(flash, "scale", Vector2(2.4, 2.4), 0.24) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(flash, "modulate:a", 0.0, 0.24)
+	tw.chain().tween_callback(flash.queue_free)
+
+func _build_summon_particles(item: Sprite2D) -> bool:
+	if not ClassDB.class_exists("GPUParticles2D"):
+		return false
+	var p := GPUParticles2D.new()
+	p.name = "SummonMagic"
+	p.texture = Global.get_smooth_light_texture(32)
+	p.amount = 34
+	p.lifetime = 0.7
+	p.one_shot = false
+	p.local_coords = true
+	p.z_index = 1
+	p.modulate = SUMMON_BLEND_COLOR
+
+	var m := ParticleProcessMaterial.new()
+	m.direction = Vector3(0.0, -1.0, 0.0)
+	m.spread = 360.0
+	m.gravity = Vector3(0.0, -50.0, 0.0)
+	m.initial_velocity_min = 24.0
+	m.initial_velocity_max = 70.0
+	m.scale_min = 0.28
+	m.scale_max = 0.62
+	m.color = SUMMON_BLEND_COLOR
+	m.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	m.emission_sphere_radius = 16.0
+
+	var grad := Gradient.new()
+	grad.colors = PackedColorArray([
+		Color(1.0, 0.85, 1.0, 0.0),
+		Color(1.0, 0.9, 1.0, 1.0),
+		Color(0.9, 0.7, 1.0, 0.0)])
+	grad.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = grad
+	m.color_ramp = ramp
+
+	p.process_material = m
+	p.emitting = true
+	item.add_child(p)
+	return true
+
+# Fallback for backends without GPU particles: a short burst of tweened motes
+# that spiral outward from the item and fade.
+func _spawn_summon_fallback(item: Sprite2D) -> void:
+	for i in range(10):
+		var mote := _build_anim_sprite(SUMMON_GLOW, SUMMON_GLOW_SIZE, SUMMON_FRAMES, 18.0)
+		mote.modulate = SUMMON_BLEND_COLOR
+		mote.position = Vector2(randf_range(-10, 10), randf_range(-10, 10))
+		mote.scale = Vector2(0.6, 0.6)
+		item.add_child(mote)
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(mote, "position", mote.position + Vector2(randf_range(-22, 22), randf_range(-30, -8)), 0.45)
+		tw.tween_property(mote, "scale", Vector2(1.8, 1.8), 0.45)
+		tw.tween_property(mote, "modulate:a", 0.0, 0.45)
+		tw.chain().tween_callback(mote.queue_free)

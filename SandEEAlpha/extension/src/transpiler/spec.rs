@@ -303,6 +303,42 @@ impl SymbolsStack {
                 "take_output".to_string(),
                 Arguments::new(false, false, 0, Vec::new()),
             ),
+            // ── Furnace automation API ───────────────────────────────
+            // Implemented by resources/godot_furnace_base.gd (the base used by
+            // a Furnace's Python host). output_count / take_output above are
+            // shared with the station.
+            Symbol::Function(
+                "feed".to_string(),
+                Arguments::new(false, false, 2, Vec::new()),
+            ),
+            Symbol::Function(
+                "fuel".to_string(),
+                Arguments::new(false, false, 2, Vec::new()),
+            ),
+            Symbol::Function(
+                "smelt".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "input_name".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "input_count".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "fuel_name".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "fuel_count".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "output_name".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
         ]]
     }
 }

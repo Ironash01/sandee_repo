@@ -29,6 +29,13 @@ var _rows_vbox:    VBoxContainer
 var _row_data:     Array = []    # [{label, m, row_node}]
 var _fade_tween:   Tween = null
 var _active_pool:  Array = []    # currently shown gameplay mission ids
+# True while a completed row is playing its send-off animation, so the
+# mission_updated rebuild doesn't wipe the row mid-animation.
+var _completing:   bool = false
+# The in-flight send-off tween. It must be killed before its row is freed,
+# otherwise its callbacks/property steps run on a dead node and crash
+# ("Invalid assignment ... on a base object of type 'Nil'").
+var _complete_tween: Tween = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -38,8 +45,17 @@ func _ready() -> void:
 	Global.mission_completed.connect(_on_mission_completed)
 	Global.dungeon_cleared.connect(_on_dungeon_cleared)
 	Global.ui_scale_changed.connect(_on_ui_scale)
+	Global.quest_bg_changed.connect(_on_quest_bg_changed)
 	call_deferred("_refit")
 	call_deferred("_refill_pool")
+
+# Rebuild when the opaque-background setting changes.
+func _on_quest_bg_changed(_opaque: bool) -> void:
+	if _panel != null:
+		_panel.queue_free()
+		_panel = null
+	_row_data.clear()
+	_build_panel()
 
 # Rebuild the tracker at the new scale so the font/size change applies live.
 func _on_ui_scale(_s: float) -> void:
@@ -54,9 +70,13 @@ func _build_panel() -> void:
 	var s: float = Global.ui_scale
 	_panel = PanelContainer.new()
 	_panel.custom_minimum_size = Vector2(PANEL_WIDTH * s, 0)
-	# No panel background / border — the tracker's text floats over the world.
+	# Transparent by default (text floats over the world); the Gameplay
+	# setting "Opaque Quest Background" turns on a solid panel + border.
+	var opaque: bool = Global.quest_opaque_bg
+	var bg:     Color = C_PANEL  if opaque else Color(0, 0, 0, 0)
+	var border: Color = C_BORDER if opaque else Color(0, 0, 0, 0)
 	_panel.add_theme_stylebox_override("panel",
-			_make_sb(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 0,
+			_make_sb(bg, border, 1 if opaque else 0, 6 if opaque else 0,
 				int(10 * s), int(10 * s), int(8 * s), int(8 * s)))
 	add_child(_panel)
 
@@ -91,6 +111,9 @@ func _add_section(text: String) -> void:
 
 # ── Rebuild rows ──────────────────────────────────────────────────
 func _rebuild_rows() -> void:
+	# Freeing the rows below would leave any running send-off tween pointing
+	# at dead nodes; stop it first.
+	_cancel_completion()
 	for child in _rows_vbox.get_children().duplicate():
 		child.free()
 	_row_data.clear()
@@ -176,7 +199,11 @@ func _add_gameplay_row(m: Dictionary) -> void:
 	row.add_child(star)
 
 	var lbl := Label.new()
-	lbl.text = m["title"]
+	var title: String = str(m["title"])
+	var goal: int = int(m.get("goal", 0))
+	if goal > 1 and not m["completed"]:
+		title += "  (%d/%d)" % [int(m.get("progress", 0)), goal]
+	lbl.text = title
 	lbl.add_theme_font_size_override("font_size", int(12 * s))
 	lbl.add_theme_color_override("font_color",
 			C_DONE if m["completed"] else C_ACTIVE)
@@ -188,27 +215,53 @@ func _add_gameplay_row(m: Dictionary) -> void:
 # ── Signal handlers ───────────────────────────────────────────────
 func _on_mission_updated() -> void:
 	_stars_label.text = _stars_text()
+	if _completing:
+		return   # the send-off animation rebuilds the list when it finishes
 	_rebuild_rows()
 
 func _on_mission_completed(id: String) -> void:
+	_stars_label.text = _stars_text()
 	for entry in _row_data:
 		if entry["m"]["id"] == id:
+			_completing = true
 			var lbl = entry["label"]
-			# Strikethrough + completion marker
-			lbl.add_theme_color_override("font_color", C_DONE)
-			lbl.text = "✓ " + entry["m"]["title"]
-			# Wait 2 seconds then fade out
 			var row = entry["row"]
+			lbl.add_theme_color_override("font_color", C_DONE)
+			lbl.text = "✓ " + str(lbl.text)
+			# Send-off: pop + green flash, hold, then fade away. mission_updated
+			# is suppressed while _completing, so this row survives the rebuild.
+			row.pivot_offset = row.size * 0.5
 			var tw := create_tween()
-			tw.tween_interval(2.0)
+			_complete_tween = tw
+			tw.tween_property(row, "scale", Vector2(1.12, 1.12), 0.14) \
+				.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			tw.tween_callback(func() -> void:
+				if is_instance_valid(row):
+					row.modulate = Color(0.6, 1.35, 0.6, 1.0))
+			tw.tween_property(row, "scale", Vector2.ONE, 0.14)
+			tw.tween_interval(0.7)
 			tw.tween_property(row, "modulate:a", 0.0, FADE_DURATION)
-			tw.tween_callback(row.queue_free)
-			break
-	_stars_label.text = _stars_text()
-	call_deferred("_rebuild_rows")
+			tw.tween_callback(_finish_completion)
+			return
+
+func _finish_completion() -> void:
+	# The tween has ended on its own; drop the handle before rebuilding so
+	# _cancel_completion() doesn't try to kill it again.
+	_complete_tween = null
+	_completing = false
+	_rebuild_rows()
+
+# Stop a running send-off tween and reset the completing flag.
+func _cancel_completion() -> void:
+	if _complete_tween != null and _complete_tween.is_valid():
+		_complete_tween.kill()
+	_complete_tween = null
+	_completing = false
 
 func _on_dungeon_cleared(_index: int) -> void:
 	_stars_label.text = _stars_text()
+	if _completing:
+		return   # let the send-off finish; its rebuild will pick up the change
 	_rebuild_rows()
 
 # ── Refill gameplay pool when missions complete ────────────────────

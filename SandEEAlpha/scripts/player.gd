@@ -105,11 +105,15 @@ func _ready() -> void:
 	if _shared_frames == null:
 		_shared_frames = _build_frames()
 	sprite.sprite_frames = _shared_frames
-	sprite.scale = Vector2(0.980, 0.980)
-	# Offset tuned to sit under the feet — PlayerCol's collision box
-	# (waist-high band, position.y 17, half-height 6) bottoms out at y=23,
-	# same as the sprite's feet.
-	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 14.0), Vector2(0.8, 0.4), 0.35))
+	# Scaled-up 32x64 art. The art's bottom is the frame's last row (pixel 63 =
+	# +31.5 from the centered origin), so offset it back onto the +23 y-sort
+	# line after scaling.
+	sprite.scale  = Vector2(SPRITE_SCALE, SPRITE_SCALE)
+	sprite.offset = Vector2(0.0, FEET_LINE_Y / SPRITE_SCALE - (FRAME_H / 2.0 - 0.5))
+	# Shadow at the sprite's actual feet (FEET_LINE_Y = +23), matching
+	# PlayerCol's waist-high box bottom — was +14, which sat at the old sprite's
+	# base and left the shadow floating above the new taller art's feet.
+	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, FEET_LINE_Y), Vector2(0.8, 0.4), 0.35))
 	sprite.play("idle_south")
 	Global.request_close_all_ui.connect(_on_close_all_ui)
 	if Global.has_pending_pos:
@@ -135,30 +139,51 @@ func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
 
 # ── Build SpriteFrames ────────────────────────────────────────────
+# New player sheet: 128x576 = 4 frames (cols) x 9 rows of 32x64. Rows are
+# three animations — idle (rows 0-2), walk (3-5), sprint (6-8) — each with a
+# front / side / back variant. The 8 movement directions map onto those three
+# variants (diagonals reuse their cardinal), and west mirrors the side art.
+const PLAYER_SHEET: Texture2D = preload("res://sprites/player.png")
+const FRAME_W: int = 32
+const FRAME_H: int = 64
+const SHEET_COLS: int = 4
+const ROW_IDLE:   int = 0
+const ROW_WALK:   int = 3
+const ROW_SPRINT: int = 6
+# Draw scale + the y-sort line the feet sit on (matches YSORT_FEET_OFFSET).
+const SPRITE_SCALE: float = 0.6
+const FEET_LINE_Y:  float = 23.0
+# No diagonal art exists, so the 8 directions choose the nearest FACING among
+# front / side / back (no image rotation): pure up/down use front/back, and
+# everything else (east/west + the 4 diagonals) uses the side art.
+const DIR_VARIANT: Dictionary = {
+	"south": 0, "north": 2, "east": 1, "west": 1,
+	"south-east": 1, "south-west": 1, "north-east": 1, "north-west": 1,
+}
+# Directions whose art is mirrored (the side art faces east).
+const DIR_FLIP_H: Array = ["west", "south-west", "north-west"]
+
 func _build_frames() -> SpriteFrames:
 	var sf := SpriteFrames.new()
 	sf.remove_animation("default")
-
 	for d in DIRS:
 		var dir: String = d["name"]
-
-		var idle_anim := "idle_" + dir.replace("-", "_")
-		sf.add_animation(idle_anim)
-		sf.set_animation_speed(idle_anim, 5.0)
-		sf.set_animation_loop(idle_anim, true)
-		for f in range(4):
-			var path := "res://sprites/char/steve/animations/Breathing_Idle-a7ad4449/%s/frame_%03d.png" % [dir, f]
-			sf.add_frame(idle_anim, load(path) as Texture2D)
-
-		var walk_anim := "walk_" + dir.replace("-", "_")
-		sf.add_animation(walk_anim)
-		sf.set_animation_speed(walk_anim, 10.0)
-		sf.set_animation_loop(walk_anim, true)
-		for f in range(8):
-			var path := "res://sprites/char/steve/animations/Walking-e6fa8864/%s/frame_%03d.png" % [dir, f]
-			sf.add_frame(walk_anim, load(path) as Texture2D)
-
+		var variant: int = DIR_VARIANT.get(dir, 0)
+		var key: String = dir.replace("-", "_")
+		_add_sheet_anim(sf, "idle_"   + key, ROW_IDLE   + variant, 5.0)
+		_add_sheet_anim(sf, "walk_"   + key, ROW_WALK   + variant, 10.0)
+		_add_sheet_anim(sf, "sprint_" + key, ROW_SPRINT + variant, 14.0)
 	return sf
+
+func _add_sheet_anim(sf: SpriteFrames, anim: String, row: int, fps: float) -> void:
+	sf.add_animation(anim)
+	sf.set_animation_speed(anim, fps)
+	sf.set_animation_loop(anim, true)
+	for col in range(SHEET_COLS):
+		var at := AtlasTexture.new()
+		at.atlas  = PLAYER_SHEET
+		at.region = Rect2(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
+		sf.add_frame(anim, at)
 
 # ── Input ─────────────────────────────────────────────────────────
 func get_input() -> void:
@@ -253,6 +278,7 @@ func _physics_process(delta: float) -> void:
 				_clamp_velocity_for_water(water_layer, delta)
 	move_and_slide()
 	_update_animation()
+	_tick_attack_hold()
 	_tick_stamina(delta)
 	_tick_stuck(delta)
 
@@ -516,6 +542,10 @@ func _get_closest_dir(vec: Vector2) -> String:
 var _swing_lock_until_ms: int = 0
 var _active_swing:        Node = null   # the live swing effect (single instance)
 const SWING_LOCK_MS:     int = 240   # a touch longer than the swing effect
+# True while the left mouse is held — drives auto-repeat swings (see
+# _tick_attack_hold): holding keeps swinging, restarting the instant each
+# swing finishes instead of only firing on the initial press.
+var _attack_held:        bool = false
 
 # Public: perform a swing with whatever item is currently held. Callable from
 # any interaction (plain click, block/tool breaking, tree chopping) so the
@@ -533,11 +563,14 @@ func swing_held_item() -> bool:
 		var data: ItemData = (held as Dictionary)["data"] as ItemData
 		if data != null:
 			icon = data.icon
-			# Only a sword deals combat damage AND cuts grass; the damage
-			# amount scales with the sword level (ItemData.sword_damage).
 			if data.is_sword:
 				is_sword = true
 				damage = float(data.sword_damage())
+			else:
+				# Every other held item (tools, blocks, materials) still deals a
+				# token amount of damage when swung — just not sword-tier. Bare
+				# hands (no item) stay at 0.
+				damage = 1.0
 	return _trigger_swing(icon, damage, is_sword)
 
 # Spawns the swing effect as a child of the player. Returns false if it was
@@ -588,16 +621,19 @@ func _update_animation() -> void:
 	else:
 		_face_dir = _last_dir
 
+	sprite.speed_scale = 1.0
 	if input_direction == Vector2.ZERO:
-		sprite.speed_scale = 1.0
 		var anim := "idle_" + _face_dir.replace("-", "_")
 		if sprite.animation != anim:
 			sprite.play(anim)
 	else:
-		sprite.speed_scale = SPRINT_MULTIPLIER if _sprinting else 1.0
-		var anim := "walk_" + _face_dir.replace("-", "_")
+		var anim := ("sprint_" if _sprinting else "walk_") + _face_dir.replace("-", "_")
 		if sprite.animation != anim:
 			sprite.play(anim)
+	# Mirror the (east-facing) side art for west-ish directions. The 8 directions
+	# pick a facing via DIR_VARIANT; no image rotation.
+	sprite.flip_h = _face_dir in DIR_FLIP_H
+	sprite.rotation = 0.0
 
 const _DEBUG_ITEM_PATHS: Array = [
 	"res://resources/items/wood.tres",
@@ -659,6 +695,13 @@ func _on_close_all_ui() -> void:
 		Global.inventory_toggled.emit(false)
 
 func _input(event: InputEvent) -> void:
+	# Track the left mouse for auto-repeat swings. The release is handled BEFORE
+	# the UI guard below so a menu opening mid-hold still clears it (otherwise
+	# the player would keep swinging once the menu closes).
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+			and not event.pressed:
+		_attack_held = false
+
 	# Inventory key: can always close; blocked from opening when another UI is
 	# active. Ignored entirely while a text field is focused — "e" is a typed
 	# character then, not the inventory hotkey.
@@ -688,7 +731,28 @@ func _input(event: InputEvent) -> void:
 	# starts its hold-to-break, handled by the block's own _input).
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
 			and event.pressed:
+		_attack_held = true
 		swing_held_item()
+
+# Auto-repeat: while the left mouse is held, start the next swing the moment the
+# current one finishes. swing_held_item()/swing_effect already refuse while a
+# swing is live, so this paces itself to the swing duration instead of spamming.
+func _tick_attack_hold() -> void:
+	if not _attack_held:
+		return
+	# A UI/menu (or the cave/portal confirm dialog) PAUSES the tree, and a
+	# paused player never runs _input — so a mouse RELEASE during that pause is
+	# never seen and _attack_held stays latched, resuming the swing loop forever
+	# once the UI closes. Reconcile with the real button state every tick so a
+	# lost release can't leave it stuck.
+	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		_attack_held = false
+		return
+	if Global.any_ui_open() or Global.pause_menu_open or Global.block_mode:
+		return
+	if _active_swing != null and is_instance_valid(_active_swing):
+		return
+	swing_held_item()
 
 func apply_item_effect(item) -> void:
 	match item["effect"]:

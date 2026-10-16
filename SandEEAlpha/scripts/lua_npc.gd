@@ -31,12 +31,36 @@ const SHADOW_TEXTURE:     Texture2D = preload("res://sprites/shadow/shadow_base.
 # The robot sprite is CENTERED on the Robot node, so the node origin sits at
 # the sprite's middle, not its feet. Sorting on the origin (the old behaviour)
 # put the robot half a tile too high, so it drew behind trees/blocks it was
-# standing in front of. Offset to the FEET line, then add the same half-tile
-# tiebreak the player uses so the robot wins ties against an object's base the
-# same way. ROBOT_FEET_OFFSET = (visible feet pixel row - frame centre) *
-# sprite scale: measured 11px below centre in the 36px frames, x1.6 scale.
-const ROBOT_FEET_OFFSET: float = 17.6
+# standing in front of. Offset to the sprite's bottom line, then add the same
+# half-tile tiebreak the player uses. The floating-entity art is 52px tall at
+# scale 1.0, so the visual bottom sits 26px below the origin.
+const ROBOT_FEET_OFFSET: float = 26.0
 const YSORT_TIEBREAK:    float = 16.0   # half a tile — matches player.gd
+
+# ── Floating bob ──────────────────────────────────────────────────
+# The robot hovers, so its sprite gently bobs up/down while it moves and
+# settles to rest when idle. The ground shadow stays put on the floor (only
+# shrinking a touch as the robot rises) so the bob reads as hovering.
+const BOB_AMPLITUDE: float = 2.5
+const BOB_SPEED:     float = 6.5
+const SHADOW_OFFSET_Y: float = 28.0     # shadow sits at the sprite's base
+var _bob_t: float = 0.0
+var _shadow: Sprite2D = null
+var _shadow_scale: Vector2 = Vector2(0.7, 0.32)
+
+# ── Floating-entity sprite set ────────────────────────────────────
+# The robot is now a FLOATING entity (no walk cycle): one static sprite per
+# direction, taken from the 3 layer groups of sprites/lua.aseprite
+# (front/back/side). Diagonals reuse the nearest cardinal; west mirrors side.
+const TEX_FRONT: Texture2D = preload("res://sprites/char/lua/front.png")
+const TEX_BACK:  Texture2D = preload("res://sprites/char/lua/back.png")
+const TEX_SIDE:  Texture2D = preload("res://sprites/char/lua/side.png")
+const LUA_OUTLINE_SHADER: Shader = preload("res://shaders/lua_outline.gdshader")
+const DIR_TEX: Dictionary = {
+	"north": TEX_BACK,  "north-east": TEX_BACK,  "north-west": TEX_BACK,
+	"south": TEX_FRONT, "south-east": TEX_FRONT, "south-west": TEX_FRONT,
+	"east":  TEX_SIDE,  "west":       TEX_SIDE,
+}
 
 # ── Obstacle avoidance / stuck detection ─────────────────────────
 # Trees, placed blocks, chests, etc. are all StaticBody2D on the default
@@ -85,6 +109,9 @@ var _npc_inventory:   Array   = []       # [{data: ItemData, quantity: int}, ...
 # withdraw(name, n) pulls from the nearest chest.
 const BUILD_SLOTS: int = 3
 var _build_palette: Array = []           # [ {data, quantity} | null, x3 ]
+# rename(name) — custom name shown above the robot.
+var _custom_name: String = ""
+var _name_label:  Label  = null
 var _selected_slot: int   = 0            # 0-based; the slot place_item uses
 
 # ── Node refs ─────────────────────────────────────────────────────
@@ -108,9 +135,16 @@ func _ready() -> void:
 	if _shared_frames == null:
 		_shared_frames = _build_frames()
 	_robot_sprite.sprite_frames = _shared_frames
+	# Glowing outline (a floating entity reads better lit up). Uses the sprite's
+	# own texture, so it tracks whichever direction frame is showing.
+	var outline := ShaderMaterial.new()
+	outline.shader = LUA_OUTLINE_SHADER
+	_robot_sprite.material = outline
 	_play_idle(_last_dir)
 	# Attached to _robot (not the station) so it moves with the robot as it walks.
-	_robot.add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 5.0), Vector2(0.6, 0.3), 0.35))
+	# Ground shadow at the robot's base (same soft blob the player/mobs use).
+	_shadow = Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, SHADOW_OFFSET_Y), _shadow_scale, 0.4)
+	_robot.add_child(_shadow)
 
 	# ── Y-sorting ─────────────────────────────────────────────────
 	# place_block() stamps a static z_index on this node from the tile it was
@@ -154,6 +188,21 @@ func _ready() -> void:
 	_lua_state.connect("signal_take_output", _on_lua_take_output)
 	_lua_state.connect("signal_put_input",   _on_lua_put_input)
 	_lua_state.connect("signal_input_slot",  _on_lua_input_slot)
+	# mine(name, radius) + rename(name).
+	_lua_state.connect("signal_mine",        _on_lua_mine)
+	_lua_state.connect("signal_rename",      _on_lua_rename)
+
+	# Persistent name label above the robot (set by rename()).
+	_name_label = Label.new()
+	_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_name_label.add_theme_font_size_override("font_size", 12)
+	_name_label.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0, 1.0))
+	_name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	_name_label.add_theme_constant_override("outline_size", 3)
+	_name_label.position = Vector2(-60, -58)
+	_name_label.size     = Vector2(120, 16)
+	_name_label.visible  = false
+	_robot.add_child(_name_label)
 
 	# Code editor UI
 	var ui_scene: PackedScene = load("res://scenes/ui/LuaEditorUI.tscn") as PackedScene
@@ -184,7 +233,7 @@ func _draw() -> void:
 # against trees/blocks/chests as a hard backstop — the raycast steering in
 # the walk helpers picks a clear direction, but this is what actually stops
 # it from ever tunnelling through an obstacle the steering missed.
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	# Sort by each visual's own feet line every frame — the robot walks far
 	# from the station's fixed bucket, so a static z_index would leave it drawn
 	# behind trees/blocks it is standing in front of (and vice versa). The
@@ -200,6 +249,18 @@ func _physics_process(_delta: float) -> void:
 	else:
 		_robot.velocity = Vector2.ZERO
 		_play_idle(_last_dir)
+
+	# Floating bob — only the SPRITE moves; the ground shadow stays put and
+	# shrinks a little as the robot rises so the hover reads correctly.
+	if _robot_vel != Vector2.ZERO:
+		_bob_t += delta * BOB_SPEED
+		_robot_sprite.position.y = sin(_bob_t) * BOB_AMPLITUDE
+	else:
+		_robot_sprite.position.y = move_toward(_robot_sprite.position.y, 0.0, delta * 40.0)
+	if _shadow != null and is_instance_valid(_shadow):
+		var lift: float   = _robot_sprite.position.y / BOB_AMPLITUDE if BOB_AMPLITUDE > 0.0 else 0.0
+		var shrink: float = clampf(1.0 - lift * 0.18, 0.7, 1.0)
+		_shadow.scale = Vector2(_shadow_scale.x * shrink, _shadow_scale.y * shrink)
 
 # ── Station click (left = editor, right = radius toggle) ─────────
 func _on_station_input_event(_viewport, event: InputEvent, _shape) -> void:
@@ -258,7 +319,20 @@ func _on_lua_interact() -> void:
 		_:               _chop_all_trees.call_deferred()   # default / chop_trees()
 	_pending_action = "chop"
 
-func _on_lua_attack()                            -> void: pass
+# The robot has no weapon-swing art, so an attack reads as a magic slash aimed
+# the way it last faced (see magic_swing.gd).
+func _on_lua_attack() -> void:
+	var world: Node = Global.world_node
+	if world != null:
+		MagicSwing.spawn(world, global_position + Vector2(0.0, -10.0), _facing_vec(), 1.0, 5)
+
+# _last_dir (a DIRS name) -> a unit vector.
+func _facing_vec() -> Vector2:
+	for d in DIRS:
+		if d["name"] == _last_dir:
+			return d["vec"] as Vector2
+	return Vector2(0.0, 1.0)
+
 func _on_lua_print(_t: String) -> void: pass
 
 # ── Building (place_item / place_at / select_block / withdraw) ─────
@@ -446,6 +520,104 @@ func _on_lua_put_input(name: String, quantity: int) -> void:
 # so a program doesn't need to name it.
 func _on_lua_input_slot(quantity: int) -> void:
 	_queue_station_job("input_slot", maxi(quantity, 1))
+
+# ── mine(name, radius) + rename(name) ─────────────────────────────
+func _on_lua_mine(name: String, radius: int) -> void:
+	if _is_working:
+		_lua_state.emit_signal("signal_print", "[mine] robot is busy — mine() ignored.")
+		return
+	_is_working = true
+	_mine_named.call_deferred(name, maxi(radius, 1))
+
+func _on_lua_rename(new_name: String) -> void:
+	_custom_name = new_name.strip_edges()
+	if _name_label != null:
+		_name_label.text    = _custom_name
+		_name_label.visible = not _custom_name.is_empty()
+
+# Mines every placed block whose item_name matches `name` within `radius` tiles
+# of the station: walk to each, break it (drops the item), store the drop.
+# Verbose progress is written to the editor's output panel via signal_print.
+func _mine_named(name: String, radius: int) -> void:
+	var world: Node = Global.world_node
+	if world == null:
+		_lua_state.emit_signal("signal_print", "[mine] no world to mine in.")
+		_is_working = false
+		return
+	_lua_state.emit_signal("signal_print", "[mine] searching for \"%s\" within %d blocks..." % [name, radius])
+	var mined: int = 0
+	while true:
+		if _stop_requested:
+			break
+		var cell: Variant = _nearest_named_block(name, radius)
+		if cell == null:
+			break
+		var block: Node2D = _placed_block_node(cell as Vector2i)
+		if block == null:
+			_erase_placed_block(cell as Vector2i)   # stale entry — forget it
+			continue
+		_lua_state.emit_signal("signal_print", "[mine] mining %s..." % name)
+		if not await _walk_to_node(block):
+			_is_working = false
+			return
+		if _stop_requested:
+			break
+		if block.has_method("_break"):
+			# Mining reads as magic too — a small slash at the block being broken.
+			MagicSwing.spawn(world, block.global_position, _facing_vec(), 0.8, 3)
+			block.call("_break")
+		await get_tree().create_timer(PICKUP_DELAY).timeout
+		_collect_drops_nearby()
+		mined += 1
+		_lua_state.emit_signal("signal_print", "[mine] storing... (%d x %s)" % [mined, name])
+	if not _stop_requested:
+		await _walk_to_spawn()
+	_lua_state.emit_signal("signal_print", "[mine] done — mined %d x %s." % [mined, name])
+	_is_working = false
+
+# Nearest placed block (by item_name) within radius tiles of the station.
+func _nearest_named_block(name: String, radius: int) -> Variant:
+	var world: Node = Global.world_node
+	if world == null:
+		return null
+	var placed: Variant = world.get("_placed_blocks")
+	if not (placed is Dictionary):
+		return null
+	var center: Vector2 = global_position
+	var best: Variant = null
+	var best_d: float = float(radius) * TILE_SIZE
+	for cell in (placed as Dictionary):
+		var entry: Variant = (placed as Dictionary)[cell]
+		if not (entry is Dictionary):
+			continue
+		if str((entry as Dictionary).get("name", "")) != name:
+			continue
+		var node_ref: Variant = (entry as Dictionary).get("node")
+		if not is_instance_valid(node_ref):
+			continue
+		var d: float = center.distance_to((node_ref as Node2D).global_position)
+		if d <= best_d:
+			best_d = d
+			best   = cell
+	return best
+
+func _placed_block_node(cell: Vector2i) -> Node2D:
+	var world: Node = Global.world_node
+	if world == null:
+		return null
+	var placed: Variant = world.get("_placed_blocks")
+	if not (placed is Dictionary):
+		return null
+	var entry: Variant = (placed as Dictionary).get(cell)
+	if not (entry is Dictionary):
+		return null
+	var node_ref: Variant = (entry as Dictionary).get("node")
+	return node_ref as Node2D if is_instance_valid(node_ref) else null
+
+func _erase_placed_block(cell: Vector2i) -> void:
+	var world: Node = Global.world_node
+	if world != null and world.has_method("unregister_block"):
+		world.call("unregister_block", cell)
 
 func _queue_station_job(action: String, arg: Variant) -> void:
 	_station_queue.append({"action": action, "arg": arg})
@@ -928,23 +1100,30 @@ func _find_item_data_by_name(item_name: String) -> ItemData:
 func _build_frames() -> SpriteFrames:
 	var sf := SpriteFrames.new()
 	sf.remove_animation("default")
+	# Floating entity: one STATIC frame per direction (front/back/side), no
+	# walk cycle. Both the idle_ and walk_ animation names are kept so the rest
+	# of the code (which asks for walk_<dir>/idle_<dir>) is unchanged.
 	for d in DIRS:
-		var dir: String  = d["name"]
+		var dir: String = d["name"]
+		var tex: Texture2D = DIR_TEX.get(dir, TEX_FRONT)
 		var walk: String = "walk_" + dir.replace("-", "_")
 		sf.add_animation(walk)
-		sf.set_animation_speed(walk, 10.0)
-		sf.set_animation_loop(walk, true)
-		for f in range(8):
-			var path := "res://sprites/char/lua/animations/Walking-c1c75e91/%s/frame_%03d.png" % [dir, f]
-			sf.add_frame(walk, load(path) as Texture2D)
+		sf.set_animation_speed(walk, 1.0)
+		sf.set_animation_loop(walk, false)
+		sf.add_frame(walk, tex)
 		var idle: String = "idle_" + dir.replace("-", "_")
 		sf.add_animation(idle)
 		sf.set_animation_speed(idle, 1.0)
 		sf.set_animation_loop(idle, false)
-		sf.add_frame(idle, load("res://sprites/char/lua/animations/Walking-c1c75e91/%s/frame_000.png" % dir) as Texture2D)
+		sf.add_frame(idle, tex)
 	return sf
 
+# West mirrors the side sprite; everything else uses its own texture.
+func _apply_facing(dir: String) -> void:
+	_robot_sprite.flip_h = dir == "west"
+
 func _play_idle(dir: String) -> void:
+	_apply_facing(dir)
 	var anim := "idle_" + dir.replace("-", "_")
 	if _robot_sprite.animation != anim:
 		_robot_sprite.play(anim)
@@ -958,6 +1137,7 @@ func _update_walk_animation(vec: Vector2) -> void:
 		if dot > best_dot:
 			best_dot = dot
 			best_dir = d["name"]
+	_apply_facing(best_dir)
 	var anim := "walk_" + best_dir.replace("-", "_")
 	if _robot_sprite.animation != anim:
 		_robot_sprite.play(anim)

@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SandEE — Learn Lua &amp; Python in a 2D Open-World Survival Crafting Game</title>
+  <meta name="description" content="SandEE is an educational multi-platform 2D open-world survival crafting game that teaches Lua and Python to ICT and STEM students through real embedded interpreters.">
+  <link rel="icon" type="image/svg+xml" href="assets/img/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+  <!-- ============================================================ top bar -->
+  <header class="topbar">
+    <div class="wrap topbar__inner">
+      <a class="brand" href="#top">
+        <img src="assets/img/logo.svg" alt="">
+        <span>SandEE</span>
+      </a>
+      <nav class="nav nav--collapsible" id="primary-nav" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#screens">Screenshots</a>
+        <a href="#about">About</a>
+        <a href="#developers">Developers</a>
+        <a href="#downloads">Downloads</a>
+      </nav>
+      <button class="nav-toggle" type="button"
+              aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="primary-nav">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- ============================================================= hero -->
+    <section class="hero">
+      <div class="wrap hero__grid">
+        <div>
+          <span class="kicker">BS Computer Science Thesis &bull; Capstone Project</span>
+          <h1>Sand<span class="ee">EE</span></h1>
+          <p class="lead">Learn Lua &amp; Python by playing.</p>
+          <p class="hero__sub">
+            An educational, multi-platform 2D open-world survival crafting game that teaches
+            programming to ICT and STEM students &mdash; through a real Lua robot, Python-powered
+            machines, and missions that guide you from your first line of code to full automation.
+          </p>
+
+          <div class="dl-row">
+            <a class="btn" href="#" data-soon="PC download &mdash; coming soon" aria-disabled="true">
+              <img class="ic" src="assets/img/platform-pc.svg" alt=""> Download for PC
+            </a>
+            <a class="btn btn--accent" href="#" data-soon="Android download &mdash; coming soon" aria-disabled="true">
+              <img class="ic" src="assets/img/platform-android.svg" alt=""> Download for Android
+            </a>
+          </div>
+          <p class="platforms">Alpha build in development &bull; Windows &bull; Android</p>
+        </div>
+
+        <div class="hero__art">
+          <div class="panel">
+            <img src="assets/img/hero.svg" alt="Pixel-art key art of the SandEE open world with a player and a coding robot">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================== ribbon -->
+    <div class="ribbon">
+      <ul>
+        <li>Open World Sandbox</li>
+        <li>Survival &amp; Crafting</li>
+        <li>Lua Robot</li>
+        <li>Python Automation</li>
+        <li>Real Interpreters</li>
+        <li>Mission Progression</li>
+        <li>Multi-Platform</li>
+      </ul>
+    </div>
+
+    <!-- ========================================================= features -->
+    <section class="section" id="features">
+      <div class="wrap">
+        <div class="section__head">
+          <h2>What you will do in SandEE</h2>
+          <p>Survive an open world, gather and craft, and gradually command it with code. Every
+             concept you learn has an immediate, visible effect on the game.</p>
+        </div>
+
+        <div class="grid grid--3">
+          <article class="panel card">
+            <div class="card__ic">&#9632;</div>
+            <h3>Open World Sandbox</h3>
+            <p>Explore a procedurally generated world of biomes, caves, and structures &mdash; free to
+               build, mine, and shape however you like.</p>
+          </article>
+
+          <article class="panel card">
+            <div class="card__ic">&#9670;</div>
+            <h3>Survival &amp; Crafting</h3>
+            <p>Gather resources, craft tools and stations, smelt ore, and build shelter. The survival
+               loop keeps practice hands-on and goal-driven.</p>
+          </article>
+
+          <article class="panel card">
+            <div class="card__ic">&#9650;</div>
+            <h3>Program a Lua Robot</h3>
+            <p>Write Lua to make your robot mine, rename, and build for you. Watch your script run in
+               the world, line by line.</p>
+          </article>
+
+          <article class="panel card">
+            <div class="card__ic">&#9679;</div>
+            <h3>Python Automation</h3>
+            <p>Automate furnaces and crafting stations with Python. Feed, fuel, and smelt through code
+               that mirrors real scripting use cases.</p>
+          </article>
+
+          <article class="panel card">
+            <div class="card__ic">&#9733;</div>
+            <h3>Mission Progression</h3>
+            <p>Guided missions introduce syntax and structure step by step, rewarding you as you grow
+               from beginner to confident coder.</p>
+          </article>
+
+          <article class="panel card">
+            <div class="card__ic">&#10004;</div>
+            <h3>Real Interpreters</h3>
+            <p>Lua and Python are embedded directly in the game, so it reacts to your actual code
+               &mdash; including real errors and real feedback.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================= screenshots -->
+    <section class="section section--tint" id="screens">
+      <div class="wrap">
+        <div class="section__head">
+          <h2>Inside the world</h2>
+          <p>A look at the survival loop, the machines you automate, and the robot you program.</p>
+        </div>
+
+        <div class="shots">
+          <figure class="panel shot">
+            <img src="assets/img/shot1.svg" alt="Mining ore in a cave">
+            <figcaption>Mine ore and explore caves</figcaption>
+          </figure>
+          <figure class="panel shot">
+            <img src="assets/img/shot2.svg" alt="A furnace automated with Python">
+            <figcaption>Automate furnaces with Python</figcaption>
+          </figure>
+          <figure class="panel shot">
+            <img src="assets/img/shot3.svg" alt="A Lua-powered robot mining and building">
+            <figcaption>Script the Lua robot to build</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ about -->
+    <section class="section" id="about">
+      <div class="wrap">
+        <div class="section__head">
+          <h2>Why we built SandEE</h2>
+        </div>
+
+        <div class="about-grid">
+          <div>
+            <p>
+              Learning to program is hard. Traditional lessons lean on theory and static exercises,
+              which struggle to hold students&rsquo; attention or prepare them for real problem-solving.
+              Game-based learning changes that: it makes practice interactive, contextual, and fun.
+            </p>
+            <p>
+              We surveyed <b>104 ICT and STEM students</b> at Yverdon de Pestalozzi School Inc. and found
+              that most were only <b>averagely familiar with Lua</b> &mdash; yet the large majority believed a
+              game would improve their understanding and motivate them to explore it. Interest was
+              clearly there; the right tool was not.
+            </p>
+            <p>
+              <b>SandEE</b> is our answer. It embeds real Lua and Python interpreters into a 2D open-world
+              survival crafting game, so the code you write actually affects the world around you. A
+              mission system introduces syntax gradually, and visual feedback turns abstract concepts
+              into things you can see, break, and fix &mdash; just like in a real programming environment.
+            </p>
+
+            <h3>Our objectives</h3>
+            <ul class="ticks">
+              <li>Enhance programming skills through hands-on, experience-based learning.</li>
+              <li>Provide direct visual feedback as players learn and apply concepts.</li>
+              <li>Respond realistically to player code &mdash; errors included &mdash; via embedded interpreters.</li>
+              <li>Introduce the structure and syntax of Lua and Python in a natural progression.</li>
+            </ul>
+          </div>
+
+          <aside>
+            <div class="panel panel--inset stat">
+              <b>104</b>
+              <span>ICT &amp; STEM students surveyed (Grades 11&ndash;12)</span>
+            </div>
+            <div class="panel panel--inset stat">
+              <b>78.9%</b>
+              <span>agreed game-based learning would improve their understanding</span>
+            </div>
+            <div class="panel panel--inset stat">
+              <b>73%</b>
+              <span>were motivated to explore Lua through an interactive approach</span>
+            </div>
+            <div class="panel panel--inset stat">
+              <b>80.8%</b>
+              <span>found Python&rsquo;s syntax and structure easy to understand</span>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================= developers -->
+    <section class="section section--tint" id="developers">
+      <div class="wrap">
+        <div class="section__head">
+          <h2>The team behind SandEE</h2>
+          <p>A capstone thesis by four Bachelor of Science in Computer Science students.</p>
+        </div>
+
+        <div class="dev-grid">
+          <article class="panel dev">
+            <div class="dev__av">GA</div>
+            <h3>Glenn Marco B. Accad</h3>
+            <p>Thesis Proponent</p>
+            <small>BS Computer Science</small>
+          </article>
+          <article class="panel dev">
+            <div class="dev__av">AG</div>
+            <h3>Adrian V. Gallano</h3>
+            <p>Thesis Proponent</p>
+            <small>BS Computer Science</small>
+          </article>
+          <article class="panel dev">
+            <div class="dev__av">JM</div>
+            <h3>Jefferson G. Mamauag</h3>
+            <p>Thesis Proponent</p>
+            <small>BS Computer Science</small>
+          </article>
+          <article class="panel dev">
+            <div class="dev__av">JT</div>
+            <h3>Jose Mari Christian V. Tayag</h3>
+            <p>Thesis Proponent</p>
+            <small>BS Computer Science</small>
+          </article>
+        </div>
+
+        <div class="panel panel--inset reqs">
+          <h3>With thanks to</h3>
+          <table>
+            <tr><td>Thesis Adviser</td><td>Norvin Shaq F. Lintag</td></tr>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== downloads -->
+    <section class="section" id="downloads">
+      <div class="wrap">
+        <div class="section__head">
+          <h2>Download SandEE</h2>
+          <p>Coming to PC and Android. The alpha build is still in development &mdash;
+             download links will appear here once it ships.</p>
+        </div>
+
+        <div class="dl-grid">
+          <article class="panel dl-card">
+            <img src="assets/img/platform-pc.svg" alt="">
+            <h3>PC / Windows</h3>
+            <a class="btn btn--block" href="#" data-soon="PC download &mdash; coming soon" aria-disabled="true">Download for PC</a>
+            <small>Windows 10 / 11 (64-bit)</small>
+          </article>
+          <article class="panel dl-card">
+            <img src="assets/img/platform-android.svg" alt="">
+            <h3>Android</h3>
+            <a class="btn btn--block btn--accent" href="#" data-soon="Android download &mdash; coming soon" aria-disabled="true">Download for Android</a>
+            <small>Android 8.0 and newer</small>
+          </article>
+        </div>
+
+        <div class="panel reqs">
+          <h3>System requirements <span class="dim" style="font-size:16px">(alpha &mdash; subject to change)</span></h3>
+          <table>
+            <tr><td>Operating system</td><td>Windows 10/11 (64-bit) &bull; Android 8.0+</td></tr>
+            <tr><td>Processor</td><td>Dual-core 2.0 GHz or better</td></tr>
+            <tr><td>Memory</td><td>4 GB RAM</td></tr>
+            <tr><td>Graphics</td><td>OpenGL 3.3 / Vulkan / DirectX 12 compatible</td></tr>
+            <tr><td>Storage</td><td>300 MB available space</td></tr>
+            <tr><td>Input</td><td>Keyboard &amp; mouse (PC) &bull; touch (Android)</td></tr>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============================================================= footer -->
+  <footer class="footer">
+    <div class="wrap">
+      <div class="footer__grid">
+        <div class="footer__brand">
+          <img src="assets/img/logo.svg" alt="">
+          <p>An educational multi-platform 2D open-world survival crafting game that teaches
+             Lua and Python through play.</p>
+        </div>
+
+        <!-- the "About" submenu -->
+        <div>
+          <h4>About</h4>
+          <ul>
+            <li><a href="#about">About the Game</a></li>
+            <li><a href="#developers">Developers</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#screens">Screenshots</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4>Quick Links</h4>
+          <ul>
+            <li><a href="#downloads">Downloads</a></li>
+            <li><a href="#screens">Screenshots</a></li>
+            <li><a href="#top">Back to Top</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4>Project</h4>
+          <ul>
+            <li><a href="#developers">Thesis Team</a></li>
+            <li><a href="#about">Our Research</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer__bottom">
+        <span>&copy; <span id="year">2026</span> SandEE Team &bull; All rights reserved.</span>
+        <span>Built with Godot Engine &bull; Thesis project, not for commercial sale.</span>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    // Non-functional download buttons: show a "coming soon" toast instead.
+    (function () {
+      var toast = document.getElementById('toast');
+      var timer;
+      document.querySelectorAll('[data-soon]').forEach(function (el) {
+        el.addEventListener('click', function (e) {
+          e.preventDefault();
+          toast.textContent = el.getAttribute('data-soon');
+          toast.classList.add('show');
+          clearTimeout(timer);
+          timer = setTimeout(function () { toast.classList.remove('show'); }, 2200);
+        });
+      });
+      document.getElementById('year').textContent = new Date().getFullYear();
+    })();
+
+    // Collapsible navigation for mobile / portrait.
+    (function () {
+      var toggle = document.querySelector('.nav-toggle');
+      var nav = document.getElementById('primary-nav');
+      if (!toggle || !nav) { return; }
+
+      function setOpen(open) {
+        nav.classList.toggle('open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+
+      toggle.addEventListener('click', function () {
+        setOpen(!nav.classList.contains('open'));
+      });
+
+      // Close after choosing a destination.
+      nav.querySelectorAll('a').forEach(function (link) {
+        link.addEventListener('click', function () { setOpen(false); });
+      });
+
+      // Close if the viewport grows back to the desktop layout.
+      window.addEventListener('resize', function () {
+        if (window.innerWidth > 860) { setOpen(false); }
+      });
+
+      // Close on Escape.
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { setOpen(false); }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -16,6 +16,17 @@ class_name Minimap
 #   • green circle  = bonfires/flags ("Bonfire"/"Flag" groups — future)
 #   • portal icon   = dungeon portals ("DungeonPortal"; tooltip = dungeon name)
 #
+# ── Merged dungeon map ───────────────────────────────────────────────
+# When Global.world_node is a DungeonWorld, this SAME control renders the
+# dungeon instead of the overworld: terrain comes from the DungeonGenerator
+# grid (walls/floor) rather than sampled tilesets, and the markers become the
+# knowledge altar (cyan), quiz altar (purple), exit (gold) and the player.
+# Collapsed/expanded behaviour, pan, zoom and fog are unchanged — only the
+# CONTENT swaps. The dungeon map has NO legend, and its fog is stored
+# separately (Global.explored_dungeon_tiles) so grid coords can't collide with
+# overworld world coords. The old always-on top-left "Dungeon Map" panel
+# (DungeonMinimap in dungeon_world.gd) is gone.
+#
 # Bound to the VIEWPORT rect (a Control under a CanvasLayer is not auto-sized).
 # STANDING RULE: text/markers scale with Global.ui_scale.
 
@@ -49,6 +60,20 @@ const C_PLAYER  := Color(1.00, 1.00, 1.00)
 const C_ENEMY   := Color(0.90, 0.20, 0.20)   # HOSTILE mobs
 const C_FRIEND  := Color(0.95, 0.85, 0.25)   # PASSIVE mobs (yellow)
 const C_GREEN   := Color(0.25, 0.85, 0.35)
+
+# Dungeon content (see the merged-map note at the top): the grid is drawn from
+# the DungeonGenerator directly — walls/floor, plus altar/exit markers.
+const C_DUN_WALL:  Color = Color(0.38, 0.33, 0.48, 1.0)
+const C_DUN_FLOOR: Color = Color(0.13, 0.14, 0.18, 1.0)
+const C_KNOWLEDGE: Color = Color(0.30, 0.80, 0.95, 1.0)   # knowledge altar
+const C_QUIZ:      Color = Color(0.80, 0.45, 0.95, 1.0)   # quiz altar
+const C_EXIT:      Color = Color(0.90, 0.75, 0.25, 1.0)   # exit (once cleared)
+
+# Cave content: solid vs walkable from the cave generator grid, plus a single
+# entrance/exit marker (a cave has one tile that is both).
+const C_CAVE_WALL:  Color = Color(0.35, 0.32, 0.30, 1.0)
+const C_CAVE_FLOOR: Color = Color(0.12, 0.13, 0.16, 1.0)
+const C_CAVE_EXIT:  Color = Color(0.45, 0.95, 0.70, 1.0)
 
 const PORTAL_TEX: Texture2D = preload("res://sprites/map/dungeon_portal_icon.png")
 
@@ -89,6 +114,32 @@ func _ready() -> void:
 func _vp() -> Vector2:
 	return get_viewport_rect().size
 
+# The DungeonWorld currently being played, or null in the overworld / caves.
+func _dungeon() -> DungeonWorld:
+	var w: Node = Global.world_node
+	if w is DungeonWorld and (w as DungeonWorld).generator != null:
+		return w as DungeonWorld
+	return null
+
+# The CaveWorld / PixieCaveWorld currently being played, or an empty Dictionary
+# in the overworld / a dungeon. Carries the generator + grid size so the cave
+# map can render from the generator grid (caves have no Ground/Water/Structures
+# layers to sample).
+func _cave_info() -> Dictionary:
+	var w: Node = Global.world_node
+	if w is CaveWorld and (w as CaveWorld).generator != null:
+		var g: CaveGenerator = (w as CaveWorld).generator
+		return {"gen": g, "w": g.size, "h": g.size, "pixie": false}
+	if w is PixieCaveWorld and (w as PixieCaveWorld).generator != null:
+		var g: PixieCaveGenerator = (w as PixieCaveWorld).generator
+		return {"gen": g, "w": g.width, "h": g.height, "pixie": true}
+	return {}
+
+func _cave_floor(info: Dictionary, gc: Vector2i) -> bool:
+	if bool(info["pixie"]):
+		return (info["gen"] as PixieCaveGenerator).grid[gc.x][gc.y] == PixieCaveGenerator.Tile.FLOOR
+	return (info["gen"] as CaveGenerator).grid[gc.x][gc.y] == CaveGenerator.Tile.FLOOR
+
 func _process(delta: float) -> void:
 	position = Vector2.ZERO
 	size     = _vp()
@@ -122,11 +173,38 @@ func _process(delta: float) -> void:
 func _mark_explored() -> void:
 	var r: int = EXPLORE_RADIUS
 	var r2: int = r * r
+	var dun := _dungeon()
+	if dun != null:
+		# Dungeon fog is keyed by GRID cell (world tile + the grid's half-size),
+		# namespaced by dungeon index so re-entering the same dungeon keeps its
+		# fog and a different dungeon gets its own.
+		var g: DungeonGenerator = dun.generator
+		var gp: Vector2i = _player_tile + Vector2i(g.width / 2, g.height / 2)
+		var idx: int = dun._dungeon_index
+		for dx in range(-r, r + 1):
+			for dy in range(-r, r + 1):
+				if dx * dx + dy * dy > r2:
+					continue
+				var c: Vector2i = gp + Vector2i(dx, dy)
+				Global.explored_dungeon_tiles[Vector3i(idx, c.x, c.y)] = true
+		return
+	var cave := _cave_info()
+	if not cave.is_empty():
+		# Cave fog is keyed by GRID cell and cleared on every cave entry, since
+		# each entrance generates a fresh cave.
+		var gp: Vector2i = _player_tile + Vector2i(int(cave["w"]) / 2, int(cave["h"]) / 2)
+		for dx in range(-r, r + 1):
+			for dy in range(-r, r + 1):
+				if dx * dx + dy * dy > r2:
+					continue
+				Global.explored_cave_tiles[gp + Vector2i(dx, dy)] = true
+		return
 	for dx in range(-r, r + 1):
 		for dy in range(-r, r + 1):
 			if dx * dx + dy * dy > r2:
 				continue
 			Global.explored_tiles[_player_tile + Vector2i(dx, dy)] = true
+	Global.set_mission_progress("explore_tiles", Global.explored_tiles.size())
 
 # ── Input ───────────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
@@ -206,6 +284,14 @@ func _set_expanded(on: bool) -> void:
 
 # ── Terrain sampling (real tileset colours) ─────────────────────────────
 func _sample_terrain() -> void:
+	var dun := _dungeon()
+	if dun != null:
+		_sample_dungeon(dun)
+		return
+	var cave := _cave_info()
+	if not cave.is_empty():
+		_sample_cave(cave)
+		return
 	var world: Node = Global.world_node
 	var ground: TileMapLayer     = null
 	var water:  TileMapLayer     = null
@@ -229,6 +315,49 @@ func _sample_terrain() -> void:
 				c = _tile_color(ground, cell)
 			if not Global.explored_tiles.has(cell):
 				c = c.lerp(C_FOG, 0.62)   # dim unexplored, still readable
+			_terrain.set_pixel(gx, gy, c)
+	_tex.update(_terrain)
+
+# Dungeon terrain: read the generator grid directly (walls/floor), converted
+# from the world tile under each pixel into a grid cell via the grid's half-size.
+# Cells outside the grid stay void (the world's surrounding wall band is not
+# drawn, so the layout reads against a dark backdrop). Fog uses the dungeon store.
+func _sample_dungeon(dun: DungeonWorld) -> void:
+	var g: DungeonGenerator = dun.generator
+	var half: int = GRID / 2
+	var gh := Vector2i(g.width / 2, g.height / 2)
+	var idx: int = dun._dungeon_index
+	for gy in range(GRID):
+		for gx in range(GRID):
+			var cell: Vector2i = _view_center + Vector2i(
+				roundi((gx - half) / _zoom), roundi((gy - half) / _zoom))
+			var gc: Vector2i = cell + gh
+			var c: Color = C_VOID
+			if gc.x >= 0 and gc.y >= 0 and gc.x < g.width and gc.y < g.height:
+				c = C_DUN_WALL if g.grid[gc.x][gc.y] == DungeonGenerator.Tile.WALL else C_DUN_FLOOR
+			if not Global.explored_dungeon_tiles.has(Vector3i(idx, gc.x, gc.y)):
+				c = c.lerp(C_FOG, 0.62)
+			_terrain.set_pixel(gx, gy, c)
+	_tex.update(_terrain)
+
+# Cave terrain: same idea as the dungeon — read the cave generator grid directly
+# (walkable floor vs solid rock). Caves have no Ground/Water/Structures layers,
+# so sampling the tilesets would render void. Fog uses the cave store.
+func _sample_cave(info: Dictionary) -> void:
+	var half: int = GRID / 2
+	var w: int = int(info["w"])
+	var h: int = int(info["h"])
+	var gh := Vector2i(w / 2, h / 2)
+	for gy in range(GRID):
+		for gx in range(GRID):
+			var cell: Vector2i = _view_center + Vector2i(
+				roundi((gx - half) / _zoom), roundi((gy - half) / _zoom))
+			var gc: Vector2i = cell + gh
+			var c: Color = C_VOID
+			if gc.x >= 0 and gc.y >= 0 and gc.x < w and gc.y < h:
+				c = C_CAVE_FLOOR if _cave_floor(info, gc) else C_CAVE_WALL
+			if not Global.explored_cave_tiles.has(gc):
+				c = c.lerp(C_FOG, 0.62)
 			_terrain.set_pixel(gx, gy, c)
 	_tex.update(_terrain)
 
@@ -308,8 +437,13 @@ func _draw_expanded() -> void:
 	draw_rect(bg, C_PANEL, true)
 	draw_rect(bg, C_BORDER, false, 2.0 * s)
 
+	var title := "MAP"
+	if _dungeon() != null:
+		title = "DUNGEON MAP"
+	elif not _cave_info().is_empty():
+		title = "CAVE MAP"
 	draw_string(font, Vector2(panel.position.x, panel.position.y - 9 * s),
-		"MAP", HORIZONTAL_ALIGNMENT_LEFT, -1, int(16 * s), C_TITLE)
+		title, HORIZONTAL_ALIGNMENT_LEFT, -1, int(16 * s), C_TITLE)
 	var hint := "drag to pan  ·  M to close"
 	var hw: float = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * s)).x
 	draw_string(font, Vector2(panel.end.x - hw, panel.position.y - 9 * s),
@@ -320,9 +454,17 @@ func _draw_expanded() -> void:
 	_draw_entities(panel, s)
 	draw_rect(panel, C_BORDER, false, 2.0 * s)
 
-	# Legend
+	# Legend — the dungeon map deliberately has none; caves show You +
+	# Entrance/Exit; the overworld shows the full list.
+	if _dungeon() != null:
+		return
+
 	var ly: float = panel.end.y + 18 * s
 	var lx: float = panel.position.x
+	if not _cave_info().is_empty():
+		lx = _legend_item(font, lx, ly, s, C_PLAYER, "You")
+		_legend_item(font, lx, ly, s, C_CAVE_EXIT, "Entrance / Exit")
+		return
 	lx = _legend_item(font, lx, ly, s, C_PLAYER, "You")
 	lx = _legend_item(font, lx, ly, s, C_ENEMY, "Enemies")
 	lx = _legend_item(font, lx, ly, s, C_FRIEND, "Friendly")
@@ -350,18 +492,52 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 	var z: float = _zoom if _expanded else 1.0
 	var ppt: float = cell_px * z   # screen px per world tile
 	var center: Vector2 = map_rect.position + map_rect.size * 0.5
-	for m in get_tree().get_nodes_in_group("Mob"):
-		_marker(map_rect, center, ppt, m, C_ENEMY if _mob_is_hostile(m) else C_FRIEND, 3.0 * s)
-	for grp in ["Bonfire", "Flag"]:
-		for b in get_tree().get_nodes_in_group(grp):
-			_marker(map_rect, center, ppt, b, C_GREEN, 3.0 * s)
-	for d in get_tree().get_nodes_in_group("DungeonPortal"):
-		_portal_marker(map_rect, center, ppt, d, s)
+	var dun := _dungeon()
+	var cave := _cave_info()
+	if dun != null:
+		_draw_dungeon_entities(map_rect, center, ppt, s, dun)
+	elif not cave.is_empty():
+		_draw_cave_entities(map_rect, center, ppt, s, cave)
+	else:
+		for m in get_tree().get_nodes_in_group("Mob"):
+			_marker(map_rect, center, ppt, m, C_ENEMY if _mob_is_hostile(m) else C_FRIEND, 3.0 * s)
+		for grp in ["Bonfire", "Flag"]:
+			for b in get_tree().get_nodes_in_group(grp):
+				_marker(map_rect, center, ppt, b, C_GREEN, 3.0 * s)
+		for d in get_tree().get_nodes_in_group("DungeonPortal"):
+			_portal_marker(map_rect, center, ppt, d, s)
 	var ppos: Vector2 = center + (p.global_position / TILE - Vector2(_view_center)) * ppt
 	if not _expanded:
 		ppos = center
 	draw_circle(ppos, 3.5 * s, C_PLAYER)
 	draw_arc(ppos, 3.5 * s, 0.0, TAU, 16, C_BORDER, 1.0 * s)
+
+# Dungeon markers: knowledge altar (cyan), quiz altar (purple), exit (gold,
+# only once cleared) and the player (drawn by the caller). Positions are grid
+# coords → world tiles via the grid's half-size, then the usual map projection.
+func _draw_dungeon_entities(map_rect: Rect2, center: Vector2, ppt: float, s: float, dun: DungeonWorld) -> void:
+	var g: DungeonGenerator = dun.generator
+	var gh := Vector2i(g.width / 2, g.height / 2)
+	_grid_dot(map_rect, center, ppt, s, g.knowledge_altar_pos, gh, C_KNOWLEDGE)
+	_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos, gh, C_QUIZ)
+	if dun._exit_marker != null and dun._exit_marker._active:
+		_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos + Vector2i(0, 2), gh, C_EXIT)
+
+# Cave marker: the single entrance/exit tile (caves have one tile that is both
+# where you entered and where you leave). Grid coords → world tiles via the
+# grid's half-size, then the usual map projection.
+func _draw_cave_entities(map_rect: Rect2, center: Vector2, ppt: float, s: float, info: Dictionary) -> void:
+	var gen = info["gen"]
+	var gh := Vector2i(int(info["w"]) / 2, int(info["h"]) / 2)
+	_grid_dot(map_rect, center, ppt, s, gen.entrance_tile, gh, C_CAVE_EXIT)
+
+func _grid_dot(map_rect: Rect2, center: Vector2, ppt: float, s: float,
+		grid_pos: Vector2i, gh: Vector2i, col: Color) -> void:
+	var wt: Vector2 = Vector2(grid_pos) - Vector2(gh) + Vector2(0.5, 0.5)
+	var pos: Vector2 = center + (wt - Vector2(_view_center)) * ppt
+	if not map_rect.has_point(pos):
+		return
+	draw_circle(pos, 3.0 * s, col)
 
 func _marker(map_rect: Rect2, center: Vector2, cell_px: float, node: Node, col: Color, r: float) -> void:
 	if not (node is Node2D) or not is_instance_valid(node):

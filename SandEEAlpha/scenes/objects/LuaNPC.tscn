@@ -39,7 +39,7 @@ shape = SubResource("CircleShape_click")
 position = Vector2(0, 36)
 
 [node name="RobotSprite" type="AnimatedSprite2D" parent="Robot" unique_id=236635100]
-scale = Vector2(1.6, 1.6)
+scale = Vector2(1, 1)
 
 [node name="RobotCol" type="CollisionShape2D" parent="Robot"]
 position = Vector2(0, 10)

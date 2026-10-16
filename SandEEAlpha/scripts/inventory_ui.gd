@@ -104,6 +104,8 @@ func _rebuild() -> void:
 	_active_idx = -1; _selected_idx = -1
 	for child in get_children():
 		child.queue_free()
+	if not is_inside_tree():
+		return
 	await get_tree().process_frame
 	if _rebuild_ver != my_ver:
 		return
@@ -472,6 +474,9 @@ func _craft_filter_refresh() -> void:
 		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
 		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
 		btn.tooltip_text            = r.result_item.item_name
+		var res: ItemData = r.result_item
+		btn.mouse_entered.connect(func() -> void: Global.show_item_tooltip({"data": res, "quantity": 1}))
+		btn.mouse_exited.connect(func() -> void: Global.hide_item_tooltip())
 		var i2 := idx
 		btn.pressed.connect(func() -> void: _craft_select(i2))
 		_craft_list.add_child(btn)

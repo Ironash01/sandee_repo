@@ -20,6 +20,7 @@ is_placeable = true
 has_place_animation = true
 place_animation_sheet = ExtResource("2_6kuyk")
 place_animation_frame_count = 4
+place_scene_path = "res://scenes/objects/Bonfire.tscn"
 is_torch = true
 is_craftable = true
 block_level = 10

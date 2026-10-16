@@ -21,6 +21,13 @@ const STORM_MAX_BLEND:  float = 1.0  # 2x the previous 0.55, clamped at 1.0 (ful
 const STORM_EASE_SPEED: float = 0.15  # blend fraction per second toward target
 var _storm_blend: float = 0.0
 
+# ── Indoors dim ──────────────────────────────────────────────────
+# While the player is inside a VALID house (Global.player_indoors) the ambient
+# color is multiplied down a touch so interiors read as roofed. Eased in/out.
+const INDOOR_DIM:        float = 0.72
+const INDOOR_EASE_SPEED: float = 0.12
+var _indoor_blend: float = 0.0
+
 var _sky_gradient: Gradient
 var _debug_log_timer: float = 0.0
 
@@ -82,7 +89,14 @@ func toggle_period() -> void:
 func _update_color(delta: float) -> void:
 	var target_blend: float = STORM_MAX_BLEND if Global.snowstorm_active else 0.0
 	_storm_blend = move_toward(_storm_blend, target_blend, STORM_EASE_SPEED * delta)
+	# Indoors: ease in a subtle dim on top of the sky colour.
+	var indoor_target: float = 1.0 if Global.player_indoors else 0.0
+	_indoor_blend = move_toward(_indoor_blend, indoor_target, INDOOR_EASE_SPEED * delta)
 	var base_color: Color = _sky_gradient.sample(time_of_day)
+	if _indoor_blend > 0.0:
+		var dim := Color(base_color.r * INDOOR_DIM, base_color.g * INDOOR_DIM,
+			base_color.b * INDOOR_DIM, 1.0)
+		base_color = base_color.lerp(dim, _indoor_blend)
 	color = base_color.lerp(STORM_TINT, _storm_blend) if _storm_blend > 0.0 else base_color
 
 # Emits Global.day_started / Global.night_started exactly once per crossing —
@@ -92,6 +106,7 @@ func _update_day_state() -> void:
 	Global.is_daytime = now_day
 	if now_day and not _was_daytime:
 		Global.day_started.emit()
+		Global.add_mission_progress("survive_days")
 	elif not now_day and _was_daytime:
 		Global.night_started.emit()
 	_was_daytime = now_day

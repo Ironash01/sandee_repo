@@ -27,6 +27,9 @@ pub enum LuaSignal {
     TakeOutput,
     PutInput,
     InputSlot,
+    // Robot extras: mine(name, radius) and rename(name).
+    Mine,
+    Rename,
 }
 
 fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<Table> {
@@ -189,6 +192,17 @@ impl INode for LuaState {
                     let quantity: u32 = signal.get("arg").expect("Failed to get signal argument");
                     self.signals().signal_input_slot().emit(quantity);
                 }
+                LuaSignal::Mine => {
+                    // arg is a table {name, radius}.
+                    let arg: Table = signal.get("arg").expect("Failed to get signal argument");
+                    let name: String = arg.get("name").unwrap_or_default();
+                    let radius: i32 = arg.get("radius").unwrap_or(20);
+                    self.signals().signal_mine().emit(name, radius);
+                }
+                LuaSignal::Rename => {
+                    let name: String = signal.get("arg").expect("Failed to get signal argument");
+                    self.signals().signal_rename().emit(name);
+                }
                 _ => (),
             }
         }
@@ -238,6 +252,14 @@ impl LuaState {
     // into the station's input slot (no name needed).
     #[signal]
     fn signal_input_slot(quantity: u32);
+    // mine(name, radius) — mine every matching block within radius of the
+    // robot, walking to each and storing the drops; rename(name) — set the
+    // robot's displayed name.
+    #[signal]
+    fn signal_mine(name: String, radius: i32);
+    #[signal]
+    fn signal_rename(name: String);
+
     // Godot Functions
     #[func]
     fn run_code(&mut self) {
@@ -246,6 +268,18 @@ impl LuaState {
         } else {
             self.signals().code_executed().emit();
         }
+    }
+
+    // Every item display name — lets a GDScript editor offer a name popup.
+    #[func]
+    fn run_list_items(&mut self) -> PackedStringArray {
+        let mut names: Vec<String> = crate::utils::item_names();
+        names.sort();
+        let mut out = PackedStringArray::new();
+        for n in names {
+            out.push(&GString::from(n.as_str()));
+        }
+        out
     }
 
     fn _run_code(&mut self, code: &str) -> Result<()> {
@@ -453,6 +487,81 @@ impl LuaState {
         })?;
         globals.set("input_slot", input_slot_func)?;
 
+        // mine(name, radius) — mine every block whose item name matches within
+        // radius tiles of the robot (walks to each, stores the drops).
+        let mine_func = self.lua.create_function(|state, (name, radius): (Value, Value)| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let name = match name {
+                Value::String(s) => s.to_str()?.to_string(),
+                _ => String::new(),
+            };
+            let radius = match as_int(radius) {
+                r if r > 0 => r,
+                _ => 20,
+            };
+            let arg = state.create_table()?;
+            arg.set("name", name)?;
+            arg.set("radius", radius)?;
+            insert_signal(signals, state, LuaSignal::Mine, arg)?;
+            Ok(())
+        })?;
+        globals.set("mine", mine_func)?;
+
+        // rename(name) — set the robot's displayed name.
+        let rename_func = self.lua.create_function(|state, name: Value| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let name = match name {
+                Value::String(s) => s.to_str()?.to_string(),
+                _ => String::new(),
+            };
+            insert_signal(signals, state, LuaSignal::Rename, name)?;
+            Ok(())
+        })?;
+        globals.set("rename", rename_func)?;
+
+        // list_items() — the item display names available in the game, offered
+        // as an editor autocomplete popup inside name arguments.
+        let list_items_func = self.lua.create_function(|_state, ()| {
+            let mut names: Vec<String> = crate::utils::item_names();
+            names.sort();
+            Ok(names)
+        })?;
+        globals.set("list_items", list_items_func)?;
+
+        self.restrict_globals()?;
+
+        Ok(())
+    }
+
+    // Whitelist the Lua environment: remove every global that is not part of
+    // the curated API (see APIReference). This drops os/io/debug/load/require/
+    // package and anything else, so calling a disallowed function raises the
+    // normal Lua "attempt to call a nil value" instead of running.
+    fn restrict_globals(&mut self) -> Result<()> {
+        const ALLOWED: &[&str] = &[
+            // language built-ins
+            "print", "type", "tostring", "tonumber", "pairs", "ipairs", "next",
+            "select", "error", "assert", "pcall", "xpcall", "unpack",
+            "rawget", "rawset", "rawequal", "rawlen", "setmetatable",
+            "getmetatable", "math", "string", "table", "coroutine", "utf8",
+            // game globals + custom API
+            "vector", "held_item", "station_recipe", "station_output_item",
+            "station_output_count", "GODOT_PROP_signals", "move", "attack",
+            "interact", "drop_item", "place_item", "place_at", "select_block",
+            "withdraw", "craft", "set_recipe", "take_output", "put_input",
+            "input_slot", "mine", "rename", "list_items",
+        ];
+        let globals = self.lua.globals();
+        let mut remove: Vec<String> = Vec::new();
+        for pair in globals.clone().pairs::<String, Value>() {
+            let (key, _) = pair?;
+            if !ALLOWED.contains(&key.as_str()) {
+                remove.push(key);
+            }
+        }
+        for key in remove {
+            globals.set(key, Value::Nil)?;
+        }
         Ok(())
     }
 }

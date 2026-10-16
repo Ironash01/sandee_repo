@@ -1,0 +1,82 @@
+extends Node
+
+# ── Tap tooltips ──────────────────────────────────────────────────
+# Godot's built-in tooltips only appear on MOUSE HOVER. On a touch screen a tap
+# has no hover step, so this node shows the tapped control's tooltip_text as a
+# small popup for a moment. On desktop (no touch) it stays out of the way — the
+# built-in hover tooltip already covers it.
+#
+# Added by game_instance; owns its own high CanvasLayer (60).
+
+const SHOW_SEC: float = 2.2
+
+var _popup: PanelContainer = null
+var _label: Label = null
+var _timer: float = 0.0
+
+func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	var layer := CanvasLayer.new()
+	layer.layer = 60
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(layer)
+
+	_popup = PanelContainer.new()
+	_popup.visible = false
+	_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.10, 0.20, 0.98)
+	sb.border_color = Color(0.22, 0.32, 0.58, 1.0)
+	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
+	sb.content_margin_left = 8; sb.content_margin_right = 8
+	sb.content_margin_top = 5; sb.content_margin_bottom = 5
+	_popup.add_theme_stylebox_override("panel", sb)
+	layer.add_child(_popup)
+
+	_label = Label.new()
+	_label.add_theme_font_size_override("font_size", 12)
+	_label.add_theme_color_override("font_color", Color(0.80, 0.90, 1.0))
+	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_label.custom_minimum_size = Vector2(180, 0)
+	_popup.add_child(_label)
+
+func _input(event: InputEvent) -> void:
+	var pos := Vector2.INF
+	if event is InputEventScreenTouch and event.pressed:
+		pos = event.position
+	elif event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT \
+			and DisplayServer.is_touchscreen_available():
+		pos = event.position
+	if pos == Vector2.INF:
+		return
+	_show_at(pos)
+
+func _show_at(pos: Vector2) -> void:
+	var ctrl: Control = get_viewport().gui_get_hovered_control()
+	if ctrl == null:
+		return
+	var text: String = ctrl.tooltip_text
+	# Walk up: a Label inside a row often carries the tooltip on the row.
+	var p := ctrl.get_parent()
+	while p is Control and text.is_empty():
+		text = (p as Control).tooltip_text
+		p = p.get_parent()
+	if text.is_empty():
+		return
+	_label.text = text
+	_popup.visible = true
+	_popup.reset_size()
+	var vp := get_viewport().get_visible_rect().size
+	var sz := _popup.get_combined_minimum_size()
+	_popup.position = Vector2(
+		clampf(pos.x, 4.0, maxf(4.0, vp.x - sz.x - 4.0)),
+		clampf(pos.y - sz.y - 10.0, 4.0, maxf(4.0, vp.y - sz.y - 4.0)))
+	_timer = SHOW_SEC
+
+func _process(delta: float) -> void:
+	if not _popup.visible:
+		return
+	_timer -= delta
+	if _timer <= 0.0:
+		_popup.visible = false

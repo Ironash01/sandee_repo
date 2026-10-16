@@ -45,6 +45,10 @@ var _disperse_direction: Vector2 = Vector2.ZERO
 const DISPERSE_DURATION: float = 2.0
 const DISPERSE_SPEED:    float = 80.0
 const DISPERSE_RANDOMNESS: float = 0.4
+# Spawn clearing: when the player (re)spawns, mobs within this radius of the
+# spawn point flee for SPAWN_CLEAR_DURATION so the player can react.
+const SPAWN_CLEAR_RADIUS:   float = 20.0 * 32.0
+const SPAWN_CLEAR_DURATION: float = 5.0
 
 # ── Despawn zone (driven by world.gd's periodic distance check) ──────
 # Same contract as wolf.gd/worm.gd: the world ticks this with a zone + elapsed
@@ -89,6 +93,7 @@ func _ready() -> void:
 		_ai = ai_script.new()
 
 	Global.player_died.connect(_on_player_died)
+	Global.player_spawned.connect(_on_player_spawned)
 
 	# Night-only: despawn when day starts
 	Global.day_started.connect(_on_day_started)
@@ -290,6 +295,22 @@ func _on_player_died(death_position: Vector2) -> void:
 	away = away.rotated(randf_range(-DISPERSE_RANDOMNESS, DISPERSE_RANDOMNESS))
 	_disperse_direction = away
 	_disperse_timer = DISPERSE_DURATION
+	_is_dispersing = true
+
+# The player just (re)spawned — if we're near the spawn point, clear out so the
+# player isn't instantly swarmed. Same dispersal as the death version, just
+# longer and scoped to mobs near the spawn.
+func _on_player_spawned(spawn_position: Vector2) -> void:
+	if _mob_health <= 0.0:
+		return
+	if global_position.distance_to(spawn_position) > SPAWN_CLEAR_RADIUS:
+		return
+	var away: Vector2 = global_position - spawn_position
+	if away.length_squared() < 1.0:
+		away = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
+	away = away.normalized().rotated(randf_range(-DISPERSE_RANDOMNESS, DISPERSE_RANDOMNESS))
+	_disperse_direction = away
+	_disperse_timer = SPAWN_CLEAR_DURATION
 	_is_dispersing = true
 
 func _build_frames() -> SpriteFrames:

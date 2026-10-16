@@ -65,6 +65,9 @@ func _ready() -> void:
 	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(canvas)
 	_ui = menu_scene.instantiate() as Control
+	# Give the menu its furnace reference BEFORE it enters the tree so _ready()
+	# wires the shared smelting state + programming host without a parent walk.
+	_ui.set("furnace", self)
 	canvas.add_child(_ui)
 	_ui.visible = false
 
@@ -225,3 +228,241 @@ func _do_break() -> void:
 			drop_parent.add_child(drop)
 			(drop as Node2D).global_position = global_position + Vector2(randf_range(-20, 20), randf_range(-20, 20))
 	queue_free()
+
+# ═══════════════════════════════════════════════════════════════════
+# ── Furnace automation (mirrors the Crafting Station programming) ───
+# ═══════════════════════════════════════════════════════════════════
+# All smelting state lives HERE, on the furnace object, not in the menu — so a
+# program keeps running with the menu closed and the state persists with the
+# world save. The menu is only a view that reads/writes these fields.
+signal furnace_state_changed
+
+const FURNACE_PYTHON_HOST_SCRIPT: GDScript = preload("res://scripts/furnace_python_host.gd")
+const SMELT_RECIPE_DIR: String = "res://resources/recipes/"
+
+var input_item:      ItemData = null
+var input_quantity:  int      = 0
+var fuel_item:       ItemData = null
+var fuel_quantity:   int      = 0
+var output_item:     ItemData = null
+var output_quantity: int      = 0
+
+var program_code:     String = ""
+var program_language: String = "python"
+var _program_host: Node = null
+
+static var _smelt_recipe_cache: Array = []
+
+static func all_smelting_recipes() -> Array:
+	if _smelt_recipe_cache.is_empty():
+		# ResourceLoader.list_directory (not DirAccess) so this survives export.
+		for fname in ResourceLoader.list_directory(SMELT_RECIPE_DIR):
+			if fname.ends_with(".tres"):
+				var res: Resource = load(SMELT_RECIPE_DIR + fname)
+				if res is SmeltingRecipe:
+					_smelt_recipe_cache.append(res)
+	return _smelt_recipe_cache
+
+func smelting_recipe_for(item: ItemData) -> SmeltingRecipe:
+	if item == null:
+		return null
+	for r in all_smelting_recipes():
+		var rec: SmeltingRecipe = r
+		if rec.input_item == item \
+				or (rec.input_item != null and rec.input_item.resource_path == item.resource_path):
+			return rec
+	return null
+
+func _stack_limit(data: ItemData) -> int:
+	if data == null or not data.stackable:
+		return 1
+	return data.max_stack_size if data.max_stack_size > 0 else Global.MAX_STACK
+
+# ── Slots ─────────────────────────────────────────────────────────
+func get_input_stack() -> Dictionary:
+	return {} if (input_item == null or input_quantity <= 0) else {"data": input_item, "quantity": input_quantity}
+func get_fuel_stack() -> Dictionary:
+	return {} if (fuel_item == null or fuel_quantity <= 0) else {"data": fuel_item, "quantity": fuel_quantity}
+func get_output_stack() -> Dictionary:
+	return {} if (output_item == null or output_quantity <= 0) else {"data": output_item, "quantity": output_quantity}
+
+func put_input(data: ItemData, quantity: int) -> int:
+	if data == null or quantity <= 0:
+		return 0
+	if input_item != null and input_item != data:
+		return 0
+	var add: int = mini(quantity, _stack_limit(data) - input_quantity)
+	if add <= 0:
+		return 0
+	input_item = data
+	input_quantity += add
+	furnace_state_changed.emit()
+	return add
+
+func put_fuel(data: ItemData, quantity: int) -> int:
+	if data == null or not data.is_fuel or quantity <= 0:
+		return 0
+	if fuel_item != null and fuel_item != data:
+		return 0
+	var add: int = mini(quantity, _stack_limit(data) - fuel_quantity)
+	if add <= 0:
+		return 0
+	fuel_item = data
+	fuel_quantity += add
+	furnace_state_changed.emit()
+	return add
+
+func take_input(data: ItemData, quantity: int) -> int:
+	if data == null or quantity <= 0 or input_item != data or input_quantity <= 0:
+		return 0
+	var take: int = mini(quantity, input_quantity)
+	input_quantity -= take
+	if input_quantity <= 0:
+		input_quantity = 0
+		input_item = null
+	furnace_state_changed.emit()
+	return take
+
+func take_fuel(data: ItemData, quantity: int) -> int:
+	if data == null or quantity <= 0 or fuel_item != data or fuel_quantity <= 0:
+		return 0
+	var take: int = mini(quantity, fuel_quantity)
+	fuel_quantity -= take
+	if fuel_quantity <= 0:
+		fuel_quantity = 0
+		fuel_item = null
+	furnace_state_changed.emit()
+	return take
+
+# Move the output into the player's inventory one item at a time (so a full
+# inventory can't destroy items). Returns how many were taken.
+func take_output() -> int:
+	if output_item == null or output_quantity <= 0:
+		return 0
+	var taken: int = 0
+	for _i in range(output_quantity):
+		if not Global.add_item({"quantity": 1, "data": output_item}):
+			break
+		taken += 1
+	output_quantity -= taken
+	if output_quantity <= 0:
+		output_quantity = 0
+		output_item = null
+	if taken > 0:
+		furnace_state_changed.emit()
+	return taken
+
+# Remove the whole output stack and return it, WITHOUT touching any inventory.
+func take_output_stack() -> Dictionary:
+	if output_item == null or output_quantity <= 0:
+		return {}
+	var stack: Dictionary = {"data": output_item, "quantity": output_quantity}
+	output_item = null
+	output_quantity = 0
+	furnace_state_changed.emit()
+	return stack
+
+# ── Smelt (the validated entry point programs call) ───────────────
+# Consumes input AND one fuel per item, produces the recipe's output. Fuel is
+# SLOT-ONLY — it is never auto-consumed from the player's inventory.
+func smelt_request(amount: int) -> int:
+	if amount <= 0:
+		return _smelt_fail("Invalid smelt amount")
+	var rec: SmeltingRecipe = smelting_recipe_for(input_item)
+	if input_item == null or rec == null:
+		return _smelt_fail("No smeltable input loaded")
+	if rec.output_item == null:
+		return _smelt_fail("Recipe has no output")
+	if output_item != null and output_item != rec.output_item:
+		return _smelt_fail("Output slot holds a different item")
+	if fuel_item == null or not fuel_item.is_fuel or fuel_item.fuel_level < rec.fuel_level_required:
+		return _smelt_fail("No suitable fuel in the fuel slot")
+	var n: int = mini(amount, input_quantity)
+	n = mini(n, fuel_quantity)
+	n = mini(n, _stack_limit(rec.output_item) - output_quantity)
+	if n <= 0:
+		return _smelt_fail("Nothing to smelt (input, fuel or output space)")
+	input_quantity -= n
+	if input_quantity <= 0:
+		input_quantity = 0
+		input_item = null
+	fuel_quantity -= n
+	if fuel_quantity <= 0:
+		fuel_quantity = 0
+		fuel_item = null
+	output_item = rec.output_item
+	output_quantity += n
+	if rec.output_item.item_name.to_lower().contains("iron bar"):
+		Global.add_mission_progress("smelt_iron", n)
+	furnace_state_changed.emit()
+	return n
+
+# Load named items from the player's inventory into a specific slot. Returns
+# how many were loaded. Input and fuel are SEPARATE (an item can be both a
+# smeltable input and a fuel — e.g. Wood — so the slot is never inferred).
+func load_input_named(data: ItemData, amount: int) -> int:
+	return _load_from_inventory(data, amount, false)
+
+func load_fuel_named(data: ItemData, amount: int) -> int:
+	if data == null or not data.is_fuel:
+		return 0
+	return _load_from_inventory(data, amount, true)
+
+func _load_from_inventory(data: ItemData, amount: int, as_fuel: bool) -> int:
+	var accepted: int = 0
+	for _i in range(amount):
+		if Global.count_item(data) <= 0:
+			break
+		var put: int = put_fuel(data, 1) if as_fuel else put_input(data, 1)
+		if put <= 0:
+			break
+		Global.remove_item(data)
+		accepted += 1
+	return accepted
+
+func _smelt_fail(reason: String) -> int:
+	var msg: String = "[smelt] " + reason
+	if _program_host != null and is_instance_valid(_program_host):
+		_program_host.emit_signal("signal_print", msg)
+	else:
+		print("[Furnace] ", msg)
+	return 0
+
+# ── Program execution ─────────────────────────────────────────────
+func get_program_host() -> Node:
+	if _program_host == null or not is_instance_valid(_program_host):
+		_program_host = FURNACE_PYTHON_HOST_SCRIPT.new()
+		_program_host.set("furnace", self)
+		add_child(_program_host)
+	return _program_host
+
+func run_program(source: String) -> void:
+	program_code = source
+	var host: Node = get_program_host()
+	host.set("code", source)
+	host.call("run_code")
+
+# ── Persistence ───────────────────────────────────────────────────
+func get_furnace_save_data() -> Dictionary:
+	return {
+		"code":     program_code,
+		"language": program_language,
+		"input":    Global.serialize_item(get_input_stack()),
+		"fuel":     Global.serialize_item(get_fuel_stack()),
+		"output":   Global.serialize_item(get_output_stack()),
+	}
+
+func set_furnace_save_data(data: Dictionary) -> void:
+	program_code = str(data.get("code", ""))
+	var lang: String = str(data.get("language", "python"))
+	program_language = lang if lang in ["python", "lua"] else "python"
+	var in_slot: Variant = Global.deserialize_item(data.get("input", null))
+	input_item     = (in_slot as Dictionary)["data"] as ItemData if in_slot != null else null
+	input_quantity = int((in_slot as Dictionary)["quantity"]) if in_slot != null else 0
+	var fuel_slot: Variant = Global.deserialize_item(data.get("fuel", null))
+	fuel_item     = (fuel_slot as Dictionary)["data"] as ItemData if fuel_slot != null else null
+	fuel_quantity = int((fuel_slot as Dictionary)["quantity"]) if fuel_slot != null else 0
+	var out_slot: Variant = Global.deserialize_item(data.get("output", null))
+	output_item     = (out_slot as Dictionary)["data"] as ItemData if out_slot != null else null
+	output_quantity = int((out_slot as Dictionary)["quantity"]) if out_slot != null else 0
+	furnace_state_changed.emit()

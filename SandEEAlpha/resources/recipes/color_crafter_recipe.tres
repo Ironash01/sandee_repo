@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3]
+
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_script"]
+[ext_resource type="Resource" uid="uid://c8ubfq7atk0ox" path="res://resources/items/cactus.tres" id="2_cactus"]
+[ext_resource type="Resource" uid="uid://dcqn7oo0b6ntf" path="res://resources/items/ironbar.tres" id="3_iron"]
+[ext_resource type="Resource" uid="uid://bm500rnofcy64" path="res://resources/items/color_crafter.tres" id="4_cc"]
+
+[resource]
+script = ExtResource("1_script")
+result_item = ExtResource("4_cc")
+ingredient_1 = ExtResource("2_cactus")
+ingredient_1_quantity = 20
+ingredient_2 = ExtResource("3_iron")
+ingredient_2_quantity = 10
+category = "Blocks"

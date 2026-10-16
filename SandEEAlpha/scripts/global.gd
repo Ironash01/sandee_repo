@@ -35,6 +35,24 @@ func draw_break_bar(ci: CanvasItem, progress: float, y_offset: float = -20.0) ->
 	var fill_w: float = w * clampf(progress, 0.0, 1.0)
 	ci.draw_rect(Rect2(-half_w, y, fill_w, h), BREAK_BAR_FILL)
 
+# ── Shared break wobble ────────────────────────────────────────────
+# The snappy left-right shake played while breaking ANY block. One definition
+# so a placed block (overworld) and a mined wall tile (caves) shake identically
+# instead of each script carrying its own copy. Callers set
+# sprite.rotation = Global.block_wobble_rotation() every frame while breaking,
+# and 0.0 when not.
+const WOBBLE_AMPLITUDE_RAD: float = 0.045   # ~2.6° snap each side
+const WOBBLE_SNAPS_PER_SEC:  float = 3.0     # full left→right→left cycles per second
+const WOBBLE_FLIP_FRACTION:  float = 0.25    # fraction of each half spent flipping; the rest dwells
+
+func block_wobble_rotation() -> float:
+	var u: float = fposmod(Time.get_ticks_msec() / 1000.0 * WOBBLE_SNAPS_PER_SEC, 1.0)
+	var target: float = 1.0 if u < 0.5 else -1.0   # side this half dwells on
+	var source: float = -target                    # side the flip starts from
+	var half: float   = fmod(u, 0.5)               # 0..0.5 into this half
+	var p: float      = clampf(half / (0.5 * WOBBLE_FLIP_FRACTION), 0.0, 1.0)
+	return lerpf(source, target, ease(p, 2.0)) * WOBBLE_AMPLITUDE_RAD
+
 # ── Keyword emphasis (shared by the knowledge altar + encyclopedia) ────
 # A short "pop + colour flash" on a keyword Label when a knowledge entry is
 # first learned: the text scales up with a back-ease overshoot while flashing
@@ -234,6 +252,11 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 			p.call("become_invincible")
 	if p == null:
 		return
+	# The attacker's hit reads as a magic swing (see magic_swing.gd) — spawned
+	# at the attacker and aimed at the player. Covers mob contact hits and
+	# projectiles, since both route through here.
+	if world_node != null and is_instance_valid(world_node):
+		MagicSwing.spawn(world_node, from_position, p.global_position - from_position, 0.9, 3)
 	var strength: float = amount * KNOCKBACK_PER_DAMAGE
 	if p.has_method("apply_knockback"):
 		# Knock the player in the ATTACKER's facing direction (attack_dir) —
@@ -249,6 +272,12 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 # the screen). _handle_player_death immediately respawns the player.
 signal player_died(death_position: Vector2)
 
+# Emitted after the player (re)spawns at a spawn point. Mobs near the spawn
+# disperse for a few seconds so the player isn't instantly swarmed before they
+# can react (see the AI scripts' _on_player_spawned). Fires for the world spawn
+# / death respawn, and can be emitted by any future item-set spawn point.
+signal player_spawned(spawn_position: Vector2)
+
 # Player death: notify on the chat bar, teleport back to the world spawn point,
 # and restore full health. Runs synchronously inside damage_player so death is
 # only handled once per fatal hit.
@@ -258,6 +287,20 @@ var _death_in_progress: bool = false
 ## the frozen player's death position during the death window.
 var player_is_dead: bool = false
 const DEATH_RESPAWN_TIME: float = 5.0
+
+# Player-set respawn point (a placed Bonfire). When has_spawn_point is true the
+# player respawns HERE instead of the world spawn. Session-scoped — re-derived
+# from the live Bonfire(s) on load (see scripts/bonfire.gd).
+var spawn_point: Vector2 = Vector2.ZERO
+var has_spawn_point: bool = false
+
+func set_spawn_point(pos: Vector2) -> void:
+	spawn_point = pos
+	has_spawn_point = true
+
+func clear_spawn_point() -> void:
+	spawn_point = Vector2.ZERO
+	has_spawn_point = false
 
 func _handle_player_death() -> void:
 	if _death_in_progress:
@@ -295,14 +338,30 @@ func _handle_player_death() -> void:
 		p.call("apply_knockback", Vector2.ZERO, 0.0)
 	if p.has_method("become_invincible"):
 		p.call("become_invincible")
+	# Clear nearby mobs out of the spawn area for a few seconds so the player
+	# gets a chance to react after respawning.
+	player_spawned.emit(spawn)
 	health = max_health
 	health_changed.emit(health, max_health)
 	_death_in_progress = false
 	player_is_dead = false
 
 func _get_respawn_position() -> Vector2:
+	# Call the Game scene FIRST: get_world_spawn_position() also exits any
+	# active cave/pixie cave/dungeon, so the player always respawns in the
+	# OVERWORLD. (Returning early on a bonfire would leave the player stranded
+	# inside a structure at overworld coordinates.)
+	var world_spawn: Vector2 = Vector2.ZERO
+	var have_world := false
 	if game_node != null and game_node.has_method("get_world_spawn_position"):
-		return game_node.call("get_world_spawn_position") as Vector2
+		world_spawn = game_node.call("get_world_spawn_position") as Vector2
+		have_world = true
+	# A placed Bonfire overrides the world spawn (its coords are overworld-only —
+	# see bonfire.gd, which refuses to register inside caves/dungeons).
+	if has_spawn_point:
+		return spawn_point
+	if have_world:
+		return world_spawn
 	var world: Node = world_node
 	if world != null:
 		if world.has_method("_world_spawn_pos"):
@@ -320,6 +379,9 @@ var music_volume:       float = 1.0
 var sfx_volume:         float = 1.0
 var camera_zoom:        float = 1.3
 var pause_on_inventory: bool  = true
+# Quest tracker: draw an opaque panel background instead of floating text.
+var quest_opaque_bg:    bool  = false
+signal quest_bg_changed(opaque: bool)
 var pause_menu_open:    bool  = false
 # ── Unified UI stack ──────────────────────────────────────────────
 # All game interfaces call open_ui() / close_ui() instead of
@@ -337,6 +399,16 @@ var ui_scale_set:        bool  = false
 # Fog of war for the minimap: tiles the player has been near (Vector2i -> true).
 # Session-scoped (the minimap marks a radius around the player as it moves).
 var explored_tiles:      Dictionary = {}
+
+# Fog of war for DUNGEON maps, keyed by Vector3i(dungeon_index, grid_x, grid_y).
+# Kept separate from explored_tiles so dungeon grid coords can't collide with
+# overworld world coords (both start near 0). Session-scoped.
+var explored_dungeon_tiles: Dictionary = {}
+
+# Fog of war for CAVE maps (Vector2i grid cell -> true). Cleared on every cave
+# entry (game_instance._do_enter_cave) because each entrance generates a fresh
+# cave. Session-scoped.
+var explored_cave_tiles: Dictionary = {}
 
 # True while the chat console's text input is focused — gates player movement
 # (and other input) so typing WASD into a command doesn't also walk the player.
@@ -361,6 +433,11 @@ func is_text_input_focused() -> bool:
 # console's /daynight command can toggle it from anywhere. Null while inside a
 # cave/dungeon (those have no sky tint).
 var day_night_cycle: Node = null
+
+# True while the player stands inside a VALID house (a sealed, doored room).
+# The overworld's day/night CanvasModulate dims a touch to sell the "indoors"
+# feel. Updated by world.gd each frame from the housing system.
+var player_indoors: bool = false
 
 signal ui_scale_changed(scale: float)
 signal request_close_all_ui
@@ -613,12 +690,92 @@ var game_node:   Node = null  # game_instance.gd — CavePortal calls enter_cave
 
 @onready var inventory_slot_scene: PackedScene = preload("res://scenes/ui/InventorySlot.tscn")
 
+# ── Key rebinding persistence ─────────────────────────────────────
+# The settings panel rebinds InputMap actions live; persist the key overrides
+# to user://keybinds.cfg so they survive restarts. Saved/loaded by physical
+# keycode (layout-independent). Only keyboard events are stored.
+const KEYBIND_PATH: String = "user://keybinds.cfg"
+
+func save_keybinds(actions: Array) -> void:
+	var cfg := ConfigFile.new()
+	for action in actions:
+		var codes: Array = []
+		for e in InputMap.action_get_events(action):
+			if e is InputEventKey:
+				codes.append(int((e as InputEventKey).physical_keycode))
+		cfg.set_value("keys", action, codes)
+	cfg.save(KEYBIND_PATH)
+
+func load_keybinds() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(KEYBIND_PATH) != OK:
+		return
+	for action in cfg.get_section_keys("keys"):
+		if not InputMap.has_action(action):
+			continue
+		var codes: Array = cfg.get_value("keys", action, [])
+		if codes.is_empty():
+			continue
+		InputMap.action_erase_events(action)
+		for code in codes:
+			var ev := InputEventKey.new()
+			ev.physical_keycode = int(code)
+			InputMap.action_add_event(action, ev)
+
+# ── Shared floating item tooltip ──────────────────────────────────
+# Slots and recipe buttons call these on hover; the popup follows the mouse.
+# Lazily created and parented to the scene root so it draws above every UI.
+var _item_tooltip: Node = null
+const ITEM_TOOLTIP_SCRIPT: GDScript = preload("res://scripts/item_tooltip.gd")
+
+func show_item_tooltip(inv_item: Dictionary) -> void:
+	if _item_tooltip == null or not is_instance_valid(_item_tooltip):
+		_item_tooltip = ITEM_TOOLTIP_SCRIPT.new()
+		get_tree().root.add_child(_item_tooltip)
+	_item_tooltip.call("show_item", inv_item)
+
+func hide_item_tooltip() -> void:
+	if _item_tooltip != null and is_instance_valid(_item_tooltip):
+		_item_tooltip.call("hide_tip")
+
+# Press-and-hold helper (used by slots): call with the button/touch pressed
+# state as it changes. Holding for ITEM_HOLD_SEC shows the item tooltip;
+# releasing hides it. Implemented via a one-shot timer, so nothing needs to
+# run every frame.
+const ITEM_HOLD_SEC: float = 0.45
+var _hold_timer: Timer = null
+var _hold_item:  Dictionary = {}
+
+func item_hold_start(item: Dictionary) -> void:
+	_hold_item = item
+	if _hold_timer == null:
+		_hold_timer = Timer.new()
+		_hold_timer.one_shot = true
+		_hold_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(_hold_timer)
+		_hold_timer.timeout.connect(_on_hold_timeout)
+	_hold_timer.start(ITEM_HOLD_SEC)
+
+func _on_hold_timeout() -> void:
+	# _hold_timer is a child of Global (an autoload Node that PAUSES with the
+	# tree), so process_mode ALWAYS keeps the hold working inside menus that
+	# pause the game — e.g. the crafting station.
+	if not _hold_item.is_empty():
+		show_item_tooltip(_hold_item)
+
+func item_hold_end() -> void:
+	if _hold_timer != null:
+		_hold_timer.stop()
+	_hold_item = {}
+	hide_item_tooltip()
+
 func _ready() -> void:
 	# Global input (Ctrl build toggle, pause/chat shortcuts) must work even when
 	# the SceneTree is paused — a leaked open_ui() leaves get_tree().paused true
 	# while the player (PROCESS_MODE_ALWAYS) still moves, and a pausable Global
 	# would silently stop receiving _input. ALWAYS keeps this responsive.
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	load_keybinds()
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
 	_init_missions()
@@ -668,27 +825,27 @@ func _init_missions() -> void:
 		{"id": "open_inventory",   "title": "Open your inventory",   "completed": false},
 		{"id": "cut_tree",         "title": "Cut your first tree",   "completed": false},
 		{"id": "craft_item",       "title": "Craft your first item", "completed": false},
-		{"id": "collect_wood",     "title": "Collect 20 wood",       "completed": false},
+		{"id": "collect_wood",     "title": "Collect 20 wood",       "completed": false, "goal": 20},
 		{"id": "craft_sword",      "title": "Craft a wooden sword",  "completed": false},
 		{"id": "craft_pickaxe",    "title": "Craft a wooden pickaxe","completed": false},
-		{"id": "mine_stone",       "title": "Mine 10 stone blocks",  "completed": false},
-		{"id": "place_blocks",     "title": "Place 5 blocks",        "completed": false},
-		{"id": "defeat_wolves",    "title": "Defeat 5 wolves",       "completed": false},
-		{"id": "build_shelter",    "title": "Place 10 blocks",       "completed": false},
+		{"id": "mine_stone",       "title": "Mine 10 stone blocks",  "completed": false, "goal": 10},
+		{"id": "place_blocks",     "title": "Place 5 blocks",        "completed": false, "goal": 5},
+		{"id": "defeat_wolves",    "title": "Defeat 5 wolves",       "completed": false, "goal": 5},
+		{"id": "build_shelter",    "title": "Place 10 blocks",       "completed": false, "goal": 10},
 		{"id": "craft_chest",      "title": "Craft a chest",         "completed": false},
 		{"id": "enter_cave",       "title": "Enter a cave",          "completed": false},
-		{"id": "mine_iron",        "title": "Mine 5 iron ore",       "completed": false},
-		{"id": "smelt_iron",       "title": "Smelt 3 iron bars",     "completed": false},
+		{"id": "mine_iron",        "title": "Mine 5 iron ore",       "completed": false, "goal": 5},
+		{"id": "smelt_iron",       "title": "Smelt 3 iron bars",     "completed": false, "goal": 3},
 		{"id": "craft_iron_sword", "title": "Craft an iron sword",   "completed": false},
 		{"id": "craft_iron_pickaxe","title": "Craft an iron pickaxe","completed": false},
 		{"id": "place_torch",      "title": "Place a torch",         "completed": false},
-		{"id": "explore_tiles",    "title": "Explore 500 tiles",     "completed": false},
-		{"id": "survive_days",     "title": "Survive 3 in-game days","completed": false},
-		{"id": "defeat_worms",     "title": "Defeat 10 worms",       "completed": false},
+		{"id": "explore_tiles",    "title": "Explore 500 tiles",     "completed": false, "goal": 500},
+		{"id": "survive_days",     "title": "Survive 3 in-game days","completed": false, "goal": 3},
+		{"id": "defeat_worms",     "title": "Defeat 10 worms",       "completed": false, "goal": 10},
 		{"id": "enter_dungeon",    "title": "Enter your first dungeon","completed": false},
 		{"id": "clear_dungeon",    "title": "Clear a dungeon",       "completed": false},
 		{"id": "learn_entry",      "title": "Learn a knowledge entry","completed": false},
-		{"id": "mine_diamond",     "title": "Mine 3 diamond ore",    "completed": false},
+		{"id": "mine_diamond",     "title": "Mine 3 diamond ore",    "completed": false, "goal": 3},
 		{"id": "run_program",      "title": "Run your first Lua program", "completed": false},
 	]
 
@@ -792,8 +949,39 @@ func complete_mission(id: String) -> void:
 	for m in missions:
 		if m["id"] == id and not m["completed"]:
 			m["completed"] = true
-			mission_updated.emit()
+			m["progress"] = int(m.get("goal", m.get("progress", 0)))
+			# mission_completed FIRST so the tracker can animate the row while
+			# it still exists; mission_updated then rebuilds the list.
 			mission_completed.emit(id)
+			mission_updated.emit()
+			return
+
+# ── Mission progress ──────────────────────────────────────────────
+# Count missions (m["goal"] > 1) show "x/goal" in the tracker.
+# add_mission_progress increments and auto-completes at the goal;
+# set_mission_progress sets the exact count (used where a live total already
+# exists, e.g. wood currently in the inventory).
+func set_mission_progress(id: String, value: int) -> void:
+	for m in missions:
+		if m["id"] == id:
+			if m["completed"]:
+				return
+			var goal: int = int(m.get("goal", 0))
+			var v: int = maxi(0, value)
+			if goal > 0:
+				v = mini(v, goal)
+			if int(m.get("progress", -1)) == v:
+				return
+			m["progress"] = v
+			mission_updated.emit()
+			if goal > 0 and v >= goal:
+				complete_mission(id)
+			return
+
+func add_mission_progress(id: String, amount: int = 1) -> void:
+	for m in missions:
+		if m["id"] == id and not m["completed"]:
+			set_mission_progress(id, int(m.get("progress", 0)) + amount)
 			return
 
 func reset_missions() -> void:
@@ -883,8 +1071,7 @@ func _track_craft_missions(data: ItemData, qty: int) -> void:
 		for slot in Inventory:
 			if slot != null and (slot["data"] as ItemData).item_name == "Wood":
 				total += slot["quantity"]
-		if total >= 20:
-			complete_mission("collect_wood")
+		set_mission_progress("collect_wood", total)
 
 # ── Remove one from an item slot by ItemData reference ────────────
 # Always tries the selected hotbar slot first so the active stack is
@@ -1049,6 +1236,39 @@ func get_save_info(slot: int) -> Dictionary:
 		return data
 	return {}
 
+# ── Item (de)serialization ─────────────────────────────────────────
+# Items are normally saved by resource_path. Runtime-generated color blocks
+# have no .tres on disk, so they're saved by their RGB key instead and rebuilt
+# via ColorBlock on load. These two helpers are the single funnel every item
+# slot (hotbar, inventory, chests, station input/output, placed blocks) uses.
+func serialize_item(slot_item: Variant) -> Variant:
+	if slot_item == null or not (slot_item is Dictionary):
+		return null
+	var d: ItemData = (slot_item as Dictionary).get("data") as ItemData
+	if d == null:
+		return null
+	var qty: int = int((slot_item as Dictionary).get("quantity", 1))
+	if d.is_color_block:
+		return {"color": ColorBlock.key_of(d.block_color), "quantity": qty}
+	if d.resource_path.is_empty():
+		return null
+	return {"path": d.resource_path, "quantity": qty}
+
+# Rebuild a {"data": ItemData, "quantity": int} slot from a saved entry, or
+# null when the entry can't be resolved.
+func deserialize_item(entry: Variant) -> Variant:
+	if entry == null or not (entry is Dictionary):
+		return null
+	var e: Dictionary = entry as Dictionary
+	var qty: int = int(e.get("quantity", 1))
+	if e.has("color"):
+		var d: ItemData = ColorBlock.from_key(str(e["color"]))
+		return {"data": d, "quantity": qty} if d != null else null
+	if not e.has("path"):
+		return null
+	var res: ItemData = load(str(e["path"])) as ItemData
+	return {"data": res, "quantity": qty} if res != null else null
+
 func save_game(slot: int) -> void:
 	active_save_slot = slot
 	var save_data: Dictionary = {
@@ -1075,23 +1295,9 @@ func save_game(slot: int) -> void:
 			save_data["player_pos_y"] = (ctx["player_pos"] as Vector2).y
 			save_data["world"] = ctx["world_data"]
 	for slot_item in Hotbar:
-		if slot_item == null:
-			save_data["hotbar"].append(null)
-		else:
-			var d: ItemData = slot_item["data"] as ItemData
-			if d == null or d.resource_path.is_empty():
-				save_data["hotbar"].append(null)
-			else:
-				save_data["hotbar"].append({"path": d.resource_path, "quantity": slot_item["quantity"]})
+		save_data["hotbar"].append(serialize_item(slot_item))
 	for slot_item in Inventory:
-		if slot_item == null:
-			save_data["inventory"].append(null)
-		else:
-			var d: ItemData = slot_item["data"] as ItemData
-			if d == null or d.resource_path.is_empty():
-				save_data["inventory"].append(null)
-			else:
-				save_data["inventory"].append({"path": d.resource_path, "quantity": slot_item["quantity"]})
+		save_data["inventory"].append(serialize_item(slot_item))
 	var missions_save: Array = []
 	for m in missions:
 		missions_save.append({"id": m["id"], "completed": m["completed"]})
@@ -1130,29 +1336,15 @@ func load_game(slot: int) -> void:
 	if data.has("hotbar"):
 		var arr: Array = data["hotbar"] as Array
 		for i in range(mini(arr.size(), HOTBAR_SIZE)):
-			if arr[i] == null:
-				continue
-			if not (arr[i] is Dictionary):
-				continue
-			var entry: Dictionary = arr[i] as Dictionary
-			if not entry.has("path"):
-				continue
-			var res: ItemData = load(entry["path"]) as ItemData
-			if res != null:
-				Hotbar[i] = {"data": res, "quantity": int(entry["quantity"])}
+			var saved_slot: Variant = deserialize_item(arr[i])
+			if saved_slot != null:
+				Hotbar[i] = saved_slot
 	if data.has("inventory"):
 		var arr: Array = data["inventory"] as Array
 		for i in range(mini(arr.size(), INVENTORY_SIZE)):
-			if arr[i] == null:
-				continue
-			if not (arr[i] is Dictionary):
-				continue
-			var entry: Dictionary = arr[i] as Dictionary
-			if not entry.has("path"):
-				continue
-			var res: ItemData = load(entry["path"]) as ItemData
-			if res != null:
-				Inventory[i] = {"data": res, "quantity": int(entry["quantity"])}
+			var saved_slot: Variant = deserialize_item(arr[i])
+			if saved_slot != null:
+				Inventory[i] = saved_slot
 	if data.has("player_pos_x") and data.has("player_pos_y"):
 		pending_player_pos = Vector2(float(data["player_pos_x"]), float(data["player_pos_y"]))
 		has_pending_pos    = true

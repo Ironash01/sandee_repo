@@ -3,13 +3,13 @@ extends Node2D
 # Spawned by world.gd for each language's current dungeon mission (see
 # world.gd's _ensure_current_dungeon_entrances) — NOT placed by the player
 # (the old "Dungeon Spawner" placeable-item flow was removed).
-# The entrance structure is a 3x3 sprite; its MIDDLE tile is walkable
-# (no collision) and holds this node. Stepping into that middle tile
-# shows the confirm dialog that dispatches to
+# The entrance structure is a 3x3 sprite whose cells are all walkable (see
+# sample_structure.tres's door_rect), and this node sits on its CENTRE tile.
+# Walking onto it shows the confirm dialog that dispatches to
 # Global.game_node.enter_dungeon(dungeon_index) — the same parent-scene
 # pattern CavePortal uses, instead of the old change_scene_to_file (which
-# destroyed Player/UI — see game_instance.gd). A left-click on the tile
-# still works too.
+# destroyed Player/UI — see game_instance.gd). A left-click on the centre
+# tile works too.
 #
 # Dungeon mapping comes from the DungeonMissionData the index points at (see
 # _portal_title) — each language runs its own sequential track, so the same
@@ -38,12 +38,12 @@ const C_CANCEL  := Color(0.40, 0.20, 0.20, 1.00)
 const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.55)
 
 # ── Door hitbox ────────────────────────────────────────────────────
-# The confirm only pops on a left-click that lands ON the door. This node's
-# origin sits on the entrance structure's door tile (see world.gd's
+# The confirm only pops on a left-click that lands ON the portal. This node's
+# origin sits on the entrance structure's CENTRE tile (see world.gd's
 # _place_dungeon_entrance_structure), so the door is a small rect centered
-# at the origin — roughly the visible doorway (the middle-bottom tile of the
-# sprite) plus a little click slack. A click anywhere else (the surrounding
-# wall sprite, the ground nearby) does nothing.
+# at the origin — the visible portal in the middle of the 3x3 art, plus a
+# little click slack. A click anywhere else (the surrounding frames, the
+# ground nearby) does nothing.
 const DOOR_HITBOX := Rect2(-18.0, -20.0, 36.0, 40.0)  # px, centered on the door tile
 
 # ── Door highlight ─────────────────────────────────────────────────
@@ -65,6 +65,121 @@ var _beaconing:      bool = false
 const BEACON_DURATION: float = 0.6
 
 @onready var _interact: Area2D   = $InteractArea
+
+# ── Dissolve (dungeon cleared) ──────────────────────────────────────
+# When a dungeon is cleared, world.gd calls begin_dissolve() instead of
+# freeing the portal outright. The overworld is normally OFF-TREE at that
+# moment (the player is inside the dungeon), so the animation is DEFERRED
+# until the portal is back in the tree — i.e. the moment the player returns
+# to the surface and can actually see it. A slow ring of "mellow" sprites
+# blooms out of the portal while the painted entrance sinks, fades and
+# vanishes.
+const MELLOW_TEX:         Texture2D = preload("res://sprites/particles_effects/mellow_effect.png")
+const MELLOW_FRAMES:      int   = 5    # mellow_effect.png is 80x16 = 5 frames of 16x16
+const MELLOW_FRAME_SIZE:  int   = 16
+const MELLOW_COUNT:       int   = 10
+const MELLOW_FPS:         float = 8.0
+const DISSOLVE_DURATION:  float = 3.0
+
+var _dissolving:       bool  = false
+var _dissolve_started: bool  = false
+var _dissolve_root:    Node2D = null
+var _mellow_sf:        SpriteFrames = null
+
+# Called by world.gd's remove_dungeon_entrance. Disables all interaction, then
+# either starts the dissolve now (already in-tree) or waits for _process to
+# see the overworld come back.
+func begin_dissolve(entrance_root: Node2D) -> void:
+	if _dissolving:
+		return
+	_dissolving    = true
+	_dissolve_root = entrance_root
+	_player_nearby = false
+	set_process_input(false)
+	_interact.set_deferred("monitoring", false)
+	_interact.set_deferred("monitorable", false)
+	if _confirm_ui != null:
+		_confirm_ui.visible = false
+		Global.close_ui()
+	set_process(true)   # _process drives the deferred start + glow fade
+	queue_redraw()
+
+func _start_dissolve() -> void:
+	if _dissolve_started:
+		return
+	_dissolve_started = true
+	# Drop the painted entrance's collision immediately so the player can walk
+	# out of it while the visuals fade — the walls stop blocking at once.
+	if _dissolve_root != null and is_instance_valid(_dissolve_root):
+		for c in _dissolve_root.get_children():
+			if c is StaticBody2D:
+				(c as StaticBody2D).set_deferred("collision_layer", 0)
+				(c as StaticBody2D).set_deferred("collision_mask", 0)
+	# Stop the motes; flash the glow up, then let it die out.
+	var motes := get_node_or_null("PortalMotes") as GPUParticles2D
+	if motes != null:
+		motes.emitting = false
+	if _glow != null:
+		var ft := create_tween()
+		ft.tween_property(_glow, "energy", 3.2, 0.25)
+		ft.tween_property(_glow, "energy", 0.0, DISSOLVE_DURATION - 0.25)
+	# Mellow sprites bloom out of the portal in a slow ring.
+	for i in range(MELLOW_COUNT):
+		_spawn_mellow(i)
+	# Fade the entrance out ON THE SPOT — deliberately NO slide or scale, so it
+	# vanishes exactly where it stood instead of appearing to move/relocate.
+	if _dissolve_root != null and is_instance_valid(_dissolve_root):
+		var t := create_tween()
+		t.tween_property(_dissolve_root, "modulate:a", 0.0, DISSOLVE_DURATION) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	# Clean up once the show is over.
+	var self_tw := create_tween()
+	self_tw.tween_interval(DISSOLVE_DURATION)
+	self_tw.tween_callback(_finish_dissolve)
+
+func _spawn_mellow(index: int) -> void:
+	var s: float = Global.ui_scale
+	var spr := AnimatedSprite2D.new()
+	spr.sprite_frames  = _mellow_frames()
+	spr.z_index        = z_index + 4
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	spr.modulate       = Color(0.80, 0.85, 1.0, 0.0)
+	var ang:  float = TAU * float(index) / float(MELLOW_COUNT) + randf() * 0.4
+	var dist: float = 18.0 + randf() * 10.0
+	spr.position = Vector2(cos(ang), sin(ang)) * dist
+	spr.scale    = Vector2(0.6, 0.6)
+	add_child(spr)
+	spr.play("mellow")
+	var delay: float = randf() * 0.8
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(spr, "modulate:a", 0.95, 0.4).set_delay(delay)
+	tw.tween_property(spr, "scale", Vector2(2.6, 2.6) * s, DISSOLVE_DURATION) \
+		.set_delay(delay).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.tween_property(spr, "position", spr.position * 2.6, DISSOLVE_DURATION) \
+		.set_delay(delay).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.tween_property(spr, "modulate:a", 0.0, DISSOLVE_DURATION * 0.6) \
+		.set_delay(delay + DISSOLVE_DURATION * 0.4)
+
+func _finish_dissolve() -> void:
+	if _dissolve_root != null and is_instance_valid(_dissolve_root):
+		_dissolve_root.queue_free()
+	queue_free()
+
+func _mellow_frames() -> SpriteFrames:
+	if _mellow_sf != null:
+		return _mellow_sf
+	var sf := SpriteFrames.new()
+	sf.add_animation("mellow")
+	sf.set_animation_speed("mellow", MELLOW_FPS)
+	sf.set_animation_loop("mellow", true)
+	for i in range(MELLOW_FRAMES):
+		var at := AtlasTexture.new()
+		at.atlas  = MELLOW_TEX
+		at.region = Rect2(i * MELLOW_FRAME_SIZE, 0, MELLOW_FRAME_SIZE, MELLOW_FRAME_SIZE)
+		sf.add_frame("mellow", at)
+	_mellow_sf = sf
+	return _mellow_sf
 
 # ── Ready ─────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -94,6 +209,12 @@ func _on_ui_scale(_s: float) -> void:
 
 # ── Glow pulse ─────────────────────────────────────────────────────
 func _process(delta: float) -> void:
+	if _dissolving:
+		# Deferred until the overworld is back on screen (a clear happens while
+		# the player is inside the dungeon, with the overworld off-tree).
+		if not _dissolve_started and is_inside_tree():
+			_start_dissolve()
+		return
 	if _glow == null:
 		return
 	_glow_time += delta
@@ -186,9 +307,11 @@ func _click_is_on_door() -> bool:
 	return DOOR_HITBOX.has_point(to_local(get_global_mouse_position()))
 
 # ── Proximity ─────────────────────────────────────────────────────
-# The area is the walkable middle tile — stepping into it plays the beckoning
+# The area is the walkable centre tile — stepping onto it plays the beckoning
 # pulse, and the Enter prompt only pops once that pulse has finished.
 func _on_body_entered(body: Node) -> void:
+	if _dissolving:
+		return
 	if body.is_in_group("Player"):
 		_player_nearby = true
 		queue_redraw()

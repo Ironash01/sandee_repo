@@ -27,6 +27,29 @@ func _ready() -> void:
 	custom_minimum_size = Vector2(sz, sz)
 	mouse_filter        = Control.MOUSE_FILTER_STOP
 	_build_visuals()
+	# Floating item tooltip on hover (shared popup).
+	mouse_entered.connect(_on_hover_in)
+	mouse_exited.connect(_on_hover_out)
+
+func _on_hover_in() -> void:
+	_hovered = true
+	queue_redraw()
+	if item != null:
+		Global.show_item_tooltip(item as Dictionary)
+
+func _on_hover_out() -> void:
+	_hovered = false
+	queue_redraw()
+	Global.hide_item_tooltip()
+
+# Press-and-hold to inspect (touch screens have no hover). A mouse press that
+# turns into a drag cancels the hold; releasing always ends it.
+func _on_press() -> void:
+	if item != null:
+		Global.item_hold_start(item as Dictionary)
+
+func _on_release() -> void:
+	Global.item_hold_end()
 
 func _build_visuals() -> void:
 	var s: float = Global.ui_scale
@@ -93,10 +116,12 @@ func _draw() -> void:
 
 # ── Mouse events ──────────────────────────────────────────────────
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton \
-			and event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT:
-		slot_clicked.emit(slot_index)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_on_press()
+			slot_clicked.emit(slot_index)
+		else:
+			_on_release()
 
 func _mouse_enter() -> void:
 	_hovered = true
@@ -163,6 +188,7 @@ func _update_visual() -> void:
 # drag's source and it wasn't accepted by any slot, drop the stack in the world.
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_DRAG_END:
+		Global.item_hold_end()
 		_drag_over = false
 		queue_redraw()
 		if _is_drag_source:

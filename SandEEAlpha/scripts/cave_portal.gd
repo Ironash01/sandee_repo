@@ -73,11 +73,30 @@ var _triggered:  bool    = false
 var _player_nearby: bool = false
 var _confirm_ui: Control = null
 # Beckoning animation played on approach; the Enter prompt waits until it ends.
-var _beaconing:  bool = false
+var _beaconing:  bool    = false
 const BEACON_DURATION: float = 0.6
+
+# ── Gate dwell ─────────────────────────────────────────────────────
+# The Enter prompt only appears once the player has actually stood IN the
+# cave's gate (the door_rect opening) for GATE_DWELL_SEC — walking past the
+# rock, or just being near the entrance, no longer pops the dialog. A second
+# Area2D sized to the door_rect tracks this; _process accumulates the dwell.
+const GATE_DWELL_SEC: float = 0.8
+# The gate trigger is dropped a little below the door tile's centre so the
+# player actually walks INTO the doorway before it fires, rather than brushing
+# the rock above the opening.
+const GATE_HITBOX_DROP_PX: float = 10.0
+var _in_gate:    bool  = false
+var _gate_dwell: float = 0.0
+# Once the prompt has been shown, suppress it until the player leaves the whole
+# entrance and comes back — a second prompt while the cave is already loading
+# crashed the game (enter fired again mid scene-swap).
+var _prompt_shown: bool = false
 
 var _area:  Area2D            = null
 var _shape: CollisionShape2D  = null
+var _gate_area:  Area2D           = null
+var _gate_shape: CollisionShape2D = null
 
 func _ready() -> void:
 	add_to_group("CavePortal")
@@ -94,6 +113,21 @@ func _ready() -> void:
 	_area.body_entered.connect(_on_body_entered)
 	_area.body_exited.connect(_on_body_exited)
 	add_child(_area)
+
+	# Gate area — sized to the door_rect by set_door_rect(); drives the
+	# dwell-to-enter prompt. Only meaningful for ENTER.
+	_gate_area = Area2D.new()
+	var grect := RectangleShape2D.new()
+	grect.size = Vector2(TILE_SIZE, TILE_SIZE)
+	_gate_shape = CollisionShape2D.new()
+	_gate_shape.shape = grect
+	_gate_area.add_child(_gate_shape)
+	_gate_area.collision_layer = 0
+	_gate_area.collision_mask  = 4
+	_gate_area.body_entered.connect(_on_gate_entered)
+	_gate_area.body_exited.connect(_on_gate_exited)
+	add_child(_gate_area)
+	set_process(false)
 
 	if mode == Mode.EXIT:
 		_add_exit_sprite()
@@ -138,6 +172,11 @@ func set_interact_rect(rect: Rect2) -> void:
 
 func set_door_rect(rect: Rect2) -> void:
 	door_rect = rect
+	# Size the gate trigger to the actual opening so "walk through the gate"
+	# matches the visible doorway, not the whole rock.
+	if _gate_shape != null and rect.size != Vector2.ZERO:
+		(_gate_shape.shape as RectangleShape2D).size = rect.size
+		_gate_shape.position = rect.get_center() - global_position + Vector2(0.0, GATE_HITBOX_DROP_PX)
 	queue_redraw()
 
 func set_highlight_cells(rects: Array[Rect2]) -> void:
@@ -148,13 +187,7 @@ func _draw() -> void:
 	var s: float = Global.ui_scale
 	if mode == Mode.EXIT:
 		z_index = int(global_position.y / TILE_SIZE) + 1
-		# Yellow highlight around the exit sprite — same colour the cave
-		# entrances use, so the two markers read as a matched pair. The exit
-		# fires on walk-in, so it is always outlined rather than proximity-lit.
-		var half := Vector2(CAVE_EXIT_TEX.get_width(), CAVE_EXIT_TEX.get_height()) * 0.5
-		var r := Rect2(-half, half * 2.0)
-		draw_rect(r, Color(C_DOOR_HIGHLIGHT.r, C_DOOR_HIGHLIGHT.g, C_DOOR_HIGHLIGHT.b, 0.18), true)
-		draw_rect(r, C_DOOR_HIGHLIGHT, false, 2.0 * s)
+		# No highlight — the exit sprite stands on its own.
 		return
 
 	# ENTER without a structure — fall back to the old colored marker so the
@@ -176,25 +209,8 @@ func _draw() -> void:
 	# computing it there would permanently bucket every portal at y=0.
 	# Above the whole structure's bottom row (see constant comment).
 	z_index = int((interact_rect.position.y + interact_rect.size.y) / TILE_SIZE) + 1
-	if not _player_nearby:
-		return
-	# Highlight ONLY the entrance opening when the player is close enough to
-	# click, not the whole rock — a faint fill so it visibly lights up, plus a
-	# crisp outline (same yellow the dungeon portal uses for its door). Three
-	# shapes, in priority order:
-	#   1. highlight_cells — cells hand-painted on the structure's
-	#      GeneratedStructure.highlight_mask (arbitrary blob/path shape).
-	#   2. door_rect — the dark mouth cells (default, rectangle).
-	#   3. the whole interact_rect — fallback when neither was supplied.
-	if highlight_cells.size() > 0:
-		_draw_cell_highlight(highlight_cells)
-		return
-	var hl_rect: Rect2 = door_rect if door_rect.size != Vector2.ZERO else interact_rect
-	var local_rect := Rect2(
-		hl_rect.position - global_position - Vector2(0.0, DOOR_HIGHLIGHT_GROW_UP),
-		hl_rect.size + Vector2(0.0, DOOR_HIGHLIGHT_GROW_UP))
-	draw_rect(local_rect, Color(C_DOOR_HIGHLIGHT.r, C_DOOR_HIGHLIGHT.g, C_DOOR_HIGHLIGHT.b, 0.18), true)
-	draw_rect(local_rect, C_DOOR_HIGHLIGHT, false, 2.0 * s)
+	# No highlight on the entrance (removed by request) — the painted cave
+	# structure is the only visual.
 
 # Fills each painted cell and outlines ONLY the outer boundary of the painted
 # blob (shared edges between two selected cells are skipped), so a hand-painted
@@ -224,7 +240,9 @@ func _draw_cell_highlight(rects: Array[Rect2]) -> void:
 			draw_line(p + Vector2(s.x, 0.0), p + s, C_DOOR_HIGHLIGHT, line_w)
 
 func _input(event: InputEvent) -> void:
-	if mode != Mode.ENTER or not _player_nearby:
+	# Only while actually standing in the gate — clicking the rock from the
+	# outside no longer opens the prompt.
+	if mode != Mode.ENTER or not _in_gate or _prompt_shown:
 		return
 	if Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
 		return
@@ -253,14 +271,51 @@ func _on_body_entered(body: Node) -> void:
 		return
 	_player_nearby = true
 	queue_redraw()
-	# Beckoning pulse first; the Enter prompt is deferred to its end.
-	if not Global.block_mode and not Global.any_ui_open() and not Global.pause_menu_open:
+
+# ── Gate dwell (ENTER) ─────────────────────────────────────────────
+# The prompt is driven purely by lingering IN the gate (see _process), not by
+# merely being near the rock.
+func _on_gate_entered(body: Node) -> void:
+	if mode != Mode.ENTER or not body.is_in_group("Player"):
+		return
+	_in_gate    = true
+	_gate_dwell = 0.0
+	set_process(true)
+
+func _on_gate_exited(body: Node) -> void:
+	if mode != Mode.ENTER or not body.is_in_group("Player"):
+		return
+	_in_gate    = false
+	_gate_dwell = 0.0
+	set_process(false)
+
+# Accumulate time spent standing in the gate; once the player has lingered
+# long enough, beckon and show the Enter prompt.
+func _process(delta: float) -> void:
+	if mode != Mode.ENTER or not _in_gate:
+		set_process(false)
+		return
+	# Already prompted this visit — don't re-show until the player leaves the
+	# entrance (see _on_body_exited).
+	if _prompt_shown:
+		return
+	if Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
+		return
+	if _confirm_ui != null and _confirm_ui.visible:
+		return
+	_gate_dwell += delta
+	if _gate_dwell >= GATE_DWELL_SEC:
+		_gate_dwell   = 0.0
+		_prompt_shown = true
 		_play_beacon()
+		_show_confirm()
 
 func _on_body_exited(body: Node) -> void:
 	if mode != Mode.ENTER or not body.is_in_group("Player"):
 		return
 	_player_nearby = false
+	# Left the whole entrance — arm the prompt again for the next approach.
+	_prompt_shown = false
 	queue_redraw()
 	if _confirm_ui != null and _confirm_ui.visible:
 		_confirm_ui.visible = false
@@ -290,9 +345,6 @@ func _on_beacon_done(pulse: Node) -> void:
 	if is_instance_valid(pulse):
 		pulse.queue_free()
 	_beaconing = false
-	if _player_nearby \
-			and not Global.block_mode and not Global.any_ui_open() and not Global.pause_menu_open:
-		_show_confirm()
 
 func _start_cooldown() -> void:
 	var t := Timer.new()
@@ -402,6 +454,7 @@ func _build_confirm_ui() -> void:
 	btn_row.add_child(cancel_btn)
 
 func _show_confirm() -> void:
+	_prompt_shown = true
 	if _confirm_ui != null:
 		_confirm_ui.visible = true
 		Global.open_ui()
@@ -412,6 +465,12 @@ func _cancel() -> void:
 		Global.close_ui()
 
 func _enter_cave() -> void:
+	# Lock out any further prompting while the cave loads — a second prompt
+	# during the scene swap crashed the game.
+	_prompt_shown = true
+	set_process(false)
+	if _gate_area != null:
+		_gate_area.set_deferred("monitoring", false)
 	if _confirm_ui != null:
 		_confirm_ui.visible = false
 		Global.close_ui()

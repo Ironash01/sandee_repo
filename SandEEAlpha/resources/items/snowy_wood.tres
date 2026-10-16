@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" uid="uid://bshcdsqn5xlbn" path="res://sprites/items/snowy_wood.png" id="2_tex"]
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Snowy Wood"
+description = "Wood chopped from a snowy tree. Burns as fuel."
+item_type = "block"
+icon = ExtResource("2_tex")
+is_placeable = true
+placeable_sprite = ExtResource("2_tex")
+is_fuel = true
+is_craftable = true
+block_level = 5
+min_pickaxe_level = 1
+wooden_block = true
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -46,30 +46,38 @@ var _arrow_fill:   ColorRect = null
 var _timer_label:  Label     = null
 var _smelt_btn:    Button    = null
 var _hint_label:   Label     = null
-var _inv_slots:    Array     = []  # InventorySlot instances for the bottom grid
+var _inv_slots:    Array    = []  # InventorySlot instances for the bottom grid
+
+# The furnace object that owns the real smelting state + the programming host.
+# Set by object_item.gd before the menu enters the tree. The menu is a VIEW:
+# its _input_item/_fuel_item/_output_item are a cache synced from the object.
+var furnace: Node = null
+var _panel:  Control = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	if furnace == null:
+		# Fallback: the menu is a child of a CanvasLayer, child of the furnace.
+		var p := get_parent()
+		if p != null:
+			p = p.get_parent()
+			if p != null and p.has_method("smelt_request"):
+				furnace = p
 	_load_recipes()
 	_build_ui()
+	_build_programming_panel()
+	if furnace != null and not furnace.is_connected("furnace_state_changed", _refresh_slots):
+		furnace.connect("furnace_state_changed", _refresh_slots)
 	Global.request_close_all_ui.connect(_close)
 	Global.Inventory_updated.connect(_refresh_inv_grid)
 	Global.Hotbar_updated.connect(_refresh_inv_grid)
 	visible = false
 
-func _process(delta: float) -> void:
-	if not _smelting:
-		return
-	_smelt_elapsed = minf(_smelt_elapsed + delta, _smelt_total)
-	_update_arrow()
-	if _smelt_elapsed >= _smelt_total:
-		_smelting = false
-		# Consume the input; the output becomes available.
-		_input_item = null
-		_output_ready = true
-		_refresh_slots()
-		_hint("Smelted! Click the right slot to take it.")
+# Smelting is INSTANT — the furnace object's smelt_request validates and
+# resolves it (mirrors the Crafting Station's craft). Nothing to tick here.
+func _process(_delta: float) -> void:
+	pass
 
 func _input(event: InputEvent) -> void:
 	if not visible:
@@ -157,8 +165,21 @@ func _build_ui() -> void:
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
+	var prog_btn := Button.new()
+	prog_btn.text = "🐍 PROGRAM"
+	prog_btn.tooltip_text = "Write a Python program to automate this furnace."
+	prog_btn.add_theme_font_size_override("font_size", int(12 * s))
+	prog_btn.add_theme_color_override("font_color", C_TITLE)
+	var pbs := StyleBoxFlat.new(); pbs.bg_color = C_SMELT; pbs.border_color = C_BORDER
+	pbs.set_border_width_all(1); pbs.set_corner_radius_all(4)
+	prog_btn.add_theme_stylebox_override("normal", pbs)
+	prog_btn.add_theme_stylebox_override("hover", pbs)
+	prog_btn.pressed.connect(_open_programming)
+	header.add_child(prog_btn)
+
 	var close_btn := Button.new()
 	close_btn.text = "✕"; close_btn.flat = true
+	close_btn.tooltip_text = "Close the furnace."
 	close_btn.add_theme_color_override("font_color", C_MUTED)
 	close_btn.add_theme_font_size_override("font_size", int(13 * s))
 	close_btn.pressed.connect(hide_menu)
@@ -319,103 +340,96 @@ func _take_from_source(data: Dictionary) -> bool:
 	return false
 
 func _on_input_dropped(data: Dictionary) -> void:
-	if _smelting:
-		return
-	var item: Variant = data.get("item")
-	if not (item is Dictionary):
-		return
-	var item_data: ItemData = (item as Dictionary)["data"] as ItemData
-	if item_data == null or _recipe_for(item_data) == null:
-		_hint("That can't be smelted.")
-		return
-	# Return any current input first.
-	if _input_item != null:
-		Global.add_item({"data": _input_item, "quantity": 1})
-	if not _take_from_source(data):
-		return
-	_input_item  = item_data
-	_output_item = _recipe_for(item_data).output_item
-	_output_ready = false
-	_refresh_slots()
-	_hint("Previewing: %s — add fuel, then click SMELT." % _output_item.item_name)
+	_load_slot_from(data, false)
 
 func _on_fuel_dropped(data: Dictionary) -> void:
-	if _smelting:
+	_load_slot_from(data, true)
+
+# Load ONE item from a drag payload into the input (as_fuel=false) or fuel
+# (as_fuel=true) slot, through the furnace's own validated API. The previous
+# slot contents are returned to the inventory first so nothing is lost.
+func _load_slot_from(data: Dictionary, as_fuel: bool) -> void:
+	if furnace == null:
 		return
 	var item: Variant = data.get("item")
 	if not (item is Dictionary):
 		return
 	var item_data: ItemData = (item as Dictionary)["data"] as ItemData
-	if item_data == null or not item_data.is_fuel:
-		_hint("That's not fuel.")
+	if item_data == null:
 		return
-	if _fuel_item != null:
-		Global.add_item({"data": _fuel_item, "quantity": 1})
-	if not _take_from_source(data):
+	if as_fuel:
+		if not item_data.is_fuel:
+			_hint("That's not fuel.")
+			return
+	elif _recipe_for(item_data) == null:
+		_hint("That can't be smelted.")
 		return
-	_fuel_item = item_data
+	_return_slot(as_fuel)
+	var accepted: int = int(furnace.call("put_fuel" if as_fuel else "put_input", item_data, 1))
+	if accepted <= 0:
+		_hint("The slot already holds a different item.")
+		return
+	if _take_from_source(data):
+		_hint("Loaded %s." % item_data.item_name)
+	else:
+		furnace.call("take_fuel" if as_fuel else "take_input", item_data, 1)   # undo
 	_refresh_slots()
-	_hint("Fuel loaded: %s (fuel LV %d)." % [item_data.item_name, item_data.fuel_level])
+
+# Return a whole slot (input or fuel) to the player's inventory.
+func _return_slot(as_fuel: bool) -> void:
+	if furnace == null:
+		return
+	var stack: Dictionary = furnace.call("get_fuel_stack" if as_fuel else "get_input_stack")
+	if stack.is_empty():
+		return
+	var d: ItemData = stack["data"]
+	var removed: int = int(furnace.call("take_fuel" if as_fuel else "take_input", d, int(stack["quantity"])))
+	if removed > 0:
+		Global.add_item({"data": d, "quantity": removed})
 
 # ── Interaction ────────────────────────────────────────────────────
 func _on_input_slot_clicked() -> void:
-	if _smelting:
-		return
-	if _input_item != null:
-		# Return the current input to inventory and clear (and the preview).
-		Global.add_item({"data": _input_item, "quantity": 1})
-		_input_item  = null
-		_output_item = null
-		_output_ready = false
-		_smelting     = false
-		_refresh_slots()
-		_hint("Click the top slot to put in an ore from your hotbar.")
-		return
-	var held: Variant = Global.get_hotbar_item()
-	if held == null:
-		_hint("Nothing in your hand.")
-		return
-	var data: ItemData = (held as Dictionary)["data"] as ItemData
-	if data == null or _recipe_for(data) == null:
-		_hint("That can't be smelted.")
-		return
-	_input_item = data
-	Global.remove_item(data)
-	var rec: SmeltingRecipe = _recipe_for(data)
-	_output_item = rec.output_item
-	_output_ready = false
-	_refresh_slots()
-	_hint("Previewing: %s — add fuel, then click SMELT." % _output_item.item_name)
+	_slot_clicked(false)
 
 func _on_fuel_slot_clicked() -> void:
-	if _smelting:
+	_slot_clicked(true)
+
+# Click a slot: return its contents if full, else load one from the held item.
+func _slot_clicked(as_fuel: bool) -> void:
+	if furnace == null:
 		return
-	if _fuel_item != null:
-		Global.add_item({"data": _fuel_item, "quantity": 1})
-		_fuel_item = null
+	var stack: Dictionary = furnace.call("get_fuel_stack" if as_fuel else "get_input_stack")
+	if not stack.is_empty():
+		_return_slot(as_fuel)
+		_hint("Removed.")
 		_refresh_slots()
-		_hint("Fuel removed.")
 		return
 	var held: Variant = Global.get_hotbar_item()
 	if held == null:
 		_hint("Nothing in your hand.")
 		return
 	var data: ItemData = (held as Dictionary)["data"] as ItemData
-	if data == null or not data.is_fuel:
-		_hint("That's not fuel.")
+	if data == null:
 		return
-	_fuel_item = data
+	if as_fuel:
+		if not data.is_fuel:
+			_hint("That's not fuel.")
+			return
+	elif _recipe_for(data) == null:
+		_hint("That can't be smelted.")
+		return
+	if int(furnace.call("put_fuel" if as_fuel else "put_input", data, 1)) <= 0:
+		_hint("The slot already holds a different item.")
+		return
 	Global.remove_item(data)
 	_refresh_slots()
-	_hint("Fuel loaded: %s (fuel LV %d)." % [data.item_name, data.fuel_level])
 
 func _on_output_slot_clicked() -> void:
-	if _output_ready and _output_item != null:
-		if Global.add_item({"data": _output_item, "quantity": 1}):
-			_output_item  = null
-			_output_ready = false
-			_refresh_slots()
-			_hint("Took the smelted item.")
+	if furnace == null:
+		return
+	if int(furnace.call("take_output")) > 0:
+		_hint("Took the smelted item.")
+		_refresh_slots()
 
 func _on_inv_slot_clicked(idx: int) -> void:
 	if idx < 0 or idx >= Global.Inventory.size():
@@ -428,39 +442,24 @@ func _on_inv_slot_clicked(idx: int) -> void:
 		_hint("%s ×%d — drag it into a furnace slot, or click the furnace slot while holding it." % [data.item_name, item["quantity"]])
 
 func _on_smelt_pressed() -> void:
-	if _smelting or _input_item == null or _output_item == null or _output_ready:
+	if furnace == null:
 		return
-	var rec: SmeltingRecipe = _recipe_for(_input_item)
-	if rec == null:
-		return
-	if not _fuel_ok(rec):
-		_hint("Need fuel with fuel LV >= %d." % rec.fuel_level_required)
-		return
-	# The fuel was already consumed from the inventory when it was loaded into
-	# the fuel slot; the input was consumed when it was loaded too.
-	_fuel_item    = null
-	_smelting     = true
-	_smelt_total  = maxf(0.5, rec.smelt_time)
-	_smelt_elapsed = 0.0
-	_update_arrow()
+	if int(furnace.call("smelt_request", 1)) <= 0:
+		_hint("Cannot smelt — check input, fuel and output space.")
 	_refresh_slots()
-	_hint("Smelting %s..." % _input_item.item_name)
 
 # ── Refresh ────────────────────────────────────────────────────────
 func _refresh_slots() -> void:
+	_sync_from_furnace()
 	if _input_slot != null:
-		_input_slot.set_icon(_input_item.icon if _input_item != null else null)
+		_input_slot.set_icon(_input_item.icon if _input_item != null else null, 1.0, _input_item)
 	if _fuel_slot != null:
-		_fuel_slot.set_icon(_fuel_item.icon if _fuel_item != null else null)
+		_fuel_slot.set_icon(_fuel_item.icon if _fuel_item != null else null, 1.0, _fuel_item)
 	if _output_slot != null:
-		if _output_item != null:
-			_output_slot.set_icon(_output_item.icon, 1.0 if _output_ready else 0.35)
-		else:
-			_output_slot.set_icon(null)
+		_output_slot.set_icon(_output_item.icon if _output_item != null else null, 1.0, _output_item)
 	if _smelt_btn != null:
 		var rec: SmeltingRecipe = _recipe_for(_input_item)
-		var can_smelt: bool = not _smelting and _input_item != null \
-			and not _output_ready and _fuel_ok(rec)
+		var can_smelt: bool = _input_item != null and _fuel_ok(rec)
 		_smelt_btn.disabled = not can_smelt
 		var style := StyleBoxFlat.new()
 		style.bg_color = C_SMELT_OK if can_smelt else C_SMELT
@@ -474,6 +473,19 @@ func _refresh_slots() -> void:
 	_update_arrow()
 	_refresh_inv_grid()
 
+# The menu is a VIEW — pull the real slot state from the furnace object, which
+# owns it (so a program's loads/smelts show up here too).
+func _sync_from_furnace() -> void:
+	if furnace == null:
+		return
+	var i: Dictionary = furnace.call("get_input_stack")
+	_input_item = i["data"] if not i.is_empty() else null
+	var f: Dictionary = furnace.call("get_fuel_stack")
+	_fuel_item = f["data"] if not f.is_empty() else null
+	var o: Dictionary = furnace.call("get_output_stack")
+	_output_item = o["data"] if not o.is_empty() else null
+	_output_ready = not o.is_empty()
+
 func _refresh_inv_grid() -> void:
 	for i in range(_inv_slots.size()):
 		var slot: Control = _inv_slots[i]
@@ -484,27 +496,32 @@ func _refresh_inv_grid() -> void:
 			slot.call("set_empty")
 
 func _update_arrow() -> void:
-	if _arrow_fill == null:
-		return
-	var frac: float = clampf(_smelt_elapsed / _smelt_total if _smelt_total > 0.0 else 0.0, 0.0, 1.0)
-	_arrow_fill.anchor_right = frac
+	if _arrow_fill != null:
+		_arrow_fill.anchor_right = 1.0 if _output_ready else 0.0
 	if _timer_label == null:
 		return
-	if _smelting:
-		_timer_label.text = "%d / %d s" % [int(_smelt_elapsed), int(_smelt_total)]
+	if _output_ready:
+		_timer_label.text = "Ready"
 	elif _input_item != null:
 		var rec: SmeltingRecipe = _recipe_for(_input_item)
 		var need: int = rec.fuel_level_required if rec != null else 1
-		if _fuel_ok(rec):
-			_timer_label.text = "%d s  ·  fuel LV %d" % [int(_smelt_total), need]
-		else:
-			_timer_label.text = "Needs fuel LV %d" % need
+		_timer_label.text = "Smeltable" if _fuel_ok(rec) else ("Needs fuel LV %d" % need)
 	else:
 		_timer_label.text = ""
 
 func _hint(text: String) -> void:
 	if _hint_label != null:
 		_hint_label.text = text
+
+func _build_programming_panel() -> void:
+	if _panel != null:
+		_panel.queue_free()
+	_panel = load("res://scripts/furnace_programming_panel.gd").new() as Control
+	add_child(_panel)
+
+func _open_programming() -> void:
+	if _panel != null:
+		_panel.call("open", furnace)
 
 func _close() -> void:
 	hide_menu()

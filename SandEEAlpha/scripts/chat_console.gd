@@ -590,19 +590,6 @@ func _cmd_help() -> void:
 	]:
 		add_line(line)
 
-# ── Dungeon repositioning ────────────────────────────────────────
-# Called by dungeon_world.gd to move the notification log below the minimap,
-# and by game_instance.gd to restore the default position on exit.
-func reposition_for_dungeon(minimap_bottom_y: int) -> void:
-	if _panel == null:
-		return
-	var s: float = Global.ui_scale
-	_panel.offset_top    = minimap_bottom_y
-	_panel.offset_bottom = minimap_bottom_y + int(150 * s)
-	_entry.offset_top    = minimap_bottom_y + int(150 * s) + int(4 * s)
-	_entry.offset_bottom = minimap_bottom_y + int(150 * s) + int(4 * s) + int(26 * s)
-	_completion.offset_top = _entry.offset_bottom + int(2 * s)
-
 func reset_position() -> void:
 	if _panel == null:
 		return

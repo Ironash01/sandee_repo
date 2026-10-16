@@ -14,7 +14,7 @@ const C_ERR     := Color(0.45, 0.12, 0.12, 1.00)
 const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.50)
 
 # ── Refs ──────────────────────────────────────────────────────────
-var _code_edit: TextEdit
+var _code_edit: CodeEdit
 var _output:    RichTextLabel
 var _run_btn:   Button
 var _stop_btn:  Button
@@ -79,6 +79,11 @@ func _wire_build_palette() -> void:
 	_refresh_build_palette()
 
 func _on_ui_scale(_s: float) -> void:
+	# The overworld (and this editor) is OFF-TREE while the player is inside a
+	# cave/dungeon, but ui_scale_changed still fires on off-tree nodes — and
+	# get_tree() is null there, so the await below would crash.
+	if not is_inside_tree():
+		return
 	var saved_code: String = _code_edit.text if _code_edit != null else ""
 	var was_visible: bool  = visible
 	var was_encycl: bool   = _encycl != null and _encycl.visible
@@ -238,10 +243,10 @@ func _build_body(s: float) -> Control:
 	ed_lbl.add_theme_color_override("font_color", C_MUTED)
 	ed_wrap.add_child(ed_lbl)
 
-	_code_edit = TextEdit.new()
+	_code_edit = CodeEdit.new()
 	_code_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_code_edit.placeholder_text    = "-- write your Lua code here\ninteract()"
-	_code_edit.syntax_highlighter  = null
+	_setup_code_editor()
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_EDITOR; es.border_color = C_BORDER
 	es.set_border_width_all(1); es.set_corner_radius_all(4)
@@ -264,15 +269,18 @@ func _build_body(s: float) -> Control:
 	ed_wrap.add_child(btn_row)
 
 	_run_btn = _make_btn("▶  RUN",  Color(0.8, 1.0, 0.8, 1.0), C_OK,  _run_code, s)
+	_run_btn.tooltip_text = "Run the program on the robot."
 	_run_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_row.add_child(_run_btn)
 
 	_stop_btn = _make_btn("■  STOP", Color(1.0, 0.8, 0.6, 1.0), C_STOP, _stop_code, s)
+	_stop_btn.tooltip_text = "Stop the running program."
 	_stop_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_stop_btn.disabled = true
 	btn_row.add_child(_stop_btn)
 
 	var clear_btn := _make_btn("✕ CLEAR", Color(1.0, 0.8, 0.8, 1.0), C_ERR, _clear_code, s)
+	clear_btn.tooltip_text = "Clear the editor."
 	btn_row.add_child(clear_btn)
 
 	# Output panel
@@ -665,6 +673,68 @@ func _toggle_encyclopedia() -> void:
 		_refresh_knowledge_section()
 		_emphasize_unseen_knowledge.call_deferred()
 
+# ── Code editor: syntax highlight + autocomplete ──────────────────
+# Custom API names + Lua keywords are highlighted, and the completion popup is
+# built from APIReference (custom + built-in). A light lint warns about
+# `name(` calls that aren't in the API before the program is even run.
+var _completion_filled: bool = false
+
+func _setup_code_editor() -> void:
+	var ce := _code_edit
+	var hl := CodeHighlighter.new()
+	for kw in ["function", "end", "if", "then", "elseif", "else", "for", "while",
+			"do", "repeat", "until", "return", "local", "and", "or", "not", "in",
+			"break", "true", "false", "nil"]:
+		hl.add_keyword_color(kw, Color(0.85, 0.55, 0.95))
+	for fn in _api_function_names():
+		hl.add_keyword_color(fn, Color(0.45, 0.85, 1.0))
+	ce.syntax_highlighter = hl
+	ce.set_code_completion_enabled(true)
+	ce.code_completion_requested.connect(_on_code_completion_requested)
+
+# Every callable name from the API reference (custom + built-in Lua), deduped.
+func _api_function_names() -> PackedStringArray:
+	var seen: Dictionary = {}
+	var out := PackedStringArray()
+	for group in APIReference.groups():
+		for lang in (group["languages"] as Array):
+			if not str(lang["name"]).begins_with("LUA"):
+				continue
+			for e in (lang["entries"] as Array):
+				var name: String = str(e["sig"]).split("(")[0].split("/")[0].strip_edges()
+				if name.is_empty() or name.contains(" ") or seen.has(name):
+					continue
+				seen[name] = true
+				out.append(name)
+	return out
+
+func _on_code_completion_requested() -> void:
+	var ce := _code_edit
+	if not _completion_filled:
+		_completion_filled = true
+		for name in _api_function_names():
+			ce.add_code_completion_option(CodeEdit.KIND_FUNCTION, name, name + "(", Color(0.6, 0.85, 1.0))
+	ce.update_code_completion_options(true)
+
+# Warn (don't block) about `name(` calls that aren't in the API, so a typo is
+# visible before running. Real syntax/runtime errors still come from Lua.
+func _lint(code: String) -> void:
+	var allowed: Dictionary = {}
+	for n in _api_function_names():
+		allowed[n] = true
+	var re := RegEx.new()
+	re.compile("([A-Za-z_][A-Za-z0-9_]*)\\s*\\(")
+	var unknown: Dictionary = {}
+	for m in re.search_all(code):
+		var name: String = m.get_string(1)
+		if allowed.has(name):
+			continue
+		if name in ["if", "for", "while", "function", "return", "and", "or", "not"]:
+			continue
+		unknown[name] = true
+	if not unknown.is_empty():
+		_print_output("[color=#ffcc66]Warning: unknown function(s): %s — see the Encyclopedia.[/color]" % ", ".join(PackedStringArray(unknown.keys())))
+
 func _run_code() -> void:
 	if _lua_state == null:
 		_print_output("[color=#ff8888]No LuaState connected.[/color]")
@@ -672,6 +742,7 @@ func _run_code() -> void:
 	var code: String = _code_edit.text.strip_edges()
 	if code.is_empty():
 		return
+	_lint(code)
 
 	var preamble: String = """
 -- Built-in helpers
@@ -702,10 +773,10 @@ function craft_example()
     chop_trees()
     deposit_chest()
     return_to_spawn()
-    set_recipe("Planks")
+	set_recipe("Planks")
     craft(5)
     take_output()
-    set_recipe("Chest")
+	set_recipe("Chest")
     craft(2)
     take_output()
 end

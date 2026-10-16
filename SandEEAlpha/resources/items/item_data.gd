@@ -51,6 +51,20 @@ func sword_slash_radius() -> int:
 ## Separate sprite shown when placed in the world (leave blank to reuse icon)
 @export var placeable_sprite: Texture2D
 
+## True for a FLOOR block: WALKABLE (no collision) and rendered as a floor tile
+## beneath the player/walls (low z-index). Floors form a house's interior.
+@export var is_floor: bool = false
+
+## True for a DOOR block: has open/closed sprites and the player toggles it with
+## a click. Doors are part of a house's sealed boundary in EITHER state.
+@export var is_door: bool = false
+
+## Door: the sprite shown when the door is CLOSED (the default state).
+@export var door_closed_sprite: Texture2D = null
+
+## Door: the sprite shown when the door is OPEN.
+@export var door_open_sprite: Texture2D = null
+
 ## Enable if the placed sprite has an animation to play
 @export var has_place_animation: bool = false
 
@@ -127,6 +141,14 @@ func axe_wood_block_bonus() -> float:
 # ── World scene ───────────────────────────────────────────────────
 ## Scene instantiated when this item is placed on the map
 @export var place_scene_path: String = ""
+
+# ── Color blocks (generated at runtime by the Color Crafter) ──────
+## True for a runtime-generated solid-color block. Such items have NO .tres on
+## disk, so Global's save/load serializes block_color instead of a path and
+## rebuilds the item via ColorBlock on load.
+@export var is_color_block: bool = false
+## The solid fill colour of a color block (ignored for every other item).
+@export var block_color: Color = Color(0, 0, 0)
 
 # ── Validation: tools cannot stack ──────────────────────────────────
 func _validate_property(property: Dictionary) -> void:

@@ -16,6 +16,24 @@ var _hovered:       bool     = false
 var _world_cell:    Vector2i = Vector2i(-99999, -99999)
 var _world_ref:     Node     = null
 
+# ── Floor / door ──────────────────────────────────────────────────
+# Floors are walkable decor rendered UNDER everything (like the dungeon trap).
+const FLOOR_Z: int = -200
+# Door state + the facing it was placed with. The door node rotates to the
+# player's facing (like the connected torch orients itself from context).
+var _door_open:   bool   = false
+var _door_facing: String = "south"
+
+# The door art is front-facing at rotation 0, i.e. its front normal points
+# "south" (toward the viewer). "Door front = player facing" therefore rotates
+# that normal onto the player's facing vector: south → 0, north → PI,
+# east → -PI/2, west → +PI/2.
+func _door_rotation_for(dir: String) -> float:
+	if dir.contains("east"):  return -PI * 0.5
+	if dir.contains("west"):  return  PI * 0.5
+	if dir.contains("north"): return PI
+	return 0.0   # south / unknown
+
 # ── Breaking state ────────────────────────────────────────────────
 # Break progress is damage measured in seconds of break work. It comes
 # from two sources: holding accumulates delta per frame, and every fresh
@@ -56,11 +74,64 @@ func _ready() -> void:
 		_apply_sprite()
 		if item_data.is_torch:
 			_register_torch_light()
+		if item_data.is_floor:
+			_apply_floor()
+		elif item_data.is_door:
+			_apply_door()
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 10.0), Vector2(0.8, 0.4), 0.35))
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
 	refresh_u_collision()
 	refresh_torch_connection()
+
+# ── Floor ─────────────────────────────────────────────────────────
+# A floor is walkable (its collider is disabled) and sits under the world (low
+# z-index). The z is set DEFERRED because the world assigns z_index AFTER
+# add_child() (which fires _ready), so setting it here would be overwritten.
+func _apply_floor() -> void:
+	var cs := get_node_or_null("StaticBody2D/CollisionShape2D") as CollisionShape2D
+	if cs != null:
+		cs.disabled = true
+	call_deferred("_apply_floor_z")
+
+func _apply_floor_z() -> void:
+	z_index = FLOOR_Z
+
+# ── Door ──────────────────────────────────────────────────────────
+func _apply_door() -> void:
+	var p = Global.player_node
+	_door_facing = str(p.get("_face_dir")) if p != null and p.get("_face_dir") != null else "south"
+	rotation = _door_rotation_for(_door_facing)
+	_set_door_collision(not _door_open)
+
+func _toggle_door() -> void:
+	_door_open = not _door_open
+	_apply_sprite()
+	_set_door_collision(not _door_open)
+
+func _set_door_collision(solid: bool) -> void:
+	var cs := get_node_or_null("StaticBody2D/CollisionShape2D") as CollisionShape2D
+	if cs != null:
+		cs.set_deferred("disabled", not solid)
+
+# Door save/restore: the facing it was placed with + its open/closed state.
+# Every PlaceableBlock exposes these (the world calls them on every block), so
+# they must no-op for non-doors — otherwise a restored FLOOR would run the door
+# path and re-enable its (walkable) collider, and a restored wall would take a
+# door rotation.
+func get_door_save_data() -> Dictionary:
+	if item_data == null or not item_data.is_door:
+		return {}
+	return {"facing": _door_facing, "open": _door_open}
+
+func set_door_save_data(data: Dictionary) -> void:
+	if item_data == null or not item_data.is_door:
+		return
+	_door_facing = str(data.get("facing", "south"))
+	_door_open   = bool(data.get("open", false))
+	rotation = _door_rotation_for(_door_facing)
+	_apply_sprite()
+	_set_door_collision(not _door_open)
 
 # Lazy-create (once per world) the TorchLights manager under the world that
 # owns this block, then register. _world_ref is set by set_world_cell() BEFORE
@@ -101,29 +172,28 @@ func set_world_cell(cell: Vector2i, world: Node) -> void:
 	_world_cell = cell
 	_world_ref  = world
 
-# ── U-collider toggle ─────────────────────────────────────────────
-# The full-height SIDE walls (SideColL/SideColR) only help when another block
-# sits directly above or below this one — a vertical column, where nothing can
-# step into the block's upper half anyway. On an isolated block they would stop
-# the player entering that upper half, which world.gd's "player behind the
-# block" cover y-sort depends on, so they stay disabled.
-# Called on _ready, on placement, and whenever an orthogonal neighbour changes.
+# ── Collision ─────────────────────────────────────────────────────
+# A placed block uses a SINGLE solid 32x32 collider. The old conditional
+# U-shape (a bottom strip + 4px full-height edge walls, upper-middle left open)
+# let the player's feet slip into a block's upper half, which read as clipping
+# through the block — so it's gone. Kept as a no-op so the worlds'
+# neighbour-refresh calls keep working without changes.
 func refresh_u_collision() -> void:
-	var side_l: CollisionShape2D = get_node_or_null("StaticBody2D/SideColL") as CollisionShape2D
-	var side_r: CollisionShape2D = get_node_or_null("StaticBody2D/SideColR") as CollisionShape2D
-	if side_l == null or side_r == null:
-		return
-	var stacked: bool = false
-	var world: Node = _world_ref if _world_ref != null else Global.world_node
-	if world != null and world.has_method("has_placed_block") and _world_cell.x != -99999:
-		stacked = bool(world.call("has_placed_block", _world_cell + Vector2i(0, -1))) \
-			or bool(world.call("has_placed_block", _world_cell + Vector2i(0, 1)))
-	# set_deferred: collision state can't be flipped mid physics flush.
-	side_l.set_deferred("disabled", not stacked)
-	side_r.set_deferred("disabled", not stacked)
+	pass
 
 func _apply_sprite() -> void:
 	if item_data == null:
+		return
+	# Door: swap between the closed/open sprite (no sheet animation).
+	if item_data.is_door:
+		var door_tex: Texture2D = item_data.door_open_sprite if _door_open else item_data.door_closed_sprite
+		if door_tex == null:
+			door_tex = item_data.placeable_sprite if item_data.placeable_sprite != null else item_data.icon
+		_sprite.texture = door_tex
+		_sprite.hframes = 1
+		_sprite.vframes = 1
+		_sprite.flip_h  = false
+		_stop_sheet_animation()
 		return
 	# Sprite-sheet animation: set the sheet as the texture and let hframes slice
 	# it into 32x32 frames, then advance `frame` on a timer. (hframes is also
@@ -158,10 +228,16 @@ func refresh_torch_connection() -> void:
 	if item_data.torch_connected_sheet == null:
 		return
 	var world: Node = _world_ref if _world_ref != null else Global.world_node
-	if world == null or not world.has_method("has_placed_block") or _world_cell.x == -99999:
+	if world == null or _world_cell.x == -99999:
 		return
-	var left:  bool = bool(world.call("has_placed_block", _world_cell + Vector2i(-1, 0)))
-	var right: bool = bool(world.call("has_placed_block", _world_cell + Vector2i( 1, 0)))
+	# A torch mounts to a solid neighbour. Worlds expose torch_support() for
+	# this (caves count solid wall cells, not just placed blocks); fall back to
+	# has_placed_block for any world that doesn't.
+	var fn: StringName = &"torch_support" if world.has_method("torch_support") else &"has_placed_block"
+	if not world.has_method(fn):
+		return
+	var left:  bool = bool(world.call(fn, _world_cell + Vector2i(-1, 0)))
+	var right: bool = bool(world.call(fn, _world_cell + Vector2i( 1, 0)))
 	var connected: bool = left or right
 	_sprite.flip_h = right and not left
 	if connected == _torch_connected:
@@ -206,6 +282,11 @@ func _advance_sheet_frame() -> void:
 func _process(delta: float) -> void:
 	if not _player_nearby:
 		return
+	# Same lost-release guard as player.gd _tick_attack_hold: opening a UI pauses
+	# the tree, so the release during that pause never reaches _input and
+	# _mouse_held would stay latched — resuming the break once the UI closes.
+	if _mouse_held and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		_mouse_held = false
 	_update_hover()
 	_tick_progress_expiry()
 	_tick_wobble()
@@ -246,12 +327,8 @@ func _tick_progress_expiry() -> void:
 func _tick_wobble() -> void:
 	if not _breaking:
 		return
-	var u: float = fposmod(Time.get_ticks_msec() / 1000.0 * WOBBLE_SNAPS_PER_SEC, 1.0)
-	var target: float = 1.0 if u < 0.5 else -1.0   # side this half dwells on
-	var source: float = -target                    # side the flip starts from
-	var half: float   = fmod(u, 0.5)               # 0..0.5 into this half
-	var p: float      = clampf(half / (0.5 * WOBBLE_FLIP_FRACTION), 0.0, 1.0)
-	_sprite.rotation = lerpf(source, target, ease(p, 2.0)) * WOBBLE_AMPLITUDE_RAD
+	# Shared with the cave wall mining so both shake identically.
+	_sprite.rotation = Global.block_wobble_rotation()
 
 func _update_hover() -> void:
 	if _sprite.texture == null:
@@ -277,6 +354,17 @@ func _input(event: InputEvent) -> void:
 		if _breaking:
 			_cancel_breaking()
 		return
+	# A door toggles open/closed on a plain click. SHIFT+click mines it instead
+	# (falls through to the mining path below, which supports click-spam/hold).
+	if item_data != null and item_data.is_door:
+		var shift_held: bool = event is InputEventMouseButton \
+			and (event as InputEventMouseButton).shift_pressed
+		if not shift_held:
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				if not get_viewport().is_input_handled():
+					get_viewport().set_input_as_handled()
+					_toggle_door()
+			return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			# Extra safety alongside _hovered: if two blocks' sprites ever
@@ -374,6 +462,14 @@ func _break() -> void:
 			world.add_child(burst)
 			burst.global_position = global_position + Vector2(0.0, -10.0)
 	if item_data != null:
+		# Mining-progress missions keyed off the block that was broken.
+		var lower: String = item_data.item_name.to_lower()
+		if lower == "stone":
+			Global.add_mission_progress("mine_stone")
+		elif lower.contains("iron ore"):
+			Global.add_mission_progress("mine_iron")
+		elif lower.contains("diamond"):
+			Global.add_mission_progress("mine_diamond")
 		var drop: Node = ITEM_SCENE.instantiate() as Node
 		drop.call("set_item_data", item_data)
 		# World itself (via _world_ref, falling back to Global.world_node)

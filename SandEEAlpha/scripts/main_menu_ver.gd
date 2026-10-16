@@ -33,6 +33,8 @@ func _on_ui_scale(_s: float) -> void:
 		child.queue_free()
 	_slot_overlay = null
 	_settings_overlay = null
+	if not is_inside_tree():
+		return
 	await get_tree().process_frame
 	_build_all()
 	if _slot_overlay != null:
@@ -86,8 +88,8 @@ func _build_main_ui() -> void:
 		continue_btn.disabled = true
 	vbox.add_child(continue_btn)
 
-	_add_menu_btn(vbox, "Start Game", _on_start_game)
-	_add_menu_btn(vbox, "Settings",   _on_settings)
+	_add_menu_btn(vbox, "Start Game", _on_start_game, "Choose a save slot and play.")
+	_add_menu_btn(vbox, "Settings",   _on_settings,   "Graphics, audio and gameplay options.")
 	_add_spacer(vbox, 8)
 
 	var quit_btn := _make_menu_btn("Quit", _on_quit)
@@ -250,8 +252,10 @@ func _make_menu_btn(label: String, callback: Callable) -> Button:
 	btn.pressed.connect(callback)
 	return btn
 
-func _add_menu_btn(parent: Node, label: String, callback: Callable) -> void:
-	parent.add_child(_make_menu_btn(label, callback))
+func _add_menu_btn(parent: Node, label: String, callback: Callable, tooltip: String = "") -> void:
+	var btn := _make_menu_btn(label, callback)
+	btn.tooltip_text = tooltip
+	parent.add_child(btn)
 
 func _add_spacer(parent: Node, height: int) -> void:
 	var spacer := Control.new()

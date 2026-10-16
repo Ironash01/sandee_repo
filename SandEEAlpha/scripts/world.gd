@@ -75,6 +75,28 @@ const GRASS_CHUNKS_PER_FRAME: int = 4
 # GRASS_CHUNKS_PER_FRAME stays in place for any gentler future caller.
 const GRASS_CHUNKS_PER_FRAME_LOAD: int = 16
 
+# ── Stone / charcoal patches ────────────────────────────────────────
+# Random clusters of mineable Stone blocks scattered across the world, but
+# PLAINS chunks only (never snowy, desert, water or the world edge). Each
+# eligible chunk rolls a chance to host one patch of STONE_PATCH_MIN..MAX
+# blocks; 70% of patches also embed CHARCOAL_PATCH_MIN..MAX charcoal blocks
+# (charcoal is a placeable/mineable block too — see charcoal.tres).
+#
+# The blocks are registered in _placed_blocks so mining, occupancy and the
+# dungeon-entrance "replace the stone" rule all reuse the existing paths, but
+# each entry is tagged "natural": excluded from saves (they regenerate
+# deterministically from the seed), from hover scanning and from the
+# "developed chunk" checks.
+const STONE_DATA:             ItemData = preload("res://resources/items/stone.tres")
+const CHARCOAL_DATA:          ItemData = preload("res://resources/items/charcoal.tres")
+const STONE_PATCH_CHANCE:     float    = 0.40
+const STONE_PATCH_MIN:        int      = 5
+const STONE_PATCH_MAX:        int      = 20
+const STONE_PATCH_RADIUS:     int      = 3   # cluster grows within this many tiles of the centre
+const CHARCOAL_PATCH_CHANCE:  float    = 0.70
+const CHARCOAL_PATCH_MIN:     int      = 1
+const CHARCOAL_PATCH_MAX:     int      = 15
+
 # For Large Forest Gen (plains and snowy only)
 const LARGE_FOREST_MIN_SEP:   int   = 100
 const LARGE_FOREST_R_MIN:     int   = 10  # was 15
@@ -628,6 +650,12 @@ func _update_block_sort() -> void:
 			if node_ref is GrassTuft:
 				continue   # tufts are driven by _update_grass_sort
 			var block: Node2D = node_ref as Node2D
+			# Floors are walkable decor pinned UNDER the world (FLOOR_Z). Never
+			# raise one over the player — otherwise the very tile the player
+			# stands on gets z = player_z + 1 and covers their sprite.
+			var bdata: Variant = block.get("item_data")
+			if bdata != null and bdata.is_floor:
+				continue
 			var base: float = block.global_position.y + BLOCK_COVER_BASE_OFFSET_PX
 			# Cover while the feet are inside the block's tile (north of its
 			# visual base at the tile bottom).
@@ -640,7 +668,10 @@ func _update_block_sort() -> void:
 	for t in _block_sort_touched:
 		if is_instance_valid(t) and not covered.has(t):
 			var block: Node2D = t as Node2D
-			var static_z: int = int(block.global_position.y / TILE_SIZE)
+			# A floor must always return to FLOOR_Z, never the tile bucket.
+			var bdata: Variant = block.get("item_data")
+			var static_z: int = FLOOR_Z if (bdata != null and bdata.is_floor) \
+				else int(block.global_position.y / TILE_SIZE)
 			if block.z_index != static_z:
 				block.z_index = static_z
 	_block_sort_touched = covered
@@ -654,6 +685,11 @@ func _process(delta: float) -> void:
 	_update_block_sort()
 	_update_tree_fade(delta)
 	_check_desert_worm_spawn(delta)
+	# Throttled: are we inside a valid house? (drives the day/night indoor dim)
+	_indoor_check_accum += delta
+	if _indoor_check_accum >= INDOOR_CHECK_SEC:
+		_indoor_check_accum = 0.0
+		_update_player_indoors()
 	if Global.block_mode and _grid_overlay != null:
 		_grid_overlay.queue_redraw()
 	if _show_hitboxes and _hitbox_overlay != null:
@@ -736,6 +772,11 @@ func _deferred_foliage() -> void:
 	var t0 := Time.get_ticks_msec()
 	_place_foliage()
 	print("[FOLIAGE] total %d trees in %dms" % [_tree_spawn_count, Time.get_ticks_msec() - t0])
+	# Stone/charcoal patches run AFTER foliage (so they never fight a tree for
+	# a tile) and BEFORE apply_world_save_data (so a restored player block wins
+	# the cell if the two ever overlap). Dungeon entrances spawn later and will
+	# clear any natural block sitting in their footprint.
+	_place_stone_patches()
 	if not Global.pending_world_data.is_empty():
 		apply_world_save_data(Global.pending_world_data)
 		Global.pending_world_data.clear()
@@ -1046,6 +1087,9 @@ func _valid_ambient_tile(tile: Vector2i, data: MobCombatData) -> bool:
 		return false
 	if _placed_blocks.has(tile):
 		return false
+	# No ambient spawns inside a valid house (safe zone).
+	if housing_is_valid_room_cell(tile):
+		return false
 	if structures_layer.get_cell_source_id(tile) != -1:
 		return false
 	var world_pos: Vector2 = ground_layer.to_global(ground_layer.map_to_local(tile))
@@ -1207,7 +1251,9 @@ func _on_grid_draw() -> void:
 			var cell: Vector2i = player_tile + Vector2i(dx, dy)
 			if not _is_cell_in_place_radius(cell):
 				continue
-			if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
+			# A floor cell is placeable decor — show the grid on it (as valid).
+			if (_placed_blocks.has(cell) and not _is_floor_block(cell)) \
+					or editable_layer.get_cell_source_id(cell) != -1:
 				continue
 			var cp: Vector2 = editable_layer.map_to_local(cell)
 			var rect := Rect2(cp.x - half, cp.y - half, TILE_SIZE, TILE_SIZE)
@@ -1379,17 +1425,26 @@ func _update_hover() -> void:
 	var mouse_pos: Vector2 = get_global_mouse_position()
 	var best_name: String  = ""
 	var best_name_dist: float = INTERACT_RADIUS_PX
-	for entry in _placed_blocks.values():
-		var node_ref: Variant = (entry as Dictionary)["node"]
-		if not is_instance_valid(node_ref):
-			continue
-		var node: Node2D = node_ref as Node2D
-		if node == null:
-			continue
-		var name_dist: float = mouse_pos.distance_to(node.global_position)
-		if name_dist < best_name_dist:
-			best_name_dist = name_dist
-			best_name = (entry as Dictionary)["name"]
+	# Only blocks within INTERACT_RADIUS_PX of the cursor can match, so scan
+	# just that tile neighbourhood instead of every placed block — with the
+	# world-gen stone/charcoal patches the dictionary can hold thousands.
+	var mouse_cell: Vector2i = editable_layer.local_to_map(editable_layer.to_local(mouse_pos))
+	var reach: int = int(ceil(INTERACT_RADIUS_PX / float(TILE_SIZE))) + 1
+	for dx in range(-reach, reach + 1):
+		for dy in range(-reach, reach + 1):
+			var entry: Variant = _placed_blocks.get(mouse_cell + Vector2i(dx, dy))
+			if not (entry is Dictionary):
+				continue
+			var node_ref: Variant = (entry as Dictionary).get("node")
+			if not is_instance_valid(node_ref):
+				continue
+			var node: Node2D = node_ref as Node2D
+			if node == null:
+				continue
+			var name_dist: float = mouse_pos.distance_to(node.global_position)
+			if name_dist < best_name_dist:
+				best_name_dist = name_dist
+				best_name = str((entry as Dictionary).get("name", ""))
 	Global.set_hover(best_name)
 
 func _is_placeable_item(item) -> bool:
@@ -1401,7 +1456,11 @@ func _is_placeable_item(item) -> bool:
 # BOTH the player's place_block() and the Lua robot's placement. Pure query:
 # no side effects, so it can be called to preview/validate a whole build.
 func can_place_at(cell: Vector2i) -> bool:
-	if _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1:
+	# A FLOOR block is walkable decor — it does NOT occupy the cell for building
+	# (you can place a block over it, and build mode shows the cell as valid).
+	if _placed_blocks.has(cell) and not _is_floor_block(cell):
+		return false
+	if editable_layer.get_cell_source_id(cell) != -1:
 		return false
 	if _grass_occupied_tiles.has(cell):
 		return false
@@ -1433,6 +1492,12 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 		return null
 	if obj.has_method("setup"):
 		obj.call("setup", item_data)
+	# A FLOOR block already here is walkable decor (can_place_at allows placing
+	# over it) — free it so it doesn't linger orphaned under the new block.
+	if _placed_blocks.has(cell):
+		var old = (_placed_blocks[cell] as Dictionary).get("node")
+		if old != null and is_instance_valid(old):
+			old.queue_free()
 	_placed_blocks[cell] = {"node": obj, "name": item_data.item_name}
 	if obj.has_method("set_world_cell"):
 		obj.call("set_world_cell", cell, self)
@@ -1442,9 +1507,11 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 		return null
 	var world_pos: Vector2 = editable_layer.map_to_local(cell)
 	obj.position = world_pos
-	obj.z_index  = int(world_pos.y / TILE_SIZE)
+	# Floors render UNDER the world (fixed low z); everything else y-sorts.
+	obj.z_index  = FLOOR_Z if (item_data != null and item_data.is_floor) else int(world_pos.y / TILE_SIZE)
 	_fix_sprite_offset(obj)
 	_refresh_neighbor_u_collision(cell)
+	housing_rebuild_around(cell)
 	# Debris burst coloured like the block (also the visual feedback the robot's
 	# paced placement rides on).
 	var place_tex: Texture2D = item_data.placeable_sprite if item_data.placeable_sprite != null else item_data.icon
@@ -1459,10 +1526,8 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 		var ap: AnimationPlayer = obj.get_node_or_null("AnimationPlayer") as AnimationPlayer
 		if ap != null:
 			ap.play(item_data.place_animation_name)
-	if _placed_blocks.size() >= 5:
-		Global.complete_mission("place_blocks")
-	if _placed_blocks.size() >= 10:
-		Global.complete_mission("build_shelter")
+	Global.set_mission_progress("place_blocks", _placed_blocks.size())
+	Global.set_mission_progress("build_shelter", housing_valid_room_count())
 	return obj
 
 func _update_ghost() -> void:
@@ -1531,11 +1596,183 @@ func unregister_block(cell: Vector2i) -> void:
 	# A block vanished — any block stacked above/below it may no longer need
 	# its full-height side walls.
 	_refresh_neighbor_u_collision(cell)
+	# The room may have merged/opened up — re-evaluate it.
+	housing_rebuild_around(cell)
+	Global.set_mission_progress("build_shelter", housing_valid_room_count())
 
 # True when a player-placed block occupies this cell. Used by PlaceableBlock's
 # U-collider toggle to detect vertical stacking.
 func has_placed_block(cell: Vector2i) -> bool:
 	return _placed_blocks.has(cell)
+
+# A torch mounts to a solid neighbour. In the overworld that's any placed block
+# — including world-gen stone/charcoal, which live in _placed_blocks too — so
+# this is the same as has_placed_block here. (Caves override the idea with
+# solid wall cells; see cave_world.gd / pixie_cave_world.gd.)
+func torch_support(cell: Vector2i) -> bool:
+	return _placed_blocks.has(cell)
+
+# True here (the overworld). Caves/dungeons return false — used by the Bonfire
+# to decide whether its position is a valid overworld respawn point.
+func is_overworld() -> bool:
+	return true
+
+# ── Housing (room detection) ──────────────────────────────────────────
+# A "room" is a 4-connected region of FLOOR cells enclosed by player-placed
+# boundary blocks (walls + doors). VALID = sealed (no leak) + >=1 door on the
+# boundary + interior bounding box >= 3x3. Rebuilt incrementally around a
+# placed/broken block (place_block_at / unregister_block). Overworld only.
+const ROOM_MAX_CELLS: int = 400
+# Floors render UNDER the world (fixed z; above the -300 ground layer, below all
+# y-sorted sprites/player).
+const FLOOR_Z: int = -200
+# How often to re-check whether the player is inside a valid house.
+const INDOOR_CHECK_SEC: float = 0.2
+var _indoor_check_accum: float = 0.0
+const ROOM_MIN_SIDE:  int = 3
+const ROOM_OFFS: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+var _room_of:      Dictionary = {}   # floor cell -> room id
+var _rooms:        Dictionary = {}   # room id -> {cells, valid, has_door}
+var _next_room_id: int        = 1
+
+# The ItemData of a player-placed block at `cell`, or null (natural/empty).
+func placed_item(cell: Vector2i) -> ItemData:
+	var e = _placed_blocks.get(cell)
+	if e == null:
+		return null
+	var n = (e as Dictionary).get("node")
+	if n != null and is_instance_valid(n) and n.get("item_data") != null:
+		return n.get("item_data") as ItemData
+	return null
+
+func _is_floor_block(cell: Vector2i) -> bool:
+	if _is_natural_block(cell):
+		return false
+	var d := placed_item(cell)
+	return d != null and d.is_floor
+
+func _is_door_block(cell: Vector2i) -> bool:
+	if _is_natural_block(cell):
+		return false
+	var d := placed_item(cell)
+	return d != null and d.is_door
+
+# Boundary = a player-placed, non-floor block (walls AND doors).
+func _is_boundary_block(cell: Vector2i) -> bool:
+	if not _placed_blocks.has(cell) or _is_natural_block(cell):
+		return false
+	var d := placed_item(cell)
+	return d == null or not d.is_floor
+
+# Rebuild the rooms touching `cell` (+ its 4 neighbours). Called after any
+# placed-block change. Handles merges (a wall broke) and splits (a wall placed).
+func housing_rebuild_around(cell: Vector2i) -> void:
+	var dirty: Dictionary = {}
+	var probe: Array = [cell]
+	for off in ROOM_OFFS:
+		probe.append(cell + off)
+	for c in probe:
+		var rid = _room_of.get(c)
+		if rid != null and _rooms.has(rid):
+			for rc in (_rooms[rid]["cells"] as Array):
+				dirty[rc] = true
+		dirty[c] = true
+	for c in dirty.keys():
+		_room_of.erase(c)
+	for rid in _rooms.keys():
+		var still := false
+		for rc in (_rooms[rid]["cells"] as Array):
+			if _room_of.has(rc):
+				still = true
+				break
+		if not still:
+			_rooms.erase(rid)
+	for c in dirty.keys():
+		if _is_floor_block(c) and not _room_of.has(c):
+			_rebuild_room_from(c)
+
+# Full rebuild (after a save-restore). Cheap — floors are few.
+func housing_rebuild_all() -> void:
+	_room_of.clear()
+	_rooms.clear()
+	_next_room_id = 1
+	for cell in _placed_blocks.keys():
+		if _is_floor_block(cell) and not _room_of.has(cell):
+			_rebuild_room_from(cell)
+
+func _rebuild_room_from(seed: Vector2i) -> void:
+	var cells: Array = _flood_floor(seed)
+	if cells.is_empty():
+		return
+	var rid: int = _next_room_id
+	_next_room_id += 1
+	var sealed := true
+	var has_door := false
+	for c in cells:
+		_room_of[c] = rid
+		for off in ROOM_OFFS:
+			var n: Vector2i = (c as Vector2i) + (off as Vector2i)
+			if _is_floor_block(n):
+				continue
+			if _is_boundary_block(n):
+				if _is_door_block(n):
+					has_door = true
+			else:
+				sealed = false
+	var valid: bool = sealed and has_door and _room_min_size(cells)
+	_rooms[rid] = {"cells": cells, "valid": valid, "has_door": has_door}
+
+func _flood_floor(seed: Vector2i) -> Array:
+	var out: Array = []
+	var seen: Dictionary = {seed: true}
+	var queue: Array = [seed]
+	while not queue.is_empty():
+		var c: Vector2i = queue.pop_front()
+		out.append(c)
+		if out.size() >= ROOM_MAX_CELLS:
+			break
+		for off in ROOM_OFFS:
+			var n: Vector2i = c + (off as Vector2i)
+			if seen.has(n):
+				continue
+			if _is_floor_block(n):
+				seen[n] = true
+				queue.append(n)
+	return out
+
+func _room_min_size(cells: Array) -> bool:
+	var mn := Vector2i(1 << 20, 1 << 20)
+	var mx := Vector2i(-(1 << 20), -(1 << 20))
+	for c in cells:
+		var v: Vector2i = c
+		mn.x = mini(mn.x, v.x); mn.y = mini(mn.y, v.y)
+		mx.x = maxi(mx.x, v.x); mx.y = maxi(mx.y, v.y)
+	return (mx.x - mn.x + 1) >= ROOM_MIN_SIDE and (mx.y - mn.y + 1) >= ROOM_MIN_SIDE
+
+# True when `cell` sits inside a VALID room (used by the no-spawn safe zone).
+func housing_is_valid_room_cell(cell: Vector2i) -> bool:
+	var rid = _room_of.get(cell)
+	if rid == null or not _rooms.has(rid):
+		return false
+	return bool((_rooms[rid] as Dictionary)["valid"])
+
+func housing_valid_room_count() -> int:
+	var n := 0
+	for rid in _rooms:
+		if bool((_rooms[rid] as Dictionary)["valid"]):
+			n += 1
+	return n
+
+# Is the player standing inside a VALID house? Sets Global.player_indoors, which
+# the overworld's day/night modulate reads to dim a little ("indoors" feel).
+func _update_player_indoors() -> void:
+	var p := _get_player()
+	if p == null:
+		Global.player_indoors = false
+		return
+	var tile: Vector2i = editable_layer.local_to_map(editable_layer.to_local(p.global_position))
+	Global.player_indoors = housing_is_valid_room_cell(tile)
 
 # World position -> tile cell (editable grid). Shared with the Lua robot's
 # placement so it targets the same cells the player's mouse would.
@@ -1546,11 +1783,12 @@ func world_to_cell(world_pos: Vector2) -> Vector2i:
 func cell_to_world(cell: Vector2i) -> Vector2:
 	return editable_layer.to_global(editable_layer.map_to_local(cell))
 
-# Re-evaluate the U-collider of `cell` plus its 4 orthogonal neighbours. Called
-# whenever a block appears or disappears, so a vertical column gains/loses its
-# side walls the moment its neighbour is added or broken.
+# Re-evaluate the U-collider of `cell` plus its 8 neighbours. Called whenever a
+# block appears or disappears, so a vertical column (above/below) OR a diagonal
+# pair gains/loses its side walls the moment its neighbour is added or broken.
 func _refresh_neighbor_u_collision(cell: Vector2i) -> void:
-	for off in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+	for off in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0),
+			Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
 		var c: Vector2i = cell + (off as Vector2i)
 		if not _placed_blocks.has(c):
 			continue
@@ -1809,6 +2047,26 @@ func _unmark_tree_occupied(cell: Vector2i) -> void:
 
 func _is_tree_occupied(cell: Vector2i) -> bool:
 	return _tree_occupied_tiles.has(cell)
+
+# True when a foliage tree must NOT spawn on this tile: it already holds a
+# placed block (incl. the world-gen stone/charcoal patches), an editable or
+# structure tile, grass, an entrance, or another tree. Every foliage pass uses
+# this — previously they only checked a LOCAL tile set + chunk claims, so a
+# regenerated world could drop a tree onto a saved player block.
+func _foliage_tile_blocked(tile: Vector2i) -> bool:
+	if _placed_blocks.has(tile):
+		return true
+	if _is_tree_occupied(tile):
+		return true
+	if _grass_occupied_tiles.has(tile):
+		return true
+	if editable_layer.get_cell_source_id(tile) != -1:
+		return true
+	if structures_layer.get_cell_source_id(tile) != -1:
+		return true
+	if _cave_entrance_cells.has(tile) or _dungeon_entrance_cells.has(tile):
+		return true
+	return false
 
 # ── Grass ─────────────────────────────────────────────────────────────
 # Per-tuft look/sizing/material now lives in scripts/grass.gd (GrassTuft) —
@@ -2119,6 +2377,10 @@ func _tile_to_chunk(tile: Vector2i) -> Vector2i:
 func _regrow_grass() -> void:
 	var occupied_chunks: Dictionary = {}
 	for cell in _placed_blocks:
+		# Natural stone/charcoal patches are terrain, not player development —
+		# a "developed" chunk is one the player actually built in.
+		if _is_natural_block(cell as Vector2i):
+			continue
 		occupied_chunks[_tile_to_chunk(cell as Vector2i)] = true
 
 	var processed: int = 0
@@ -2133,6 +2395,122 @@ func _regrow_grass() -> void:
 				await get_tree().process_frame
 				if not is_inside_tree():
 					return
+
+# ── Stone / charcoal patches (world-gen) ────────────────────────────
+# One chance per chunk to grow a small cluster of mineable Stone blocks on
+# PLAINS tiles only; 70% of patches also embed a few charcoal blocks. See the
+# STONE_PATCH_* consts for the tuning. Deterministic: driven by the shared gen
+# rng, so the same world seed always yields the same patches.
+func _place_stone_patches() -> void:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var placed_count: int = 0
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			# Caves/structures own their chunks outright.
+			if _cave_claimed_chunks.has(chunk) or _structure_claimed_chunks.has(chunk):
+				continue
+			if _is_chunk_all_ocean(chunk):
+				continue
+			if rng.randf() >= STONE_PATCH_CHANCE:
+				continue
+			var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+			# Collect every free PLAINS tile in the chunk, then pick a random
+			# centre and grow the cluster within STONE_PATCH_RADIUS of it.
+			var free: Array[Vector2i] = []
+			for dx in range(CHUNK_SIZE):
+				for dy in range(CHUNK_SIZE):
+					var tile: Vector2i = tl + Vector2i(dx, dy)
+					if _can_host_natural_block(tile):
+						free.append(tile)
+			if free.size() < STONE_PATCH_MIN:
+				continue
+			var center: Vector2i = free[rng.randi_range(0, free.size() - 1)]
+			var candidates: Array[Vector2i] = []
+			for tile in free:
+				if tile.distance_to(center) <= float(STONE_PATCH_RADIUS):
+					candidates.append(tile)
+			# Guarantee at least STONE_PATCH_MIN blocks even in a tight cluster.
+			if candidates.size() < STONE_PATCH_MIN:
+				candidates = free.duplicate()
+			_shuffle_tiles(candidates, rng)
+			var stone_n: int = mini(rng.randi_range(STONE_PATCH_MIN, STONE_PATCH_MAX), candidates.size())
+			var used: Dictionary = {}
+			for i in range(stone_n):
+				var tile: Vector2i = candidates[i]
+				_spawn_natural_block(tile, STONE_DATA)
+				used[tile] = true
+				placed_count += 1
+			if rng.randf() < CHARCOAL_PATCH_CHANCE:
+				# Charcoal embeds in the SAME patch, on the remaining nearby
+				# tiles (never overwriting a stone block).
+				var char_free: Array[Vector2i] = []
+				for tile in candidates:
+					if not used.has(tile) and _can_host_natural_block(tile):
+						char_free.append(tile)
+				_shuffle_tiles(char_free, rng)
+				var char_n: int = mini(rng.randi_range(CHARCOAL_PATCH_MIN, CHARCOAL_PATCH_MAX), char_free.size())
+				for i in range(char_n):
+					_spawn_natural_block(char_free[i], CHARCOAL_DATA)
+					placed_count += 1
+	print("[STONE] placed %d natural stone/charcoal blocks" % placed_count)
+
+# A tile a world-gen natural block may occupy: plains, dry, no tree/structure/
+# cave/entrance, nothing already placed. (Grass doesn't exist yet at this
+# point in generation, so it can't conflict.)
+func _can_host_natural_block(tile: Vector2i) -> bool:
+	if _cell_biome_type(tile) != 0:      # 0 == Plains only
+		return false
+	if water_layer.get_cell_source_id(tile) != -1:
+		return false
+	if _is_tree_occupied(tile):
+		return false
+	if _placed_blocks.has(tile):
+		return false
+	if editable_layer.get_cell_source_id(tile) != -1:
+		return false
+	if structures_layer.get_cell_source_id(tile) != -1:
+		return false
+	if _cave_entrance_cells.has(tile) or _dungeon_entrance_cells.has(tile):
+		return false
+	return true
+
+# Instantiates a PlaceableBlock for a world-gen natural block and registers it
+# in _placed_blocks tagged "natural". Mirrors the save-restore path (no debris
+# burst, no mission credit — those belong to PLAYER placement only).
+func _spawn_natural_block(cell: Vector2i, idata: ItemData) -> void:
+	if idata == null or idata.place_scene_path.is_empty():
+		return
+	if not ResourceLoader.exists(idata.place_scene_path):
+		return
+	var scene: PackedScene = load(idata.place_scene_path) as PackedScene
+	if scene == null:
+		return
+	var obj: Node = scene.instantiate()
+	if obj == null:
+		return
+	if obj.has_method("setup"):
+		obj.call("setup", idata)
+	_placed_blocks[cell] = {"node": obj, "name": idata.item_name, "natural": true}
+	if obj.has_method("set_world_cell"):
+		obj.call("set_world_cell", cell, self)
+	add_child(obj)
+	if not is_instance_valid(obj):
+		_placed_blocks.erase(cell)
+		return
+	var world_pos: Vector2 = editable_layer.map_to_local(cell)
+	obj.position = world_pos
+	obj.z_index  = int(world_pos.y / TILE_SIZE)
+	_fix_sprite_offset(obj)
+	_refresh_neighbor_u_collision(cell)
+
+# True for a world-gen natural block (stone/charcoal patch). Such blocks are
+# NOT saved, NOT counted as "developed", and are replaceable by dungeon
+# entrances.
+func _is_natural_block(cell: Vector2i) -> bool:
+	var e: Variant = _placed_blocks.get(cell)
+	return e is Dictionary and bool((e as Dictionary).get("natural", false))
 
 func _place_foliage() -> void:
 	var cell_offset: Vector2i = Vector2i(width, height) / 2
@@ -2168,6 +2546,8 @@ func _place_foliage() -> void:
 			continue           # Desert or water — no trees
 
 		if occupied_tiles.has(tile_coord):
+			continue
+		if _foliage_tile_blocked(tile_coord):
 			continue
 		if tile_coord.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
 			continue
@@ -2248,6 +2628,8 @@ func _spawn_dense_forest(center: Vector2i, occupied_tiles: Dictionary) -> void:
 				continue
 			var tile: Vector2i = center + Vector2i(dx, dy)
 			if occupied_tiles.has(tile):
+				continue
+			if _foliage_tile_blocked(tile):
 				continue
 			if tile.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
 				continue
@@ -2349,6 +2731,8 @@ func _spawn_scattered_group(origin: Vector2i, tree_type_val: int, extra: int, oc
 			rng.randi_range(-SPREAD, SPREAD)
 		)
 		if tile == origin or occupied_tiles.has(tile):
+			continue
+		if _foliage_tile_blocked(tile):
 			continue
 		if tile.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
 			continue
@@ -2947,26 +3331,41 @@ func _spawn_cave_entrance_nodes(s: GeneratedStructure, anchor: Vector2i) -> Dict
 
 			cells.append(cell)
 
-			# The door cell is the walkable opening — the player walks through
-			# it (the click/confirm portal still sits on it). Every other cell
-			# gets pixel collision from its opaque pixels.
+			# The door cell is the GATE. Its bottom stays walkable so the player
+			# can step into the doorway, but its TOP half is solid so they can't
+			# pass THROUGH the gate (up into the rock above it) and trigger the
+			# walk-through bug.
 			if s.is_door_cell(x, y):
+				var gate := StaticBody2D.new()
+				gate.collision_layer = 1
+				gate.collision_mask  = 1
+				var gshape := CollisionShape2D.new()
+				var grect := RectangleShape2D.new()
+				grect.size = Vector2(GeneratedStructure.TILE_PX, GeneratedStructure.TILE_PX * 0.5)
+				gshape.shape = grect
+				gshape.position = Vector2(0.0, -GeneratedStructure.TILE_PX * 0.25)
+				gate.add_child(gshape)
+				root.add_child(gate)
+				gate.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
 				continue
-			var solid: Rect2i = solid_rects.get(Vector2i(x, y), Rect2i(Vector2i.ZERO, Vector2i.ZERO)) as Rect2i
-			if solid.size == Vector2i.ZERO:
+			# Every other cell that has any visible pixels is made FULLY solid
+			# (a whole-tile box, not the tight per-pixel bounding box the old
+			# code used): the bbox collision left gaps inside and at the edges
+			# of each cell, so the player could clip straight into the rock.
+			# Fully transparent cells stay open so no invisible wall sits in
+			# the sprite's empty corners.
+			if not solid_rects.has(Vector2i(x, y)):
 				continue
 			var body := StaticBody2D.new()
 			body.collision_layer = 1
 			body.collision_mask  = 1
 			var shape := CollisionShape2D.new()
 			var rect := RectangleShape2D.new()
-			rect.size = Vector2(solid.size)
+			rect.size = Vector2(GeneratedStructure.TILE_PX, GeneratedStructure.TILE_PX)
 			shape.shape = rect
 			body.add_child(shape)
 			root.add_child(body)
-			var cell_world: Vector2 = ground_layer.to_global(ground_layer.map_to_local(cell))
-			var solid_offset: Vector2 = Vector2(solid.position) - Vector2(GeneratedStructure.TILE_PX / 2.0, GeneratedStructure.TILE_PX / 2.0)
-			body.global_position = cell_world + solid_offset
+			body.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
 
 	return {"cells": cells, "root": root}
 
@@ -3271,7 +3670,7 @@ func locate_nearest_structure(structure_name: String) -> Vector2:
 # Every cell of the structure's footprint (except skip_cell — a
 # Vector2i(-1, -1) sentinel means "skip nothing") must be in-bounds, land,
 # and free of trees, placed blocks and already-painted structure cells.
-func _structure_footprint_valid(s: GeneratedStructure, anchor: Vector2i, skip_cell: Vector2i) -> bool:
+func _structure_footprint_valid(s: GeneratedStructure, anchor: Vector2i, skip_cell: Vector2i, allow_natural: bool = false) -> bool:
 	var half_w: int = width  / 2
 	var half_h: int = height / 2
 	for x in range(s.tile_width):
@@ -3283,7 +3682,12 @@ func _structure_footprint_valid(s: GeneratedStructure, anchor: Vector2i, skip_ce
 				return false
 			if _cell_biome_type(cell) == -1:
 				return false
-			if _placed_blocks.has(cell) or _is_tree_occupied(cell):
+			if _is_tree_occupied(cell):
+				return false
+			# A natural stone/charcoal block may be replaced when the caller
+			# opts in (dungeon entrances do — see _clear_natural_in_footprint);
+			# a player-placed block always vetoes.
+			if _placed_blocks.has(cell) and not (allow_natural and _is_natural_block(cell)):
 				return false
 			if structures_layer.get_cell_source_id(cell) != -1:
 				return false
@@ -3329,6 +3733,10 @@ func _spawn_dungeon_entrance_nodes(s: GeneratedStructure, anchor: Vector2i, dung
 	var root := Node2D.new()
 	root.name = "DungeonEntrance%d" % dungeon_index
 	add_child(root)
+	# Track the root so remove_dungeon_entrance() can hand it to the portal's
+	# dissolve animation and then free it — without this the painted structure
+	# was never stored anywhere and lingered on the map forever after a clear.
+	_dungeon_entrance_nodes[dungeon_index] = root
 
 	# The structure sprite is an AtlasTexture region into a shared sheet; the
 	# per-cell AtlasTextures must unwrap it to the BASE texture + the region
@@ -3384,6 +3792,22 @@ func _spawn_dungeon_entrance_nodes(s: GeneratedStructure, anchor: Vector2i, dung
 # entrance and the real entry trigger are always the same position: the 5x5
 # search below can shift the whole picture off the requested portal tile when
 # a tree/block occupies the ideal footprint.
+# Frees any world-gen natural block (stone/charcoal) sitting in a structure's
+# footprint so a dungeon entrance can replace the stone that happened to be
+# where it wants to sit (the requested "portals replace stone" mechanic).
+# Player-placed blocks are never cleared here — they still veto the footprint.
+func _clear_natural_in_footprint(s: GeneratedStructure, anchor: Vector2i) -> void:
+	for x in range(s.tile_width):
+		for y in range(s.tile_height):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			if not _is_natural_block(cell):
+				continue
+			var entry: Dictionary = _placed_blocks.get(cell) as Dictionary
+			var node: Node = entry.get("node") as Node
+			unregister_block(cell)
+			if is_instance_valid(node):
+				node.queue_free()
+
 func _place_dungeon_entrance_structure(portal_tile: Vector2i, dungeon_index: int) -> Vector2i:
 	if _dungeon_entrance_pool.is_empty():
 		_dungeon_entrance_pool = _load_dungeon_entrance_structures()
@@ -3407,8 +3831,12 @@ func _place_dungeon_entrance_structure(portal_tile: Vector2i, dungeon_index: int
 		return a.length_squared() < b.length_squared())
 	for offset in offsets:
 		var anchor: Vector2i = portal_tile - center + offset
-		if not _structure_footprint_valid(s, anchor, Vector2i(-1, -1)):
+		if not _structure_footprint_valid(s, anchor, Vector2i(-1, -1), true):
 			continue
+		# A dungeon entrance is allowed to REPLACE natural stone/charcoal that
+		# happens to sit in its footprint (requested mechanic) — player-placed
+		# blocks were already vetoed by _structure_footprint_valid above.
+		_clear_natural_in_footprint(s, anchor)
 		var painted := _spawn_dungeon_entrance_nodes(s, anchor, dungeon_index)
 		for cell in painted:
 			_dungeon_entrance_cells[cell as Vector2i] = true
@@ -3477,6 +3905,11 @@ func _spawn_dungeon_entrance(dungeon_index: int) -> void:
 	# of random attempts could keep missing valid chunks on tighter maps.
 	var developed_chunks: Dictionary = {}
 	for cell in _placed_blocks:
+		# Natural stone/charcoal doesn't make a chunk "developed" — a dungeon
+		# entrance is allowed to spawn where stone happens to be and will clear
+		# it (see _clear_natural_in_footprint).
+		if _is_natural_block(cell as Vector2i):
+			continue
 		developed_chunks[_tile_to_chunk(cell as Vector2i)] = true
 
 	var valid: Array[Vector2i] = []
@@ -3549,7 +3982,11 @@ func _random_land_tile_in_chunk(chunk: Vector2i) -> Vector2i:
 				continue
 			if structures_layer.get_cell_source_id(tile) != -1:
 				continue
-			if _placed_blocks.has(tile) or _is_tree_occupied(tile):
+			# A natural stone/charcoal block is fair game — the entrance clears
+			# it. A player-placed block still vetoes the tile.
+			if _placed_blocks.has(tile) and not _is_natural_block(tile):
+				continue
+			if _is_tree_occupied(tile):
 				continue
 			candidates.append(tile)
 	if candidates.is_empty():
@@ -3578,26 +4015,30 @@ func _spawn_dungeon_portal_at(tile: Vector2i, dungeon_index: int) -> void:
 # call while the overworld is off-tree (in-dungeon): the portal is a child of
 # this node and queue_free() works on off-tree nodes.
 func remove_dungeon_entrance(dungeon_index: int) -> void:
-	if _dungeon_portal_nodes.has(dungeon_index):
-		var portal: Node = _dungeon_portal_nodes[dungeon_index]
-		if is_instance_valid(portal):
-			portal.queue_free()
-		_dungeon_portal_nodes.erase(dungeon_index)
+	var portal: Node   = _dungeon_portal_nodes.get(dungeon_index)
+	var entrance: Node = _dungeon_entrance_nodes.get(dungeon_index)
+	_dungeon_portal_nodes.erase(dungeon_index)
+	_dungeon_entrance_nodes.erase(dungeon_index)
 	_dungeon_entrance_tiles.erase(dungeon_index)
-	# Scrub the painted entrance so a cleared dungeon leaves no orphaned
-	# sprite or collision (the portal's chunk was validated structure-free
-	# when the entrance spawned, so un-claiming is safe).
-	if _dungeon_entrance_nodes.has(dungeon_index):
-		var entrance: Node = _dungeon_entrance_nodes[dungeon_index]
-		if is_instance_valid(entrance):
-			entrance.queue_free()
-		_dungeon_entrance_nodes.erase(dungeon_index)
+	# Scrub the painted entrance bookkeeping so a cleared dungeon leaves no
+	# orphaned collision cells / chunk claims (persisted on the next save).
 	if _dungeon_entrance_structure_cells.has(dungeon_index):
 		for cell in (_dungeon_entrance_structure_cells[dungeon_index] as Array):
 			var c := cell as Vector2i
 			_dungeon_entrance_cells.erase(c)
 			_structure_claimed_chunks.erase(_tile_to_chunk(c))
 		_dungeon_entrance_structure_cells.erase(dungeon_index)
+	# Dramatic send-off: the portal dissolves itself (taking the painted
+	# entrance with it). This runs while the player is INSIDE the dungeon and
+	# the overworld is off-tree, so the portal defers the animation until it is
+	# back on screen — i.e. the moment the player returns to the surface.
+	if is_instance_valid(portal) and portal.has_method("begin_dissolve"):
+		portal.call("begin_dissolve", entrance)
+	else:
+		if is_instance_valid(entrance):
+			entrance.queue_free()
+		if is_instance_valid(portal):
+			portal.queue_free()
 
 # World position of the live entrance for a language's current dungeon
 # ("lua"/"python"), or Vector2.INF when that track is finished or its
@@ -3657,6 +4098,11 @@ func get_world_save_data() -> Dictionary:
 		data["dungeon_entrances"].append({"index": int(idx), "x": t.x, "y": t.y})
 	for cell in _placed_blocks:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
+		# Natural world-gen patches (stone/charcoal) are NOT saved — they
+		# regenerate deterministically from the seed, and persisting thousands
+		# of them would bloat the save and slow loading.
+		if bool(entry.get("natural", false)):
+			continue
 		var node_ref: Variant = entry["node"]
 		if not is_instance_valid(node_ref):
 			continue
@@ -3664,27 +4110,25 @@ func get_world_save_data() -> Dictionary:
 		if node == null:
 			continue
 		var idata: ItemData = node.get("item_data") as ItemData
-		if idata == null or idata.resource_path.is_empty():
+		if idata == null:
 			continue
 		var block_entry: Dictionary = {
 			"cell_x":        (cell as Vector2i).x,
 			"cell_y":        (cell as Vector2i).y,
-			"item_path":     idata.resource_path,
+			"item_path":     "" if idata.is_color_block else idata.resource_path,
+			"color":         ColorBlock.key_of(idata.block_color) if idata.is_color_block else "",
 			"chest_slots":   null,
 			"dungeon_index": null,
 		}
+		# Runtime-generated color blocks have no resource_path — they persist by
+		# their RGB key instead. Anything else with no path can't be saved.
+		if not idata.is_color_block and idata.resource_path.is_empty():
+			continue
 		if node.has_method("get_items"):
 			var slots: Array = node.call("get_items") as Array
 			var saved: Array = []
 			for slot in slots:
-				if slot == null:
-					saved.append(null)
-				else:
-					var sd: ItemData = (slot as Dictionary)["data"] as ItemData
-					if sd != null and not sd.resource_path.is_empty():
-						saved.append({"path": sd.resource_path, "quantity": (slot as Dictionary)["quantity"]})
-					else:
-						saved.append(null)
+				saved.append(Global.serialize_item(slot))
 			block_entry["chest_slots"] = saved
 		var di = node.get("dungeon_index")
 		if di != null:
@@ -3692,6 +4136,12 @@ func get_world_save_data() -> Dictionary:
 		# Crafting Station automation state (selected recipe / program / output).
 		if node.has_method("get_station_save_data"):
 			block_entry["station"] = node.call("get_station_save_data")
+		# Furnace automation state (program / input / fuel / output).
+		if node.has_method("get_furnace_save_data"):
+			block_entry["furnace"] = node.call("get_furnace_save_data")
+		# Door state (facing + open/closed) — doors only.
+		if idata.is_door and node.has_method("get_door_save_data"):
+			block_entry["door"] = node.call("get_door_save_data")
 		data["placed_blocks"].append(block_entry)
 	return data
 
@@ -3744,9 +4194,12 @@ func apply_world_save_data(data: Dictionary) -> void:
 		if _placed_blocks.has(cell):
 			continue
 		var item_path: String = str(bd.get("item_path", ""))
-		if item_path.is_empty() or not ResourceLoader.exists(item_path):
-			continue
-		var idata: ItemData = load(item_path) as ItemData
+		var color_key:  String = str(bd.get("color", ""))
+		var idata: ItemData = null
+		if not color_key.is_empty():
+			idata = ColorBlock.from_key(color_key)
+		elif not item_path.is_empty() and ResourceLoader.exists(item_path):
+			idata = load(item_path) as ItemData
 		if idata == null:
 			continue
 		var scene_path: String = idata.place_scene_path
@@ -3768,22 +4221,16 @@ func apply_world_save_data(data: Dictionary) -> void:
 			_placed_blocks.erase(cell)
 			continue
 		obj.position = editable_layer.map_to_local(cell)
-		obj.z_index  = int(obj.position.y / TILE_SIZE)
+		obj.z_index  = FLOOR_Z if idata.is_floor else int(obj.position.y / TILE_SIZE)
 		_fix_sprite_offset(obj)
 		var chest_slots = bd.get("chest_slots", null)
 		if chest_slots is Array:
 			var slots_ref = obj.get("slots")
 			if slots_ref is Array:
 				for i in range(mini((chest_slots as Array).size(), (slots_ref as Array).size())):
-					var se = (chest_slots as Array)[i]
-					if not (se is Dictionary):
-						continue
-					var spath: String = str((se as Dictionary).get("path", ""))
-					if spath.is_empty() or not ResourceLoader.exists(spath):
-						continue
-					var res: ItemData = load(spath) as ItemData
-					if res != null:
-						(slots_ref as Array)[i] = {"data": res, "quantity": int((se as Dictionary).get("quantity", 1))}
+					var slot: Variant = Global.deserialize_item((chest_slots as Array)[i])
+					if slot != null:
+						(slots_ref as Array)[i] = slot
 			if obj.has_method("_refresh_ui"):
 				obj.call("_refresh_ui")
 		var di = bd.get("dungeon_index", null)
@@ -3793,9 +4240,33 @@ func apply_world_save_data(data: Dictionary) -> void:
 		var station_data = bd.get("station", null)
 		if station_data is Dictionary and obj.has_method("set_station_save_data"):
 			obj.call("set_station_save_data", station_data)
+		# Restore Furnace automation state, if this block had any.
+		var furnace_data = bd.get("furnace", null)
+		if furnace_data is Dictionary and obj.has_method("set_furnace_save_data"):
+			obj.call("set_furnace_save_data", furnace_data)
+		# Door state (facing + open/closed) — doors only.
+		var door_data = bd.get("door", null)
+		if idata.is_door and door_data is Dictionary and obj.has_method("set_door_save_data"):
+			obj.call("set_door_save_data", door_data)
 
 	# Restored columns need their U-colliders re-evaluated now that every
 	# neighbour exists (each block's _ready ran before the rest of its column
 	# was restored, so it saw no vertical neighbour yet).
 	for cell in _placed_blocks.keys():
 		_refresh_neighbor_u_collision(cell as Vector2i)
+	# Rebuild the housing rooms now that every restored block exists.
+	housing_rebuild_all()
+	Global.set_mission_progress("build_shelter", housing_valid_room_count())
+	# A (re)generated tree must never share a tile with a restored block. If the
+	# world regenerated even slightly differently (or a block was saved under a
+	# tree), free any tree now sitting in a block-occupied cell so it can't
+	# overlap the player's build.
+	for tree in get_tree().get_nodes_in_group("Tree"):
+		if not is_instance_valid(tree):
+			continue
+		var spawn_cell: Variant = tree.get_meta("spawn_cell", null)
+		if spawn_cell == null:
+			continue
+		if _placed_blocks.has(spawn_cell as Vector2i):
+			_unmark_tree_occupied(spawn_cell as Vector2i)
+			(tree as Node).queue_free()

@@ -13,6 +13,8 @@ var accept_drops: bool = true
 const SLOT_ICON_MARGIN: float = 8.0
 
 var _icon: TextureRect = null
+# The item currently shown (for the hover tooltip).
+var item_data: ItemData = null
 
 func _init() -> void:
 	# Build the icon here (not _ready) so set_icon() works even before this
@@ -38,10 +40,20 @@ func _ready() -> void:
 	# cross axis into a rectangle and the icon/sprite no longer fits.
 	size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+	mouse_entered.connect(_on_hover_in)
+	mouse_exited.connect(_on_hover_out)
 
-func set_icon(tex: Texture2D, alpha: float = 1.0) -> void:
+func _on_hover_in() -> void:
+	if item_data != null:
+		Global.show_item_tooltip({"data": item_data, "quantity": 1})
+
+func _on_hover_out() -> void:
+	Global.hide_item_tooltip()
+
+func set_icon(tex: Texture2D, alpha: float = 1.0, data: ItemData = null) -> void:
 	_icon.texture  = tex
 	_icon.modulate = Color(1, 1, 1, alpha)
+	item_data      = data
 
 func _draw() -> void:
 	# Draw the border box to FIT the item square: the icon is inset by
@@ -55,10 +67,13 @@ func _icon_margin() -> float:
 	return SLOT_ICON_MARGIN * Global.ui_scale
 
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton \
-			and event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT:
-		item_clicked.emit()
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			if item_data != null:
+				Global.item_hold_start({"data": item_data, "quantity": 1})
+			item_clicked.emit()
+		else:
+			Global.item_hold_end()
 
 func _get_drag_data(_at_position: Vector2) -> Variant:
 	return null

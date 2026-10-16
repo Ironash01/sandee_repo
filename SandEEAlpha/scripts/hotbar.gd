@@ -301,18 +301,25 @@ func _apply_label_scale() -> void:
 	var fs_popup: int = int(15 * s)
 	var fs_hover: int = int(15 * s)
 	var fs_stuck: int = int(20 * s)
+	# The hotbar itself is fixed-size (40px slots, top at -48 from the screen
+	# bottom), so every label stacked above it is banded relative to that top
+	# and scaled by s. Each band is 20*s tall with a 2*s gap, bottom→top:
+	# stat bars, item name, build-mode, pickup popup. Previously the stat bars
+	# used FIXED offsets (-64/-44) while the name scaled, so on Small/Medium
+	# the name dropped down into the bars and overlapped them.
+	const TOP := 48.0
 	if _build_label != null:
 		_build_label.add_theme_font_size_override("font_size", fs_build)
-		_build_label.offset_top    = int(-80 * s)
-		_build_label.offset_bottom = int(-56 * s)
+		_build_label.offset_top    = int(-(TOP + 70.0 * s))
+		_build_label.offset_bottom = int(-(TOP + 50.0 * s))
 	if _popup_label != null:
 		_popup_label.add_theme_font_size_override("font_size", fs_popup)
-		_popup_label.offset_top    = int(-108 * s)
-		_popup_label.offset_bottom = int(-80  * s)
+		_popup_label.offset_top    = int(-(TOP + 92.0 * s))
+		_popup_label.offset_bottom = int(-(TOP + 72.0 * s))
 	if _selected_name_label != null:
 		_selected_name_label.add_theme_font_size_override("font_size", int(13 * s))
-		_selected_name_label.offset_top    = int(-60 * s)
-		_selected_name_label.offset_bottom = int(-42  * s)
+		_selected_name_label.offset_top    = int(-(TOP + 48.0 * s))
+		_selected_name_label.offset_bottom = int(-(TOP + 28.0 * s))
 	if _hover_label != null:
 		_hover_label.add_theme_font_size_override("font_size", fs_hover)
 		_hover_label.offset_left   = int(14 * s)
@@ -330,8 +337,8 @@ func _apply_label_scale() -> void:
 		_stuck_label.offset_top    = int(24 * s)
 		_stuck_label.offset_bottom = int(56 * s)
 	if _stat_container != null:
-		_stat_container.offset_top    = -64
-		_stat_container.offset_bottom = -44
+		_stat_container.offset_top    = int(-(TOP + 26.0 * s))
+		_stat_container.offset_bottom = int(-(TOP + 2.0 * s))
 
 func _on_hover_label_changed(text: String) -> void:
 	if _hover_label == null:

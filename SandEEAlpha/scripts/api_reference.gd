@@ -41,6 +41,10 @@ const CUSTOM_LUA_ROBOT: Array = [
 		"desc": "Drop qty copies of the held item at the robot's current position. The item must be in the robot's inventory."},
 	{"sig": "place_item()",
 		"desc": "Place the robot's currently held placeable item at its position."},
+	{"sig": "mine(name, radius)",
+		"desc": "Mine every placed block whose name matches within radius blocks of the station, walking to each and storing the drops, e.g. mine(\"Stone\"). Radius defaults to 20."},
+	{"sig": "rename(name)",
+		"desc": "Give the robot a custom name. It is shown above the robot itself."},
 ]
 
 # ── Custom: Lua crafting-station API ───────────────────────────────
@@ -155,6 +159,24 @@ const BUILTIN_PYTHON: Array = [
 		"desc": "Build a list / dictionary from the given values."},
 ]
 
+# ── Custom: Python furnace API ─────────────────────────────────────
+const CUSTOM_PYTHON_FURNACE: Array = [
+	{"sig": "feed(name, n)",
+		"desc": "Move up to n of the named item from your inventory into the INPUT (smeltable) slot. Returns how many were loaded."},
+	{"sig": "fuel(name, n)",
+		"desc": "Move up to n of the named FUEL item from your inventory into the FUEL slot. Returns how many were loaded."},
+	{"sig": "smelt(n)",
+		"desc": "Smelt up to n, consuming input AND one fuel each. Fuel must already be in the fuel slot (never auto-consumed). Returns how many were smelted."},
+	{"sig": "take_output()",
+		"desc": "Move the furnace's output slot into your inventory. Returns how many were taken."},
+	{"sig": "input_name() / input_count()",
+		"desc": "Read the input slot's item name / quantity (\"\" / 0 when empty)."},
+	{"sig": "fuel_name() / fuel_count()",
+		"desc": "Read the fuel slot's item name / quantity (\"\" / 0 when empty)."},
+	{"sig": "output_name() / output_count()",
+		"desc": "Read the output slot's item name / quantity (\"\" / 0 when empty)."},
+]
+
 # ── Grouped view ───────────────────────────────────────────────────
 # Two top-level groups so CUSTOM (this game) is never mixed with BUILT-IN
 # (the language), each split by language. Returns an Array of:
@@ -170,6 +192,7 @@ static func groups() -> Array:
 				{"name": "LUA — BUILDING", "entries": CUSTOM_LUA_BUILD},
 				{"name": "LUA — CRAFTING STATION", "entries": CUSTOM_LUA_STATION},
 				{"name": "PYTHON — CRAFTING STATION", "entries": CUSTOM_PYTHON_STATION},
+				{"name": "PYTHON — FURNACE", "entries": CUSTOM_PYTHON_FURNACE},
 			],
 		},
 		{

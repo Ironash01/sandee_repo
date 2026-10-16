@@ -519,10 +519,8 @@ func get_station_save_data() -> Dictionary:
 		"recipe_path":      automation_recipe.resource_path if automation_recipe != null else "",
 		"code":             program_code,
 		"language":         program_language,
-		"output_path":      output_item.resource_path if output_item != null else "",
-		"output_quantity":  output_quantity,
-		"input_path":       input_item.resource_path if input_item != null else "",
-		"input_quantity":   input_quantity,
+		"output":           Global.serialize_item({"data": output_item, "quantity": output_quantity} if output_item != null else null),
+		"input":            Global.serialize_item({"data": input_item, "quantity": input_quantity} if input_item != null else null),
 	}
 
 func set_station_save_data(data: Dictionary) -> void:
@@ -532,17 +530,17 @@ func set_station_save_data(data: Dictionary) -> void:
 	program_code = str(data.get("code", ""))
 	var lang: String = str(data.get("language", "python"))
 	program_language = lang if lang in ["python", "lua"] else "python"
-	var output_path: String = str(data.get("output_path", ""))
-	if not output_path.is_empty() and ResourceLoader.exists(output_path):
-		output_item     = load(output_path) as ItemData
-		output_quantity = int(data.get("output_quantity", 0))
+	var out_slot: Variant = Global.deserialize_item(data.get("output", null))
+	if out_slot != null:
+		output_item     = (out_slot as Dictionary)["data"] as ItemData
+		output_quantity = int((out_slot as Dictionary)["quantity"])
 	else:
 		output_item     = null
 		output_quantity = 0
-	var input_path: String = str(data.get("input_path", ""))
-	if not input_path.is_empty() and ResourceLoader.exists(input_path):
-		input_item     = load(input_path) as ItemData
-		input_quantity = int(data.get("input_quantity", 0))
+	var in_slot: Variant = Global.deserialize_item(data.get("input", null))
+	if in_slot != null:
+		input_item     = (in_slot as Dictionary)["data"] as ItemData
+		input_quantity = int((in_slot as Dictionary)["quantity"])
 	else:
 		input_item     = null
 		input_quantity = 0

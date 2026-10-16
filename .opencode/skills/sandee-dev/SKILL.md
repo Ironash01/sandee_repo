@@ -12,6 +12,11 @@ API, not older 4.x). All game code lives under `SandEEAlpha/` — scripts in
 
 ## Core conventions
 
+- **"Caves" ALWAYS means BOTH large caves AND pixie caves** unless the user
+  explicitly says "large caves only" / "pixie caves only". So any cave fix must
+  cover `cave_world.gd` + `pixie_cave_world.gd`, and anything driven through
+  `CavePortal` (which both entrance types share) or the cave entrance
+  structures already does.
 - `TILE_SIZE = 32` everywhere. `GeneratedStructure.TILE_PX` is the structure-grid
   pixel size (also 32).
 - World rendering is layered in `world.gd`:
@@ -21,18 +26,61 @@ API, not older 4.x). All game code lives under `SandEEAlpha/` — scripts in
   each row sorts correctly against the player (player walks behind the row above, in
   front of the row below). Player origin is at chest height:
   `z_index = int((global_position.y + 23.0 + 16.0) / 32)` (see `player.gd`).
-- Hitboxes are **feet-anchored**, not full-tile: the player's `PlayerCol` is
-  `RectangleShape2D(20, 12)` at `(0, 17)` (below the chest-height origin). Placed
-  blocks (`PlaceableBlock.tscn`) use a **conditional U-shaped** collider — bottom
-  strip `RectangleShape2D(32, 16)` at `(0, 8)` plus `RectangleShape2D(4, 32)` side
-  walls at `x = ±14`. The side walls are **enabled only when the block has a
-  block directly above or below it** (`PlaceableBlock.refresh_u_collision()` asks
-  the owning world's `has_placed_block()`); an isolated block keeps them disabled
-  so the player's feet can still enter its upper half and keep `world.gd`'s
-  "player behind the block" cover y-sort. Worlds call
-  `_refresh_neighbor_u_collision(cell)` on place/unregister/save-restore.
-  **Revert** = delete `SideColL`/`SideColR` + `RectShape_side` and leave the
-  single `(0, 8)` 32x16 strip.
+- Hitboxes: the player's `PlayerCol` is the feet box `RectangleShape2D(20, 12)`
+  at `(0, 17)` (below the chest-height origin). Placement's
+  `_cell_blocked_by_player()` mirrors it (20x12 at y 17) in all three worlds —
+  keep in sync. Placed blocks (`PlaceableBlock.tscn`) use a **single solid
+  `RectangleShape2D(32, 32)` at `(0, 0)`**. Cave gates: the door cell stays
+  walkable at the bottom so the player can step into the doorway, but its **top
+  half** is a solid box so they can't pass through it
+  (`world.gd:_spawn_cave_entrance_nodes`). (History: blocks used to be a
+  conditional U-shape — a bottom strip `(32, 16)` at `(0, 8)` + `(4, 32)` side
+  walls at `x = ±14`, enabled only when a block sat above/below/diagonally; that
+  left the upper half open so the player slipped into a block, so it became the
+  solid tile. `PlaceableBlock.refresh_u_collision()` is now a no-op, kept only so
+  the worlds' `_refresh_neighbor_u_collision(cell)` calls still work.)
+- Bonfire (`bonfire.tres` + `Bonfire.tscn` + `scripts/bonfire.gd`, which
+  `extends "res://scripts/placeable_block.gd"`): a placeable block that sets the
+  player's respawn point. It joins the `"Bonfire"` group (minimap green marker),
+  calls `Global.set_spawn_point(pos)` on placement (deferred — the world assigns
+  the position after `add_child`), and `Global.clear_spawn_point()` on break if
+  it was the active one. It sets the respawn **only in the overworld**
+  (`world.is_overworld()`; caves/dungeons return false there, so a cave bonfire
+  is just a light/block — its coords are structure-local and invalid for the
+  overworld respawn). `Global._get_respawn_position()` still calls
+  `get_world_spawn_position()` FIRST so the player exits any cave/dungeon, then
+  prefers the bonfire. Any placeable item needs a non-empty `place_scene_path`
+  or it can't be placed at all.
+- Floors & doors (`ItemData.is_floor` / `is_door`, handled in
+  `placeable_block.gd`): a **floor** is walkable (its `StaticBody2D/CollisionShape2D`
+  is disabled) and renders as ground at `FLOOR_Z = -200` — the world sets that
+  z at placement/restore (`world.gd`) so the block's deferred fallback can't
+  lose the race with the world's y-sort z-assign. **`world.gd:_update_block_sort()`
+  must SKIP floors** (and restore them to `FLOOR_Z`) — otherwise the tile the
+  player stands on gets raised to `player_z + 1` and covers the player. A **door**
+  swaps between `door_closed_sprite`/`door_open_sprite` on a **left-click**
+  (SHIFT+click mines it instead), toggles its collider (closed = solid, open =
+  passable), and **rotates** its node so its FRONT points the way the player
+  faces (`_door_rotation_for()`; the 32x32 art is front-facing at rotation 0, so
+  the front normal is "south": south = 0, north = PI, east = -PI/2, west = +PI/2).
+  Facing + open/closed persist via `get/set_door_save_data()`.
+  **Every `PlaceableBlock` exposes `get/set_door_save_data`, so both MUST no-op
+  for non-doors** (guard on `item_data.is_door`) and the world only saves/restores
+  the `"door"` entry for actual doors. Otherwise a restored FLOOR runs the door
+  path, which re-enables its collider — "floor blocks have collision after
+  restart".
+- Housing (`world.gd`, overworld only): a "room" is a 4-connected region of
+  **floor** cells enclosed by player-placed boundary blocks (walls + doors).
+  `_is_boundary_block()` = placed ∧ not natural ∧ not floor. A room is VALID iff
+  **sealed** (no non-boundary neighbour) ∧ **≥1 door** on the boundary ∧ interior
+  bounding box ≥ 3×3. `housing_rebuild_around(cell)` runs on every
+  place/break (handles merges/splits); `housing_rebuild_all()` on save-restore;
+  `housing_is_valid_room_cell()` gates the ambient no-spawn director; the count
+  drives the `build_shelter` mission (goal 1).
+- Indoor dim: `Global.player_indoors` (set by `world.gd:_update_player_indoors()`
+  every ~0.2s from `housing_is_valid_room_cell()`) makes the overworld's
+  DayNightCycle (`day_night_cycle.gd`) multiply its ambient colour by
+  `INDOOR_DIM` (0.72, eased) so standing in a valid house reads as "roofed".
 - Whole-canvas layers (TileMapLayer, a Node2D pinned at World origin) can NOT y-sort.
   Hand-drawn structures are therefore painted as **per-cell Sprite2D nodes**, each
   anchored at its tile center with `z_index = int(global_position.y / TILE_SIZE)`.
@@ -151,6 +199,22 @@ Convention (see `inventory_ui.gd`, `crafting_menu.gd`, `lua_editor_ui.gd`,
   for `AMBIENT_STRAY_LINGER` are recycled (`_despawn_strays`), and the older
   30/15/5-min zone timer now runs over the whole `"Mob"` group. PASSIVE mobs
   flee on `take_hit` via `FleeBehavior` (see `_maybe_flee`). Never teleport.
+
+## Pause & input
+
+- Opening any UI (`Global.open_ui()`) sets `get_tree().paused = true`. A
+  **pausable** node (the player, blocks — default `PROCESS_MODE_INHERIT`) does
+  NOT receive `_input`/`_process`/`_physics_process` while paused. So a mouse
+  RELEASE that happens while a UI/dialog is open is never seen, and any
+  hold-state latched on press (`player.gd` `_attack_held`, `placeable_block.gd`
+  `_mouse_held`) stays stuck — resuming the swing loop / block break forever
+  once the UI closes. Reconcile the latch against `Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)`
+  on the first unpaused tick (`_tick_attack_hold` / `_process`) so a lost
+  release can't leave it latched. The cave/portal confirm dialog also pauses
+  (`cave_portal.gd` `Global.open_ui()`), so this bites on scene changes too.
+- `SceneTree.create_timer(t)` defaults to `process_always = true`, so transient
+  effects that free themselves on a timer (`sword_swing_effect.gd`) still
+  despawn while the tree is paused.
 
 ## Working style
 

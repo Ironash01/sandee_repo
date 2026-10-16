@@ -161,6 +161,8 @@ func _show() -> void:
 func _play_keyword_emphasis() -> void:
 	# Wait one frame so the freshly built Label has been laid out — the pop
 	# needs a non-zero size to centre its pivot.
+	if not is_inside_tree():
+		return
 	await get_tree().process_frame
 	if _keyword_lbl != null and is_instance_valid(_keyword_lbl):
 		Global.emphasize_keyword(_keyword_lbl, _keyword_lbl.get_theme_color("font_color"))

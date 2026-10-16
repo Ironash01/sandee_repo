@@ -16,6 +16,9 @@ const C_NO_MAT    := Color(0.30, 0.20, 0.20, 1.00)
 const C_RED       := Color(1.00, 0.35, 0.35, 1.00)
 
 const CATEGORIES  := ["Materials", "Blocks", "Weapons & Tools", "Others"]
+# preload (not class_name) so the name-argument completion works even before the
+# editor has registered the helper's global class.
+const NameComplete: GDScript = preload("res://scripts/lua_name_complete.gd")
 
 # ── Auto-discovered recipe directory (no hardcoded list needed) ────
 const RECIPE_DIR: String = "res://resources/recipes/"
@@ -45,6 +48,9 @@ var _auto_body:      Control
 var _prog_body:      Control
 var _output_section: Control
 var _mode_btns:      Dictionary = {}
+# Full-screen programming overlay (AUTOMATION + PROGRAMMING + input/output),
+# opened by the header's 🐍 PROGRAM button — same pattern as the furnace UI.
+var _prog_overlay:   Control
 
 var _auto_grid:     GridContainer
 var _auto_selected: Label
@@ -52,6 +58,8 @@ var _auto_status:   Label
 
 var _code_edit: TextEdit
 var _prog_log:  RichTextLabel
+var _name_popup: PopupPanel
+var _name_list:  ItemList
 
 var _output_slot:  Button
 var _output_count: Label
@@ -103,6 +111,8 @@ func _on_ui_scale(_s: float) -> void:
 	_detail_panel = null
 	_selected_idx = -1
 	_mode_btns.clear()
+	if not is_inside_tree():
+		return
 	await get_tree().process_frame
 	_build()
 	_filter_and_refresh()
@@ -154,92 +164,125 @@ func _build() -> void:
 	outer.add_theme_constant_override("separation", 0)
 	center.add_child(outer)
 
-	# Left tab strip
-	var tab_strip := PanelContainer.new()
-	var ts_ps := _sb(C_TAB_BG, C_BORDER, 6, 0, 0, 0, 0)
-	tab_strip.add_theme_stylebox_override("panel", ts_ps)
-	tab_strip.custom_minimum_size = Vector2(40 * s, 0)
-	outer.add_child(tab_strip)
-
-	var tab_vbox := VBoxContainer.new()
-	tab_vbox.add_theme_constant_override("separation", 2)
-	tab_strip.add_child(tab_vbox)
-
-	var icon_rect := TextureRect.new()
-	icon_rect.custom_minimum_size  = Vector2(28 * s, 28 * s)
-	icon_rect.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon_rect.expand_mode          = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-	icon_rect.modulate             = C_MUTED
-	tab_vbox.add_child(icon_rect)
-
-	var tab_label_wrap := Control.new()
-	tab_label_wrap.custom_minimum_size = Vector2(36 * s, 100 * s)
-	tab_vbox.add_child(tab_label_wrap)
-	var tab_lbl := Label.new()
-	tab_lbl.text = "STATION"
-	tab_lbl.add_theme_font_size_override("font_size", int(10 * s))
-	tab_lbl.add_theme_color_override("font_color", C_TITLE)
-	tab_lbl.rotation_degrees = 90.0
-	tab_lbl.position         = Vector2(28 * s, 8 * s)
-	tab_label_wrap.add_child(tab_lbl)
-
-	# Main panel
+	# Single centred panel (no side tab strip) — same shape as the furnace UI.
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(1080 * s, 540 * s)
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(16*s), int(16*s), int(14*s), int(16*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	outer.add_child(panel)
 
-	# Two columns INSIDE the styled panel (same as the Lua editor): the station
-	# content on the left, the player's inventory + hotbar on the right — the
-	# in-world hotbar sits behind this menu, so a usable copy lives here.
+	# Inventory on the LEFT, station content on the RIGHT (furnace parity).
 	var panel_row := HBoxContainer.new()
 	panel_row.add_theme_constant_override("separation", int(14 * s))
 	panel.add_child(panel_row)
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", int(10 * s))
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel_row.add_child(vbox)
 	# Inventory only here — the player's on-screen hotbar stays reachable
 	# (this menu's canvas sits below it), so no HOTBAR strip.
 	var items := PlayerItemsPanel.new()
 	items.show_hotbar = false
 	panel_row.add_child(items)
 
-	# Header
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", int(10 * s))
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel_row.add_child(vbox)
+
+	# Header: title + 🐍 PROGRAM (opens the overlay) + close.
 	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", int(6 * s))
 	vbox.add_child(header)
 	_title_label = _lbl("CRAFTING STATION", int(16 * s), C_TITLE)
 	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title_label)
+	var prog_btn := Button.new()
+	prog_btn.text = "🐍 PROGRAM"
+	prog_btn.tooltip_text = "Write a Python/Lua program to automate this station."
+	prog_btn.add_theme_font_size_override("font_size", int(12 * s))
+	prog_btn.add_theme_color_override("font_color", C_TITLE)
+	prog_btn.pressed.connect(func() -> void: _set_mode(Mode.PROGRAMMING))
+	header.add_child(prog_btn)
 	var close := Button.new()
 	close.text = "✕"
 	close.flat = true
+	close.tooltip_text = "Close the crafting station."
 	close.add_theme_color_override("font_color", C_MUTED)
 	close.pressed.connect(hide_menu)
 	header.add_child(close)
 
 	_div(vbox)
 
-	# Mode switch — the existing crafting view plus the two new station tabs.
-	_build_mode_row(vbox, s)
-	_div(vbox)
-
-	# Only one body is visible at a time.
+	# The manual crafting view is always the main view.
 	_craft_body = _build_craft_body(s)
 	vbox.add_child(_craft_body)
-	_auto_body  = _build_automation_body(s)
-	vbox.add_child(_auto_body)
-	_prog_body  = _build_programming_body(s)
-	vbox.add_child(_prog_body)
 
+	# Automation + Programming live in a separate overlay (furnace parity).
+	_build_programming_overlay(s)
+
+	_set_mode(Mode.CRAFTING)
+
+# Programming overlay: the automation recipe selector, the input/output slots,
+# and the code editor — opened by the header's 🐍 PROGRAM button, exactly like
+# the furnace's PROGRAM panel.
+func _build_programming_overlay(s: float) -> void:
+	_prog_overlay = Control.new()
+	_prog_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_prog_overlay.visible = false
+	add_child(_prog_overlay)
+
+	var dim := ColorRect.new()
+	dim.color = C_OVERLAY
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_prog_overlay.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_prog_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(780 * s, 540 * s)
+	var ps := _sb(C_PANEL, C_BORDER, 6, int(18*s), int(18*s), int(14*s), int(18*s))
+	panel.add_theme_stylebox_override("panel", ps)
+	center.add_child(panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", int(8 * s))
+	panel.add_child(vbox)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", int(6 * s))
+	vbox.add_child(header)
+	var title := _lbl("STATION PROGRAMMING", int(15 * s), C_TITLE)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	for entry in [
+		{"mode": Mode.AUTOMATION,  "text": "AUTOMATION"},
+		{"mode": Mode.PROGRAMMING, "text": "PROGRAMMING"},
+	]:
+		var btn := Button.new()
+		btn.text = entry["text"]
+		btn.add_theme_font_size_override("font_size", int(11 * s))
+		var m: int = entry["mode"]
+		btn.pressed.connect(func() -> void: _set_mode(m))
+		header.add_child(btn)
+		_mode_btns[m] = btn
+	var close := Button.new()
+	close.text = "✕"; close.flat = true
+	close.add_theme_color_override("font_color", C_MUTED)
+	close.pressed.connect(_close_programming)
+	header.add_child(close)
+
+	_auto_body = _build_automation_body(s)
+	vbox.add_child(_auto_body)
+	_prog_body = _build_programming_body(s)
+	vbox.add_child(_prog_body)
 	# Input + Output slots — shared by Automation and Programming.
 	_input_section = _build_input_section(s)
 	vbox.add_child(_input_section)
 	_output_section = _build_output_section(s)
 	vbox.add_child(_output_section)
 
+func _close_programming() -> void:
 	_set_mode(Mode.CRAFTING)
 
 # ── Mode switch ───────────────────────────────────────────────────
@@ -275,9 +318,13 @@ func _update_mode_btns() -> void:
 
 func _set_mode(mode: int) -> void:
 	_mode = mode
+	# The overlay hosts automation + programming; the main panel always shows
+	# the manual crafting body.
+	if _prog_overlay != null:   _prog_overlay.visible   = mode != Mode.CRAFTING
 	if _craft_body != null:     _craft_body.visible     = mode == Mode.CRAFTING
 	if _auto_body != null:      _auto_body.visible      = mode == Mode.AUTOMATION
 	if _prog_body != null:      _prog_body.visible      = mode == Mode.PROGRAMMING
+	if _input_section != null:  _input_section.visible  = mode != Mode.CRAFTING
 	if _output_section != null: _output_section.visible = mode != Mode.CRAFTING
 	_update_mode_btns()
 	# Leaving the Programming tab keeps the editor text on the station.
@@ -303,6 +350,7 @@ func _build_craft_body(s: float) -> Control:
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.custom_minimum_size   = Vector2(0, int(30 * s))
 		btn.add_theme_font_size_override("font_size", int(12 * s))
+		btn.tooltip_text = "Show the %s recipes." % cat
 		var c: String = cat as String
 		btn.pressed.connect(func() -> void: _on_category(c))
 		tabs.add_child(btn)
@@ -391,6 +439,9 @@ func _refresh_automation() -> void:
 		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
 		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
 		btn.tooltip_text            = recipe.result_item.item_name
+		var res: ItemData = recipe.result_item
+		btn.mouse_entered.connect(func() -> void: Global.show_item_tooltip({"data": res, "quantity": 1}))
+		btn.mouse_exited.connect(func() -> void: Global.hide_item_tooltip())
 		var rec := recipe
 		btn.pressed.connect(func() -> void: _on_auto_pick(rec))
 		var ps := _sb(C_TIP_BG, C_BORDER, 4, 4, 4, 4, 4)
@@ -443,7 +494,19 @@ func _build_programming_body(s: float) -> Control:
 	_code_edit.placeholder_text      = "craft(1)"
 	if station != null:
 		_code_edit.text = str(station.get("program_code"))
+	# Item-name popup: when the caret sits inside a name-argument function's
+	# parentheses, offer the list of valid items to pick from.
+	_code_edit.text_changed.connect(_on_program_text_changed)
 	root.add_child(_code_edit)
+
+	_name_popup = PopupPanel.new()
+	var name_list := ItemList.new()
+	name_list.custom_minimum_size = Vector2(int(200 * s), int(180 * s))
+	name_list.add_theme_font_size_override("font_size", int(12 * s))
+	name_list.item_selected.connect(_on_name_item_selected)
+	_name_popup.add_child(name_list)
+	_name_list = name_list
+	add_child(_name_popup)
 
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", int(8 * s))
@@ -512,6 +575,39 @@ func _on_clear_program() -> void:
 func _store_program_code() -> void:
 	if station != null and _code_edit != null:
 		station.set("program_code", _code_edit.text)
+
+# ── Item-name popup ───────────────────────────────────────────────
+# Show the popup when the caret sits inside a name-argument function's
+# parentheses (craft-style set_recipe / put_input / …); hide it otherwise.
+func _caret_index() -> int:
+	var idx: int = 0
+	for ln in range(_code_edit.get_caret_line()):
+		idx += _code_edit.get_line(ln).length() + 1
+	return idx + _code_edit.get_caret_column()
+
+func _on_program_text_changed() -> void:
+	if _code_edit == null or _name_popup == null:
+		return
+	if NameComplete.name_arg_open(_code_edit.text, _caret_index()):
+		_open_name_popup()
+	else:
+		_name_popup.hide()
+
+func _open_name_popup() -> void:
+	if _name_popup.visible:
+		return
+	_name_list.clear()
+	for n in NameComplete.item_names():
+		_name_list.add_item(str(n))
+	var local: Vector2 = _code_edit.get_caret_draw_pos()
+	_name_popup.position = Vector2i(_code_edit.get_screen_position() + local) + Vector2i(0, 22)
+	_name_popup.popup()
+
+func _on_name_item_selected(idx: int) -> void:
+	var name: String = _name_list.get_item_text(idx)
+	_code_edit.insert_text_at_caret("\"%s\"" % name)
+	_name_popup.hide()
+	_code_edit.grab_focus()
 
 func _on_program_print(text: String) -> void:
 	if _prog_log != null:
@@ -774,6 +870,9 @@ func _filter_and_refresh() -> void:
 		btn.icon_alignment          = HORIZONTAL_ALIGNMENT_CENTER
 		btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
 		btn.tooltip_text            = recipe.result_item.item_name
+		var res: ItemData = recipe.result_item
+		btn.mouse_entered.connect(func() -> void: Global.show_item_tooltip({"data": res, "quantity": 1}))
+		btn.mouse_exited.connect(func() -> void: Global.hide_item_tooltip())
 		var idx := i
 		btn.pressed.connect(func() -> void: _on_select(idx))
 		_recipe_list.add_child(btn)

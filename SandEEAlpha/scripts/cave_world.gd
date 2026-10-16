@@ -163,6 +163,16 @@ var _mine_tile:     Vector2i = Vector2i.ZERO
 var _mining:        bool     = false
 var _mine_elapsed:  float    = 0.0
 var _mine_duration: float    = 1.0
+# Global tap-to-break: a fresh click is worth this much break work (same value
+# placed_block.gd uses), so tapping repeatedly chips a wall down instead of
+# requiring one long hold. Progress persists across clicks on the SAME tile
+# and resets when the target tile changes.
+const CLICK_BREAK_SECONDS: float = 0.5
+# A wobbling Sprite2D copy of the mined wall tile. Tiles have no per-tile node
+# to rotate (unlike the overworld's PlaceableBlock), so mining hides the real
+# tile and shakes this overlay — giving cave mining the same wobble the
+# overworld has, from the shared Global.block_wobble_rotation().
+var _mine_overlay: Sprite2D = null
 
 func _try_start_mining() -> void:
 	var mouse_cell: Vector2i = _mouse_cell()
@@ -190,18 +200,65 @@ func _try_start_mining() -> void:
 	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
 		Global.player_node.call("swing_held_item")
 	get_viewport().set_input_as_handled()
+	if _mine_tile != mouse_cell:
+		_mine_elapsed = 0.0   # new target — drop any progress from the old tile
+		_destroy_mine_overlay(true)
 	_mine_tile     = mouse_cell
 	_mine_duration = maxf(0.1, float(item.block_level - pick_lvl))
-	_mine_elapsed  = 0.0
 	_mining        = true
+	if not is_instance_valid(_mine_overlay):
+		_spawn_mine_overlay(item, mouse_cell)
+	# A fresh click is worth CLICK_BREAK_SECONDS of work (tap-to-break).
+	_mine_elapsed  = minf(_mine_elapsed + CLICK_BREAK_SECONDS, _mine_duration)
 	queue_redraw()
+	if _mine_elapsed >= _mine_duration:
+		_finish_break()
 
 func _cancel_mining() -> void:
 	if not _mining:
 		return
-	_mining       = false
+	_mining = false
+	# Progress is deliberately KEPT so the next tap on this tile continues —
+	# it is reset only when the target tile changes (see _try_start_mining).
+	# The real tile comes back (the wobble overlay goes away).
+	_destroy_mine_overlay(true)
+	queue_redraw()
+
+# Mine complete: drop the overlay WITHOUT restoring the tile (it becomes floor).
+func _finish_break() -> void:
+	_mining = false
+	_destroy_mine_overlay(false)
+	_break_tile(_mine_tile)
 	_mine_elapsed = 0.0
 	queue_redraw()
+
+func _spawn_mine_overlay(item: ItemData, cell: Vector2i) -> void:
+	if item == null:
+		return
+	var tex: Texture2D = item.placeable_sprite if item.placeable_sprite != null else item.icon
+	if tex == null:
+		return
+	var spr := Sprite2D.new()
+	spr.texture        = tex
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	# Above the TileMapLayer (-300) but below world sprites/the player — a wall.
+	spr.z_index = _tilemap.z_index + 1
+	add_child(spr)
+	spr.global_position = _tilemap.to_global(_tilemap.map_to_local(cell))
+	_mine_overlay = spr
+	# Hide the real tile so the rotated overlay can't double-image against it.
+	_tilemap.set_cell(cell, -1)
+
+# restore=true repaints the real wall tile (cancel); false leaves it hidden
+# (the caller is about to paint FLOOR over it).
+func _destroy_mine_overlay(restore: bool) -> void:
+	if restore:
+		var gp: Vector2i = _cell_to_grid(_mine_tile)
+		if _grid_in_bounds(gp):
+			_paint_cell(_mine_tile, generator.grid[gp.x][gp.y], gp)
+	if is_instance_valid(_mine_overlay):
+		_mine_overlay.queue_free()
+	_mine_overlay = null
 
 func _update_mining(delta: float) -> void:
 	if not _mining:
@@ -213,10 +270,12 @@ func _update_mining(delta: float) -> void:
 		_cancel_mining()
 		return
 	_mine_elapsed = minf(_mine_elapsed + delta, _mine_duration)
+	# Same shake the overworld's placed blocks use.
+	if is_instance_valid(_mine_overlay):
+		_mine_overlay.rotation = Global.block_wobble_rotation()
 	queue_redraw()
 	if _mine_elapsed >= _mine_duration:
-		_break_tile(_mine_tile)
-		_cancel_mining()
+		_finish_break()
 
 # No visual feedback at all while mining (no progress bar) was the actual
 # bug behind "can't break blocks" reports — mining requires holding the
@@ -392,10 +451,23 @@ func unregister_block(cell: Vector2i) -> void:
 func has_placed_block(cell: Vector2i) -> bool:
 	return _placed_blocks.has(cell)
 
-# Re-evaluate the U-collider of `cell` plus its 4 orthogonal neighbours so a
-# vertical column gains/loses its side walls when a block appears/disappears.
+# A torch mounts to a solid neighbour: a placed block OR a solid cave wall.
+# Cave rock is TileMapLayer cells, NOT placed blocks, so without this a torch
+# placed against a wall never used its connected sprite (unlike the overworld,
+# where world-gen stone/charcoal live in _placed_blocks).
+func torch_support(cell: Vector2i) -> bool:
+	return _placed_blocks.has(cell) or _cell_is_wall(cell)
+
+# Not the overworld — a Bonfire here must not set the respawn point.
+func is_overworld() -> bool:
+	return false
+
+# Re-evaluate the U-collider of `cell` plus its 8 neighbours so a vertical
+# column (above/below) or a diagonal pair gains/loses its side walls when a
+# block appears/disappears.
 func _refresh_neighbor_u_collision(cell: Vector2i) -> void:
-	for off in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+	for off in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0),
+			Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
 		var c: Vector2i = cell + (off as Vector2i)
 		if not _placed_blocks.has(c):
 			continue

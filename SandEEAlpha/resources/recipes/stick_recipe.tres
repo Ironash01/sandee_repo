@@ -10,6 +10,6 @@ result_item = ExtResource("2_koego")
 result_quantity = 4
 ingredient_1 = ExtResource("1_l1lcc")
 ingredient_1_quantity = 2
-category = "Others"
+category = "Materials"
 requires_station = true
 metadata/_custom_type_script = "uid://bfxcb6bsffusb"

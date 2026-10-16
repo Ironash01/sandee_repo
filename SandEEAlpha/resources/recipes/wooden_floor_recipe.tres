@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3]
+
+[ext_resource type="Script" uid="uid://bfxcb6bsffusb" path="res://resources/items/crafting_recipe.gd" id="1_rec"]
+[ext_resource type="Resource" uid="uid://c8yfxlhehk2es" path="res://resources/items/plains_planks.tres" id="1_planks"]
+[ext_resource type="Resource" path="res://resources/items/wooden_floor.tres" id="2_floor"]
+
+[resource]
+script = ExtResource("1_rec")
+result_item = ExtResource("2_floor")
+result_quantity = 4
+ingredient_1 = ExtResource("1_planks")
+category = "Blocks"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

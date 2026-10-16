@@ -34,6 +34,10 @@ var _disperse_direction: Vector2 = Vector2.ZERO
 const DISPERSE_DURATION: float = 2.0     # seconds to keep moving away
 const DISPERSE_SPEED:    float = 80.0    # px/s while dispersing
 const DISPERSE_RANDOMNESS: float = 0.4   # angle spread (radians)
+# Spawn clearing: when the player (re)spawns, mobs within this radius of the
+# spawn point flee for SPAWN_CLEAR_DURATION so the player can react.
+const SPAWN_CLEAR_RADIUS:   float = 20.0 * 32.0
+const SPAWN_CLEAR_DURATION: float = 5.0
 
 # ── Combat (sword hits) ────────────────────────────────────────────
 # Tracks remaining HP from COMBAT_DATA.health; a sword hit calls take_hit()
@@ -58,6 +62,15 @@ const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png"
 const DAMAGE_NUMBER_SCRIPT: GDScript = preload("res://scripts/damage_number.gd")
 const MELLOW_BURST_SCRIPT: GDScript = preload("res://scripts/mellow_burst.gd")
 const MOB_NAME_LABEL_SCRIPT: GDScript = preload("res://scripts/mob_name_label.gd")
+
+# ── Feet-anchored y-sort ────────────────────────────────────────────
+# The wolf sprite is centred on its origin with the feet ~11px below it, so
+# sorting by raw y put the wolf ~11px too high — it drew BEHIND blocks it was
+# actually standing south of (reading as "walking through" them). These mirror
+# player.gd's YSORT_FEET_OFFSET/YSORT_TIEBREAK convention so mobs and the
+# player sort consistently against blocks/trees/each other.
+const YSORT_FEET_OFFSET: float = 11.0
+const YSORT_TIEBREAK:    float = 16.0
 
 var _last_dir: String = "south"
 var _name_label: Node2D = null
@@ -100,7 +113,7 @@ func _ready() -> void:
 	# never sorts against the world — a wolf south of a tree or the player
 	# would wrongly render underneath it. The player's own z boost keeps the
 	# player on top regardless.
-	z_index = int(global_position.y / 32)
+	z_index = int((global_position.y + YSORT_FEET_OFFSET + YSORT_TIEBREAK) / 32.0)
 	if _shared_frames == null:
 		_shared_frames = _build_frames()
 	_sprite.sprite_frames = _shared_frames
@@ -112,9 +125,10 @@ func _ready() -> void:
 	if ai_script != null:
 		_ai = ai_script.new()
 	Global.player_died.connect(_on_player_died)
+	Global.player_spawned.connect(_on_player_spawned)
 
 func _physics_process(delta: float) -> void:
-	z_index = int(global_position.y / 32)
+	z_index = int((global_position.y + YSORT_FEET_OFFSET + YSORT_TIEBREAK) / 32.0)
 
 	# PASSIVE flee: run away from whoever hit us. Never teleports — it just
 	# out-runs them, then resumes normal AI.
@@ -261,7 +275,7 @@ func _die() -> void:
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
-	Global.complete_mission("defeat_wolves")
+	Global.add_mission_progress("defeat_wolves")
 	_spawn_death_burst()
 	queue_free()
 
@@ -329,6 +343,22 @@ func _on_player_died(death_position: Vector2) -> void:
 	away = away.rotated(randf_range(-DISPERSE_RANDOMNESS, DISPERSE_RANDOMNESS))
 	_disperse_direction = away
 	_disperse_timer = DISPERSE_DURATION
+	_is_dispersing = true
+
+# The player just (re)spawned — if we're near the spawn point, clear out so the
+# player isn't instantly swarmed. Same dispersal as the death version, just
+# longer and scoped to mobs near the spawn.
+func _on_player_spawned(spawn_position: Vector2) -> void:
+	if _mob_health <= 0.0:
+		return
+	if global_position.distance_to(spawn_position) > SPAWN_CLEAR_RADIUS:
+		return
+	var away: Vector2 = global_position - spawn_position
+	if away.length_squared() < 1.0:
+		away = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
+	away = away.normalized().rotated(randf_range(-DISPERSE_RANDOMNESS, DISPERSE_RANDOMNESS))
+	_disperse_direction = away
+	_disperse_timer = SPAWN_CLEAR_DURATION
 	_is_dispersing = true
 
 func _build_frames() -> SpriteFrames:

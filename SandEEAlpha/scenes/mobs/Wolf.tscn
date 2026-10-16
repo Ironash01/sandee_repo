@@ -2,9 +2,8 @@
 
 [ext_resource type="Script" uid="uid://c2y1uiepygmrn" path="res://scripts/wolf.gd" id="1_wolf"]
 
-[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_wolf"]
-radius = 8.0
-height = 16.0
+[sub_resource type="RectangleShape2D" id="RectShape_wolf"]
+size = Vector2(16, 12)
 
 [node name="Wolf" type="CharacterBody2D" unique_id=802000003 groups=["Wolf"]]
 collision_layer = 2
@@ -13,4 +12,5 @@ script = ExtResource("1_wolf")
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=802000001]
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=802000002]
-shape = SubResource("CapsuleShape2D_wolf")
+position = Vector2(0, 5)
+shape = SubResource("RectShape_wolf")

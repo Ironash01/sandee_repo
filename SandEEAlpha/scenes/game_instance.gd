@@ -9,6 +9,8 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 # the editor has re-scanned/registered the new script's class.
 const CHAT_CONSOLE_SCRIPT: Script = preload("res://scripts/chat_console.gd")
 const MINIMAP_SCRIPT: Script = preload("res://scripts/minimap.gd")
+# Touch tap-tooltip popup (built-in tooltips are hover-only).
+const TOOLTIP_TAP_SCRIPT: Script = preload("res://scripts/tooltip_tap.gd")
 
 @onready var pause_menu: Control         = $CanvasLayer/PauseMenu
 @onready var pause_btn:  Button          = $CanvasLayer/PauseButton
@@ -71,6 +73,8 @@ func _ready() -> void:
 	# Bottom-left minimap (click / M opens the full map). Background HUD layer,
 	# so panels dim it.
 	_hud_backdrop.add_child(MINIMAP_SCRIPT.new())
+	# Tap tooltips (touch screens have no hover) — owns its own high layer.
+	add_child(TOOLTIP_TAP_SCRIPT.new())
 
 	_setup_death_overlay()
 
@@ -178,6 +182,8 @@ func enter_cave(portal: CavePortal) -> void:
 # block the build-mode toggle in here.
 func _do_enter_cave(portal: CavePortal) -> void:
 	Global.is_in_dungeon = false
+	# Each entrance generates a fresh cave, so cave-map fog starts clean.
+	Global.explored_cave_tiles.clear()
 	var return_position: Vector2 = _player.global_position
 	remove_child(_world)
 
