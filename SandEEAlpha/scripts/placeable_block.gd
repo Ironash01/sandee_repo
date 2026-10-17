@@ -68,12 +68,20 @@ var _anim_timer: Timer = null  # drives the sheet animation when has_place_anima
 # registers/unregisters with that manager.
 const TORCH_MANAGER_SCRIPT: GDScript = preload("res://scripts/torch_light_manager.gd")
 
+# Torches/bonfires register their light with the owning world's TorchLights
+# manager. This MUST be _enter_tree, not _ready: the overworld is REMOVED from
+# the tree (never freed) while a cave/dungeon is active, which fires _exit_tree
+# on every block (unregistering its light). _ready only ever fires ONCE, so a
+# _ready-only registration never comes back — the bonfire/torch light vanished
+# for good after leaving a cave/dungeon. _enter_tree fires on every re-entry.
+func _enter_tree() -> void:
+	if item_data != null and item_data.is_torch:
+		_register_torch_light()
+
 func _ready() -> void:
 	set_process(false)
 	if item_data != null:
 		_apply_sprite()
-		if item_data.is_torch:
-			_register_torch_light()
 		if item_data.is_floor:
 			_apply_floor()
 		elif item_data.is_door:
@@ -463,13 +471,7 @@ func _break() -> void:
 			burst.global_position = global_position + Vector2(0.0, -10.0)
 	if item_data != null:
 		# Mining-progress missions keyed off the block that was broken.
-		var lower: String = item_data.item_name.to_lower()
-		if lower == "stone":
-			Global.add_mission_progress("mine_stone")
-		elif lower.contains("iron ore"):
-			Global.add_mission_progress("mine_iron")
-		elif lower.contains("diamond"):
-			Global.add_mission_progress("mine_diamond")
+		Global.track_mining(item_data)
 		var drop: Node = ITEM_SCENE.instantiate() as Node
 		drop.call("set_item_data", item_data)
 		# World itself (via _world_ref, falling back to Global.world_node)

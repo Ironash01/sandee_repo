@@ -12,6 +12,7 @@ const SWORD_SWING_SCRIPT: GDScript = preload("res://scripts/sword_swing_effect.g
 const CACTUS_SCENE:    PackedScene = preload("res://scenes/objects/PlaceableBlock.tscn")
 const CACTUS_DATA:     ItemData    = preload("res://resources/items/cactus.tres")
 const OBJECT_BURST_SCRIPT: GDScript = preload("res://scripts/object_burst.gd")
+const INTERIOR_SHADE_SCRIPT: GDScript = preload("res://scripts/interior_shade.gd")
 
 # Extra pixels beyond the geometrically-exact half-tile offset used to plant
 # a tree's trunk base on the grid line — tune this if the source art has
@@ -400,6 +401,11 @@ func _ready() -> void:
 	_setup_chunk_border_overlay()
 	_setup_hitbox_overlay()
 	_setup_glow_environment()
+	# Darkens the world around a house while the player is indoors (interior
+	# stays bright). Lives in the world canvas so it never dims the UI.
+	_interior_shade = INTERIOR_SHADE_SCRIPT.new() as Node2D
+	if _interior_shade != null:
+		add_child(_interior_shade)
 	Global.hotbar_selection_changed.connect(_on_hotbar_changed)
 	Global.Hotbar_updated.connect(_on_hotbar_changed)
 	Global.mission_updated.connect(_on_mission_updated)
@@ -1622,13 +1628,24 @@ func is_overworld() -> bool:
 # boundary blocks (walls + doors). VALID = sealed (no leak) + >=1 door on the
 # boundary + interior bounding box >= 3x3. Rebuilt incrementally around a
 # placed/broken block (place_block_at / unregister_block). Overworld only.
-const ROOM_MAX_CELLS: int = 400
+#
+# The flood ALSO traverses INTERIOR blocks (furniture placed on the floor, and
+# the enclosed side of thick walls) so a house stays ONE connected room no
+# matter how much furniture is placed inside or how large it is — a floor-only
+# flood split at every chest/station, which is why interiors flickered to
+# "outside" near furniture. A block is interior iff none of its 4 neighbours is
+# open ground; a real wall/door always touches open ground.
+const ROOM_MAX_CELLS: int = 1600
 # Floors render UNDER the world (fixed z; above the -300 ground layer, below all
 # y-sorted sprites/player).
 const FLOOR_Z: int = -200
 # How often to re-check whether the player is inside a valid house.
 const INDOOR_CHECK_SEC: float = 0.2
+# Downward offset from the player origin (chest) to the feet box centre, used
+# for indoor tile detection (see _update_player_indoors).
+const INDOOR_FEET_OFFSET: float = 17.0
 var _indoor_check_accum: float = 0.0
+var _interior_shade: Node2D = null   # darkens the world OUTSIDE the house (see interior_shade.gd)
 const ROOM_MIN_SIDE:  int = 3
 const ROOM_OFFS: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
@@ -1723,23 +1740,39 @@ func _rebuild_room_from(seed: Vector2i) -> void:
 	var valid: bool = sealed and has_door and _room_min_size(cells)
 	_rooms[rid] = {"cells": cells, "valid": valid, "has_door": has_door}
 
+# Collect the floor cells of the room reachable from `seed`, traversing THROUGH
+# interior (furniture) blocks so furniture never splits a house. Only floor
+# cells are returned; interior blocks are pass-through only.
 func _flood_floor(seed: Vector2i) -> Array:
 	var out: Array = []
 	var seen: Dictionary = {seed: true}
 	var queue: Array = [seed]
 	while not queue.is_empty():
 		var c: Vector2i = queue.pop_front()
-		out.append(c)
-		if out.size() >= ROOM_MAX_CELLS:
-			break
+		if _is_floor_block(c):
+			out.append(c)
+			if out.size() >= ROOM_MAX_CELLS:
+				break
 		for off in ROOM_OFFS:
 			var n: Vector2i = c + (off as Vector2i)
 			if seen.has(n):
 				continue
-			if _is_floor_block(n):
+			if _is_floor_block(n) or _is_interior_block(n):
 				seen[n] = true
 				queue.append(n)
 	return out
+
+# A placed non-floor block that is fully surrounded by blocks (no open-ground
+# neighbour) is INTERIOR — furniture placed on the floor, or the inner layer of
+# a thick wall. A boundary wall/door always has at least one open neighbour
+# (the outside), so it is NOT traversed and houses never merge through a wall.
+func _is_interior_block(cell: Vector2i) -> bool:
+	if not _is_boundary_block(cell):
+		return false
+	for off in ROOM_OFFS:
+		if not _placed_blocks.has(cell + (off as Vector2i)):
+			return false
+	return true
 
 func _room_min_size(cells: Array) -> bool:
 	var mn := Vector2i(1 << 20, 1 << 20)
@@ -1764,15 +1797,37 @@ func housing_valid_room_count() -> int:
 			n += 1
 	return n
 
-# Is the player standing inside a VALID house? Sets Global.player_indoors, which
-# the overworld's day/night modulate reads to dim a little ("indoors" feel).
+# Is the player standing inside a VALID house? Sets Global.player_indoors and
+# drives the interior shade (dim the world OUTSIDE the house, keep the room
+# itself fully bright). Instant.
+#
+# Detection uses the FEET tile, not the origin (chest): the origin sits ~23px
+# above the feet, so near a top wall the chest tile lands on the wall while the
+# feet are still on the floor — that made interiors flicker to "outside" at the
+# edges. The feet box (collider centre at +17) is always on the standing tile.
 func _update_player_indoors() -> void:
 	var p := _get_player()
 	if p == null:
 		Global.player_indoors = false
+		_update_interior_shade(false, [])
 		return
-	var tile: Vector2i = editable_layer.local_to_map(editable_layer.to_local(p.global_position))
-	Global.player_indoors = housing_is_valid_room_cell(tile)
+	var feet: Vector2 = p.global_position + Vector2(0.0, INDOOR_FEET_OFFSET)
+	var tile: Vector2i = editable_layer.local_to_map(editable_layer.to_local(feet))
+	var indoors: bool = housing_is_valid_room_cell(tile)
+	Global.player_indoors = indoors
+	var cells: Array = []
+	if indoors:
+		var rid = _room_of.get(tile)
+		if rid != null and _rooms.has(rid):
+			cells = (_rooms[rid] as Dictionary)["cells"] as Array
+	_update_interior_shade(indoors, cells)
+
+# Hand the current room's floor cells to interior_shade.gd (it cuts a hole in
+# the darkening over them). `active` false clears it immediately.
+func _update_interior_shade(active: bool, cells: Array) -> void:
+	if _interior_shade == null or not is_instance_valid(_interior_shade):
+		return
+	_interior_shade.call("set_shade", active, cells)
 
 # World position -> tile cell (editable grid). Shared with the Lua robot's
 # placement so it targets the same cells the player's mouse would.

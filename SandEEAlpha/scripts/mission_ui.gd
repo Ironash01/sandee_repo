@@ -140,12 +140,28 @@ func _rebuild_rows() -> void:
 
 # ── Get up to GAMEPLAY_POOL_SIZE active gameplay missions ──────────
 func _active_gameplay() -> Array:
-	var result: Array = []
+	# Missions the player has already STARTED (progress > 0) come FIRST, then
+	# the next not-yet-started ones fill the remaining slots. Without this the
+	# pool was just the first N incomplete in list order, so a count mission far
+	# down the list ("Mine 10 stone blocks", 8th) never appeared while you mined
+	# it — it looked untriggered and never updated.
+	var started: Array = []
+	var unstarted: Array = []
 	for m in Global.missions:
 		if m["completed"]:
 			continue
 		if m.has("dungeon_index"):
 			continue  # dungeon missions handled separately
+		if int(m.get("progress", 0)) > 0:
+			started.append(m)
+		else:
+			unstarted.append(m)
+	var result: Array = []
+	for m in started:
+		if result.size() >= GAMEPLAY_POOL_SIZE:
+			break
+		result.append(m)
+	for m in unstarted:
 		if result.size() >= GAMEPLAY_POOL_SIZE:
 			break
 		result.append(m)

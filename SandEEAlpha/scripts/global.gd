@@ -984,6 +984,22 @@ func add_mission_progress(id: String, amount: int = 1) -> void:
 			set_mission_progress(id, int(m.get("progress", 0)) + amount)
 			return
 
+# Credit the mining missions for a mined block/ore. Centralised so EVERY world
+# backend tracks the same quests — the overworld's placed blocks AND the cave /
+# pixie-cave wall tiles (which are mined via the worlds' own _break_tile, not
+# placeable_block.gd). Without this, mining stone/iron/diamond inside a cave
+# dropped the item but never advanced "Mine 10 stone blocks" etc.
+func track_mining(item: ItemData) -> void:
+	if item == null:
+		return
+	var lower: String = item.item_name.to_lower()
+	if lower == "stone":
+		add_mission_progress("mine_stone")
+	elif lower.contains("iron ore"):
+		add_mission_progress("mine_iron")
+	elif lower.contains("diamond"):
+		add_mission_progress("mine_diamond")
+
 func reset_missions() -> void:
 	for m in missions:
 		m["completed"] = false

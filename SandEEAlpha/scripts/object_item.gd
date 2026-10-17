@@ -151,6 +151,22 @@ func _tick_wobble() -> void:
 	var p: float      = clampf(half / (0.5 * WOBBLE_FLIP_FRACTION), 0.0, 1.0)
 	_sprite.rotation = lerpf(source, target, ease(p, 2.0)) * WOBBLE_AMPLITUDE_RAD
 
+# True when the cursor is over THIS object's sprite. Without it, every adjacent
+# furnace within INTERACT_RADIUS_PX reacted to the same click and the first one
+# in tree order consumed it — so clicking a specific furnace opened a different
+# (previously placed) one. Only the object under the cursor may consume a click.
+func _cursor_over() -> bool:
+	if _sprite == null or _sprite.texture == null:
+		return true
+	var r: Rect2 = _sprite.get_rect()
+	var gt: Transform2D = _sprite.global_transform
+	var a: Vector2 = gt * r.position
+	var b: Vector2 = gt * (r.position + r.size)
+	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
+	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
+	var m: Vector2 = get_global_mouse_position()
+	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
+
 # Left-click (nearby) opens the standalone smelting menu; Shift + left-click
 # mines this interactable off the wall (respecting pickaxe tier + break time).
 func _input(event: InputEvent) -> void:
@@ -160,6 +176,8 @@ func _input(event: InputEvent) -> void:
 		return
 	var p: Node2D = Global.player_node as Node2D
 	if p == null or p.global_position.distance_to(global_position) > INTERACT_RADIUS_PX:
+		return
+	if not _cursor_over():
 		return
 	if Input.is_key_pressed(KEY_SHIFT):
 		if event.pressed:

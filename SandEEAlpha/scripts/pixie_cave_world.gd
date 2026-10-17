@@ -395,6 +395,7 @@ func _break_tile(cell: Vector2i) -> void:
 	
 	if item == null:
 		return
+	Global.track_mining(item)
 	var drop: Node = ITEM_DROP_SCENE.instantiate()
 	drop.call("set_item_data", item)
 	add_child(drop)
