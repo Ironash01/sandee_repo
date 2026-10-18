@@ -14,7 +14,7 @@ size = Vector2(28, 28)
 radius = 28.0
 
 [sub_resource type="RectangleShape2D" id="RectShape_robot"]
-size = Vector2(20, 20)
+size = Vector2(15, 15)
 
 [node name="LuaNPC" type="Node2D" unique_id=1321413095]
 script = ExtResource("1_lua")
@@ -39,8 +39,8 @@ shape = SubResource("CircleShape_click")
 position = Vector2(0, 36)
 
 [node name="RobotSprite" type="AnimatedSprite2D" parent="Robot" unique_id=236635100]
-scale = Vector2(1, 1)
+scale = Vector2(0.75, 0.75)
 
 [node name="RobotCol" type="CollisionShape2D" parent="Robot"]
-position = Vector2(0, 10)
+position = Vector2(0, 7.5)
 shape = SubResource("RectShape_robot")

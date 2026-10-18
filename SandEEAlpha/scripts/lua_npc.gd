@@ -21,7 +21,14 @@ func setup(data: ItemData) -> void:
 const TILE_SIZE:          float = 32.0
 const CHOP_RADIUS_BLOCKS: int   = 20
 const CHOP_RADIUS_PX:     float = CHOP_RADIUS_BLOCKS * TILE_SIZE  # 640 px
-const APPROACH_PX:        float = 40.0
+# Every LUA is 25% smaller than the original art/body. A combat LUA kept getting
+# wedged in tight spaces — its 20x20 body could not thread the gaps the player
+# slips through — so the sprite, the collision box and every distance derived
+# from the body's size are scaled down together. LuaNPC.tscn carries the
+# matching sprite scale (0.75) and RobotCol size (15x15 at y 7.5); keep the two
+# in sync (the shape is a scene sub-resource, not built here).
+const LUA_SIZE_SCALE:     float = 0.75
+const APPROACH_PX:        float = 40.0 * LUA_SIZE_SCALE
 const CHOP_DELAY:         float = 0.25
 const PICKUP_DELAY:       float = 0.4
 const NPC_SPEED:          float = 90.0
@@ -35,8 +42,9 @@ const ATTACK_RING_SCRIPT:  GDScript = preload("res://scripts/attack_ring.gd")
 # put the robot half a tile too high, so it drew behind trees/blocks it was
 # standing in front of. Offset to the sprite's bottom line, then add the same
 # half-tile tiebreak the player uses. The floating-entity art is 52px tall at
-# scale 1.0, so the visual bottom sits 26px below the origin.
-const ROBOT_FEET_OFFSET: float = 26.0
+# scale 1.0, so the visual bottom sits 26px below the origin — scaled by
+# LUA_SIZE_SCALE along with the sprite itself.
+const ROBOT_FEET_OFFSET: float = 26.0 * LUA_SIZE_SCALE
 const YSORT_TIEBREAK:    float = 16.0   # half a tile — matches player.gd
 
 # ── Floating bob ──────────────────────────────────────────────────
@@ -45,10 +53,10 @@ const YSORT_TIEBREAK:    float = 16.0   # half a tile — matches player.gd
 # shrinking a touch as the robot rises) so the bob reads as hovering.
 const BOB_AMPLITUDE: float = 2.5
 const BOB_SPEED:     float = 6.5
-const SHADOW_OFFSET_Y: float = 28.0     # shadow sits at the sprite's base
+const SHADOW_OFFSET_Y: float = 28.0 * LUA_SIZE_SCALE  # shadow sits at the sprite's base
 var _bob_t: float = 0.0
 var _shadow: Sprite2D = null
-var _shadow_scale: Vector2 = Vector2(0.7, 0.32)
+var _shadow_scale: Vector2 = Vector2(0.7, 0.32) * LUA_SIZE_SCALE
 
 # ── Floating-entity sprite set ────────────────────────────────────
 # The robot is now a FLOATING entity (no walk cycle): one static sprite per
@@ -78,7 +86,7 @@ const DIR_TEX_COMBAT: Dictionary = {
 # physics layer (bit 0) — same layer the player's CharacterBody2D collides
 # against — so a raycast on that mask reliably detects anything solid.
 const OBSTACLE_MASK:         int   = 1
-const OBSTACLE_LOOKAHEAD_PX: float = 28.0  # a bit under one tile (32px)
+const OBSTACLE_LOOKAHEAD_PX: float = 28.0 * LUA_SIZE_SCALE  # a bit under one tile (32px)
 # Angles tried, in order, either side of the direct line to the target when
 # that line is blocked — sweeps out to a full about-face for dead ends.
 const REROUTE_ANGLES_DEG: Array = [45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0]
@@ -144,22 +152,33 @@ var _status_ms:   int    = 0
 # terminated (remote, or STOP on its station). A terminated combat LUA is gone
 # for good. It cannot run code while in combat.
 const COMBAT_MAX_HP:        float = 400.0
-const COMBAT_FOLLOW_GAP:    float = 44.0    # keep this far from the player
-const COMBAT_CONTACT_PX:    float = 26.0    # a mob this close to the LUA hurts it
+const COMBAT_FOLLOW_GAP:    float = 44.0 * LUA_SIZE_SCALE  # keep this far from the player
+const COMBAT_CONTACT_PX:    float = 26.0 * LUA_SIZE_SCALE  # a mob this close to the LUA hurts it
 const COMBAT_CONTACT_DMG:   float = 8.0
 const COMBAT_CONTACT_CD:    float = 1.0
 const COMBAT_BASE_MULT:     float = 0.75    # retain 75% of the tool's damage
 const COMBAT_STACK_PENALTY: float = 0.02    # -2% per extra active combat LUA
 # A combat LUA swings a wide area CENTRED ON ITSELF (not a single mob): every
 # mob within this radius takes the hit. 2.5 tiles = a 5x5 tile box (raised from
-# the old 1.5-tile / 3x3 box by one tile).
+# the old 1.5-tile / 3x3 box by one tile). This is the LUA's REACH, not its body,
+# so it does NOT shrink with LUA_SIZE_SCALE.
 const COMBAT_AOE_RADIUS:    float = 80.0
 # The station beacon pulses this colour while its LUA is in combat.
 const COMBAT_BEACON_TINT:   Color = Color(1.00, 0.25, 0.25, 1.00)
 # Teleport the follower to the player when they jump a long way (death respawn,
 # a cave/dungeon swap, the stuck-teleport) instead of walking forever.
 const COMBAT_TELEPORT_DIST: float = 700.0
-const COMBAT_TELEPORT_GAP:  float = 40.0
+const COMBAT_TELEPORT_GAP:  float = 40.0 * LUA_SIZE_SCALE
+# Multiple combat LUAs following the player form a single-file LINE: each takes a
+# slot this far behind the one ahead, so they trail one after another instead of
+# all converging on the player's tile (which made them stack and flicker). The
+# rank is capped so a huge swarm doesn't stretch into an absurd queue.
+const COMBAT_LINE_SPACING:  float = 30.0 * LUA_SIZE_SCALE
+const COMBAT_LINE_MAX_RANK: int   = 6
+# Steering commit: hold a chosen reroute direction briefly. Re-picking the angle
+# every frame made the robot dither between two equally-open directions at a
+# corner and stall (it read as "stuck in tight spaces").
+const COMBAT_COMMIT_SEC:    float = 0.35
 
 # ── Pursuit tuning ────────────────────────────────────────────────
 # Dynamic speed: MIN when boxed in / near the player, NORMAL for a steady
@@ -175,7 +194,7 @@ const COMBAT_SPRINT_DIST:   float = 200.0   # sprint beyond this distance
 # ahead, and reroute through these angles (deg) when the forward path is
 # blocked. Sweeping the shape (not a point ray) is what lets it fit narrow
 # corridors and refuse diagonal corner cuts.
-const COMBAT_LOOKAHEAD:     float = 26.0
+const COMBAT_LOOKAHEAD:     float = 26.0 * LUA_SIZE_SCALE
 const COMBAT_REROUTE_DEG: Array = [0.0, 25.0, -25.0, 50.0, -50.0, 75.0, -75.0, 90.0, -90.0, 135.0, -135.0, 180.0]
 # Stuck recovery (last resort — a rare teleport, never the default pursuit).
 const COMBAT_STUCK_SEC:      float = 3.0
@@ -186,7 +205,7 @@ const COMBAT_RECOVER_RADIUS: int   = 5      # tiles searched around the player
 # on the same tile (which made the robots stack and flicker).
 const COMBAT_RECOVER_TRIES:  int   = 8
 # Keep recovered LUAs at least this far apart.
-const COMBAT_MIN_SPACING:    float = 30.0
+const COMBAT_MIN_SPACING:    float = 30.0 * LUA_SIZE_SCALE
 
 # ── Hostile-mob hunting ───────────────────────────────────────────
 # Opportunistic: a combat LUA hunts a nearby HOSTILE mob, then resumes player
@@ -196,8 +215,8 @@ const COMBAT_HUNT_RADIUS:   float = 220.0   # sight radius from the LUA
 const COMBAT_HUNT_LEASH:    float = 240.0   # ... and this close to the player
 const COMBAT_HUNT_DROP:     float = 380.0   # give up a hunt target beyond this
 const COMBAT_HUNT_RESCAN:   float = 0.4     # s between hostile scans
-const COMBAT_ENGAGE_GAP:    float = 40.0    # stand-off distance for a mob
-const COMBAT_ATTACK_RANGE:  float = 56.0    # attack a mob within this
+const COMBAT_ENGAGE_GAP:    float = 40.0 * LUA_SIZE_SCALE  # stand-off distance for a mob
+const COMBAT_ATTACK_RANGE:  float = 56.0 * LUA_SIZE_SCALE  # attack a mob within this
 const COMBAT_ATTACK_CD:     float = 1.0     # s between autonomous attacks
 var _combat:        bool  = false
 var _terminated:    bool  = false
@@ -209,6 +228,14 @@ var _combat_stuck_ms:   int   = -1
 var _combat_last_dist:  float = INF
 var _combat_recover_ms: int   = -1000000
 var _robot_col:         CollisionShape2D = null
+# Steering commit (see COMBAT_COMMIT_SEC): the held reroute direction + its
+# expiry timestamp.
+var _combat_commit_dir:      Vector2 = Vector2.ZERO
+var _combat_commit_until_ms: int     = 0
+# The player this robot has been made non-solid against (see
+# _exempt_player_collision). Kept so the exception is applied once per player
+# body, and re-applied if the player node is ever replaced.
+var _exempt_player: Node = null
 # Hostile-mob hunting.
 var _hunt_target:   Node2D = null
 var _hunt_scan_ms:  int    = -1000000
@@ -314,7 +341,9 @@ func _ready() -> void:
 	_name_label.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0, 1.0))
 	_name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	_name_label.add_theme_constant_override("outline_size", 3)
-	_name_label.position = Vector2(-60, -58)
+	# Sits just above the (now smaller) robot sprite; x/width stay centered on the
+	# robot's origin.
+	_name_label.position = Vector2(-60, -42)
 	_name_label.size     = Vector2(120, 16)
 	_name_label.visible  = false
 	_robot.add_child(_name_label)
@@ -824,6 +853,10 @@ func _enter_combat(silent: bool = false) -> void:
 	_reset_combat_motion()
 	_apply_combat_frames(true)
 	_connect_player_swing()
+	# A combat LUA escorts the player at close range, so it must not be able to
+	# body-block them. This removes ONLY the player<->LUA pair: the robot still
+	# collides with walls, mobs and other robots (see _exempt_player_collision).
+	_exempt_player_collision()
 	_set_status("Combat")
 	# Station beacon pulses red so this station reads as a combat LUA's home.
 	_set_beacon_combat(true)
@@ -846,6 +879,21 @@ func _connect_player_swing() -> void:
 	if p != null and is_instance_valid(p) and p.has_signal("swing_performed") \
 			and not p.is_connected("swing_performed", _on_player_swung):
 		p.connect("swing_performed", _on_player_swung)
+
+# Make the robot non-solid against the PLAYER only. A combat LUA escorts the
+# player at close range and used to shove them around / pin them in doorways;
+# a per-pair collision exception fixes that without touching any layer, so the
+# robot still collides with walls, mobs and other LUAs. Idempotent, and
+# re-applied if the player node is ever replaced (respawn / scene reload).
+func _exempt_player_collision() -> void:
+	var p := Global.player_node
+	if p == null or not is_instance_valid(p) or p == _exempt_player:
+		return
+	if _robot == null or not is_instance_valid(_robot):
+		return
+	if p is PhysicsBody2D:
+		_robot.add_collision_exception_with(p as PhysicsBody2D)
+		_exempt_player = p
 
 func _disconnect_player_swing() -> void:
 	var p := Global.player_node
@@ -1016,13 +1064,17 @@ func _combat_process(delta: float) -> void:
 		_reset_combat_motion()
 		_hunt_target = null
 		return
+	# Keep the player<->LUA collision exception current (a no-op once applied).
+	_exempt_player_collision()
 	var dist_p: float = _robot.global_position.distance_to(p.global_position)
 
 	# The player jumped a long way (death respawn, a cave/dungeon swap, the
-	# stuck-teleport) — snap next to them instead of walking forever.
+	# stuck-teleport) — snap to a SAFE, UNOCCUPIED spot near them instead of
+	# walking forever. Never the bare "player + fixed offset" it used to be:
+	# that could land inside a wall, and with several LUAs they all picked the
+	# SAME tile and stacked.
 	if dist_p > COMBAT_TELEPORT_DIST:
-		_robot.global_position = p.global_position + Vector2(0.0, COMBAT_TELEPORT_GAP)
-		_reset_combat_motion()
+		_teleport_combat_near_player(p)
 		return
 
 	_combat_atk_cd = maxf(0.0, _combat_atk_cd - delta)
@@ -1041,8 +1093,12 @@ func _combat_process(delta: float) -> void:
 	# current engagement so it doesn't oscillate).
 	var target: Node2D = _select_combat_target(p, dist_p)
 	var hunting: bool = target != p
-	var gap: float = COMBAT_ENGAGE_GAP if hunting else COMBAT_FOLLOW_GAP
-	var to: Vector2 = target.global_position - _robot.global_position
+	# Hunting keeps a stand-off gap from the mob; the follow case uses the LINE
+	# anchor directly (the follow gap is already baked into it), so each LUA
+	# stands AT its slot in the column instead of orbiting the player.
+	var gap: float = COMBAT_ENGAGE_GAP if hunting else 0.0
+	var target_pos: Vector2 = target.global_position if hunting else _follow_anchor(p)
+	var to: Vector2 = target_pos - _robot.global_position
 	var dist: float = to.length()
 
 	# Desired travel direction (the gap is preserved).
@@ -1053,7 +1109,9 @@ func _combat_process(delta: float) -> void:
 		desired = -to.normalized()
 
 	# Forward obstacle detection + local steering, using the robot's footprint.
-	var exclude: Array = [_robot.get_rid()]
+	# Other LUAs are excluded: the line formation already spaces them, and
+	# treating an ally as a wall made a queue jam up on itself in a corridor.
+	var exclude: Array = _steering_exclude()
 	var blocked: bool = desired != Vector2.ZERO and not _combat_clear(_robot.global_position, desired, exclude)
 	var travel: Vector2 = _combat_travel_dir(desired, exclude)
 	# Hard veto: never step into a house interior (a door would let us through).
@@ -1139,7 +1197,8 @@ func _is_hostile_mob(m: Node) -> bool:
 
 # True when a wall-only ray from the robot reaches `target` (walls, trees and
 # placed blocks block it; the mob itself is not in the mask, so it never
-# counts as its own obstacle).
+# counts as its own obstacle). Fellow LUAs are excluded too — an ally standing
+# between this robot and a mob must not hide the mob from it.
 func _has_los_to(target: Node2D) -> bool:
 	if not is_inside_tree() or target == null or not is_instance_valid(target):
 		return false
@@ -1148,7 +1207,7 @@ func _has_los_to(target: Node2D) -> bool:
 		return false
 	var query := PhysicsRayQueryParameters2D.create(_robot.global_position, target.global_position)
 	query.collision_mask = OBSTACLE_MASK
-	query.exclude        = [_robot.get_rid()]
+	query.exclude        = _steering_exclude()
 	return world_2d.direct_space_state.intersect_ray(query).is_empty()
 
 # One attack event: the 3x3 AoE centred on the LUA, shared by the player-swing
@@ -1197,17 +1256,100 @@ func _player_sprinting() -> bool:
 		return false
 	return bool(p.call("is_sprinting"))
 
+# ── Line formation (multiple combat LUAs) ─────────────────────────
+# With more than one combat LUA following, they form a single-file LINE behind
+# the player instead of all aiming at the player's tile (which made them pile up
+# and flicker). Each LUA takes a slot COMBAT_FOLLOW_GAP + rank*COMBAT_LINE_SPACING
+# further back along the player's heading, so they trail one after another
+# ("successively") — the lead LUA sits right behind the player, the next behind
+# that, and so on.
+func _follow_anchor(p: Node2D) -> Vector2:
+	var dir: Vector2 = _player_heading(p)
+	if dir == Vector2.ZERO:
+		return p.global_position
+	var back: float = COMBAT_FOLLOW_GAP + COMBAT_LINE_SPACING * float(_combat_line_rank())
+	return p.global_position - dir * back
+
+# The direction the follow line trails behind: the player's travel direction
+# while they move (remembered so a standing player aiming the mouse around
+# doesn't make the column orbit them), else their facing.
+var _line_dir_cache: Vector2 = Vector2.ZERO
+
+func _player_heading(p: Node2D) -> Vector2:
+	if p is CharacterBody2D:
+		var v: Vector2 = (p as CharacterBody2D).velocity
+		if v.length() > 8.0:
+			_line_dir_cache = v.normalized()
+			return _line_dir_cache
+	if _line_dir_cache != Vector2.ZERO:
+		return _line_dir_cache
+	if p.has_method("facing_vector"):
+		var f: Variant = p.call("facing_vector")
+		if f is Vector2 and (f as Vector2).length() > 0.001:
+			return (f as Vector2).normalized()
+	return Vector2.ZERO
+
+# This LUA's slot in the follow column (0 = the lead, right behind the player).
+# The order is stable — LUA name index first, then instance id as a tiebreak —
+# so the slots never swap every frame.
+func _combat_line_rank() -> int:
+	if not is_inside_tree():
+		return 0
+	var mine: int = _name_index if _name_index >= 0 else 1 << 30
+	var my_id: int = get_instance_id()
+	var rank: int = 0
+	for n in get_tree().get_nodes_in_group("LuaNPC"):
+		if n == self or not is_instance_valid(n) or not bool(n.get("_combat")):
+			continue
+		var other: int = int(n.get("_name_index"))
+		if other < 0:
+			other = 1 << 30
+		if other < mine or (other == mine and n.get_instance_id() < my_id):
+			rank += 1
+	return mini(rank, COMBAT_LINE_MAX_RANK)
+
+# RIDs the steering should IGNORE: this robot itself, plus every other LUA's
+# robot. A LUA is not an obstacle to another LUA — the line formation (combat)
+# keeps them apart, and treating an ally as a wall made a queue jam up on itself
+# in a corridor. Physics still stops them overlapping.
+func _steering_exclude() -> Array:
+	var rids: Array = [_robot.get_rid()]
+	if not is_inside_tree():
+		return rids
+	for n in get_tree().get_nodes_in_group("LuaNPC"):
+		if n == self or not is_instance_valid(n):
+			continue
+		var other: Variant = n.get("_robot")
+		if other is CharacterBody2D and is_instance_valid(other):
+			rids.append((other as CharacterBody2D).get_rid())
+	return rids
+
 # Steering: the desired direction if its footprint path is clear, else the
 # closest clear reroute angle. ZERO when fully boxed in.
+#
+# The chosen reroute is COMMITTED for COMBAT_COMMIT_SEC: re-picking every frame
+# let two equally-open angles alternate and the robot stalled on the spot (the
+# "suffers in tight spaces" symptom). The commit is dropped early if it stops
+# being clear or starts pointing away from the goal.
 func _combat_travel_dir(desired: Vector2, exclude: Array) -> Vector2:
 	if desired == Vector2.ZERO:
+		_combat_commit_dir = Vector2.ZERO
 		return Vector2.ZERO
+	var now: int = Time.get_ticks_msec()
+	if _combat_commit_dir != Vector2.ZERO and now < _combat_commit_until_ms \
+			and _combat_commit_dir.dot(desired) > 0.0 \
+			and _combat_clear(_robot.global_position, _combat_commit_dir, exclude):
+		return _combat_commit_dir
 	if _combat_clear(_robot.global_position, desired, exclude):
+		_combat_commit_dir = Vector2.ZERO
 		return desired
 	for ang in COMBAT_REROUTE_DEG:
 		var cand: Vector2 = desired.rotated(deg_to_rad(ang))
 		if _combat_clear(_robot.global_position, cand, exclude):
+			_combat_commit_dir      = cand
+			_combat_commit_until_ms = now + int(COMBAT_COMMIT_SEC * 1000.0)
 			return cand
+	_combat_commit_dir = Vector2.ZERO
 	return Vector2.ZERO
 
 # Footprint-aware clearance: sweep the robot's OWN collision shape one lookahead
@@ -1283,21 +1425,43 @@ func _tick_combat_stuck(target: Node2D, dist: float, gap: float, is_player: bool
 	_combat_recover_ms = Time.get_ticks_msec()
 	_teleport_combat_near_player(target)
 
-# Find a valid recovery spot near the player and teleport there. Rejects house
-# interiors and the player's own tile; if nothing valid exists it does nothing
-# (normal recovery keeps running) rather than teleporting to an arbitrary spot.
+# Find a valid recovery/teleport spot near the player and teleport there. The
+# spot is never on the player, inside a house, on another LUA, or overlapping a
+# wall. If nothing valid exists it does nothing (normal recovery keeps running)
+# rather than teleporting to an arbitrary spot — EXCEPT for the long-distance
+# case, which must land somewhere (walking across the world would never arrive).
 func _teleport_combat_near_player(p: Node2D) -> void:
-	var world: Node = Global.world_node
-	if world == null or not is_instance_valid(world) or not world.has_method("find_open_spot_near"):
+	if _robot == null or not is_instance_valid(_robot):
 		return
-	# Try a few offset search centres around the player. find_open_spot_near is
-	# deterministic, so without this every stuck LUA would recover to the SAME
-	# tile and they would stack and flicker.
+	var spot: Vector2 = _find_recovery_spot(p)
+	if spot == Vector2.INF:
+		# Nothing open within the search radius: fall back to the plain offset so
+		# a long-distance catch-up still happens. Only reached when the spiral
+		# search found no free tile at all.
+		spot = p.global_position + Vector2(0.0, COMBAT_TELEPORT_GAP)
+	_robot.global_position = spot
+	_reset_combat_motion()
+
+# A safe landing spot near `p`: tries several offset search centres (so
+# simultaneous recoveries never pick the same tile) and validates each one
+# against the player's tile, houses, other LUAs, and the physics world.
+func _find_recovery_spot(p: Node2D) -> Vector2:
+	var world: Node = Global.world_node
+	var use_world: bool = world != null and is_instance_valid(world) \
+		and world.has_method("find_open_spot_near")
 	for attempt in range(COMBAT_RECOVER_TRIES):
 		var center: Vector2 = p.global_position
 		if attempt > 0:
 			center += Vector2.from_angle(TAU * float(attempt) / float(COMBAT_RECOVER_TRIES)) * TILE_SIZE
-		var spot: Vector2 = world.call("find_open_spot_near", center, COMBAT_RECOVER_RADIUS) as Vector2
+		# Prefer the world's own open-tile search — it also rejects water, trees,
+		# placed blocks and cave/dungeon entrances. It exists only on the
+		# overworld, so caves/dungeons fall through to the footprint sweep below
+		# (which is why a stuck combat LUA used to have NO recovery in a cave).
+		var spot: Vector2 = Vector2.INF
+		if use_world:
+			spot = world.call("find_open_spot_near", center, COMBAT_RECOVER_RADIUS) as Vector2
+		if spot == Vector2.INF:
+			spot = _find_free_spot(center, float(COMBAT_RECOVER_RADIUS) * TILE_SIZE)
 		if spot == Vector2.INF:
 			continue
 		if spot.distance_to(p.global_position) < 16.0:
@@ -1306,9 +1470,50 @@ func _teleport_combat_near_player(p: Node2D) -> void:
 			continue   # never teleport into a house
 		if _recovery_spot_taken(spot):
 			continue   # keep LUAs off each other's tile
-		_robot.global_position = spot
-		_reset_combat_motion()
-		return
+		return spot
+	return Vector2.INF
+
+# Generic footprint-based open-spot search that works in EVERY world: spiral
+# outward from `center` and return the first position where the robot's own
+# collision shape overlaps nothing solid. The overworld's find_open_spot_near is
+# overworld-only, so this is the only recovery available inside caves/dungeons.
+func _find_free_spot(center: Vector2, max_radius_px: float) -> Vector2:
+	if not is_inside_tree():
+		return Vector2.INF
+	var world_2d := get_world_2d()
+	if world_2d == null:
+		return Vector2.INF
+	var col := _robot_collision_shape()
+	if col == null or col.shape == null:
+		return center
+	var space := world_2d.direct_space_state
+	var exclude: Array = _steering_exclude()
+	# Ring by ring at half-tile steps, with 8+ sample directions per ring.
+	var steps: int = maxi(1, int(ceil(max_radius_px / (TILE_SIZE * 0.5))))
+	for r in range(1, steps + 1):
+		var radius: float = float(r) * TILE_SIZE * 0.5
+		var count: int = maxi(8, r * 8)
+		for i in range(count):
+			var cand: Vector2 = center + Vector2.from_angle(TAU * float(i) / float(count)) * radius
+			if _spot_is_free(space, col, cand, exclude):
+				return cand
+	return Vector2.INF
+
+# True when the robot's collision shape, placed at `robot_pos`, overlaps no
+# solid body on the obstacle layer.
+func _spot_is_free(space: PhysicsDirectSpaceState2D, col: CollisionShape2D,
+		robot_pos: Vector2, exclude: Array) -> bool:
+	if space == null or col == null or col.shape == null:
+		return false
+	var params := PhysicsShapeQueryParameters2D.new()
+	params.shape          = col.shape
+	# The shape sits at col.position inside the Robot node (no rotation), so the
+	# candidate transform is that offset applied to the candidate robot position.
+	params.transform      = Transform2D(0.0, robot_pos + col.position)
+	params.collision_mask = OBSTACLE_MASK
+	params.exclude        = exclude
+	params.margin         = 0.0
+	return space.intersect_shape(params, 1).is_empty()
 
 # True when another LuaNPC's robot already sits within COMBAT_MIN_SPACING of
 # `spot`, so two recoveries never stack on one tile.
@@ -1330,6 +1535,10 @@ func _reset_combat_motion() -> void:
 	_combat_speed     = 0.0
 	_combat_stuck_ms  = -1
 	_combat_last_dist = INF
+	# Drop any steering commit: after a teleport the old direction is meaningless
+	# and would carry the robot away from its new spot for up to COMBAT_COMMIT_SEC.
+	_combat_commit_dir      = Vector2.ZERO
+	_combat_commit_until_ms = 0
 
 # Enemies hurt the LUA on contact (cooldown per hit).
 func _tick_combat_contact(delta: float) -> void:
@@ -1818,13 +2027,16 @@ func _path_is_clear(from: Vector2, dir: Vector2, exclude_rids: Array) -> bool:
 
 # Picks the clear direction closest to desired_dir, sweeping wider angles
 # either side when the direct line is blocked. Vector2.ZERO means every
-# candidate direction is blocked (fully boxed in).
+# candidate direction is blocked (fully boxed in). Fellow LUAs are merged into
+# the exclusion list so a robot never routes around an ally as if it were a wall.
 func _pick_travel_dir(from: Vector2, desired_dir: Vector2, exclude_rids: Array) -> Vector2:
-	if _path_is_clear(from, desired_dir, exclude_rids):
+	var ex: Array = exclude_rids.duplicate()
+	ex.append_array(_steering_exclude())
+	if _path_is_clear(from, desired_dir, ex):
 		return desired_dir
 	for angle in REROUTE_ANGLES_DEG:
 		var candidate: Vector2 = desired_dir.rotated(deg_to_rad(angle))
-		if _path_is_clear(from, candidate, exclude_rids):
+		if _path_is_clear(from, candidate, ex):
 			return candidate
 	return Vector2.ZERO
 

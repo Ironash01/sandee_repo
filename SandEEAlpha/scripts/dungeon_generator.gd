@@ -8,11 +8,14 @@ class_name DungeonGenerator
 #   - a guaranteed knowledge room (holds the mission's KnowledgeAltar)
 #   - a guaranteed quiz room placed far from it (holds the QuizAltar — the
 #     quiz is always the LAST room in the walkable path)
+#   - a guaranteed ENTRANCE room at the grid edge nearest the knowledge room:
+#     the player always spawns INSIDE a real room, never in the 2-wide entrance
+#     corridor (see _make_entrance_room)
 #   - one room per extra altar + one room per chest, from the mission's
 #     altar_amount / chest_amount fields (nothing else drives room count)
-#   - straight L-shaped corridors connecting knowledge -> rooms -> quiz
-#   - an entrance corridor carved from the knowledge room to the nearest
-#     grid edge so the dungeon reads as having a mouth
+#   - straight L-shaped corridors connecting entrance -> knowledge -> rooms -> quiz
+#   - a short "mouth" corridor carved from the entrance room to the nearest
+#     grid edge so the dungeon reads as having an entrance
 #
 # The dungeon grid SIZE comes only from the mission's size_modifier dropdown
 # (64x64 / 128x128 / 256x256); with no mission (-1) one is rolled randomly.
@@ -55,6 +58,9 @@ const CORRIDOR_MIN_RUN: int = 6
 var grid:                Array     = []  # grid[x][y] = Tile enum value
 var knowledge_room:      Dictionary = {} # {"pos": Vector2i, "size": Vector2i}
 var quiz_room:           Dictionary = {}
+# The player's spawn room, always against the grid edge nearest the knowledge
+# room (see _make_entrance_room). player_spawn_pos is its center.
+var entrance_room:       Dictionary = {}
 var knowledge_altar_pos: Vector2i = Vector2i.ZERO
 var quiz_altar_pos:      Vector2i = Vector2i.ZERO
 var player_spawn_pos:    Vector2i = Vector2i.ZERO
@@ -129,12 +135,17 @@ func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_am
 		attempts += 1
 	_carve_room(quiz_room)
 
+	# The ENTRANCE room — where the player spawns. Always carved so the spawn is
+	# inside a real room, not in the 2-wide entrance corridor.
+	entrance_room = _make_entrance_room(rng)
+	_carve_room(entrance_room)
+
 	# Rooms beyond the two fixed ones: their COUNT depends only on the mission's
 	# altar_amount + chest_amount (see bonus_count). Keep placing until we hit
 	# that target, skipping ones that collide with an existing room or crowd the
 	# two fixed rooms. Attempts scale with the target so dense layouts (many
 	# chests on a 64x64 grid) still get a fair chance to fill up.
-	var all_rooms: Array = [knowledge_room, quiz_room]
+	var all_rooms: Array = [knowledge_room, quiz_room, entrance_room]
 	var bonus: Array = []
 	var placed := 0
 	var attempts_total: int = maxi(BONUS_ATTEMPTS, bonus_count * 30)
@@ -156,16 +167,20 @@ func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_am
 			% [placed, bonus_count, altar_amount, chest_amount, width, height])
 
 	# The quiz is always LAST — connect knowledge -> bonuses -> quiz so the
-	# player's path flows toward the quiz and never beyond it.
+	# player's path flows toward the quiz and never beyond it. The entrance room
+	# links to the knowledge room (the first room the player reaches).
 	var path_rooms: Array = [knowledge_room]
 	path_rooms.append_array(bonus)
 	path_rooms.append(quiz_room)
 	for i in range(path_rooms.size() - 1):
 		_carve_corridor(path_rooms[i], path_rooms[i + 1], rng)
+	_carve_corridor(entrance_room, knowledge_room, rng)
 
 	knowledge_altar_pos = _room_center(knowledge_room)
 	quiz_altar_pos      = _room_center(quiz_room)
-	_carve_entrance()
+	# The player spawns in the MIDDLE of the entrance room — never in a corridor.
+	player_spawn_pos    = _room_center(entrance_room)
+	_carve_mouth()
 	_pick_flare_positions(rng)
 	_pick_trap_positions(rng, all_rooms)
 	_pick_gap_positions()
@@ -325,6 +340,55 @@ func _make_room(rng: RandomNumberGenerator) -> Dictionary:
 	var y := rng.randi_range(2, height - h - 3)
 	return {"pos": Vector2i(x, y), "size": Vector2i(w, h)}
 
+# ── Entrance room (the player's spawn room) ────────────────────────
+# The dungeon ALWAYS opens into a real room: the player spawns in its center
+# instead of the 2-tile entrance corridor. It sits flush against the grid edge
+# nearest the knowledge room, so the walk from the entrance to the first altar
+# stays short, and is slid along that edge (and shrunk toward ROOM_MIN) until it
+# clears the knowledge room — the knowledge room can hug the same edge, and the
+# two must never overlap (a 1-tile wall gap is required by _overlaps_any).
+func _make_entrance_room(rng: RandomNumberGenerator) -> Dictionary:
+	var kc: Vector2i = _room_center(knowledge_room)
+	var edge: String = _nearest_edge(kc)
+	var w := rng.randi_range(ROOM_MIN, ROOM_MAX)
+	var h := rng.randi_range(ROOM_MIN, ROOM_MAX)
+	# Slide along the edge either way; shrink toward ROOM_MIN if a long edge is
+	# somehow still crowded.
+	for shrink in range(0, ROOM_MAX - ROOM_MIN + 1):
+		var sw: int = maxi(ROOM_MIN, w - shrink)
+		var sh: int = maxi(ROOM_MIN, h - shrink)
+		for slide in range(0, maxi(width, height)):
+			for dir_i in [1, -1]:
+				var room: Dictionary = _entrance_rect(edge, sw, sh, kc, slide * dir_i)
+				if not _overlaps_any(room, [knowledge_room]):
+					return room
+	return _entrance_rect(edge, ROOM_MIN, ROOM_MIN, kc, 0)
+
+# A room rect of `w`x`h` flush against `edge`, centered on the knowledge room's
+# cross-axis coordinate and nudged `offset` tiles along the edge, clamped to the
+# grid's 2-tile margin (so the border walls at index 0 / width-1 stay intact).
+func _entrance_rect(edge: String, w: int, h: int, kc: Vector2i, offset: int) -> Dictionary:
+	var pos := Vector2i.ZERO
+	match edge:
+		"left":  pos = Vector2i(2, kc.y - h / 2 + offset)
+		"right": pos = Vector2i(width - w - 2, kc.y - h / 2 + offset)
+		"up":    pos = Vector2i(kc.x - w / 2 + offset, 2)
+		_:       pos = Vector2i(kc.x - w / 2 + offset, height - h - 2)
+	pos.x = clampi(pos.x, 2, width  - w - 2)
+	pos.y = clampi(pos.y, 2, height - h - 2)
+	return {"pos": pos, "size": Vector2i(w, h)}
+
+# The grid edge closest to `center` — "left" / "right" / "up" / "down".
+func _nearest_edge(center: Vector2i) -> String:
+	var best := "left"
+	var best_dist := maxi(width, height)
+	for edge in ["left", "right", "up", "down"]:
+		var d := _edge_dist(center, edge)
+		if d < best_dist:
+			best_dist = d
+			best = edge
+	return best
+
 func _carve_room(room: Dictionary) -> void:
 	var p: Vector2i = room["pos"]
 	var s: Vector2i = room["size"]
@@ -427,30 +491,19 @@ func _carve_floor_block(c: Vector2i) -> void:
 			if p.x >= 0 and p.y >= 0 and p.x < width and p.y < height:
 				grid[p.x][p.y] = Tile.FLOOR
 
-# Carve a straight corridor from the knowledge room to the nearest grid edge
-# — a visual "mouth" so the dungeon reads as having an entrance. The border
-# wall itself is left intact.
-func _carve_entrance() -> void:
-	var center: Vector2i = _room_center(knowledge_room)
-	var best_edge := ""
-	var best_dist := maxi(width, height)
-	for edge in ["left", "right", "up", "down"]:
-		var d := _edge_dist(center, edge)
-		if d < best_dist:
-			best_dist = d
-			best_edge = edge
+# Carve a short straight "mouth" corridor from the entrance room out toward the
+# nearest grid edge so the dungeon still reads as having an entrance. The border
+# wall itself is left intact. The player appears in the ENTRANCE ROOM (see
+# player_spawn_pos), just inside this mouth.
+func _carve_mouth() -> void:
+	var center: Vector2i = _room_center(entrance_room)
+	var best_edge: String = _nearest_edge(center)
+	var best_dist: int = _edge_dist(center, best_edge)
 	var step := _edge_step(best_edge)
 	# range stops one short of the wall cap: each _carve_floor_block expands
 	# +x/+y, so the final block would otherwise eat into the border wall.
 	for i in range(1, best_dist - 1):
 		_carve_floor_block(center + step * i)
-	# The player walks in through the overworld door, so they appear at the
-	# MOUTH — the far end of this corridor — not at the knowledge altar. Spawn
-	# a couple of tiles short of the border so the 33px-tall collision box has
-	# floor all around it (same idea as CaveWorld's entrance vestibule) while
-	# still reading as "right at the entrance". Rooms are never closer than 5
-	# tiles to an edge, so best_dist - 4 is always a carved corridor tile.
-	player_spawn_pos = center + step * maxi(1, best_dist - 4)
 
 func _edge_dist(center: Vector2i, edge: String) -> int:
 	match edge:
