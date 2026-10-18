@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/smiling_fishes.png" id="2_tex"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_fish"]
+atlas = ExtResource("2_tex")
+region = Rect2(64, 0, 32, 32)
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Glep Glorp"
+description = "A small green fish that only speaks in gibberish - nobody knows what it's saying. Cook it in a furnace."
+item_type = "material"
+icon = SubResource("AtlasTexture_fish")

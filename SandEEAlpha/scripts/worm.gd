@@ -624,7 +624,11 @@ func _record_path() -> void:
 
 func _update_segments() -> void:
 	for i in range(_segment_nodes.size()):
-		var seg: Sprite2D = _segment_nodes[i]
+		# Untyped + validity: a freed segment in a typed Sprite2D var throws.
+		var seg_ref: Variant = _segment_nodes[i]
+		if not is_instance_valid(seg_ref):
+			continue
+		var seg := seg_ref as Sprite2D
 		var target_distance: float = _path_distance - SEGMENT_SPACING * (i + 1)
 		var result := _sample_path(target_distance)
 		seg.global_position = result.pos
@@ -657,12 +661,31 @@ func _sample_path(target_dist: float) -> Dictionary:
 	var last := _path_positions.size() - 1
 	return {"pos": _path_positions[last], "dir": _head_sprite.rotation}
 
+# ── Provoked aggro (combat LUA) ───────────────────────────────────
+# A hostile mob that a combat LUA damages targets the LUA instead of the player,
+# until the LUA dies or gets this far away.
+const PROVOKE_LEASH_PX: float = 420.0
+var _provoked_by: Node2D = null
+
+func provoke(node: Node2D) -> void:
+	_provoked_by = node
+
+func combat_target() -> Node2D:
+	if _provoked_by != null and is_instance_valid(_provoked_by) and _provoked_by.is_inside_tree():
+		if (_provoked_by as Node2D).global_position.distance_to(global_position) <= PROVOKE_LEASH_PX:
+			return _provoked_by
+	_provoked_by = null
+	return Global.player_node as Node2D
+
 func _try_attack_player(delta: float) -> void:
 	if COMBAT_DATA.damage <= 1.0:
 		return
 	_attack_cooldown = maxf(0.0, _attack_cooldown - delta)
 	var p := Global.player_node as Node2D
 	if p == null or _attack_cooldown > 0.0:
+		return
+	# Provoked by a combat LUA → the LUA is the target, not the player.
+	if combat_target() != p:
 		return
 	if global_position.distance_to(p.global_position) > ATTACK_RANGE:
 		return
@@ -815,6 +838,7 @@ func _find_nearest_open_area() -> Vector2:
 func take_hit(damage: float, source_pos: Vector2) -> void:
 	if damage <= 0.0:
 		return
+	damage = COMBAT_DATA.damage_taken(damage)
 	_mob_health = maxf(0.0, _mob_health - damage)
 	var away: Vector2 = global_position - source_pos
 	if away.length_squared() > 0.001:

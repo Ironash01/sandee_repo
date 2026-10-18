@@ -51,3 +51,15 @@ enum Behavior { HOSTILE, PASSIVE }
 # ── Spawning — legacy per-chunk amount (kept for reference/tuning) ────
 @export var min_spawn: int = 1
 @export var max_spawn: int = 3
+
+# ── Daytime damage reduction ──────────────────────────────────────────
+## Enemies that spawn during the day (sandworms, wolves, pixies) are daytime
+## threats and shrug off part of every hit. Applied in each mob's take_hit()
+## through damage_taken().
+const DAY_DAMAGE_REDUCTION: float = 0.6
+
+## Damage actually dealt to this mob after the daytime reduction.
+func damage_taken(amount: float) -> float:
+	if spawn_during_day:
+		return amount * (1.0 - DAY_DAMAGE_REDUCTION)
+	return amount

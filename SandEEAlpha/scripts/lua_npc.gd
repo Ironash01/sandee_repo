@@ -26,6 +26,8 @@ const CHOP_DELAY:         float = 0.25
 const PICKUP_DELAY:       float = 0.4
 const NPC_SPEED:          float = 90.0
 const SHADOW_TEXTURE:     Texture2D = preload("res://sprites/shadow/shadow_base.png")
+const MELLOW_BURST_SCRIPT: GDScript = preload("res://scripts/mellow_burst.gd")
+const ATTACK_RING_SCRIPT:  GDScript = preload("res://scripts/attack_ring.gd")
 
 # ── Y-sort (robot visual) ────────────────────────────────────────
 # The robot sprite is CENTERED on the Robot node, so the node origin sits at
@@ -55,11 +57,20 @@ var _shadow_scale: Vector2 = Vector2(0.7, 0.32)
 const TEX_FRONT: Texture2D = preload("res://sprites/char/lua/front.png")
 const TEX_BACK:  Texture2D = preload("res://sprites/char/lua/back.png")
 const TEX_SIDE:  Texture2D = preload("res://sprites/char/lua/side.png")
+# Combat-mode sprites (see sprites/char/lua_combat/).
+const TEX_COMBAT_FRONT: Texture2D = preload("res://sprites/char/lua_combat/front.png")
+const TEX_COMBAT_BACK:  Texture2D = preload("res://sprites/char/lua_combat/back.png")
+const TEX_COMBAT_SIDE:  Texture2D = preload("res://sprites/char/lua_combat/side.png")
 const LUA_OUTLINE_SHADER: Shader = preload("res://shaders/lua_outline.gdshader")
 const DIR_TEX: Dictionary = {
 	"north": TEX_BACK,  "north-east": TEX_BACK,  "north-west": TEX_BACK,
 	"south": TEX_FRONT, "south-east": TEX_FRONT, "south-west": TEX_FRONT,
 	"east":  TEX_SIDE,  "west":       TEX_SIDE,
+}
+const DIR_TEX_COMBAT: Dictionary = {
+	"north": TEX_COMBAT_BACK,  "north-east": TEX_COMBAT_BACK,  "north-west": TEX_COMBAT_BACK,
+	"south": TEX_COMBAT_FRONT, "south-east": TEX_COMBAT_FRONT, "south-west": TEX_COMBAT_FRONT,
+	"east":  TEX_COMBAT_SIDE,  "west":       TEX_COMBAT_SIDE,
 }
 
 # ── Obstacle avoidance / stuck detection ─────────────────────────
@@ -108,32 +119,135 @@ var _npc_inventory:   Array   = []       # [{data: ItemData, quantity: int}, ...
 # into a slot (LuaEditorUI) or by the robot itself — chop/collect adds wood,
 # withdraw(name, n) pulls from the nearest chest.
 const BUILD_SLOTS: int = 3
+# Highest auto-assigned LUA index. Placed LUAs are labelled "LUA 0".."LUA 30";
+# placing more than MAX_LUA_INDEX+1 in the world is refused (world.gd).
+const MAX_LUA_INDEX: int = 30
 var _build_palette: Array = []           # [ {data, quantity} | null, x3 ]
+# Tool slot: the single item the robot SWINGS for its tasks (and its weapon in
+# combat mode). {} when empty, else {data: ItemData, quantity: int}.
+var _tool: Dictionary = {}
+# The LUA's saved Lua source (persisted with the world so a reload keeps it).
+var program_code: String = ""
 # rename(name) — custom name shown above the robot.
 var _custom_name: String = ""
 var _name_label:  Label  = null
+# Auto-assigned index (0..MAX_LUA_INDEX) for the default "LUA N" label.
+var _name_index:  int    = -1
+# Current action shown in the LUA status HUD ("Mining Stone", "Idle", …).
+var _status:      String = "Idle"
+var _status_ms:   int    = 0
+
+# ── Combat mode ───────────────────────────────────────────────────
+# combat_mode(true) turns the LUA into a COMBAT LUA: it swaps to the combat
+# sprite, abandons its station to FOLLOW the player, attacks whatever the player
+# attacks using its TOOL slot, has HP (enemies can hurt it), and can be
+# terminated (remote, or STOP on its station). A terminated combat LUA is gone
+# for good. It cannot run code while in combat.
+const COMBAT_MAX_HP:        float = 400.0
+const COMBAT_FOLLOW_GAP:    float = 44.0    # keep this far from the player
+const COMBAT_CONTACT_PX:    float = 26.0    # a mob this close to the LUA hurts it
+const COMBAT_CONTACT_DMG:   float = 8.0
+const COMBAT_CONTACT_CD:    float = 1.0
+const COMBAT_BASE_MULT:     float = 0.75    # retain 75% of the tool's damage
+const COMBAT_STACK_PENALTY: float = 0.02    # -2% per extra active combat LUA
+# A combat LUA swings a wide area CENTRED ON ITSELF (not a single mob): every
+# mob within this radius takes the hit. 2.5 tiles = a 5x5 tile box (raised from
+# the old 1.5-tile / 3x3 box by one tile).
+const COMBAT_AOE_RADIUS:    float = 80.0
+# The station beacon pulses this colour while its LUA is in combat.
+const COMBAT_BEACON_TINT:   Color = Color(1.00, 0.25, 0.25, 1.00)
+# Teleport the follower to the player when they jump a long way (death respawn,
+# a cave/dungeon swap, the stuck-teleport) instead of walking forever.
+const COMBAT_TELEPORT_DIST: float = 700.0
+const COMBAT_TELEPORT_GAP:  float = 40.0
+
+# ── Pursuit tuning ────────────────────────────────────────────────
+# Dynamic speed: MIN when boxed in / near the player, NORMAL for a steady
+# chase, SPRINT to run down a sprinting player. Smoothed by ACCEL/DECEL so the
+# speed never snaps when the distance wobbles.
+const COMBAT_SPEED_MIN:     float = 75.0
+const COMBAT_SPEED_NORMAL:  float = 125.0
+const COMBAT_SPEED_SPRINT:  float = 260.0   # > the player's sprint (144)
+const COMBAT_ACCEL:         float = 650.0   # px/s² toward a higher target
+const COMBAT_DECEL:         float = 950.0   # px/s² toward a lower target
+const COMBAT_SPRINT_DIST:   float = 200.0   # sprint beyond this distance
+# Footprint-aware steering: sweep the robot's OWN collision shape this far
+# ahead, and reroute through these angles (deg) when the forward path is
+# blocked. Sweeping the shape (not a point ray) is what lets it fit narrow
+# corridors and refuse diagonal corner cuts.
+const COMBAT_LOOKAHEAD:     float = 26.0
+const COMBAT_REROUTE_DEG: Array = [0.0, 25.0, -25.0, 50.0, -50.0, 75.0, -75.0, 90.0, -90.0, 135.0, -135.0, 180.0]
+# Stuck recovery (last resort — a rare teleport, never the default pursuit).
+const COMBAT_STUCK_SEC:      float = 3.0
+const COMBAT_STUCK_PROGRESS: float = 8.0    # px of closing distance that counts
+const COMBAT_RECOVER_CD_SEC: float = 6.0
+const COMBAT_RECOVER_RADIUS: int   = 5      # tiles searched around the player
+# Try this many offset search centres so simultaneous recoveries don't all land
+# on the same tile (which made the robots stack and flicker).
+const COMBAT_RECOVER_TRIES:  int   = 8
+# Keep recovered LUAs at least this far apart.
+const COMBAT_MIN_SPACING:    float = 30.0
+
+# ── Hostile-mob hunting ───────────────────────────────────────────
+# Opportunistic: a combat LUA hunts a nearby HOSTILE mob, then resumes player
+# pursuit. The mob must be near BOTH the LUA and the player, so hunting never
+# drags it far from the player it escorts.
+const COMBAT_HUNT_RADIUS:   float = 220.0   # sight radius from the LUA
+const COMBAT_HUNT_LEASH:    float = 240.0   # ... and this close to the player
+const COMBAT_HUNT_DROP:     float = 380.0   # give up a hunt target beyond this
+const COMBAT_HUNT_RESCAN:   float = 0.4     # s between hostile scans
+const COMBAT_ENGAGE_GAP:    float = 40.0    # stand-off distance for a mob
+const COMBAT_ATTACK_RANGE:  float = 56.0    # attack a mob within this
+const COMBAT_ATTACK_CD:     float = 1.0     # s between autonomous attacks
+var _combat:        bool  = false
+var _terminated:    bool  = false
+var _combat_hp:     float = 0.0
+var _combat_hit_cd: float = 0.0
+# Pursuit state.
+var _combat_speed:      float = 0.0
+var _combat_stuck_ms:   int   = -1
+var _combat_last_dist:  float = INF
+var _combat_recover_ms: int   = -1000000
+var _robot_col:         CollisionShape2D = null
+# Hostile-mob hunting.
+var _hunt_target:   Node2D = null
+var _hunt_scan_ms:  int    = -1000000
+var _combat_atk_cd: float  = 0.0
+var _beacon_pulse:  bool  = false
+var _pulse_t:       float = 0.0
 var _selected_slot: int   = 0            # 0-based; the slot place_item uses
 
 # ── Node refs ─────────────────────────────────────────────────────
 var _lua_state:    Node    = null
 var _ui:           Control = null
+# The world this station was placed in (normally the overworld). A combat LUA
+# hides its station whenever another world is active.
+var _home_world:   Node    = null
 
 @onready var _robot:        CharacterBody2D  = $Robot
 @onready var _robot_sprite: AnimatedSprite2D = $Robot/RobotSprite
 @onready var _click_area:   Area2D           = $ClickArea
 @onready var _beacon:       Sprite2D         = $BeaconSprite
+@onready var _station_col:  CollisionShape2D = $StationBody/StationCol
+# Default robot offset inside the station (see LuaNPC.tscn).
+const ROBOT_HOME_OFFSET: Vector2 = Vector2(0.0, 36.0)
 
 # Shared across every Lua station robot — built once instead of per-instance
 # when multiple stations are placed.
 static var _shared_frames: SpriteFrames = null
+static var _shared_combat_frames: SpriteFrames = null
 
 # ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	add_to_group("LuaNPC")
 	_build_palette.resize(BUILD_SLOTS)
+	_home_world = get_parent()
 
 	if _shared_frames == null:
-		_shared_frames = _build_frames()
+		_shared_frames = _build_frames(false)
+	if _shared_combat_frames == null:
+		_shared_combat_frames = _build_frames(true)
 	_robot_sprite.sprite_frames = _shared_frames
 	# Glowing outline (a floating entity reads better lit up). Uses the sprite's
 	# own texture, so it tracks whichever direction frame is showing.
@@ -191,6 +305,7 @@ func _ready() -> void:
 	# mine(name, radius) + rename(name).
 	_lua_state.connect("signal_mine",        _on_lua_mine)
 	_lua_state.connect("signal_rename",      _on_lua_rename)
+	_lua_state.connect("signal_combat_mode", _on_lua_combat_mode)
 
 	# Persistent name label above the robot (set by rename()).
 	_name_label = Label.new()
@@ -213,6 +328,10 @@ func _ready() -> void:
 	_ui = ui_scene.instantiate() as Control
 	canvas.add_child(_ui)
 	_ui.visible = false
+
+	# Default "LUA N" label (lowest unused index). Done after the label + group
+	# exist so the scan sees the other placed LUAs.
+	_assign_default_name()
 
 func _on_close_all_ui() -> void:
 	if _ui != null and _ui.visible:
@@ -242,6 +361,14 @@ func _physics_process(delta: float) -> void:
 	# recomputed too because the node is positioned after _ready.
 	_robot.z_index  = int((_robot.global_position.y + ROBOT_FEET_OFFSET + YSORT_TIEBREAK) / TILE_SIZE)
 	_beacon.z_index = int(global_position.y / TILE_SIZE)
+	_tick_beacon_pulse(delta)
+	# A combat LUA follows the player into caves/dungeons; its station belongs to
+	# the overworld, so hide it (and its collision) while another world is live.
+	if _combat:
+		_set_station_visible(_home_world_active())
+	# Combat mode drives the robot itself (follow the player + contact damage).
+	if _combat:
+		_combat_process(delta)
 	if _robot_vel != Vector2.ZERO:
 		_robot.velocity = _robot_vel
 		_robot.move_and_slide()
@@ -288,8 +415,11 @@ func _on_body_entered(body: Node) -> void:
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = false
-		if _ui != null and _ui.visible:
-			_ui.visible = false
+		# Closing the editor must RELEASE the UI pause too. Just hiding it (the
+		# old behaviour) left the tree paused with no visible UI — which reads
+		# as the game freezing. It fired when a combat LUA reparented itself and
+		# its click area re-detected the player.
+		_on_close_all_ui()
 
 # ── Lua signal handlers ───────────────────────────────────────────
 func _on_lua_move(vec: Vector2) -> void:
@@ -322,9 +452,7 @@ func _on_lua_interact() -> void:
 # The robot has no weapon-swing art, so an attack reads as a magic slash aimed
 # the way it last faced (see magic_swing.gd).
 func _on_lua_attack() -> void:
-	var world: Node = Global.world_node
-	if world != null:
-		MagicSwing.spawn(world, global_position + Vector2(0.0, -10.0), _facing_vec(), 1.0, 5)
+	_swing_at(Vector2.INF, 1.0, 6)
 
 # _last_dir (a DIRS name) -> a unit vector.
 func _facing_vec() -> Vector2:
@@ -332,6 +460,71 @@ func _facing_vec() -> Vector2:
 		if d["name"] == _last_dir:
 			return d["vec"] as Vector2
 	return Vector2(0.0, 1.0)
+
+# ── Interaction FX ────────────────────────────────────────────────
+# Every world interaction plays the same "LUA is really doing something" beat:
+# a violet arcane swing + mote burst AROUND THE ROBOT (aimed at the target when
+# one is given), then a short pause so the action reads as a real interaction
+# instead of an instant, silent state change. `_swing_at` is the fx-only form
+# (used when no pause is wanted); `_interact` awaits the swing window.
+const INTERACT_SWING_SEC: float = 0.22
+# Overworld actions (chop / mine / place / drop / deposit) are paced at this
+# interval; ITEM interactions (crafting station, furnace, …) at the longer one.
+const MODIFY_COOLDOWN_SEC: float = 1.5
+const ITEM_COOLDOWN_SEC: float = 3.0
+var _last_modify_ms: int = -1000000
+
+func _swing_at(target_pos: Vector2 = Vector2.INF, size: float = 1.0, motes: int = 6) -> void:
+	var world: Node = Global.world_node
+	if world == null or not is_instance_valid(world):
+		return
+	var dir: Vector2 = _facing_vec()
+	if target_pos != Vector2.INF:
+		var d: Vector2 = target_pos - _robot.global_position
+		if d.length_squared() > 0.0001:
+			dir = d.normalized()
+	MagicSwing.spawn(world, _robot.global_position + Vector2(0.0, -10.0), dir, size, motes, _tool_icon())
+
+func _interact(target_pos: Vector2 = Vector2.INF, size: float = 1.0, motes: int = 6,
+		item_interaction: bool = false) -> void:
+	await _wait_modify_cooldown(item_interaction)
+	_swing_at(target_pos, size, motes)
+	if is_inside_tree():
+		await get_tree().create_timer(INTERACT_SWING_SEC).timeout
+
+# Rate-limit: block until the cooldown has passed since the last world
+# modification — 3s for ITEM interactions (station etc.), 1.5s for overworld
+# actions.
+func _wait_modify_cooldown(item_interaction: bool = false) -> void:
+	var cd: float = ITEM_COOLDOWN_SEC if item_interaction else MODIFY_COOLDOWN_SEC
+	var elapsed: float = float(Time.get_ticks_msec() - _last_modify_ms) / 1000.0
+	if elapsed < cd:
+		if not is_inside_tree():
+			return
+		await get_tree().create_timer(cd - elapsed).timeout
+	_last_modify_ms = Time.get_ticks_msec()
+
+# The icon of the equipped tool (shown sweeping during a swing), or null.
+func _tool_icon() -> Texture2D:
+	if _tool.is_empty():
+		return null
+	var d = _tool.get("data")
+	if d is ItemData:
+		return (d as ItemData).icon
+	return null
+
+# Every job ends here: walk back to the station FIRST, then go idle, so a LUA is
+# never left idling away from its station.
+func _return_and_idle() -> void:
+	if is_inside_tree() and not _stop_requested and _robot.position.length() > 8.0:
+		_set_status("Returning to station")
+		await _walk_to_spawn()
+	_stop_requested = false
+	_is_working     = false
+	_set_status("Idle")
+	# A finished job may have queued station work behind it — kick that now.
+	if not _station_queue.is_empty():
+		_run_station_jobs.call_deferred()
 
 func _on_lua_print(_t: String) -> void: pass
 
@@ -376,6 +569,13 @@ func _place_from_palette(world: Node, cell: Vector2i) -> bool:
 		return false
 	if world.has_method("can_place_at") and not world.call("can_place_at", cell):
 		_build_warn("Cannot place there — the tile is blocked.")
+		return false
+	# Interaction beat: the swing plays, THEN the block appears (not instant).
+	var cell_pos: Vector2 = Vector2.ZERO
+	if world.has_method("cell_to_world"):
+		cell_pos = world.call("cell_to_world", cell)
+	await _interact(cell_pos, 1.0, 5)
+	if not is_instance_valid(world):
 		return false
 	var obj: Node = null
 	if world.has_method("place_block_at"):
@@ -427,7 +627,7 @@ func _withdraw_from_chest(name: String, quantity: int) -> void:
 			var taken: int = _take_from_chest(chest, data, quantity)
 			if taken > 0:
 				_npc_add_to_palette(data, taken)
-	_abort_work()
+	await _return_and_idle()
 
 # Removes up to `quantity` of `data` from a chest and returns how many were
 # actually removed, via the chest's own take_item() (no reaching into its slots).
@@ -474,6 +674,18 @@ func set_build_slot(index: int, data: ItemData, quantity: int) -> void:
 
 func get_build_palette() -> Array:
 	return _build_palette
+
+# ── Tool slot ─────────────────────────────────────────────────────
+# The single item the robot swings for its tasks (and its combat weapon).
+func set_tool(data: ItemData, quantity: int = 1) -> void:
+	_tool = {} if data == null else {"data": data, "quantity": maxi(quantity, 1)}
+	build_palette_changed.emit()
+
+func get_tool() -> Dictionary:
+	return _tool
+
+func has_tool() -> bool:
+	return not _tool.is_empty()
 
 
 # ── Crafting Station bridge ───────────────────────────────────────
@@ -531,9 +743,642 @@ func _on_lua_mine(name: String, radius: int) -> void:
 
 func _on_lua_rename(new_name: String) -> void:
 	_custom_name = new_name.strip_edges()
-	if _name_label != null:
-		_name_label.text    = _custom_name
-		_name_label.visible = not _custom_name.is_empty()
+	_update_name_label()
+
+# Public rename entry point (used by the editor UI's rename field). The new name
+# shows above the robot AND in the LUA status HUD.
+func rename_to(new_name: String) -> void:
+	_on_lua_rename(new_name)
+
+func get_display_name() -> String:
+	if not _custom_name.is_empty():
+		return _custom_name
+	if _name_index >= 0:
+		return "LUA %d" % _name_index
+	return "LUA"
+
+func _update_name_label() -> void:
+	if _name_label == null:
+		return
+	_name_label.text    = get_display_name()
+	_name_label.visible = true
+
+# Lowest unused index 0..MAX_LUA_INDEX across the placed LUAs, so the default
+# "LUA N" labels stay stable and gaps are reused after a Lua is destroyed.
+func _assign_default_name() -> void:
+	var used: Dictionary = {}
+	for n in get_tree().get_nodes_in_group("LuaNPC"):
+		if n == self or not is_instance_valid(n):
+			continue
+		var idx: int = int(n.get("_name_index"))
+		if idx >= 0:
+			used[idx] = true
+	var idx: int = 0
+	while used.has(idx) and idx <= MAX_LUA_INDEX:
+		idx += 1
+	_name_index = mini(idx, MAX_LUA_INDEX)
+	_update_name_label()
+
+# ── Status (shown in the LUA status HUD) ──────────────────────────
+func _set_status(text: String) -> void:
+	_status    = text
+	_status_ms = Time.get_ticks_msec()
+
+func get_status() -> String:
+	return _status
+
+func get_status_ms() -> int:
+	return _status_ms
+
+# ── Combat mode ───────────────────────────────────────────────────
+func is_combat() -> bool:
+	return _combat
+
+func is_terminated() -> bool:
+	return _terminated
+
+func get_combat_hp() -> float:
+	return _combat_hp
+
+func get_combat_max_hp() -> float:
+	return COMBAT_MAX_HP
+
+# combat_mode(on) from Lua. Combat is PERMANENT: combat_mode(false) is ignored —
+# a combat LUA can only be terminated, never reverted to a normal LUA.
+func _on_lua_combat_mode(on: bool) -> void:
+	if _terminated or not on:
+		return
+	_enter_combat()
+
+# `silent` skips the mellow poof + chat line (used when restoring a save).
+func _enter_combat(silent: bool = false) -> void:
+	if _combat:
+		return
+	# A combat LUA abandons its station: stop any job and follow the player.
+	_stop_requested = true
+	_combat        = true
+	_combat_hp     = COMBAT_MAX_HP
+	_combat_hit_cd = 0.0
+	_combat_atk_cd = 0.0
+	_hunt_target   = null
+	_reset_combat_motion()
+	_apply_combat_frames(true)
+	_connect_player_swing()
+	_set_status("Combat")
+	# Station beacon pulses red so this station reads as a combat LUA's home.
+	_set_beacon_combat(true)
+	# Reparent to Game (which survives world swaps) so the LUA can follow the
+	# player into caves/dungeons.
+	_attach_to_game()
+	if not silent:
+		_spawn_mellow(_robot.global_position)
+		_spawn_mellow(global_position)
+		Global.log_chat("%s entered combat mode." % get_display_name())
+
+func _apply_combat_frames(combat: bool) -> void:
+	if _robot_sprite == null:
+		return
+	_robot_sprite.sprite_frames = _shared_combat_frames if combat else _shared_frames
+	_play_idle(_last_dir)
+
+func _connect_player_swing() -> void:
+	var p := Global.player_node
+	if p != null and is_instance_valid(p) and p.has_signal("swing_performed") \
+			and not p.is_connected("swing_performed", _on_player_swung):
+		p.connect("swing_performed", _on_player_swung)
+
+func _disconnect_player_swing() -> void:
+	var p := Global.player_node
+	if p != null and is_instance_valid(p) and p.has_signal("swing_performed") \
+			and p.is_connected("swing_performed", _on_player_swung):
+		p.disconnect("swing_performed", _on_player_swung)
+
+# The player swung — the combat LUA swings too (see _combat_attack).
+func _on_player_swung() -> void:
+	if not _combat or _terminated or not is_inside_tree():
+		return
+	_combat_attack(_robot.global_position)
+
+# The circular AoE indicator (drawn, no art), under the world so it survives.
+func _spawn_attack_ring(center: Vector2) -> void:
+	var world: Node = Global.world_node
+	if world == null or not is_instance_valid(world):
+		return
+	ATTACK_RING_SCRIPT.spawn(world, center, COMBAT_AOE_RADIUS)
+
+# A mellow puff burst spawned under the world so it outlives this node (used on
+# entering combat and on termination).
+func _spawn_mellow(pos: Vector2) -> void:
+	var parent: Node = get_parent()
+	if parent == null or not is_instance_valid(parent):
+		return
+	var b: Node2D = MELLOW_BURST_SCRIPT.new() as Node2D
+	if b == null:
+		return
+	parent.add_child(b)
+	b.global_position = pos
+
+# Station combat indicator: tint + pulse the beacon red while in combat.
+func _set_beacon_combat(on: bool) -> void:
+	_beacon_pulse = on
+	_pulse_t      = 0.0
+	if _beacon != null and is_instance_valid(_beacon):
+		_beacon.modulate = COMBAT_BEACON_TINT if on else Color.WHITE
+
+func _tick_beacon_pulse(delta: float) -> void:
+	if not _beacon_pulse or _beacon == null or not is_instance_valid(_beacon):
+		return
+	_pulse_t += delta
+	var k: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
+	_beacon.modulate = Color(1.0, 0.22 + 0.5 * k, 0.22 + 0.5 * k, 1.0)
+
+# ── World-follow (caves / dungeons) ───────────────────────────────
+# A combat LUA reparents itself under Game, which is never swapped out when the
+# player enters a cave/dungeon — so the robot keeps processing and can follow
+# the player anywhere. On exit it returns to its home world.
+func _home_world_active() -> bool:
+	return _home_world != null and is_instance_valid(_home_world) and Global.world_node == _home_world
+
+func _attach_to_game() -> void:
+	var game: Node = Global.game_node
+	if game == null or not is_instance_valid(game) or get_parent() == game:
+		return
+	var gp: Vector2 = global_position
+	var par: Node = get_parent()
+	if par != null:
+		par.remove_child(self)
+	game.add_child(self)
+	global_position = gp
+
+# Show/hide the STATION (beacon + collision + click area). A combat LUA hides
+# its station whenever its home world (the overworld) isn't the live one, so the
+# station never appears inside a cave/dungeon.
+func _set_station_visible(v: bool) -> void:
+	if _beacon != null and is_instance_valid(_beacon):
+		_beacon.visible = v
+	if _station_col != null and is_instance_valid(_station_col):
+		_station_col.disabled = not v
+	if _click_area != null and is_instance_valid(_click_area):
+		_click_area.visible = v
+		_click_area.input_pickable = v
+
+# ── Persistence ───────────────────────────────────────────────────
+# Saved with the world's placed blocks (world.gd) so a reload keeps the LUA's
+# name, index, combat state, tool, build palette, general inventory and program.
+func get_lua_save_data() -> Dictionary:
+	var palette: Array = []
+	for slot in _build_palette:
+		palette.append(Global.serialize_item(slot))
+	var inv: Array = []
+	for slot in _npc_inventory:
+		inv.append(Global.serialize_item(slot))
+	return {
+		"name":       _custom_name,
+		"name_index": _name_index,
+		"combat":     _combat,
+		"combat_hp":  _combat_hp,
+		"tool":       Global.serialize_item(_tool if not _tool.is_empty() else null),
+		"palette":    palette,
+		"inventory":  inv,
+		"code":       program_code,
+	}
+
+func set_lua_save_data(data: Dictionary) -> void:
+	# Name + index (overrides the auto-assigned "LUA N").
+	_custom_name = str(data.get("name", _custom_name))
+	var ni: int = int(data.get("name_index", _name_index))
+	if ni >= 0:
+		_name_index = mini(ni, MAX_LUA_INDEX)
+	_update_name_label()
+	# Tool.
+	var tool_slot: Variant = Global.deserialize_item(data.get("tool", null))
+	_tool = tool_slot if tool_slot is Dictionary else {}
+	# Build palette (3 slots).
+	var palette: Variant = data.get("palette", null)
+	if palette is Array:
+		for i in range(_build_palette.size()):
+			_build_palette[i] = Global.deserialize_item((palette as Array)[i]) \
+				if i < (palette as Array).size() else null
+	# General inventory.
+	var inv: Variant = data.get("inventory", null)
+	if inv is Array:
+		_npc_inventory.clear()
+		for entry in (inv as Array):
+			var slot: Variant = Global.deserialize_item(entry)
+			if slot != null:
+				_npc_inventory.append(slot)
+	program_code = str(data.get("code", ""))
+	build_palette_changed.emit()
+	# Combat is IRREVERSIBLE: a saved combat LUA comes back as a combat LUA.
+	if bool(data.get("combat", false)) and not _combat:
+		_enter_combat(true)
+		_combat_hp = clampf(float(data.get("combat_hp", COMBAT_MAX_HP)), 1.0, COMBAT_MAX_HP)
+
+# Damage this combat LUA deals: 75% of its tool's damage, -2% per extra active
+# combat LUA.
+func combat_damage() -> float:
+	var base: float = 1.0
+	if not _tool.is_empty():
+		var d = _tool.get("data")
+		if d is ItemData:
+			var id := d as ItemData
+			if id.is_sword:
+				base = float(id.sword_damage())
+			elif id.axe_level > 0 or id.pickaxe_level > 0:
+				base = 2.0
+	var n: int = _active_combat_count()
+	var mult: float = COMBAT_BASE_MULT * maxf(0.0, 1.0 - COMBAT_STACK_PENALTY * float(maxi(n - 1, 0)))
+	return base * mult
+
+func _active_combat_count() -> int:
+	var n := 0
+	for c in get_tree().get_nodes_in_group("LuaNPC"):
+		if is_instance_valid(c) and bool(c.get("_combat")):
+			n += 1
+	return n
+
+# Terminate this combat LUA (remote, or STOP on its station). Gone for good.
+func terminate() -> void:
+	if _terminated:
+		return
+	_terminated = true
+	Global.log_chat("%s has been terminated." % get_display_name())
+	# Mellow poof on the LUA and on its station before this node is freed
+	# (spawned under the world so the burst outlives it).
+	_spawn_mellow(_robot.global_position)
+	_spawn_mellow(global_position)
+	queue_free()
+
+# Combat follow + hostile-mob hunting + enemy contact damage.
+func _combat_process(delta: float) -> void:
+	var p := Global.player_node as Node2D
+	if p == null or not is_instance_valid(p):
+		_reset_combat_motion()
+		_hunt_target = null
+		return
+	var dist_p: float = _robot.global_position.distance_to(p.global_position)
+
+	# The player jumped a long way (death respawn, a cave/dungeon swap, the
+	# stuck-teleport) — snap next to them instead of walking forever.
+	if dist_p > COMBAT_TELEPORT_DIST:
+		_robot.global_position = p.global_position + Vector2(0.0, COMBAT_TELEPORT_GAP)
+		_reset_combat_motion()
+		return
+
+	_combat_atk_cd = maxf(0.0, _combat_atk_cd - delta)
+
+	# House restriction: a combat LUA never follows the player inside a house.
+	# While the player is indoors it waits OUTSIDE (no pursuit); the movement
+	# veto below is the hard check that actually blocks entry.
+	if _player_indoors():
+		_robot_vel = Vector2.ZERO
+		_combat_speed = move_toward(_combat_speed, 0.0, COMBAT_DECEL * delta)
+		_combat_stuck_ms = -1
+		_tick_combat_contact(delta)
+		return
+
+	# Target selection: a nearby hostile mob, else the player (keeping the
+	# current engagement so it doesn't oscillate).
+	var target: Node2D = _select_combat_target(p, dist_p)
+	var hunting: bool = target != p
+	var gap: float = COMBAT_ENGAGE_GAP if hunting else COMBAT_FOLLOW_GAP
+	var to: Vector2 = target.global_position - _robot.global_position
+	var dist: float = to.length()
+
+	# Desired travel direction (the gap is preserved).
+	var desired := Vector2.ZERO
+	if dist > gap + 8.0:
+		desired = to.normalized()
+	elif dist < gap - 8.0:
+		desired = -to.normalized()
+
+	# Forward obstacle detection + local steering, using the robot's footprint.
+	var exclude: Array = [_robot.get_rid()]
+	var blocked: bool = desired != Vector2.ZERO and not _combat_clear(_robot.global_position, desired, exclude)
+	var travel: Vector2 = _combat_travel_dir(desired, exclude)
+	# Hard veto: never step into a house interior (a door would let us through).
+	if travel != Vector2.ZERO and _move_would_enter_house(travel):
+		travel = Vector2.ZERO
+
+	# Dynamic, smoothed pursuit speed.
+	var target_speed: float = _combat_target_speed(dist, gap, blocked)
+	var rate: float = COMBAT_ACCEL if target_speed > _combat_speed else COMBAT_DECEL
+	_combat_speed = move_toward(_combat_speed, target_speed, rate * delta)
+	if travel == Vector2.ZERO or desired == Vector2.ZERO:
+		_robot_vel = Vector2.ZERO
+	else:
+		_robot_vel = travel * _combat_speed
+
+	# Autonomous attack on the hunted mob (LOS-gated, one hit per cooldown).
+	if hunting and dist <= COMBAT_ATTACK_RANGE and _combat_atk_cd <= 0.0 and _has_los_to(target):
+		_combat_atk_cd = COMBAT_ATTACK_CD
+		_combat_attack(_robot.global_position)
+
+	# Progress tracking / last-resort recovery, then contact damage.
+	_tick_combat_stuck(target, dist, gap, not hunting)
+	_tick_combat_contact(delta)
+
+# ── Target selection (hostile mob vs player) ──────────────────────
+# Priority: keep the current hunting target while it stays valid + close to
+# both the LUA and the player (no oscillation) → an opportunistically-detected
+# nearby hostile mob → player pursuit.
+func _select_combat_target(p: Node2D, dist_p: float) -> Node2D:
+	var t: Node2D = _hunt_target
+	if t != null and (not is_instance_valid(t) or not t.is_inside_tree()):
+		_hunt_target = null
+		t = null
+	if t != null:
+		var d_lua: float = _robot.global_position.distance_to(t.global_position)
+		var d_pl:  float = p.global_position.distance_to(t.global_position)
+		if d_lua > COMBAT_HUNT_DROP or d_pl > COMBAT_HUNT_LEASH * 1.5:
+			_hunt_target = null
+			t = null
+	if t != null:
+		return t
+	# Throttled scan so we don't sweep the mob list every frame.
+	if Time.get_ticks_msec() - _hunt_scan_ms >= int(COMBAT_HUNT_RESCAN * 1000.0):
+		_hunt_scan_ms = Time.get_ticks_msec()
+		var m: Node2D = _find_hostile_mob(COMBAT_HUNT_RADIUS, p.global_position)
+		if m != null:
+			_hunt_target = m
+			return m
+	return p
+
+# Nearest HOSTILE mob that is within `radius` of the LUA, within the player
+# leash, and has line of sight, or null.
+func _find_hostile_mob(radius: float, player_pos: Vector2) -> Node2D:
+	if not is_inside_tree():
+		return null
+	var best: Node2D = null
+	var best_d: float = radius
+	for m in get_tree().get_nodes_in_group("Mob"):
+		if not (m is Node2D) or not is_instance_valid(m):
+			continue
+		if not _is_hostile_mob(m):
+			continue
+		var mob := m as Node2D
+		var d: float = mob.global_position.distance_to(_robot.global_position)
+		if d >= best_d:
+			continue
+		if mob.global_position.distance_to(player_pos) > COMBAT_HUNT_LEASH:
+			continue
+		if not _has_los_to(mob):
+			continue
+		best_d = d
+		best = mob
+	return best
+
+# True for a HOSTILE mob (MobCombatData.behavior == HOSTILE). Reads the mob's
+# own COMBAT_DATA constant, so it needs no new per-mob faction API.
+func _is_hostile_mob(m: Node) -> bool:
+	var sc: Script = m.get_script()
+	if sc == null:
+		return false
+	var cd: Variant = sc.get_script_constant_map().get("COMBAT_DATA")
+	return cd is MobCombatData and (cd as MobCombatData).behavior == MobCombatData.Behavior.HOSTILE
+
+# True when a wall-only ray from the robot reaches `target` (walls, trees and
+# placed blocks block it; the mob itself is not in the mask, so it never
+# counts as its own obstacle).
+func _has_los_to(target: Node2D) -> bool:
+	if not is_inside_tree() or target == null or not is_instance_valid(target):
+		return false
+	var world_2d := get_world_2d()
+	if world_2d == null:
+		return false
+	var query := PhysicsRayQueryParameters2D.create(_robot.global_position, target.global_position)
+	query.collision_mask = OBSTACLE_MASK
+	query.exclude        = [_robot.get_rid()]
+	return world_2d.direct_space_state.intersect_ray(query).is_empty()
+
+# One attack event: the 3x3 AoE centred on the LUA, shared by the player-swing
+# trigger and the autonomous mob-hunt attack.
+func _combat_attack(center: Vector2) -> void:
+	var dmg: float = combat_damage()
+	var nearest: Node2D = null
+	var nearest_d: float = COMBAT_AOE_RADIUS
+	for m in get_tree().get_nodes_in_group("Mob"):
+		if not (m is Node2D) or not is_instance_valid(m):
+			continue
+		var mob := m as Node2D
+		var d: float = mob.global_position.distance_to(center)
+		if d <= COMBAT_AOE_RADIUS and d < nearest_d:
+			nearest_d = d
+			nearest = mob
+		if d > COMBAT_AOE_RADIUS:
+			continue
+		if mob.has_method("take_hit"):
+			mob.call("take_hit", dmg, center)
+		# Hostile mobs now target this LUA instead of the player.
+		if mob.has_method("provoke"):
+			mob.call("provoke", _robot)
+	_swing_at(nearest.global_position if nearest != null else Vector2.INF, 1.0, 6)
+	_spawn_attack_ring(center)
+
+# The target speed for this frame from the distance + the player's own speed.
+func _combat_target_speed(dist: float, gap: float, blocked: bool) -> float:
+	# Within the gap → hold position (the 3x3 swing covers the target).
+	if dist <= gap + 8.0 and dist >= gap - 8.0:
+		return 0.0
+	var sp: float = COMBAT_SPEED_NORMAL
+	if dist > COMBAT_SPRINT_DIST:
+		sp = COMBAT_SPEED_SPRINT
+	# Run down a sprinting player once there's real ground to close.
+	if _player_sprinting() and dist > COMBAT_SPRINT_DIST * 0.5:
+		sp = maxf(sp, COMBAT_SPEED_SPRINT)
+	# Ease off when boxed in / backing off, so it doesn't slam walls.
+	if blocked or dist < gap:
+		sp = minf(sp, COMBAT_SPEED_MIN)
+	return sp
+
+func _player_sprinting() -> bool:
+	var p := Global.player_node
+	if p == null or not is_instance_valid(p) or not p.has_method("is_sprinting"):
+		return false
+	return bool(p.call("is_sprinting"))
+
+# Steering: the desired direction if its footprint path is clear, else the
+# closest clear reroute angle. ZERO when fully boxed in.
+func _combat_travel_dir(desired: Vector2, exclude: Array) -> Vector2:
+	if desired == Vector2.ZERO:
+		return Vector2.ZERO
+	if _combat_clear(_robot.global_position, desired, exclude):
+		return desired
+	for ang in COMBAT_REROUTE_DEG:
+		var cand: Vector2 = desired.rotated(deg_to_rad(ang))
+		if _combat_clear(_robot.global_position, cand, exclude):
+			return cand
+	return Vector2.ZERO
+
+# Footprint-aware clearance: sweep the robot's OWN collision shape one lookahead
+# step along `dir`. A point ray says "clear" while the body's edge clips a
+# corner — the diagonal-corner / narrow-corridor stall. Mirrors the headless
+# fish's shape-sweep navigation.
+func _combat_clear(from: Vector2, dir: Vector2, exclude: Array) -> bool:
+	if dir == Vector2.ZERO:
+		return true
+	if not is_inside_tree():
+		return false
+	var world_2d := get_world_2d()
+	if world_2d == null:
+		return false
+	var space := world_2d.direct_space_state
+	var step: Vector2 = dir.normalized() * COMBAT_LOOKAHEAD
+	var col := _robot_collision_shape()
+	if col != null:
+		var params := PhysicsShapeQueryParameters2D.new()
+		params.shape          = col.shape
+		params.transform      = col.global_transform
+		params.motion         = step
+		params.collision_mask = OBSTACLE_MASK
+		params.exclude        = exclude
+		params.margin         = 0.0
+		var res: PackedFloat32Array = space.cast_motion(params)
+		if res.size() >= 1:
+			return res[0] >= 1.0
+	# Fallback (no collision shape): centre ray.
+	var query := PhysicsRayQueryParameters2D.create(from, from + step)
+	query.collision_mask = OBSTACLE_MASK
+	query.exclude        = exclude
+	query.hit_from_inside = true
+	return space.intersect_ray(query).is_empty()
+
+func _robot_collision_shape() -> CollisionShape2D:
+	if _robot_col != null and is_instance_valid(_robot_col):
+		return _robot_col
+	for c in _robot.get_children():
+		if c is CollisionShape2D and (c as CollisionShape2D).shape != null:
+			_robot_col = c as CollisionShape2D
+			break
+	return _robot_col
+
+# ── Stuck detection + teleport recovery ───────────────────────────
+# Tracks the CLOSING distance to the player: brief pauses (waiting in the
+# follow gap, steering around a corner) don't count, only a sustained failure
+# to make progress. On timeout it tries ONE valid spot near the player, on a
+# cooldown, and otherwise keeps trying through normal movement.
+func _tick_combat_stuck(target: Node2D, dist: float, gap: float, is_player: bool) -> void:
+	if dist <= gap + 8.0:
+		_combat_stuck_ms = -1
+		_combat_last_dist = dist
+		return
+	if dist < _combat_last_dist - COMBAT_STUCK_PROGRESS:
+		_combat_last_dist = dist
+		_combat_stuck_ms = -1
+		return
+	if _combat_stuck_ms < 0:
+		_combat_stuck_ms = Time.get_ticks_msec()
+		return
+	if Time.get_ticks_msec() - _combat_stuck_ms < int(COMBAT_STUCK_SEC * 1000.0):
+		return
+	_combat_stuck_ms  = -1
+	_combat_last_dist = dist
+	# Hunting a mob we can't reach → drop it and resume normal behaviour (no
+	# teleport). Player pursuit is the only case that teleport-recovers.
+	if not is_player:
+		_hunt_target = null
+		return
+	if Time.get_ticks_msec() - _combat_recover_ms < int(COMBAT_RECOVER_CD_SEC * 1000.0):
+		return
+	_combat_recover_ms = Time.get_ticks_msec()
+	_teleport_combat_near_player(target)
+
+# Find a valid recovery spot near the player and teleport there. Rejects house
+# interiors and the player's own tile; if nothing valid exists it does nothing
+# (normal recovery keeps running) rather than teleporting to an arbitrary spot.
+func _teleport_combat_near_player(p: Node2D) -> void:
+	var world: Node = Global.world_node
+	if world == null or not is_instance_valid(world) or not world.has_method("find_open_spot_near"):
+		return
+	# Try a few offset search centres around the player. find_open_spot_near is
+	# deterministic, so without this every stuck LUA would recover to the SAME
+	# tile and they would stack and flicker.
+	for attempt in range(COMBAT_RECOVER_TRIES):
+		var center: Vector2 = p.global_position
+		if attempt > 0:
+			center += Vector2.from_angle(TAU * float(attempt) / float(COMBAT_RECOVER_TRIES)) * TILE_SIZE
+		var spot: Vector2 = world.call("find_open_spot_near", center, COMBAT_RECOVER_RADIUS) as Vector2
+		if spot == Vector2.INF:
+			continue
+		if spot.distance_to(p.global_position) < 16.0:
+			continue   # never on top of the player
+		if _cell_blocks_house_entry(world, spot):
+			continue   # never teleport into a house
+		if _recovery_spot_taken(spot):
+			continue   # keep LUAs off each other's tile
+		_robot.global_position = spot
+		_reset_combat_motion()
+		return
+
+# True when another LuaNPC's robot already sits within COMBAT_MIN_SPACING of
+# `spot`, so two recoveries never stack on one tile.
+func _recovery_spot_taken(spot: Vector2) -> bool:
+	if not is_inside_tree():
+		return false
+	for n in get_tree().get_nodes_in_group("LuaNPC"):
+		if n == self or not is_instance_valid(n):
+			continue
+		var other: Variant = n.get("_robot")
+		if other is Node2D and is_instance_valid(other) \
+				and (other as Node2D).global_position.distance_to(spot) < COMBAT_MIN_SPACING:
+			return true
+	return false
+
+func _reset_combat_motion() -> void:
+	_robot_vel        = Vector2.ZERO
+	_robot.velocity   = Vector2.ZERO
+	_combat_speed     = 0.0
+	_combat_stuck_ms  = -1
+	_combat_last_dist = INF
+
+# Enemies hurt the LUA on contact (cooldown per hit).
+func _tick_combat_contact(delta: float) -> void:
+	_combat_hit_cd = maxf(0.0, _combat_hit_cd - delta)
+	if _combat_hit_cd > 0.0:
+		return
+	for m in get_tree().get_nodes_in_group("Mob"):
+		if not (m is Node2D) or not is_instance_valid(m):
+			continue
+		if (m as Node2D).global_position.distance_to(_robot.global_position) <= COMBAT_CONTACT_PX:
+			_combat_hit_cd = COMBAT_CONTACT_CD
+			_combat_hp = maxf(0.0, _combat_hp - COMBAT_CONTACT_DMG)
+			if _combat_hp <= 0.0:
+				terminate()
+			break
+
+# ── House-entry restriction ───────────────────────────────────────
+# True when the player is inside a VALID house (overworld only). The combat LUA
+# waits outside instead of following in.
+func _player_indoors() -> bool:
+	var world: Node = Global.world_node
+	if world == null or not world.has_method("housing_is_valid_room_cell"):
+		return false
+	return Global.player_indoors
+
+# True when `world_pos` sits on (or is boxed in by) a house interior — a hard
+# veto used by BOTH movement and teleport recovery so no code path can bypass
+# it. Checks the cell plus its 4 neighbours, so the doorway (a boundary tile)
+# and the tile just outside also read as "house" and the LUA stops short.
+func _cell_blocks_house_entry(world: Node, world_pos: Vector2) -> bool:
+	if world == null or not is_instance_valid(world):
+		return false
+	if not world.has_method("housing_is_valid_room_cell") or not world.has_method("world_to_cell"):
+		return false
+	var cell: Vector2i = world.call("world_to_cell", world_pos)
+	if bool(world.call("housing_is_valid_room_cell", cell)):
+		return true
+	for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if bool(world.call("housing_is_valid_room_cell", cell + off)):
+			return true
+	return false
+
+# Would stepping `travel` from here put the robot inside a house?
+func _move_would_enter_house(travel: Vector2) -> bool:
+	var world: Node = Global.world_node
+	if world == null:
+		return false
+	var ahead: Vector2 = _robot.global_position + travel.normalized() * COMBAT_LOOKAHEAD
+	return _cell_blocks_house_entry(world, ahead)
 
 # Mines every placed block whose item_name matches `name` within `radius` tiles
 # of the station: walk to each, break it (drops the item), store the drop.
@@ -545,6 +1390,7 @@ func _mine_named(name: String, radius: int) -> void:
 		_is_working = false
 		return
 	_lua_state.emit_signal("signal_print", "[mine] searching for \"%s\" within %d blocks..." % [name, radius])
+	_set_status("Searching for %s" % name)
 	var mined: int = 0
 	while true:
 		if _stop_requested:
@@ -557,23 +1403,24 @@ func _mine_named(name: String, radius: int) -> void:
 			_erase_placed_block(cell as Vector2i)   # stale entry — forget it
 			continue
 		_lua_state.emit_signal("signal_print", "[mine] mining %s..." % name)
+		_set_status("Mining %s" % name)
 		if not await _walk_to_node(block):
 			_is_working = false
 			return
 		if _stop_requested:
 			break
 		if block.has_method("_break"):
-			# Mining reads as magic too — a small slash at the block being broken.
-			MagicSwing.spawn(world, block.global_position, _facing_vec(), 0.8, 3)
+			# Mining plays the swing beat at the block, then breaks it.
+			await _interact(block.global_position, 0.8, 4)
+			if _stop_requested:
+				break
 			block.call("_break")
 		await get_tree().create_timer(PICKUP_DELAY).timeout
 		_collect_drops_nearby()
 		mined += 1
 		_lua_state.emit_signal("signal_print", "[mine] storing... (%d x %s)" % [mined, name])
-	if not _stop_requested:
-		await _walk_to_spawn()
+	await _return_and_idle()
 	_lua_state.emit_signal("signal_print", "[mine] done — mined %d x %s." % [mined, name])
-	_is_working = false
 
 # Nearest placed block (by item_name) within radius tiles of the station.
 func _nearest_named_block(name: String, radius: int) -> Variant:
@@ -628,6 +1475,7 @@ func _run_station_jobs() -> void:
 	if _is_working:
 		return
 	_is_working = true
+	_set_status("Using crafting station")
 	while not _station_queue.is_empty():
 		if _stop_requested or not is_inside_tree():
 			break
@@ -638,10 +1486,15 @@ func _run_station_jobs() -> void:
 			continue
 		if not await _walk_to_node(station as Node2D):
 			break
-		_apply_station_job(station, job)
-	_abort_work()
+		await _apply_station_job(station, job)
+	await _return_and_idle()
 
 func _apply_station_job(station: Node, job: Dictionary) -> void:
+	# Interaction beat before the station acts (not instant). Item interaction →
+	# the longer 3s cooldown.
+	await _interact(station.global_position, 1.0, 5, true)
+	if not is_instance_valid(station):
+		return
 	match str(job["action"]):
 		"craft":
 			var n: int = int(job["arg"])
@@ -745,6 +1598,8 @@ func _remove_robot_item(data: ItemData, count: int) -> void:
 func _on_lua_drop_item(name: String, qty: int) -> void:
 	var data := _find_item_data_by_name(name)
 	if data == null: return
+	await _interact(Vector2.INF, 1.0, 5)
+	if not is_inside_tree(): return
 	var scene: PackedScene = load("res://scenes/ui/InventoryItem.tscn") as PackedScene
 	for _i in range(qty):
 		var inst: Node = scene.instantiate()
@@ -760,6 +1615,10 @@ func is_working() -> bool:
 	return _is_working
 
 func stop_work() -> void:
+	# STOP on a COMBAT LUA terminates it for good (see terminate()).
+	if _combat:
+		terminate()
+		return
 	_stop_requested = true
 	_robot_vel      = Vector2.ZERO
 	# Nothing is running, so no loop will consume the flag — clear it now or
@@ -775,6 +1634,7 @@ func _abort_work() -> void:
 	_robot_vel      = Vector2.ZERO
 	_stop_requested = false
 	_is_working     = false
+	_set_status("Idle")
 	# A finished job may have queued station work behind it (e.g. chop_trees()
 	# then input_slot()/craft()) — kick that queue now that we're free.
 	if not _station_queue.is_empty():
@@ -785,16 +1645,20 @@ func _abort_work() -> void:
 # ─────────────────────────────────────────────────────────────────
 
 func _auto_work() -> void:
+	_set_status("Working")
 	while true:
 		if _stop_requested: break
 		var tree: Node2D = _nearest_tree_in_radius()
 		if tree == null: break
+		_set_status("Chopping trees")
 		if not await _walk_to_node(tree):
 			_is_working = false
 			return
 		if _stop_requested: break
 		while is_instance_valid(tree):
 			if _stop_requested: break
+			await _interact(tree.global_position, 0.9, 5)
+			if _stop_requested or not is_instance_valid(tree): break
 			tree.call("chop", CHOP_DELAY)
 			await get_tree().create_timer(CHOP_DELAY).timeout
 		await get_tree().create_timer(PICKUP_DELAY).timeout
@@ -803,18 +1667,15 @@ func _auto_work() -> void:
 	if not _stop_requested:
 		var chest: Node = _nearest_chest_in_radius()
 		if chest != null and is_instance_valid(chest):
+			_set_status("Depositing to chest")
 			if not await _walk_to_node(chest as Node2D):
 				_is_working = false
 				return
-			_deposit_to_chest(chest)
-		if not await _walk_to_spawn():
-			_is_working = false
-			return
-
-	_stop_requested = false
-	_is_working     = false
+			await _deposit_to_chest(chest)
+	await _return_and_idle()
 
 func _chop_all_trees() -> void:
+	_set_status("Chopping trees")
 	while true:
 		if _stop_requested: break
 		var tree: Node2D = _nearest_tree_in_radius()
@@ -825,37 +1686,34 @@ func _chop_all_trees() -> void:
 		if _stop_requested: break
 		while is_instance_valid(tree):
 			if _stop_requested: break
+			await _interact(tree.global_position, 0.9, 5)
+			if _stop_requested or not is_instance_valid(tree): break
 			tree.call("chop", CHOP_DELAY)
 			await get_tree().create_timer(CHOP_DELAY).timeout
 		await get_tree().create_timer(PICKUP_DELAY).timeout
 		_collect_drops_nearby()
 
-	if not _stop_requested:
-		if not await _walk_to_spawn():
-			_is_working = false
-			return
-	_stop_requested = false
-	_is_working     = false
+	await _return_and_idle()
 
 func _walk_to_spawn_then_stop() -> void:
-	await _walk_to_spawn()
-	_is_working = false
+	await _return_and_idle()
 
 func _deposit_then_stop() -> void:
+	_set_status("Depositing to chest")
 	var chest: Node = _nearest_chest_in_radius()
 	if chest != null and is_instance_valid(chest):
 		if not await _walk_to_node(chest as Node2D):
 			_is_working = false
 			return
-		_deposit_to_chest(chest)
-	await _walk_to_spawn()
-	_is_working = false
+		await _deposit_to_chest(chest)
+	await _return_and_idle()
 
 func _print_chest_items() -> void:
+	_set_status("Reading chest")
 	var chest: Node = _nearest_chest_in_radius()
 	if chest == null or not is_instance_valid(chest):
 		_lua_state.emit_signal("signal_print", "No chest in radius.")
-		_is_working = false
+		await _return_and_idle()
 		return
 	var items: Array = chest.call("get_items")
 	var found: bool = false
@@ -867,7 +1725,7 @@ func _print_chest_items() -> void:
 		found = true
 	if not found:
 		_lua_state.emit_signal("signal_print", "Chest is empty.")
-	_is_working = false
+	await _return_and_idle()
 
 # ── Walk helpers ──────────────────────────────────────────────────
 
@@ -1060,6 +1918,9 @@ func _inventory_add_raw(data: ItemData, count: int) -> void:
 		remaining -= add
 
 func _deposit_to_chest(chest: Node) -> void:
+	await _interact(chest.global_position, 1.0, 5)
+	if not is_instance_valid(chest):
+		return
 	var to_remove: Array = []
 	for slot in _npc_inventory:
 		if chest.call("deposit_item", slot):
@@ -1097,15 +1958,17 @@ func _find_item_data_by_name(item_name: String) -> ItemData:
 			return data
 	return null
 
-func _build_frames() -> SpriteFrames:
+func _build_frames(combat: bool = false) -> SpriteFrames:
 	var sf := SpriteFrames.new()
 	sf.remove_animation("default")
 	# Floating entity: one STATIC frame per direction (front/back/side), no
 	# walk cycle. Both the idle_ and walk_ animation names are kept so the rest
 	# of the code (which asks for walk_<dir>/idle_<dir>) is unchanged.
+	var table: Dictionary = DIR_TEX_COMBAT if combat else DIR_TEX
+	var fallback: Texture2D = TEX_COMBAT_FRONT if combat else TEX_FRONT
 	for d in DIRS:
 		var dir: String = d["name"]
-		var tex: Texture2D = DIR_TEX.get(dir, TEX_FRONT)
+		var tex: Texture2D = table.get(dir, fallback)
 		var walk: String = "walk_" + dir.replace("-", "_")
 		sf.add_animation(walk)
 		sf.set_animation_speed(walk, 1.0)

@@ -237,6 +237,10 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 	# knocks the frozen player around while the respawn timer runs.
 	if player_is_dead:
 		return
+	# Safe dungeon altar room: the player can't be hurt while reading or taking
+	# a quiz, so swallow the hit entirely.
+	if player_in_safe_room:
+		return
 	var p: Node2D = player_node as Node2D
 	# Invincibility frames block HP loss (and don't re-grant), but the enemy's
 	# hit still LANDS — knockback keeps applying so enemies keep hitting even
@@ -267,6 +271,21 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 			else (p.global_position - from_position)
 		if dir.length_squared() > 0.001:
 			p.call("apply_knockback", dir.normalized(), strength)
+
+# Central heal entry point for food / consumables (the mirror of damage_player).
+# Restores up to `amount` HP, NEVER exceeding max_health, and emits the HUD
+# signal only when something actually healed. Returns the amount restored
+# (0.0 = nothing to heal / dead).
+func heal_player(amount: float) -> float:
+	if amount <= 0.0 or player_is_dead:
+		return 0.0
+	var missing: float = max_health - health
+	if missing <= 0.0:
+		return 0.0
+	var restored: float = minf(amount, missing)
+	health += restored
+	health_changed.emit(health, max_health)
+	return restored
 
 # Emitted when the player's health hits zero (the game scene uses this to dim
 # the screen). _handle_player_death immediately respawns the player.
@@ -307,6 +326,11 @@ func _handle_player_death() -> void:
 		return
 	_death_in_progress = true
 	player_is_dead = true
+	# Leave build mode so the ghost/grid doesn't linger over a dead player (and
+	# so a stray click can't place a block during the respawn window).
+	if block_mode:
+		block_mode = false
+		block_mode_changed.emit(false)
 	log_chat("[color=#ff7777]You died! Respawning in %d seconds...[/color]" % int(DEATH_RESPAWN_TIME))
 	var p: Node2D = player_node as Node2D
 	var death_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
@@ -438,6 +462,11 @@ var day_night_cycle: Node = null
 # The overworld's day/night CanvasModulate dims a touch to sell the "indoors"
 # feel. Updated by world.gd each frame from the housing system.
 var player_indoors: bool = false
+
+# True while the player stands inside a SAFE dungeon altar room (the knowledge
+# or quiz room). Set by dungeon_world.gd each frame; damage_player() ignores all
+# damage while it's set, so reading/taking a quiz can't be interrupted.
+var player_in_safe_room: bool = false
 
 signal ui_scale_changed(scale: float)
 signal request_close_all_ui
@@ -1073,6 +1102,32 @@ func add_item(item: Dictionary, allow_dev: bool = false) -> bool:
 			remaining = 0
 			break
 	return remaining <= 0
+
+# Free space (in items) for `data` across the hotbar + inventory, respecting
+# stack limits. Non-stackable items need a whole empty slot. Used to avoid
+# partial adds (which would lose the remainder) when returning items from a
+# robot slot to the player.
+func space_for_item(data: ItemData) -> int:
+	if data == null:
+		return 0
+	var limit: int = data.max_stack_size if data.max_stack_size > 0 else MAX_STACK
+	var space: int = 0
+	if data.stackable:
+		for arr in [Hotbar, Inventory]:
+			for slot in arr:
+				if slot == null:
+					space += limit
+				elif (slot as Dictionary)["data"] == data:
+					space += maxi(0, limit - int((slot as Dictionary)["quantity"]))
+	else:
+		for arr in [Hotbar, Inventory]:
+			for slot in arr:
+				if slot == null:
+					space += 1
+	return space
+
+func has_space_for_item(data: ItemData, quantity: int) -> bool:
+	return quantity <= 0 or space_for_item(data) >= quantity
 
 # ── Track wood collection for mission ─────────────────────────────
 func _track_craft_missions(data: ItemData, qty: int) -> void:

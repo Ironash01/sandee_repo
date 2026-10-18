@@ -92,7 +92,9 @@ func _mouse_exit() -> void:
 	_hovered = false
 	queue_redraw()
 
-# Left-click: take the stack back into the player's inventory.
+# Left-click: take the stack back into the player's inventory. Only cleared when
+# the inventory can hold the WHOLE stack — otherwise a full inventory would
+# silently destroy it.
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if _npc == null or not is_instance_valid(_npc):
@@ -103,8 +105,12 @@ func _gui_input(event: InputEvent) -> void:
 			return
 		var data: ItemData = (slot as Dictionary)["data"] as ItemData
 		var qty: int = int((slot as Dictionary)["quantity"])
-		if data != null:
-			Global.add_item({"data": data, "quantity": qty})
+		if data == null:
+			return
+		if not Global.has_space_for_item(data, qty):
+			Global.log_chat("[color=#ffaa66]Inventory full — the robot keeps the %s.[/color]" % data.item_name)
+			return
+		Global.add_item({"data": data, "quantity": qty})
 		_npc.call("set_build_slot", slot_index, null, 0)
 		slot_changed.emit()
 
@@ -130,8 +136,26 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	var data_obj: ItemData = item["data"] as ItemData
 	if data_obj == null:
 		return
+	# If the slot already holds a DIFFERENT stack, return it to the player first
+	# — set_build_slot would otherwise overwrite (destroy) it. Abort the drop if
+	# the inventory can't take the old stack back.
+	var palette: Array = _npc.call("get_build_palette")
+	var existing: Variant = palette[slot_index] if slot_index < palette.size() else null
+	if existing != null:
+		var ex_data: ItemData = (existing as Dictionary)["data"] as ItemData
+		var ex_qty: int = int((existing as Dictionary)["quantity"])
+		if ex_data != null and ex_qty > 0:
+			if not Global.has_space_for_item(ex_data, ex_qty):
+				Global.log_chat("[color=#ffaa66]Inventory full — can't swap the robot's slot.[/color]")
+				return
+			Global.add_item({"data": ex_data, "quantity": ex_qty})
 	# Give the whole dragged stack to the robot, then clear the player's slot.
 	_npc.call("set_build_slot", slot_index, data_obj, int(item["quantity"]))
+	_clear_source(data)
+	slot_changed.emit()
+
+# Remove the dragged item's source slot (the whole stack moved to the robot).
+func _clear_source(data: Dictionary) -> void:
 	var from_idx: int = int(data["from_index"])
 	var src: String = str(data.get("source", "inventory"))
 	if src == "hotbar":
@@ -142,7 +166,6 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		if from_idx >= 0 and from_idx < Global.Inventory.size():
 			Global.Inventory[from_idx] = null
 		Global.Inventory_updated.emit()
-	slot_changed.emit()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_DRAG_END:

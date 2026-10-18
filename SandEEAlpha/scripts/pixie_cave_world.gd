@@ -193,13 +193,14 @@ func _check_ore_regeneration() -> void:
 			_paint_cell(cell, ore_type, _cell_to_grid(cell))
 			
 			# Show the glow light + orbs animation
-			var light: PointLight2D = _ore_lights.get(cell)
-			if light != null:
-				light.visible = true
-			var firefly: GPUParticles2D = _ore_fireflies.get(cell)
-			if firefly != null:
-				firefly.emitting = true
-				firefly.visible = true
+			var light_ref: Variant = _ore_lights.get(cell)
+			if is_instance_valid(light_ref):
+				(light_ref as PointLight2D).visible = true
+			var firefly_ref: Variant = _ore_fireflies.get(cell)
+			if is_instance_valid(firefly_ref):
+				var ff := firefly_ref as GPUParticles2D
+				ff.emitting = true
+				ff.visible  = true
 	
 	for cell in to_remove:
 		_mined_ores.erase(cell)
@@ -375,13 +376,14 @@ func _break_tile(cell: Vector2i) -> void:
 			_dimmed_ore_layer.set_cell(cell, dimmed_cell["source"], dimmed_cell["coord"])
 		
 		# Hide the glow light + orbs animation
-		var light: PointLight2D = _ore_lights.get(cell)
-		if light != null:
-			light.visible = false
-		var firefly: GPUParticles2D = _ore_fireflies.get(cell)
-		if firefly != null:
-			firefly.emitting = false
-			firefly.visible = false
+		var light_ref: Variant = _ore_lights.get(cell)
+		if is_instance_valid(light_ref):
+			(light_ref as PointLight2D).visible = false
+		var firefly_ref: Variant = _ore_fireflies.get(cell)
+		if is_instance_valid(firefly_ref):
+			var ff := firefly_ref as GPUParticles2D
+			ff.emitting = false
+			ff.visible  = false
 		
 		# Store mined ore with current in-game time
 		_mined_ores[cell] = {
@@ -464,6 +466,9 @@ func _rebuild_ghost_sprite(item: Dictionary) -> void:
 	ghost_sprite.position = Vector2.ZERO
 
 func place_block() -> void:
+	# A DEAD player must not place blocks (see world.gd:place_block()).
+	if Global.player_is_dead:
+		return
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		return
@@ -517,9 +522,19 @@ func has_placed_block(cell: Vector2i) -> bool:
 # A torch mounts to a solid neighbour: a placed block OR a solid cave wall.
 # Cave rock is TileMapLayer cells, NOT placed blocks, so without this a torch
 # placed against a wall never used its connected sprite (unlike the overworld,
-# where world-gen stone/charcoal live in _placed_blocks).
+# where world-gen stone/charcoal live in _placed_blocks). A placed FLOOR is
+# walkable decor, not a wall, so it never counts as support.
 func torch_support(cell: Vector2i) -> bool:
-	return _placed_blocks.has(cell) or _cell_is_wall(cell)
+	if _cell_is_wall(cell):
+		return true
+	var e: Variant = _placed_blocks.get(cell)
+	if e == null:
+		return false
+	var n: Variant = (e as Dictionary).get("node")
+	if not is_instance_valid(n):
+		return false
+	var d = n.get("item_data")
+	return d != null and not d.is_floor
 
 # Not the overworld — a Bonfire here must not set the respawn point.
 func is_overworld() -> bool:
@@ -534,7 +549,7 @@ func _refresh_neighbor_u_collision(cell: Vector2i) -> void:
 		var c: Vector2i = cell + (off as Vector2i)
 		if not _placed_blocks.has(c):
 			continue
-		var n: Node = (_placed_blocks[c] as Dictionary).get("node")
+		var n: Variant = (_placed_blocks[c] as Dictionary).get("node")
 		if is_instance_valid(n) and n.has_method("refresh_u_collision"):
 			n.call("refresh_u_collision")
 		if is_instance_valid(n) and n.has_method("refresh_torch_connection"):

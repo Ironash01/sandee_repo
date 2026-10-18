@@ -34,6 +34,9 @@ var _recipes: Array = []  # SmeltingRecipe
 var _input_item:   ItemData = null
 var _fuel_item:    ItemData = null
 var _output_item:  ItemData = null
+var _input_qty:    int      = 0
+var _fuel_qty:     int      = 0
+var _output_qty:   int      = 0
 var _output_ready: bool     = false
 var _smelting:     bool     = false
 var _smelt_elapsed: float   = 0.0
@@ -74,10 +77,17 @@ func _ready() -> void:
 	Global.Hotbar_updated.connect(_refresh_inv_grid)
 	visible = false
 
-# Smelting is INSTANT — the furnace object's smelt_request validates and
-# resolves it (mirrors the Crafting Station's craft). Nothing to tick here.
+# Poll the furnace's cook timer while the menu is open so the arrow fills and
+# the countdown ticks (the cook itself lives on the furnace object, so it keeps
+# running with the menu closed).
 func _process(_delta: float) -> void:
-	pass
+	if not visible or furnace == null:
+		return
+	if bool(furnace.call("is_cooking")):
+		if _arrow_fill != null:
+			_arrow_fill.anchor_right = float(furnace.call("cook_progress"))
+		if _timer_label != null:
+			_timer_label.text = "Cooking... %.1fs" % float(furnace.call("cook_remaining"))
 
 func _input(event: InputEvent) -> void:
 	if not visible:
@@ -322,22 +332,24 @@ func _build_ui() -> void:
 # ── Drag-drop from inventory / hotbar ──────────────────────────────
 # Both InventorySlot and hotbar slots emit the same drag payload shape:
 #   {"item": <inventory dict>, "source": "inventory"|"hotbar", "from_index": int}
-func _take_from_source(data: Dictionary) -> bool:
+# Remove `count` of the dragged item from its source slot, leaving the rest of
+# the stack intact (the furnace may only accept part of a big stack).
+func _remove_from_source(data: Dictionary, count: int) -> bool:
 	var source: String = str(data.get("source", ""))
 	var from_idx: int = int(data.get("from_index", -1))
+	var arr: Array = Global.Hotbar if source == "hotbar" else Global.Inventory
+	if from_idx < 0 or from_idx >= arr.size() or arr[from_idx] == null or count <= 0:
+		return false
+	var remaining: int = int(arr[from_idx]["quantity"]) - count
+	if remaining <= 0:
+		arr[from_idx] = null
+	else:
+		arr[from_idx]["quantity"] = remaining
 	if source == "hotbar":
-		if from_idx < 0 or from_idx >= Global.Hotbar.size():
-			return false
-		Global.Hotbar[from_idx] = null
 		Global.Hotbar_updated.emit()
-		return true
-	elif source == "inventory":
-		if from_idx < 0 or from_idx >= Global.Inventory.size():
-			return false
-		Global.Inventory[from_idx] = null
+	else:
 		Global.Inventory_updated.emit()
-		return true
-	return false
+	return true
 
 func _on_input_dropped(data: Dictionary) -> void:
 	_load_slot_from(data, false)
@@ -345,9 +357,11 @@ func _on_input_dropped(data: Dictionary) -> void:
 func _on_fuel_dropped(data: Dictionary) -> void:
 	_load_slot_from(data, true)
 
-# Load ONE item from a drag payload into the input (as_fuel=false) or fuel
-# (as_fuel=true) slot, through the furnace's own validated API. The previous
-# slot contents are returned to the inventory first so nothing is lost.
+# Load the WHOLE dragged stack from a drag payload into the input
+# (as_fuel=false) or fuel (as_fuel=true) slot, through the furnace's own
+# validated API. Only what the furnace actually accepts is removed from the
+# source slot, so a partial accept (or a full slot) never destroys items. The
+# previous slot contents are returned to the inventory first so nothing is lost.
 func _load_slot_from(data: Dictionary, as_fuel: bool) -> void:
 	if furnace == null:
 		return
@@ -364,15 +378,19 @@ func _load_slot_from(data: Dictionary, as_fuel: bool) -> void:
 	elif _recipe_for(item_data) == null:
 		_hint("That can't be smelted.")
 		return
-	_return_slot(as_fuel)
-	var accepted: int = int(furnace.call("put_fuel" if as_fuel else "put_input", item_data, 1))
+	# A DIFFERENT item already in the slot goes back to the inventory first.
+	var cur: Dictionary = furnace.call("get_fuel_stack" if as_fuel else "get_input_stack")
+	if not cur.is_empty() and (cur["data"] as ItemData) != item_data:
+		_return_slot(as_fuel)
+	var want: int = int((item as Dictionary).get("quantity", 1))
+	var accepted: int = int(furnace.call("put_fuel" if as_fuel else "put_input", item_data, want))
 	if accepted <= 0:
-		_hint("The slot already holds a different item.")
+		_hint("The slot is full or holds a different item.")
+		_refresh_slots()
 		return
-	if _take_from_source(data):
-		_hint("Loaded %s." % item_data.item_name)
-	else:
-		furnace.call("take_fuel" if as_fuel else "take_input", item_data, 1)   # undo
+	# Remove ONLY what the furnace accepted; the rest stays in the inventory.
+	_remove_from_source(data, accepted)
+	_hint("Loaded %d × %s." % [accepted, item_data.item_name])
 	_refresh_slots()
 
 # Return a whole slot (input or fuel) to the player's inventory.
@@ -444,23 +462,33 @@ func _on_inv_slot_clicked(idx: int) -> void:
 func _on_smelt_pressed() -> void:
 	if furnace == null:
 		return
-	if int(furnace.call("smelt_request", 1)) <= 0:
+	if not bool(furnace.call("begin_cook")):
 		_hint("Cannot smelt — check input, fuel and output space.")
 	_refresh_slots()
 
 # ── Refresh ────────────────────────────────────────────────────────
 func _refresh_slots() -> void:
 	_sync_from_furnace()
+	var cooking: bool = furnace != null and bool(furnace.call("is_cooking"))
 	if _input_slot != null:
-		_input_slot.set_icon(_input_item.icon if _input_item != null else null, 1.0, _input_item)
+		_input_slot.set_icon(_input_item.icon if _input_item != null else null, 1.0, _input_item, _input_qty)
 	if _fuel_slot != null:
-		_fuel_slot.set_icon(_fuel_item.icon if _fuel_item != null else null, 1.0, _fuel_item)
+		_fuel_slot.set_icon(_fuel_item.icon if _fuel_item != null else null, 1.0, _fuel_item, _fuel_qty)
 	if _output_slot != null:
-		_output_slot.set_icon(_output_item.icon if _output_item != null else null, 1.0, _output_item)
+		if _output_item != null:
+			_output_slot.set_icon(_output_item.icon, 1.0, _output_item, _output_qty)
+		elif cooking:
+			# Ghost-preview the item currently being cooked.
+			var crec: SmeltingRecipe = _recipe_for(_input_item)
+			var out: ItemData = crec.output_item if crec != null else null
+			_output_slot.set_icon(out.icon if out != null else null, 0.4, out, 0)
+		else:
+			_output_slot.set_icon(null)
 	if _smelt_btn != null:
 		var rec: SmeltingRecipe = _recipe_for(_input_item)
-		var can_smelt: bool = _input_item != null and _fuel_ok(rec)
+		var can_smelt: bool = _input_item != null and _fuel_ok(rec) and not cooking
 		_smelt_btn.disabled = not can_smelt
+		_smelt_btn.text = "COOKING..." if cooking else "SMELT"
 		var style := StyleBoxFlat.new()
 		style.bg_color = C_SMELT_OK if can_smelt else C_SMELT
 		style.border_color = C_BORDER
@@ -480,10 +508,13 @@ func _sync_from_furnace() -> void:
 		return
 	var i: Dictionary = furnace.call("get_input_stack")
 	_input_item = i["data"] if not i.is_empty() else null
+	_input_qty  = int(i["quantity"]) if not i.is_empty() else 0
 	var f: Dictionary = furnace.call("get_fuel_stack")
 	_fuel_item = f["data"] if not f.is_empty() else null
+	_fuel_qty  = int(f["quantity"]) if not f.is_empty() else 0
 	var o: Dictionary = furnace.call("get_output_stack")
 	_output_item = o["data"] if not o.is_empty() else null
+	_output_qty  = int(o["quantity"]) if not o.is_empty() else 0
 	_output_ready = not o.is_empty()
 
 func _refresh_inv_grid() -> void:
@@ -496,9 +527,11 @@ func _refresh_inv_grid() -> void:
 			slot.call("set_empty")
 
 func _update_arrow() -> void:
-	if _arrow_fill != null:
+	var cooking: bool = furnace != null and bool(furnace.call("is_cooking"))
+	# While cooking, _process drives the arrow fill + countdown instead.
+	if _arrow_fill != null and not cooking:
 		_arrow_fill.anchor_right = 1.0 if _output_ready else 0.0
-	if _timer_label == null:
+	if _timer_label == null or cooking:
 		return
 	if _output_ready:
 		_timer_label.text = "Ready"

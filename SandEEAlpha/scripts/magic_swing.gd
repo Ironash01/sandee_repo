@@ -22,17 +22,21 @@ const ARC_SCALE:    float = 1.6
 var _dir:   Vector2 = Vector2.RIGHT
 var _size:  float   = 1.0
 var _motes: int     = 4
+# Optional tool icon drawn sweeping through the arc (the LUA's tool slot).
+var _item_icon: Texture2D = null
 
 # Build + attach a swing effect under `parent`, aimed along `dir` (world space).
-# `size` scales the whole effect; `motes` is the mote count. Returns the node.
+# `size` scales the whole effect; `motes` is the mote count; `item_icon` (when
+# set) draws the swung item. Returns the node.
 static func spawn(parent: Node, pos: Vector2, dir: Vector2,
-		size: float = 1.0, motes: int = 4) -> Node2D:
+		size: float = 1.0, motes: int = 4, item_icon: Texture2D = null) -> Node2D:
 	if parent == null or not is_instance_valid(parent):
 		return null
 	var fx := MagicSwing.new()
 	fx._dir   = dir if dir.length_squared() > 0.0001 else Vector2.RIGHT
 	fx._size  = size
 	fx._motes = motes
+	fx._item_icon = item_icon
 	parent.add_child(fx)
 	fx.global_position = pos
 	fx.z_index = int(pos.y / 32.0)
@@ -40,6 +44,15 @@ static func spawn(parent: Node, pos: Vector2, dir: Vector2,
 
 func _ready() -> void:
 	rotation = _dir.angle()
+
+	# The swung tool (drawn at the blade line, under the arc).
+	if _item_icon != null:
+		var item := Sprite2D.new()
+		item.texture = _item_icon
+		item.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		item.scale    = Vector2(0.9, 0.9) * _size
+		item.position = Vector2(16.0, 0.0) * _size
+		add_child(item)
 
 	var arc := _anim_sprite(SWING_TEX, SWING_FRAME, SWING_COUNT, SWING_FPS)
 	arc.modulate = GLOW_COLOR

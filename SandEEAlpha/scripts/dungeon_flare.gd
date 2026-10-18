@@ -4,8 +4,8 @@ class_name DungeonFlare
 # ── Dungeon flare obstacle ───────────────────────────────────────────
 # Sits on a dungeon wall brick (the wall tile still provides the solid
 # collision). It periodically fires a straight-line DungeonProjectile at
-# the player — 40 damage on hit — and is destroyable with the sword.
-# When it disappears (destroyed or lifetime) it plays the mellow burst.
+# the player — 40 damage on hit — and is destroyable with the sword. It never
+# despawns on its own; only a sword hit removes it (with the mellow burst).
 
 const MELLOW_BURST_SCRIPT: GDScript = preload("res://scripts/mellow_burst.gd")
 # The flare's own sprite (the vent tile) — the dev item the user authored.
@@ -14,12 +14,10 @@ const FLARE_DATA: ItemData = preload("res://resources/items/dungeon_flare.tres")
 const FIRE_INTERVAL: float = 2.5
 const FIRE_RANGE:    float = 320.0   # only fires when the player is this close
 const MAX_HP:        float = 30.0
-const LIFETIME:      float = 25.0
 const GLOW_COLOR:    Color = Color(1.0, 0.55, 0.25)
 
 var _hp:         float = MAX_HP
 var _fire_timer: float = FIRE_INTERVAL
-var _life:       float = 0.0
 var _time:       float = 0.0
 var _glow:       PointLight2D = null
 
@@ -63,13 +61,9 @@ func _add_visual() -> void:
 	add_child(_glow)
 
 func _physics_process(delta: float) -> void:
-	_life += delta
 	_time += delta
 	if _glow != null:
 		_glow.energy = 1.4 + sin(_time * 4.0) * 0.5
-	if _life >= LIFETIME:
-		_disappear()
-		return
 
 	var p := Global.player_node as Node2D
 	if p == null or not is_instance_valid(p):

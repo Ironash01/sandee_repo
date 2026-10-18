@@ -48,9 +48,12 @@ func _process(delta: float) -> void:
 		return
 	for i in range(_cluster_lights.size()):
 		var entry: Dictionary = _cluster_lights[i]
-		var light: PointLight2D = entry["light"]
-		if light == null or not is_instance_valid(light):
+		# Untyped first: assigning a freed light to a typed PointLight2D var
+		# throws "Trying to assign invalid previously freed instance".
+		var light_ref: Variant = entry["light"]
+		if light_ref == null or not is_instance_valid(light_ref):
 			continue
+		var light: PointLight2D = light_ref
 		var phase: float = entry["phase"] + delta * FLICKER_SPEED
 		entry["phase"] = phase
 		var flicker: float = sin(phase + i * 1.3) * 0.5 + sin(phase * 2.3 + i) * 0.5
@@ -64,9 +67,9 @@ func _has_stale_torch() -> bool:
 
 func _rebuild_clusters() -> void:
 	for entry in _cluster_lights:
-		var light: Node = entry["light"]
-		if is_instance_valid(light):
-			light.queue_free()
+		var light_ref: Variant = entry["light"]
+		if is_instance_valid(light_ref):
+			(light_ref as Node).queue_free()
 	_cluster_lights.clear()
 
 	var positions: Array = []

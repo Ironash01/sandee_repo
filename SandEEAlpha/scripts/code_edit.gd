@@ -91,3 +91,7 @@ func load_language_spec(_language_spec: LanguageSpecification) -> void:
 
 	# set as syntax highlighter
 	syntax_highlighter = syntax_highlighting
+	# Light editor-chrome colours (line numbers, caret, selection, current line)
+	# — the default theme leaves some of these dark, and CodeHighlighter's own
+	# token defaults are pure black.
+	LanguageSpecification.style_code_edit(self, Color(0.87, 0.90, 0.96), Color(0.60, 0.66, 0.78))

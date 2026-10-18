@@ -98,7 +98,7 @@ func physics_update(mob: CharacterBody2D, speed: float, _tilemap: TileMapLayer, 
 	# without this every fish resumes chasing the frozen death position.
 	if Global.player_is_dead:
 		return Vector2.ZERO
-	var player: Node2D = Global.player_node as Node2D
+	var player: Node2D = _combat_target(mob)
 	if player == null or not is_instance_valid(player):
 		return Vector2.ZERO
 
@@ -441,6 +441,11 @@ func _path_is_clear(mob: CharacterBody2D, dir: Vector2) -> bool:
 	var player: Node2D = Global.player_node as Node2D
 	if player != null and is_instance_valid(player):
 		exclude.append(player.get_rid())
+	# Also never treat the provoked LUA (the chase target) as an obstacle.
+	if mob.has_method("combat_target"):
+		var t: Node2D = mob.call("combat_target") as Node2D
+		if t != null and is_instance_valid(t) and t != player:
+			exclude.append(t.get_rid())
 	var space_state := mob.get_world_2d().direct_space_state
 	var step: Vector2 = dir.normalized() * LOOKAHEAD
 
@@ -479,4 +484,14 @@ func _has_los(mob: CharacterBody2D, target_pos: Vector2) -> bool:
 	var result := space_state.intersect_ray(query)
 	if result.is_empty():
 		return false
-	return (result as Dictionary).get("collider") == Global.player_node
+	var expected: Node = Global.player_node
+	if mob.has_method("combat_target"):
+		expected = mob.call("combat_target") as Node
+	return (result as Dictionary).get("collider") == expected
+
+# The node this fish chases: the provoked combat LUA when a LUA has hit it, else
+# the player.
+func _combat_target(mob: CharacterBody2D) -> Node2D:
+	if mob.has_method("combat_target"):
+		return mob.call("combat_target") as Node2D
+	return Global.player_node as Node2D

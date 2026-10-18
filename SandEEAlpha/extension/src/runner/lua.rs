@@ -30,6 +30,8 @@ pub enum LuaSignal {
     // Robot extras: mine(name, radius) and rename(name).
     Mine,
     Rename,
+    // combat_mode(on) — toggle the robot into/out of combat mode.
+    CombatMode,
 }
 
 fn build_lua_signal(state: &Lua, signal_type: LuaSignal, arg: Value) -> Result<Table> {
@@ -203,6 +205,10 @@ impl INode for LuaState {
                     let name: String = signal.get("arg").expect("Failed to get signal argument");
                     self.signals().signal_rename().emit(name);
                 }
+                LuaSignal::CombatMode => {
+                    let on: bool = signal.get("arg").unwrap_or(false);
+                    self.signals().signal_combat_mode().emit(on);
+                }
                 _ => (),
             }
         }
@@ -259,6 +265,10 @@ impl LuaState {
     fn signal_mine(name: String, radius: i32);
     #[signal]
     fn signal_rename(name: String);
+    // combat_mode(on) — toggle combat mode (follow the player + attack with the
+    // tool slot; see lua_npc.gd).
+    #[signal]
+    fn signal_combat_mode(on: bool);
 
     // Godot Functions
     #[func]
@@ -519,6 +529,19 @@ impl LuaState {
         })?;
         globals.set("rename", rename_func)?;
 
+        // combat_mode(on) — toggle combat mode (follow the player and attack
+        // with the tool slot). See lua_npc.gd.
+        let combat_mode_func = self.lua.create_function(|state, on: Value| {
+            let signals: Table = state.globals().get("GODOT_PROP_signals")?;
+            let on = match on {
+                Value::Boolean(b) => b,
+                _ => true,
+            };
+            insert_signal(signals, state, LuaSignal::CombatMode, on)?;
+            Ok(())
+        })?;
+        globals.set("combat_mode", combat_mode_func)?;
+
         // list_items() — the item display names available in the game, offered
         // as an editor autocomplete popup inside name arguments.
         let list_items_func = self.lua.create_function(|_state, ()| {
@@ -549,7 +572,7 @@ impl LuaState {
             "station_output_count", "GODOT_PROP_signals", "move", "attack",
             "interact", "drop_item", "place_item", "place_at", "select_block",
             "withdraw", "craft", "set_recipe", "take_output", "put_input",
-            "input_slot", "mine", "rename", "list_items",
+            "input_slot", "mine", "rename", "combat_mode", "list_items",
         ];
         let globals = self.lua.globals();
         let mut remove: Vec<String> = Vec::new();

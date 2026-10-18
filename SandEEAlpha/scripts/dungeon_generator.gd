@@ -47,6 +47,10 @@ const QUIZ_MIN_SEPARATION: float = 20.0
 const BONUS_MIN_DIST:  float = 10.0
 const BONUS_ATTEMPTS:  int   = 10
 const ROOM_PLACE_ATTEMPTS: int = 200  # quiz-room repositioning tries
+# Minimum length (tiles) of a straight corridor run between turns. Corridors
+# zig-zag (more corners) but keep runs this long — long straight streaks are
+# exactly what the Hitman's ram attack needs (see hitman.gd CHARGE_MAX_DIST).
+const CORRIDOR_MIN_RUN: int = 6
 
 var grid:                Array     = []  # grid[x][y] = Tile enum value
 var knowledge_room:      Dictionary = {} # {"pos": Vector2i, "size": Vector2i}
@@ -62,13 +66,37 @@ var flare_positions:     Array     = []
 # spawns one node per entry). Unlike flares these are WALKABLE tiles the player
 # steps on — see _pick_trap_positions().
 var trap_positions:      Array     = []
+# Corridor-mouth cells of the KNOWLEDGE room — the only SAFE altar room.
+# dungeon_world puts a safe-zone marker on each (see _pick_gap_positions). The
+# quiz room is NOT safe: the player must defeat its hitman guards.
+var gap_positions:        Array     = []  # [Vector2i, ...]
+# 4 walkable cells inside the quiz room where hitman guards spawn.
+var quiz_guard_positions: Array     = []
+# Up to 8 cells ringing the quiz altar (2 gaps left open to walk through);
+# dungeon_world spawns a DungeonTrap on each.
+var quiz_trap_positions:  Array     = []
 
 # altar_amount counts the altar/checkpoint rooms INCLUDING the first knowledge
 # room; chest_amount is pure extra loot rooms. The quiz room is always the
 # final room on top of those. bonus_count therefore = (altar_amount - 1) + chest_amount.
 var bonus_count: int = 0
 
+# Neither the knowledge nor the quiz altar may sit within this many tiles of the
+# player's entrance spawn. generate() retries with a bumped seed until both clear.
+const ALTAR_SPAWN_MIN_DIST: float = 10.0
+const ALTAR_SPAWN_ATTEMPTS: int = 8
+
 func generate(seed_value: int, size_tier: int = -1, altar_amount: int = 1, chest_amount: int = 0) -> void:
+	# Retry with a bumped seed until BOTH altars are far enough from the spawn.
+	for attempt in range(ALTAR_SPAWN_ATTEMPTS):
+		_generate_once(seed_value + attempt, size_tier, altar_amount, chest_amount)
+		var spawn := Vector2(player_spawn_pos)
+		var kd: float = Vector2(_room_center(knowledge_room)).distance_to(spawn)
+		var qd: float = Vector2(_room_center(quiz_room)).distance_to(spawn)
+		if kd >= ALTAR_SPAWN_MIN_DIST and qd >= ALTAR_SPAWN_MIN_DIST:
+			return
+
+func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_amount: int) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
@@ -140,6 +168,9 @@ func generate(seed_value: int, size_tier: int = -1, altar_amount: int = 1, chest
 	_carve_entrance()
 	_pick_flare_positions(rng)
 	_pick_trap_positions(rng, all_rooms)
+	_pick_gap_positions()
+	_pick_quiz_guards(rng)
+	_pick_quiz_traps()
 
 # Wall tiles that face a walkable FLOOR cell become flare host cells. They
 # stay WALL in the grid (collision + wall-variant art untouched); the world
@@ -197,6 +228,86 @@ func _pick_trap_positions(rng: RandomNumberGenerator, rooms: Array) -> void:
 		trap_positions.append(candidates[chosen])
 		candidates.remove_at(chosen)
 
+# Safe-zone gaps: every walkable ring cell of the KNOWLEDGE room that opens into
+# it (a corridor mouth). Rooms can have several corridors, so all such cells are
+# collected. The quiz room is deliberately NOT a safe zone.
+func _pick_gap_positions() -> void:
+	gap_positions = []
+	var room: Dictionary = knowledge_room
+	var p: Vector2i = room["pos"]
+	var s: Vector2i = room["size"]
+	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for x in range(p.x - 1, p.x + s.x + 1):
+		for y in range(p.y - 1, p.y + s.y + 1):
+			var c := Vector2i(x, y)
+			if _cell_in_room(c, room):
+				continue
+			if not _in_bounds(c) or grid[c.x][c.y] != Tile.FLOOR:
+				continue
+			# Must orthogonally touch the room: a walkable cell inside the rect
+			# right next to it. (Diagonal corners can't match, so a corner cell
+			# never gets picked.)
+			for d in dirs:
+				var n: Vector2i = c + d
+				if not _in_bounds(n) or grid[n.x][n.y] != Tile.FLOOR:
+					continue
+				if not _cell_in_room(n, room):
+					continue
+				gap_positions.append(c)
+				break
+
+# 2-3 walkable cells ringing the quiz altar (inside the room) for hitman guards.
+func _pick_quiz_guards(rng: RandomNumberGenerator) -> void:
+	quiz_guard_positions = []
+	var c := quiz_altar_pos
+	var r := 2
+	var count: int = rng.randi_range(2, 3)
+	for i in range(8):
+		if quiz_guard_positions.size() >= count:
+			break
+		var ang := TAU * float(i) / 8.0
+		var cell := c + Vector2i(roundi(cos(ang) * r), roundi(sin(ang) * r))
+		if not _in_bounds(cell) or grid[cell.x][cell.y] != Tile.FLOOR:
+			continue
+		if cell in quiz_guard_positions:
+			continue
+		quiz_guard_positions.append(cell)
+
+# Up to 8 traps ringing the quiz altar, with 2 opposite gaps left open so the
+# player can walk through.
+func _pick_quiz_traps() -> void:
+	quiz_trap_positions = []
+	var c := quiz_altar_pos
+	var r := 3
+	var samples := 10
+	var gap_a := 0
+	var gap_b := samples / 2
+	var seen: Dictionary = {}
+	for i in range(samples):
+		var ang := TAU * float(i) / float(samples)
+		var cell := c + Vector2i(roundi(cos(ang) * r), roundi(sin(ang) * r))
+		if seen.has(cell):
+			continue
+		seen[cell] = true
+		if not _in_bounds(cell) or grid[cell.x][cell.y] != Tile.FLOOR:
+			continue
+		if i == gap_a or i == gap_b:
+			continue   # walk-through gap
+		quiz_trap_positions.append(cell)
+
+# Safe altar room: the KNOWLEDGE room only. The quiz room is NOT safe — its
+# hitman guards must be defeated.
+func is_safe_room_cell(cell: Vector2i) -> bool:
+	return _cell_in_room(cell, knowledge_room)
+
+func _cell_in_room(cell: Vector2i, room: Dictionary) -> bool:
+	var p: Vector2i = room["pos"]
+	var s: Vector2i = room["size"]
+	return cell.x >= p.x and cell.x < p.x + s.x and cell.y >= p.y and cell.y < p.y + s.y
+
+func _in_bounds(c: Vector2i) -> bool:
+	return c.x >= 0 and c.y >= 0 and c.x < width and c.y < height
+
 func _cell_in_any_room(cell: Vector2i, rooms: Array) -> bool:
 	for room in rooms:
 		var p: Vector2i = room["pos"]
@@ -241,21 +352,61 @@ func _overlaps_any(room: Dictionary, rooms: Array) -> bool:
 			return true
 	return false
 
-# L-shaped corridor (horizontal then vertical, with a random corner point)
-# between two room centers — axis-aligned segments only, so it never leaves
-# the rooms' bounding box or overshoots. Every pass is carved 2 tiles thick
-# (_carve_thick_line): the player's collision box is 20x33 on a 32px grid —
-# TALLER than one tile — so 1-wide corridors between walls were impassable
-# (the "can't walk through some floors between walls" playtest report). 2-wide
-# passages give the 33px box comfortable clearance in every direction.
+# A multi-turn zig-zag corridor between two room centers. Every straight run is
+# at least CORRIDOR_MIN_RUN tiles long — the long straight streaks are exactly
+# what the Hitman's ram attack needs (see hitman.gd). The route never leaves the
+# rooms' bounding box, so it can't overshoot into other rooms.
 func _carve_corridor(a: Dictionary, b: Dictionary, rng: RandomNumberGenerator) -> void:
-	var pa := _room_center(a)
-	var pb := _room_center(b)
-	var corner := Vector2i(
-		rng.randi_range(mini(pa.x, pb.x), maxi(pa.x, pb.x)),
-		rng.randi_range(mini(pa.y, pb.y), maxi(pa.y, pb.y)))
-	_carve_thick_line(pa, Vector2i(corner.x, pa.y))
-	_carve_thick_line(Vector2i(corner.x, pa.y), pb)
+	var pts: Array = _zigzag_points(_room_center(a), _room_center(b), rng)
+	for i in range(pts.size() - 1):
+		_carve_thick_line(pts[i], pts[i + 1])
+
+# Builds a staircase of waypoints from `a` to `b`: alternate horizontal/vertical
+# runs, each a random length clamped to what's left on that axis. Because every
+# step moves toward b and never overshoots, the whole path stays inside a/b's
+# bounding box. The final point is always exactly b.
+func _zigzag_points(a: Vector2i, b: Vector2i, rng: RandomNumberGenerator) -> Array:
+	var pts: Array = [a]
+	var cur: Vector2i = a
+	var horiz_next: bool = rng.randi() % 2 == 0
+	for _i in range(64):
+		if cur == b:
+			break
+		var rx: int = absi(b.x - cur.x)
+		var ry: int = absi(b.y - cur.y)
+		# Both axes nearly done — finish with one axis-aligned L to b instead of
+		# a string of 1-tile jogs.
+		if rx < CORRIDOR_MIN_RUN and ry < CORRIDOR_MIN_RUN:
+			if rx > 0:
+				cur = Vector2i(b.x, cur.y)
+				pts.append(cur)
+			if ry > 0:
+				pts.append(b)
+			break
+		# Prefer the current axis, but only start a run on it if it can be a
+		# full-length straight streak; otherwise switch to the other axis if IT
+		# can. This keeps the long rammable runs even when one axis is nearly
+		# exhausted.
+		var do_x: bool = horiz_next
+		if do_x and rx < CORRIDOR_MIN_RUN and ry >= CORRIDOR_MIN_RUN:
+			do_x = false
+		elif not do_x and ry < CORRIDOR_MIN_RUN and rx >= CORRIDOR_MIN_RUN:
+			do_x = true
+		if do_x and rx == 0:
+			do_x = false
+		elif not do_x and ry == 0:
+			do_x = true
+		var remaining: int = rx if do_x else ry
+		var run: int = mini(rng.randi_range(CORRIDOR_MIN_RUN, CORRIDOR_MIN_RUN * 2), remaining)
+		if do_x:
+			cur.x += signi(b.x - cur.x) * run
+		else:
+			cur.y += signi(b.y - cur.y) * run
+		pts.append(cur)
+		horiz_next = not horiz_next
+	if pts[pts.size() - 1] != b:
+		pts.append(b)
+	return pts
 
 func _carve_thick_line(from: Vector2i, to: Vector2i) -> void:
 	var t := from

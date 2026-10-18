@@ -1,6 +1,8 @@
 extends Node2D
 
 const TILE_SIZE = 32
+# Max placed LUA stations (labelled "LUA 0".."LUA 30"); see lua_npc.gd.
+const LUA_MAX_STATIONS: int = 31
 const TREE_SCENE:      PackedScene = preload("res://scenes/objects/Tree.tscn")
 const WOLF_SCENE:      PackedScene = preload("res://scenes/mobs/Wolf.tscn")
 const WORM_SCENE:      PackedScene = preload("res://scenes/mobs/Worm.tscn")
@@ -750,7 +752,11 @@ func _begin_generation() -> void:
 	_compute_chunks()
 	generation_status_changed.emit("Generating terrain...")
 	var t0 := Time.get_ticks_msec()
+	_build_water_tileset()
+	_build_ocean_base()
 	_generate_terrain()
+	# Mirror every water cell onto the static seabed layer (one pass).
+	_sync_ocean_base()
 	print("[TERRAIN] done in %dms — %d tiles processed" % [Time.get_ticks_msec() - t0, width * height])
 	generation_status_changed.emit("Spawning trees and forests...")
 	# Cave entrances must claim their chunks BEFORE wolves/trees/grass are
@@ -1450,7 +1456,12 @@ func _update_hover() -> void:
 			var name_dist: float = mouse_pos.distance_to(node.global_position)
 			if name_dist < best_name_dist:
 				best_name_dist = name_dist
-				best_name = str((entry as Dictionary).get("name", ""))
+				# Blocks may expose a contextual hover prompt (a bonfire says
+				# "click to set respawn"); otherwise show the item name.
+				if node.has_method("hover_prompt"):
+					best_name = str(node.call("hover_prompt"))
+				else:
+					best_name = str((entry as Dictionary).get("name", ""))
 	Global.set_hover(best_name)
 
 func _is_placeable_item(item) -> bool:
@@ -1478,6 +1489,14 @@ func can_place_at(cell: Vector2i) -> bool:
 		return false
 	return true
 
+# Number of placed LUA stations in the world (the "LuaNPC" group).
+func _lua_station_count() -> int:
+	var n := 0
+	for node in get_tree().get_nodes_in_group("LuaNPC"):
+		if is_instance_valid(node):
+			n += 1
+	return n
+
 # Places `item_data`'s block at `cell` (world/tile coords), skipping the
 # player-specific checks (reach radius, player-overlap). Returns the spawned
 # node, or null when the cell is invalid or the scene can't load. Does NOT
@@ -1487,6 +1506,10 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 	if item_data == null or item_data.place_scene_path == "":
 		return null
 	if not can_place_at(cell):
+		return null
+	# Cap the number of placed LUA stations (LUA 0 .. LUA 30).
+	if item_data.item_name == "LUA" and _lua_station_count() >= LUA_MAX_STATIONS:
+		Global.log_chat("LUA limit reached (%d placed)." % LUA_MAX_STATIONS)
 		return null
 	if not ResourceLoader.exists(item_data.place_scene_path):
 		return null
@@ -1498,13 +1521,32 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 		return null
 	if obj.has_method("setup"):
 		obj.call("setup", item_data)
-	# A FLOOR block already here is walkable decor (can_place_at allows placing
-	# over it) — free it so it doesn't linger orphaned under the new block.
+	# Floors are walkable ground: placing a BLOCK on a floor cell KEEPS the floor
+	# underneath it, so the ground survives and returns when the block is broken.
+	# Placing a FLOOR replaces whatever was there; placing a block on another
+	# block replaces that block.
+	var kept_floor: Variant = null
 	if _placed_blocks.has(cell):
-		var old = (_placed_blocks[cell] as Dictionary).get("node")
-		if old != null and is_instance_valid(old):
-			old.queue_free()
+		var old_entry: Dictionary = _placed_blocks[cell]
+		var old_node:  Variant = old_entry.get("node")
+		var old_floor: Variant = old_entry.get("floor")
+		if item_data.is_floor:
+			if old_node != null and is_instance_valid(old_node):
+				old_node.queue_free()
+			if old_floor != null and is_instance_valid(old_floor):
+				old_floor.queue_free()
+		else:
+			if old_floor != null and is_instance_valid(old_floor):
+				kept_floor = old_floor
+				if old_node != null and is_instance_valid(old_node):
+					old_node.queue_free()
+			elif _is_floor_node(old_node):
+				kept_floor = old_node
+			elif old_node != null and is_instance_valid(old_node):
+				old_node.queue_free()
 	_placed_blocks[cell] = {"node": obj, "name": item_data.item_name}
+	if kept_floor != null:
+		(_placed_blocks[cell] as Dictionary)["floor"] = kept_floor
 	if obj.has_method("set_world_cell"):
 		obj.call("set_world_cell", cell, self)
 	add_child(obj)
@@ -1556,7 +1598,10 @@ func _update_ghost() -> void:
 		ghost.visible = false
 		return
 	ghost.visible = true
-	var occupied:    bool = _placed_blocks.has(cell) or editable_layer.get_cell_source_id(cell) != -1 \
+	# A floor cell is walkable ground you can place ON (matches can_place_at and
+	# the build grid) — only a non-floor block counts as occupied.
+	var occupied:    bool = (_placed_blocks.has(cell) and not _is_floor_block(cell)) \
+		or editable_layer.get_cell_source_id(cell) != -1 \
 		or _is_tree_occupied(cell) or _grass_occupied_tiles.has(cell) \
 		or _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell)
 	var on_water:    bool = water_layer.get_cell_source_id(cell) != -1
@@ -1578,6 +1623,11 @@ func _on_hotbar_changed(_idx = 0) -> void:
 
 # ── Block placement ───────────────────────────────────────────────────
 func place_block() -> void:
+	# A DEAD player must not place blocks: this runs from the WORLD's _input
+	# (not the player's), so the player being frozen/hidden during the respawn
+	# window doesn't stop it.
+	if Global.player_is_dead:
+		return
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		return
@@ -1598,7 +1648,17 @@ func place_block() -> void:
 		Global.complete_mission("place_torch")
 
 func unregister_block(cell: Vector2i) -> void:
-	_placed_blocks.erase(cell)
+	# If a floor was kept under the block being removed, restore it as the cell's
+	# block so the ground survives (placing on a floor never destroys it).
+	var entry: Variant = _placed_blocks.get(cell)
+	var kept_floor: Variant = null
+	if entry != null:
+		kept_floor = (entry as Dictionary).get("floor")
+	if is_instance_valid(kept_floor):
+		var fd: ItemData = kept_floor.get("item_data") as ItemData
+		_placed_blocks[cell] = {"node": kept_floor, "name": (fd.item_name if fd != null else "Floor")}
+	else:
+		_placed_blocks.erase(cell)
 	# A block vanished — any block stacked above/below it may no longer need
 	# its full-height side walls.
 	_refresh_neighbor_u_collision(cell)
@@ -1613,10 +1673,11 @@ func has_placed_block(cell: Vector2i) -> bool:
 
 # A torch mounts to a solid neighbour. In the overworld that's any placed block
 # — including world-gen stone/charcoal, which live in _placed_blocks too — so
-# this is the same as has_placed_block here. (Caves override the idea with
-# solid wall cells; see cave_world.gd / pixie_cave_world.gd.)
+# this is the same as has_placed_block here, EXCEPT a floor (walkable decor, not
+# a wall) never counts as support. (Caves override the idea with solid wall
+# cells; see cave_world.gd / pixie_cave_world.gd.)
 func torch_support(cell: Vector2i) -> bool:
-	return _placed_blocks.has(cell)
+	return _placed_blocks.has(cell) and not _is_floor_block(cell)
 
 # True here (the overworld). Caves/dungeons return false — used by the Bonfire
 # to decide whether its position is a valid overworld respawn point.
@@ -1663,10 +1724,39 @@ func placed_item(cell: Vector2i) -> ItemData:
 		return n.get("item_data") as ItemData
 	return null
 
+# The TOP block node at `cell` (a block, a floor, or null). A block placed on a
+# floor becomes the top node; the kept floor underneath is NOT the top. Used by
+# PlaceableBlock._is_top_block() so a floor doesn't consume the block's clicks.
+func placed_node(cell: Vector2i) -> Node:
+	var e: Variant = _placed_blocks.get(cell)
+	if e == null:
+		return null
+	var n: Variant = (e as Dictionary).get("node")
+	return n if is_instance_valid(n) else null
+
 func _is_floor_block(cell: Vector2i) -> bool:
 	if _is_natural_block(cell):
 		return false
 	var d := placed_item(cell)
+	if d != null and d.is_floor:
+		return true
+	# A floor kept under a WALKABLE auxiliary block (torch/bonfire — no collision)
+	# still counts as interior ground, so standing on one inside a house stays
+	# "indoors" and the room's floor region covers it. A wall/door/furniture on
+	# top is a solid boundary, not ground.
+	if d != null and d.is_torch:
+		var e: Variant = _placed_blocks.get(cell)
+		if e != null and is_instance_valid((e as Dictionary).get("floor")):
+			return true
+	return false
+
+# True when a node is a floor block (walkable ground). Used to decide whether a
+# block being placed can KEEP the floor underneath it. Takes a Variant (may be a
+# freed node) so the caller never binds a freed object to a typed Node param.
+func _is_floor_node(node: Variant) -> bool:
+	if not is_instance_valid(node):
+		return false
+	var d = node.get("item_data")
 	return d != null and d.is_floor
 
 func _is_door_block(cell: Vector2i) -> bool:
@@ -1675,12 +1765,13 @@ func _is_door_block(cell: Vector2i) -> bool:
 	var d := placed_item(cell)
 	return d != null and d.is_door
 
-# Boundary = a player-placed, non-floor block (walls AND doors).
+# Boundary = a player-placed block that is NOT walkable ground (walls, doors,
+# furniture). The exact complement of _is_floor_block, so a torch/bonfire on a
+# floor is ground, not a boundary.
 func _is_boundary_block(cell: Vector2i) -> bool:
 	if not _placed_blocks.has(cell) or _is_natural_block(cell):
 		return false
-	var d := placed_item(cell)
-	return d == null or not d.is_floor
+	return not _is_floor_block(cell)
 
 # Rebuild the rooms touching `cell` (+ its 4 neighbours). Called after any
 # placed-block change. Handles merges (a wall broke) and splits (a wall placed).
@@ -1847,7 +1938,9 @@ func _refresh_neighbor_u_collision(cell: Vector2i) -> void:
 		var c: Vector2i = cell + (off as Vector2i)
 		if not _placed_blocks.has(c):
 			continue
-		var n: Node = (_placed_blocks[c] as Dictionary).get("node")
+		# Untyped: a freed neighbour node assigned to a typed `Node` var throws
+		# "Trying to assign invalid previously freed instance".
+		var n: Variant = (_placed_blocks[c] as Dictionary).get("node")
 		if is_instance_valid(n) and n.has_method("refresh_u_collision"):
 			n.call("refresh_u_collision")
 		if is_instance_valid(n) and n.has_method("refresh_torch_connection"):
@@ -2003,6 +2096,75 @@ func is_snow_biome_at(world_pos: Vector2) -> bool:
 	return _cell_biome_type(tile) == 2
 
 # ── Terrain Generation ───────────────────────────────────────────────
+# ── Animated water tiles ───────────────────────────────────────────
+# The water surface is the project's own 8-frame water sheet (water_tile.png),
+# played as a NATIVE Godot animated tile — not a shader. The ocean floor
+# (ocean_base.png) is layered underneath (see _build_ocean_base).
+const WATER_SHEET: Texture2D = preload("res://sprites/water/water_tile.png")
+# The ocean floor: a single 32x32 seabed tile layered UNDER the animated water.
+const OCEAN_BASE_TEX: Texture2D = preload("res://sprites/water/ocean_base.png")
+const WATER_FRAME_COUNT: int = 8
+const WATER_FRAME_SEC: float = 0.34   # ≥300ms/frame so it stays calm
+# The animated water layer is drawn slightly translucent so the seabed shows
+# through it (1.0 = the seabed is hidden).
+const WATER_LAYER_ALPHA: float = 0.85
+
+# Build the water TileSet (a single animated water tile) and assign it to the
+# Water layer, replacing the shared ground TileSet. The water LOGIC only checks
+# `get_cell_source_id() != -1`, so gameplay is unaffected by the change.
+func _build_water_tileset() -> void:
+	if water_layer == null:
+		return
+	var ts := TileSet.new()
+	ts.tile_size = Vector2i(32, 32)
+	var src := TileSetAtlasSource.new()
+	src.texture             = WATER_SHEET
+	src.texture_region_size = Vector2i(32, 32)
+	src.create_tile(Vector2i(0, 0))
+	ts.add_source(src, 0)
+	# An animated tile's frames are the IMPLICIT texture regions at (1,0)..(N-1,0)
+	# — no separate tiles are created for them (create_tile would refuse, since
+	# the animation covers that atlas space).
+	src.set_tile_animation_frames_count(Vector2i(0, 0), WATER_FRAME_COUNT)
+	for i in range(WATER_FRAME_COUNT):
+		src.set_tile_animation_frame_duration(Vector2i(0, 0), i, WATER_FRAME_SEC)
+	water_layer.tile_set = ts
+
+# ── Ocean floor (seabed) ──────────────────────────────────────────
+# Godot 4.6 has no per-tile RENDERING layers (TileData only exposes custom-data
+# layers), so the seabed is a separate STATIC TileMapLayer under the animated
+# Water layer. Every water cell gets the ocean_base tile there, and the water
+# layer is drawn slightly translucent so the seabed reads through it.
+var _ocean_base_layer: TileMapLayer = null
+
+func _build_ocean_base() -> void:
+	if _ocean_base_layer != null and is_instance_valid(_ocean_base_layer):
+		return
+	var ts := TileSet.new()
+	ts.tile_size = Vector2i(32, 32)
+	var src := TileSetAtlasSource.new()
+	src.texture             = OCEAN_BASE_TEX
+	src.texture_region_size = Vector2i(32, 32)
+	src.create_tile(Vector2i(0, 0))
+	ts.add_source(src, 0)
+	var layer := TileMapLayer.new()
+	layer.name = "OceanBase"
+	layer.tile_set = ts
+	layer.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	layer.z_index = (water_layer.z_index - 2) if water_layer != null else -302
+	add_child(layer)
+	_ocean_base_layer = layer
+	# Let the seabed show through the animated water.
+	if water_layer != null:
+		water_layer.modulate = Color(1, 1, 1, WATER_LAYER_ALPHA)
+
+# Mirror every water cell onto the static seabed layer underneath. Runs once
+# after the terrain exists — there is no per-frame tile work.
+func _sync_ocean_base() -> void:
+	if water_layer == null or _ocean_base_layer == null or not is_instance_valid(_ocean_base_layer):
+		return
+	for c in water_layer.get_used_cells():
+		_ocean_base_layer.set_cell(c, 0, Vector2i(0, 0))
 func _generate_terrain() -> void:
 	var cell_offset := Vector2i(width, height) / 2
 
@@ -2048,7 +2210,7 @@ func _generate_terrain() -> void:
 						else:
 							ground_layer.set_cell(c, 0, Vector2i(1, 1))
 					_:
-						water_layer.set_cell(c, 0, Vector2i(0, 1))
+						water_layer.set_cell(c, 0, Vector2i(0, 0))
 			else:
 				match t:
 					Terrain.Plain:
@@ -2058,7 +2220,7 @@ func _generate_terrain() -> void:
 					Terrain.Snowy:
 						ground_layer.set_cell(c, 0, Vector2i(1, 1))
 					_:
-						water_layer.set_cell(c, 0, Vector2i(0, 1))
+						water_layer.set_cell(c, 0, Vector2i(0, 0))
 
 func _set_up_noise(noise: FastNoiseLite, frequency: float, type: FastNoiseLite.FractalType = FastNoiseLite.FractalType.FRACTAL_FBM) -> void:
 	noise.fractal_type = type
@@ -4070,8 +4232,10 @@ func _spawn_dungeon_portal_at(tile: Vector2i, dungeon_index: int) -> void:
 # call while the overworld is off-tree (in-dungeon): the portal is a child of
 # this node and queue_free() works on off-tree nodes.
 func remove_dungeon_entrance(dungeon_index: int) -> void:
-	var portal: Node   = _dungeon_portal_nodes.get(dungeon_index)
-	var entrance: Node = _dungeon_entrance_nodes.get(dungeon_index)
+	# Untyped: a freed portal/entrance assigned to a typed `Node` var throws
+	# "Trying to assign invalid previously freed instance".
+	var portal: Variant   = _dungeon_portal_nodes.get(dungeon_index)
+	var entrance: Variant = _dungeon_entrance_nodes.get(dungeon_index)
 	_dungeon_portal_nodes.erase(dungeon_index)
 	_dungeon_entrance_nodes.erase(dungeon_index)
 	_dungeon_entrance_tiles.erase(dungeon_index)
@@ -4194,9 +4358,18 @@ func get_world_save_data() -> Dictionary:
 		# Furnace automation state (program / input / fuel / output).
 		if node.has_method("get_furnace_save_data"):
 			block_entry["furnace"] = node.call("get_furnace_save_data")
+		# LUA station state (name, combat, tool, build palette, inventory, code).
+		if node.has_method("get_lua_save_data"):
+			block_entry["lua"] = node.call("get_lua_save_data")
 		# Door state (facing + open/closed) — doors only.
 		if idata.is_door and node.has_method("get_door_save_data"):
 			block_entry["door"] = node.call("get_door_save_data")
+		# A floor kept underneath this block persists so it survives a reload.
+		var floor_ref: Variant = entry.get("floor")
+		if floor_ref != null and is_instance_valid(floor_ref):
+			var fdata: ItemData = (floor_ref as Node).get("item_data") as ItemData
+			if fdata != null and not fdata.is_color_block and not fdata.resource_path.is_empty():
+				block_entry["floor_path"] = fdata.resource_path
 		data["placed_blocks"].append(block_entry)
 	return data
 
@@ -4278,6 +4451,26 @@ func apply_world_save_data(data: Dictionary) -> void:
 		obj.position = editable_layer.map_to_local(cell)
 		obj.z_index  = FLOOR_Z if idata.is_floor else int(obj.position.y / TILE_SIZE)
 		_fix_sprite_offset(obj)
+		# Restore a floor kept underneath this block (placing on a floor keeps it).
+		var floor_path: String = str(bd.get("floor_path", ""))
+		if not floor_path.is_empty() and ResourceLoader.exists(floor_path):
+			var fdata: ItemData = load(floor_path) as ItemData
+			if fdata != null and fdata.is_floor and not fdata.place_scene_path.is_empty() \
+					and ResourceLoader.exists(fdata.place_scene_path):
+				var fscene: PackedScene = load(fdata.place_scene_path) as PackedScene
+				if fscene != null:
+					var fobj: Node = fscene.instantiate()
+					if fobj != null:
+						if fobj.has_method("setup"):
+							fobj.call("setup", fdata)
+						if fobj.has_method("set_world_cell"):
+							fobj.call("set_world_cell", cell, self)
+						add_child(fobj)
+						if is_instance_valid(fobj):
+							fobj.position = editable_layer.map_to_local(cell)
+							fobj.z_index = FLOOR_Z
+							_fix_sprite_offset(fobj)
+							(_placed_blocks[cell] as Dictionary)["floor"] = fobj
 		var chest_slots = bd.get("chest_slots", null)
 		if chest_slots is Array:
 			var slots_ref = obj.get("slots")
@@ -4299,6 +4492,10 @@ func apply_world_save_data(data: Dictionary) -> void:
 		var furnace_data = bd.get("furnace", null)
 		if furnace_data is Dictionary and obj.has_method("set_furnace_save_data"):
 			obj.call("set_furnace_save_data", furnace_data)
+		# Restore LUA station state, if this block had any.
+		var lua_data = bd.get("lua", null)
+		if lua_data is Dictionary and obj.has_method("set_lua_save_data"):
+			obj.call("set_lua_save_data", lua_data)
 		# Door state (facing + open/closed) — doors only.
 		var door_data = bd.get("door", null)
 		if idata.is_door and door_data is Dictionary and obj.has_method("set_door_save_data"):

@@ -13,6 +13,7 @@ var accept_drops: bool = true
 const SLOT_ICON_MARGIN: float = 8.0
 
 var _icon: TextureRect = null
+var _qty:  Label       = null
 # The item currently shown (for the hover tooltip).
 var item_data: ItemData = null
 
@@ -30,6 +31,20 @@ func _init() -> void:
 	_icon.offset_right  = -int(m)
 	_icon.offset_bottom = -int(m)
 	add_child(_icon)
+
+	# Stack count (bottom-right), matching the inventory/hotbar slots — so a
+	# loaded stack of 20 shows "20" instead of just the icon.
+	_qty = Label.new()
+	_qty.add_theme_font_size_override("font_size", int(11 * Global.ui_scale))
+	_qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_qty.offset_left   = -int(24 * Global.ui_scale)
+	_qty.offset_top    = -int(15 * Global.ui_scale)
+	_qty.offset_right  = -int(2 * Global.ui_scale)
+	_qty.offset_bottom = -int(2 * Global.ui_scale)
+	_qty.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_qty.visible = false
+	add_child(_qty)
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -50,10 +65,13 @@ func _on_hover_in() -> void:
 func _on_hover_out() -> void:
 	Global.hide_item_tooltip()
 
-func set_icon(tex: Texture2D, alpha: float = 1.0, data: ItemData = null) -> void:
+func set_icon(tex: Texture2D, alpha: float = 1.0, data: ItemData = null, quantity: int = 1) -> void:
 	_icon.texture  = tex
 	_icon.modulate = Color(1, 1, 1, alpha)
 	item_data      = data
+	if _qty != null:
+		_qty.visible = data != null and quantity > 1
+		_qty.text    = str(quantity)
 
 func _draw() -> void:
 	# Draw the border box to FIT the item square: the icon is inset by

@@ -50,6 +50,13 @@ const FLOOR_ITEM_PATHS: Array = [
 	"res://resources/items/dungeon_floor3.tres",
 ]
 
+# Ranged dungeon enemy (see scripts/hitman.gd). Guards + spawner both use it.
+const HITMAN_SCENE: PackedScene = preload("res://scenes/mobs/Hitman.tscn")
+
+# Safe-zone markers use the dev item resources/items/dungeon_safe_zone_marker.tres
+# (a 3x 32x32 sheet: idle / active / warning). The zones themselves are built in
+# _spawn_safe_zones().
+
 static var _shared_tile_set: TileSet = null
 static var _wall_cells: Dictionary = {}  # wall variant -> {"source": id, "coord": Vector2i}
 static var _floor_cells: Array = []      # [{"source": id, "coord": Vector2i}, ...]
@@ -141,6 +148,21 @@ var _tilemap: TileMapLayer = null
 var _exit_marker: DungeonExit = null
 var _cleared: bool = false
 
+# ── Hitman spawner ─────────────────────────────────────────────────
+# Hitmen are NOT placed at generation time — a timer spawns one near a random
+# flare/trap every 5-10s so the dungeon keeps feeling dangerous, capped at
+# HITMAN_MAX_ALIVE, and held back for HITMAN_DEATH_COOLDOWN after one dies.
+const HITMAN_MAX_ALIVE:       int   = 15
+const HITMAN_SPAWN_MIN:       float = 5.0
+const HITMAN_SPAWN_MAX:       float = 10.0
+const HITMAN_DEATH_COOLDOWN:  float = 20.0
+# Never spawn right on top of the player.
+const HITMAN_MIN_PLAYER_DIST: float = 6.0 * TILE_SIZE
+
+var _hitman_timer:    float = 0.0
+var _hitman_cooldown: float = 0.0
+var _safe_zones:      Array = []   # DungeonSafeZone per safe altar room
+
 func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 		overworld: Node2D, return_position: Vector2) -> void:
 	_dungeon_index = dungeon_index
@@ -167,6 +189,10 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 	_spawn_altars()
 	_spawn_flares()
 	_spawn_traps()
+	_spawn_safe_zones()
+	_spawn_quiz_guards()
+	_spawn_quiz_traps()
+	_init_hitman_spawner()
 	_spawn_exit_marker()
 	_setup_lighting()
 
@@ -189,6 +215,129 @@ func _spawn_traps() -> void:
 		add_child(trap)
 		trap.global_position = _tilemap.to_global(
 			_tilemap.map_to_local(_grid_to_cell(grid_pos as Vector2i)))
+
+# The single safe zone: the KNOWLEDGE room, with a marker decal on each of its
+# corridor gaps. Walking a marker arms the zone (see dungeon_safe_zone.gd). The
+# quiz room is NOT safe — its hitman guards must be defeated.
+func _spawn_safe_zones() -> void:
+	_safe_zones.clear()
+	var zone := DungeonSafeZone.new()
+	add_child(zone)
+	zone.setup(self, _room_rect_px(generator.knowledge_room))
+	_safe_zones.append(zone)
+	# A marker on every walkable tile around each gap (deduped so overlapping
+	# gap neighbourhoods don't stack markers).
+	var cells: Dictionary = {}
+	for gap in generator.gap_positions:
+		for cell in _marker_cells_around(gap as Vector2i):
+			cells[cell] = true
+	for cell in cells.keys():
+		zone.add_marker(grid_to_world(cell as Vector2i))
+
+# The walkable cells SURROUNDING a gap cell (its 3x3 neighbourhood), so the
+# safe-zone marker covers the whole corridor entrance, not just one tile.
+func _marker_cells_around(cell: Vector2i) -> Array:
+	var out: Array = []
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			var c := cell + Vector2i(dx, dy)
+			if grid_cell_is_floor(c):
+				out.append(c)
+	return out
+
+# The world-space rect covering a room's floor tiles (for the glow + inside check).
+func _room_rect_px(room: Dictionary) -> Rect2:
+	var p: Vector2i = room["pos"]
+	var s: Vector2i = room["size"]
+	var half := Vector2(TILE_SIZE, TILE_SIZE) * 0.5
+	var tl: Vector2 = grid_to_world(p) - half
+	var br: Vector2 = grid_to_world(p + s - Vector2i(1, 1)) + half
+	return Rect2(tl, br - tl)
+
+# 4 hitman guards ringing the quiz altar (spawned at generation, inside the room).
+func _spawn_quiz_guards() -> void:
+	for cell in generator.quiz_guard_positions:
+		_spawn_hitman_at(cell as Vector2i)
+
+# A ring of traps around the quiz altar with 2 walk-through gaps.
+func _spawn_quiz_traps() -> void:
+	for cell in generator.quiz_trap_positions:
+		var trap := DungeonTrap.new()
+		add_child(trap)
+		trap.global_position = grid_to_world(cell as Vector2i)
+
+# ── Hitman spawner ─────────────────────────────────────────────────
+# Seeds the spawn timer. No Hitmen are placed at generation time — the first
+# one appears 5-10s after the player enters (see _tick_hitman_spawner).
+func _init_hitman_spawner() -> void:
+	_hitman_timer    = randf_range(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
+	_hitman_cooldown = 0.0
+
+func _process(delta: float) -> void:
+	_tick_hitman_spawner(delta)
+
+# Leaving the dungeon must clear the flag — the zones set it while active, and
+# _process stops running once we're out of the tree.
+func _exit_tree() -> void:
+	Global.player_in_safe_room = false
+
+func _tick_hitman_spawner(delta: float) -> void:
+	_hitman_cooldown = maxf(0.0, _hitman_cooldown - delta)
+	_hitman_timer -= delta
+	if _hitman_timer > 0.0 or _hitman_cooldown > 0.0:
+		return
+	# Cap the population so the dungeon doesn't fill up with hitmen.
+	if get_tree().get_nodes_in_group("Hitman").size() >= HITMAN_MAX_ALIVE:
+		_hitman_timer = randf_range(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
+		return
+	_spawn_hitman_near_hazard()
+	_hitman_timer = randf_range(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
+
+# Spawn a Hitman on a walkable cell next to a random flare or trap.
+func _spawn_hitman_near_hazard() -> void:
+	var spots: Array = []
+	for gp in generator.flare_positions:
+		var s := _floor_near(gp as Vector2i)
+		if s.x >= 0:
+			spots.append(s)
+	for gp in generator.trap_positions:
+		var s := _floor_near(gp as Vector2i)
+		if s.x >= 0:
+			spots.append(s)
+	# Prefer spots away from the player so hitmen don't pop in on top of them.
+	var p: Node2D = Global.player_node as Node2D
+	if p != null and is_instance_valid(p):
+		var far: Array = []
+		for s in spots:
+			if p.global_position.distance_to(grid_to_world(s)) >= HITMAN_MIN_PLAYER_DIST:
+				far.append(s)
+		if not far.is_empty():
+			spots = far
+	if spots.is_empty():
+		return
+	_spawn_hitman_at(spots[randi() % spots.size()])
+
+func _spawn_hitman_at(cell: Vector2i) -> void:
+	var hitman: Node2D = HITMAN_SCENE.instantiate() as Node2D
+	if hitman == null:
+		return
+	add_child(hitman)
+	hitman.global_position = grid_to_world(cell)
+	hitman.died.connect(_on_hitman_died)
+
+# A walkable cell adjacent to `gp` (so a spawn never lands in a wall or on the
+# hazard tile itself). Vector2i(-1, -1) if none.
+func _floor_near(gp: Vector2i) -> Vector2i:
+	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	dirs.shuffle()
+	for d in dirs:
+		if grid_cell_is_floor(gp + d):
+			return gp + d
+	return Vector2i(-1, -1)
+
+# A hitman died — hold the next spawn back so the dungeon has a lull.
+func _on_hitman_died() -> void:
+	_hitman_cooldown = HITMAN_DEATH_COOLDOWN
 
 # ── Paint the generated grid into the TileMapLayer ─────────────────────
 func _paint_tiles() -> void:
@@ -305,6 +454,24 @@ func get_player_spawn_pos() -> Vector2:
 # conversion needs this same per-axis offset.
 func _grid_to_cell(tile: Vector2i) -> Vector2i:
 	return tile - Vector2i(generator.width / 2, generator.height / 2)
+
+# ── Grid helpers for dungeon AIs (see hitman.gd) ───────────────────────
+# The Hitman walks the generator's FLOOR grid, so it needs to convert between
+# grid indices and world positions and ask whether a cell is walkable. These
+# wrap the same _grid_to_cell / map_to_local math the spawners use, so the two
+# can never drift apart.
+func grid_to_world(grid_pos: Vector2i) -> Vector2:
+	return _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(grid_pos)))
+
+func world_to_grid(world_pos: Vector2) -> Vector2i:
+	var cell: Vector2i = _tilemap.local_to_map(_tilemap.to_local(world_pos))
+	return cell + Vector2i(generator.width / 2, generator.height / 2)
+
+func grid_cell_is_floor(grid_pos: Vector2i) -> bool:
+	if grid_pos.x < 0 or grid_pos.y < 0 \
+			or grid_pos.x >= generator.width or grid_pos.y >= generator.height:
+		return false
+	return generator.grid[grid_pos.x][grid_pos.y] == DungeonGenerator.Tile.FLOOR
 
 # ── Shared tileset (built once, reused by every dungeon) ───────────────
 # Same approach as cave_world.gd's: every ItemData icon is its own AtlasTexture

@@ -16,6 +16,14 @@ const DAMAGE:       float = 20.0
 const AOE_HALF:     float = 48.0
 const GLOW_COLOR:   Color = Color(1.0, 0.6, 0.25)
 
+# Per-instance overrides. The defaults keep DungeonTrap's blast exactly as it
+# was; the Hitman's self-destruct sets damage_fraction + damage_mobs (hitman.gd).
+var damage: float = DAMAGE
+# If > 0, each target takes this fraction of ITS OWN max HP instead of `damage`.
+var damage_fraction: float = 0.0
+# Also hit "Mob"-group nodes, not just the player.
+var damage_mobs: bool = false
+
 func _ready() -> void:
 	z_index = 45
 	_add_sprite()
@@ -67,9 +75,31 @@ func _add_glow() -> void:
 # tiles of the blast on BOTH axes.
 func _apply_damage() -> void:
 	var p := Global.player_node as Node2D
-	if p == null or not is_instance_valid(p):
-		return
-	var d: Vector2 = p.global_position - global_position
-	if absf(d.x) > AOE_HALF or absf(d.y) > AOE_HALF:
-		return
-	Global.damage_player(DAMAGE, global_position, d)
+	if p != null and is_instance_valid(p):
+		var d: Vector2 = p.global_position - global_position
+		if absf(d.x) <= AOE_HALF and absf(d.y) <= AOE_HALF:
+			var amt: float = Global.max_health * damage_fraction if damage_fraction > 0.0 else damage
+			Global.damage_player(amt, global_position, d)
+	if damage_mobs:
+		_damage_mobs()
+
+# Blast also hits every mob in range, each for damage_fraction of its max HP.
+func _damage_mobs() -> void:
+	for m in get_tree().get_nodes_in_group("Mob"):
+		# Untyped + validity: a node freed between the group query and here would
+		# throw if assigned to a typed `Node` var.
+		var node_ref: Variant = m
+		if not (node_ref is Node2D) or not is_instance_valid(node_ref):
+			continue
+		var node := node_ref as Node2D
+		var md: Vector2 = node.global_position - global_position
+		if absf(md.x) > AOE_HALF or absf(md.y) > AOE_HALF:
+			continue
+		var data = node.get("COMBAT_DATA")
+		if data == null:
+			continue
+		var amt: float = float(data.get("health")) * damage_fraction
+		if amt <= 0.0:
+			continue
+		if node.has_method("take_hit"):
+			node.call("take_hit", amt, global_position)

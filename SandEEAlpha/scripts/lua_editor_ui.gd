@@ -18,6 +18,10 @@ var _code_edit: CodeEdit
 var _output:    RichTextLabel
 var _run_btn:   Button
 var _stop_btn:  Button
+var _name_edit: LineEdit   # rename field (reflects in the robot label + status HUD)
+var _tool_slot: Control = null      # the LUA's tool slot (lua_tool_slot.gd)
+var _combat_btn: Button = null      # combat-mode toggle
+var _terminate_btn: Button = null   # terminate a combat LUA
 var _body:      Control   # code + output view
 var _encycl:    Control   # encyclopedia view
 var _knowledge_box: VBoxContainer   # unlocked dungeon-knowledge entries
@@ -106,6 +110,14 @@ func _find_npc() -> Node:
 		n = n.get_parent()
 	return n
 
+# Rename the NPC — its label above the robot AND the LUA status HUD both update.
+func _on_rename_submitted(new_name: String) -> void:
+	var npc: Node = _find_npc()
+	if npc != null and npc.has_method("rename_to"):
+		npc.call("rename_to", new_name)
+	if _name_edit != null:
+		_name_edit.release_focus()
+
 # Re-syncs the RUN/STOP buttons (and editor editability) with the robot's
 # ACTUAL running state. _running only remembers what THIS panel session did,
 # but closing the panel deliberately leaves the robot working — without this,
@@ -122,6 +134,23 @@ func open_panel() -> void:
 	visible = true
 	_sync_running_from_npc()
 	_refresh_build_palette()
+	_load_saved_code()
+	if _name_edit != null:
+		var npc: Node = _find_npc()
+		if npc != null and npc.has_method("get_display_name"):
+			_name_edit.text = str(npc.call("get_display_name"))
+
+# Restore the LUA's saved program into the editor (persisted on the NPC with the
+# world save, so the code survives a reload).
+func _load_saved_code() -> void:
+	if _code_edit == null:
+		return
+	var npc: Node = _find_npc()
+	if npc == null:
+		return
+	var code: String = str(npc.get("program_code"))
+	if not code.is_empty():
+		_code_edit.text = code
 
 func _find_lua_state() -> void:
 	var npc: Node = _find_npc()
@@ -182,6 +211,34 @@ func _build() -> void:
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
+
+	# Rename field — the new name shows above the robot AND in the LUA status
+	# HUD (lua_status_ui.gd reads get_display_name()).
+	_name_edit = LineEdit.new()
+	_name_edit.placeholder_text = "name"
+	_name_edit.add_theme_font_size_override("font_size", i(12, s))
+	_name_edit.custom_minimum_size = Vector2(i(120, s), 0)
+	var npc_now: Node = _find_npc()
+	if npc_now != null and npc_now.has_method("get_display_name"):
+		_name_edit.text = str(npc_now.call("get_display_name"))
+	_name_edit.text_submitted.connect(_on_rename_submitted)
+	header.add_child(_name_edit)
+
+	var rename_btn := Button.new()
+	rename_btn.text = "Rename"
+	rename_btn.add_theme_font_size_override("font_size", i(12, s))
+	var rbs := StyleBoxFlat.new()
+	rbs.bg_color = Color(0.12, 0.18, 0.36, 1.0)
+	rbs.border_color = C_BORDER
+	rbs.set_border_width_all(1); rbs.set_corner_radius_all(4)
+	rbs.content_margin_left = i(10, s); rbs.content_margin_right  = i(10, s)
+	rbs.content_margin_top  = i(4, s);  rbs.content_margin_bottom = i(4, s)
+	rename_btn.add_theme_stylebox_override("normal",  rbs)
+	rename_btn.add_theme_stylebox_override("hover",   rbs)
+	rename_btn.add_theme_stylebox_override("pressed", rbs)
+	rename_btn.add_theme_color_override("font_color", C_TITLE)
+	rename_btn.pressed.connect(func() -> void: _on_rename_submitted(_name_edit.text))
+	header.add_child(rename_btn)
 
 	var enc_btn := Button.new()
 	enc_btn.text = "📖  Encyclopedia"
@@ -282,6 +339,15 @@ func _build_body(s: float) -> Control:
 	var clear_btn := _make_btn("✕ CLEAR", Color(1.0, 0.8, 0.8, 1.0), C_ERR, _clear_code, s)
 	clear_btn.tooltip_text = "Clear the editor."
 	btn_row.add_child(clear_btn)
+
+	# Combat mode + terminate (see lua_npc.gd combat section).
+	_combat_btn = _make_btn("⚔ COMBAT", Color(1.0, 0.85, 0.6, 1.0), C_STOP, _toggle_combat, s)
+	_combat_btn.tooltip_text = "Send this LUA into combat mode: it abandons its station, follows you and fights. PERMANENT — a combat LUA can't run code, can't revert to a normal LUA, and can only be terminated for good."
+	btn_row.add_child(_combat_btn)
+	_terminate_btn = _make_btn("☠ TERMINATE", Color(1.0, 0.6, 0.6, 1.0), C_ERR, _terminate_lua, s)
+	_terminate_btn.tooltip_text = "Terminate this combat LUA for good (it can never be used again)."
+	_terminate_btn.visible = false
+	btn_row.add_child(_terminate_btn)
 
 	# Output panel
 	var out_wrap := VBoxContainer.new()
@@ -430,11 +496,36 @@ func _build_player_items(s: float) -> Control:
 		tslot.expand_mode         = TextureRect.EXPAND_IGNORE_SIZE
 		tslot.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		var bg := ColorRect.new()
+		bg.name = "SlotBG"
 		bg.color = Color(0.11, 0.15, 0.26, 1.0)
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 		tslot.add_child(bg)
-		tslot.move_child(bg, 0)
+		# The ICON is a CHILD so it draws OVER the opaque bg — setting the slot's
+		# OWN texture hid it behind the bg, so the hotbar looked empty/out of
+		# sync with the real one.
+		var icon := TextureRect.new()
+		icon.name = "ItemIcon"
+		icon.expand_mode  = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+		icon.offset_left = i(4, s); icon.offset_top = i(4, s)
+		icon.offset_right = -i(4, s); icon.offset_bottom = -i(4, s)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		icon.visible = false
+		tslot.add_child(icon)
+		var qty := Label.new()
+		qty.name = "Quantity"
+		qty.add_theme_font_size_override("font_size", i(10, s))
+		qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+		qty.offset_left = -i(16, s); qty.offset_top = -i(14, s)
+		qty.offset_right = -i(2, s); qty.offset_bottom = -i(2, s)
+		qty.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		qty.visible = false
+		tslot.add_child(qty)
+		# Click a slot to make it the player's ACTIVE hotbar slot.
+		tslot.gui_input.connect(func(ev: InputEvent) -> void: _on_editor_hotbar_click(ev, idx))
 		hb_row.add_child(tslot)
 		_hotbar_slots.append(tslot)
 
@@ -442,6 +533,8 @@ func _build_player_items(s: float) -> Control:
 		Global.Inventory_updated.connect(_refresh_player_items)
 	if not Global.Hotbar_updated.is_connected(_refresh_player_items):
 		Global.Hotbar_updated.connect(_refresh_player_items)
+	if not Global.hotbar_selection_changed.is_connected(_on_hotbar_selection_changed):
+		Global.hotbar_selection_changed.connect(_on_hotbar_selection_changed)
 	# Deferred: the freshly instantiated slots build their child visuals in
 	# _ready, which hasn't run at the point this column is assembled.
 	_refresh_player_items.call_deferred()
@@ -461,8 +554,35 @@ func _refresh_player_items() -> void:
 		var slot: TextureRect = _hotbar_slots[i]
 		if not is_instance_valid(slot):
 			continue
+		var icon: TextureRect = slot.get_node_or_null("ItemIcon") as TextureRect
+		var qty:  Label       = slot.get_node_or_null("Quantity") as Label
+		var bg:   ColorRect   = slot.get_node_or_null("SlotBG") as ColorRect
 		var item: Variant = Global.Hotbar[i] if i < Global.Hotbar.size() else null
-		slot.texture = ((item as Dictionary)["data"] as ItemData).icon if item != null else null
+		if icon != null:
+			if item != null:
+				icon.texture = ((item as Dictionary)["data"] as ItemData).icon
+				icon.visible = true
+				var q: int = int((item as Dictionary)["quantity"])
+				if qty != null:
+					qty.text = str(q)
+					qty.visible = q > 1
+			else:
+				icon.texture = null
+				icon.visible = false
+				if qty != null:
+					qty.visible = false
+		# Mirror the real hotbar's selected-slot highlight.
+		if bg != null:
+			bg.color = Color(0.25, 0.40, 0.75, 1.0) if i == Global.hotbar_selected \
+				else Color(0.11, 0.15, 0.26, 1.0)
+
+func _on_hotbar_selection_changed(_i: int) -> void:
+	_refresh_player_items()
+
+func _on_editor_hotbar_click(ev: InputEvent, idx: int) -> void:
+	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+		Global.set_hotbar_selection(idx)
+		_refresh_player_items()
 
 # ── Build palette row (robot's 3 block slots) ─────────────────────
 func _build_palette_row(s: float) -> Control:
@@ -487,21 +607,74 @@ func _build_palette_row(s: float) -> Control:
 		slot.connect("slot_changed", _on_build_slot_changed)
 		slots.add_child(slot)
 		_build_slots.append(slot)
+
+	# TOOL slot — the item the robot swings for its tasks (and its combat weapon).
+	var tool_lbl := Label.new()
+	tool_lbl.text = "TOOL  (the robot swings this)"
+	tool_lbl.add_theme_font_size_override("font_size", i(10, s))
+	tool_lbl.add_theme_color_override("font_color", C_MUTED)
+	row.add_child(tool_lbl)
+	var tool_row := HBoxContainer.new()
+	tool_row.add_theme_constant_override("separation", i(6, s))
+	row.add_child(tool_row)
+	var tool_script: GDScript = load("res://scripts/lua_tool_slot.gd")
+	_tool_slot = tool_script.new()
+	_tool_slot.connect("slot_changed", _on_build_slot_changed)
+	tool_row.add_child(_tool_slot)
 	return row
 
 func _on_build_slot_changed() -> void:
 	_refresh_build_palette()
 
-# Pushes the robot's current palette contents into the slot visuals.
+# Pushes the robot's current palette + tool contents into the slot visuals.
 func _refresh_build_palette() -> void:
 	var npc: Node = _find_npc()
 	for slot in _build_slots:
 		if is_instance_valid(slot):
 			slot.set("_npc", npc)
 			slot.call("refresh")
+	if _tool_slot != null and is_instance_valid(_tool_slot):
+		_tool_slot.set("_npc", npc)
+		_tool_slot.call("refresh")
+	_update_combat_ui()
 
 func _on_build_palette_changed() -> void:
 	_refresh_build_palette()
+
+# ── Combat mode UI ────────────────────────────────────────────────
+# Entering combat is ONE-WAY: a combat LUA can only be terminated, never turned
+# back into a normal LUA (there is no exit-combat button).
+func _toggle_combat() -> void:
+	var npc: Node = _find_npc()
+	if npc == null or not npc.has_method("is_combat"):
+		return
+	if bool(npc.call("is_combat")):
+		return
+	npc.call("_enter_combat")
+	_update_combat_ui()
+
+func _terminate_lua() -> void:
+	var npc: Node = _find_npc()
+	if npc != null and npc.has_method("terminate"):
+		npc.call("terminate")
+	_close()
+
+# Reflect combat state: code/RUN disabled, TERMINATE shown, COMBAT button relabelled.
+func _update_combat_ui() -> void:
+	var npc: Node = _find_npc()
+	var combat: bool = npc != null and npc.has_method("is_combat") and bool(npc.call("is_combat"))
+	# No exit-combat: once a LUA is in combat it stays there (only TERMINATE).
+	if _combat_btn != null:
+		_combat_btn.visible = not combat
+	if _terminate_btn != null:
+		_terminate_btn.visible = combat
+	if combat:
+		if _code_edit != null:
+			_code_edit.editable = false
+		if _run_btn != null:
+			_run_btn.disabled = true
+	elif _code_edit != null and _run_btn != null:
+		_sync_running_from_npc()
 
 # ── Encyclopedia ──────────────────────────────────────────────────
 # Two clearly separated groups (see APIReference):
@@ -682,6 +855,12 @@ var _completion_filled: bool = false
 func _setup_code_editor() -> void:
 	var ce := _code_edit
 	var hl := CodeHighlighter.new()
+	# CodeHighlighter's DEFAULT number/symbol/function/member colours are pure
+	# BLACK — unreadable on the dark editor. Set them all to light tones.
+	hl.number_color          = Color(0.98, 0.70, 0.53)   # peach
+	hl.symbol_color          = Color(0.53, 0.86, 0.92)   # sky
+	hl.function_color        = Color(0.45, 0.85, 1.00)   # blue
+	hl.member_variable_color = Color(0.89, 0.75, 0.98)   # lavender
 	for kw in ["function", "end", "if", "then", "elseif", "else", "for", "while",
 			"do", "repeat", "until", "return", "local", "and", "or", "not", "in",
 			"break", "true", "false", "nil"]:
@@ -691,6 +870,8 @@ func _setup_code_editor() -> void:
 	ce.syntax_highlighter = hl
 	ce.set_code_completion_enabled(true)
 	ce.code_completion_requested.connect(_on_code_completion_requested)
+	# Light editor-chrome colours (line numbers, caret, selection, current line).
+	LanguageSpecification.style_code_edit(ce, C_TITLE, C_MUTED)
 
 # Every callable name from the API reference (custom + built-in Lua), deduped.
 func _api_function_names() -> PackedStringArray:
@@ -736,6 +917,11 @@ func _lint(code: String) -> void:
 		_print_output("[color=#ffcc66]Warning: unknown function(s): %s — see the Encyclopedia.[/color]" % ", ".join(PackedStringArray(unknown.keys())))
 
 func _run_code() -> void:
+	# Combat LUAs cannot run code (see lua_npc.gd combat section).
+	var npc_c: Node = _find_npc()
+	if npc_c != null and npc_c.has_method("is_combat") and bool(npc_c.call("is_combat")):
+		_print_output("[color=#ff8888]This LUA is in combat mode — it cannot run code.[/color]")
+		return
 	if _lua_state == null:
 		_print_output("[color=#ff8888]No LuaState connected.[/color]")
 		return
@@ -743,6 +929,9 @@ func _run_code() -> void:
 	if code.is_empty():
 		return
 	_lint(code)
+	# Persist the program on the NPC so it survives a reload.
+	if npc_c != null:
+		npc_c.set("program_code", code)
 
 	var preamble: String = """
 -- Built-in helpers

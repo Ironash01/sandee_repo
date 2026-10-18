@@ -86,6 +86,8 @@ func _ready() -> void:
 			_apply_floor()
 		elif item_data.is_door:
 			_apply_door()
+		elif item_data.is_torch:
+			_apply_torch()
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 10.0), Vector2(0.8, 0.4), 0.35))
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
@@ -105,6 +107,14 @@ func _apply_floor() -> void:
 func _apply_floor_z() -> void:
 	z_index = FLOOR_Z
 
+# ── Torch / bonfire (auxiliary) ───────────────────────────────────
+# Torches (and bonfires) are auxiliary decor — they must NOT block the player,
+# so their solid collider is disabled like a floor. They still light + animate.
+func _apply_torch() -> void:
+	var cs := get_node_or_null("StaticBody2D/CollisionShape2D") as CollisionShape2D
+	if cs != null:
+		cs.disabled = true
+
 # ── Door ──────────────────────────────────────────────────────────
 func _apply_door() -> void:
 	var p = Global.player_node
@@ -116,6 +126,24 @@ func _toggle_door() -> void:
 	_door_open = not _door_open
 	_apply_sprite()
 	_set_door_collision(not _door_open)
+
+# ── Plain-click dispatch ──────────────────────────────────────────
+# Blocks that react to a PLAIN left-click instead of mining (a door toggles
+# open/closed; a bonfire toggles the respawn point — see bonfire.gd). SHIFT+
+# click always falls through to mining.
+func has_plain_click() -> bool:
+	return item_data != null and item_data.is_door
+
+func on_plain_click() -> void:
+	_toggle_door()
+
+# True when this node is the TOP block at its cell. A floor kept under a placed
+# block is NOT the top, so it must not consume clicks meant for the block on top.
+func _is_top_block() -> bool:
+	var world := _world()
+	if world == null or not world.has_method("placed_node"):
+		return true
+	return world.call("placed_node", _world_cell) == self
 
 func _set_door_collision(solid: bool) -> void:
 	var cs := get_node_or_null("StaticBody2D/CollisionShape2D") as CollisionShape2D
@@ -141,11 +169,23 @@ func set_door_save_data(data: Dictionary) -> void:
 	_apply_sprite()
 	_set_door_collision(not _door_open)
 
+# The world that owns this block, or null. Guards against a FREED _world_ref:
+# `_world_ref != null` is TRUE for a freed instance, so the old
+# `_world_ref if _world_ref != null else Global.world_node` assigned a freed
+# object to a typed `Node` var and threw
+# "Trying to assign invalid previously freed instance".
+func _world() -> Node:
+	if is_instance_valid(_world_ref):
+		return _world_ref
+	if is_instance_valid(Global.world_node):
+		return Global.world_node
+	return null
+
 # Lazy-create (once per world) the TorchLights manager under the world that
 # owns this block, then register. _world_ref is set by set_world_cell() BEFORE
 # this node enters the tree, so it's available in _ready.
 func _register_torch_light() -> void:
-	var world: Node = _world_ref if _world_ref != null else Global.world_node
+	var world: Node = _world()
 	if world == null:
 		return
 	var mgr: Node = world.get_node_or_null("TorchLights")
@@ -157,10 +197,8 @@ func _register_torch_light() -> void:
 		mgr.call("register_torch", self)
 
 func _exit_tree() -> void:
-	var world: Node = _world_ref \
-		if (_world_ref != null and is_instance_valid(_world_ref)) \
-		else Global.world_node
-	if world == null or not is_instance_valid(world):
+	var world: Node = _world()
+	if world == null:
 		return
 	var mgr: Node = world.get_node_or_null("TorchLights")
 	if mgr != null and is_instance_valid(mgr) and mgr.has_method("unregister_torch"):
@@ -235,7 +273,7 @@ func refresh_torch_connection() -> void:
 		return
 	if item_data.torch_connected_sheet == null:
 		return
-	var world: Node = _world_ref if _world_ref != null else Global.world_node
+	var world: Node = _world()
 	if world == null or _world_cell.x == -99999:
 		return
 	# A torch mounts to a solid neighbour. Worlds expose torch_support() for
@@ -362,16 +400,21 @@ func _input(event: InputEvent) -> void:
 		if _breaking:
 			_cancel_breaking()
 		return
-	# A door toggles open/closed on a plain click. SHIFT+click mines it instead
+	# A floor kept under a placed block is NOT the top block — it must not
+	# consume clicks meant for the block on top (e.g. a door placed over a floor).
+	if item_data != null and item_data.is_floor and not _is_top_block():
+		return
+	# A block that reacts to a PLAIN left-click (doors toggle open/closed;
+	# bonfires toggle the respawn point) consumes it. SHIFT+click mines instead
 	# (falls through to the mining path below, which supports click-spam/hold).
-	if item_data != null and item_data.is_door:
+	if has_plain_click():
 		var shift_held: bool = event is InputEventMouseButton \
 			and (event as InputEventMouseButton).shift_pressed
 		if not shift_held:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 				if not get_viewport().is_input_handled():
 					get_viewport().set_input_as_handled()
-					_toggle_door()
+					on_plain_click()
 			return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -456,7 +499,7 @@ func _cancel_breaking() -> void:
 
 func _break() -> void:
 	_breaking = false
-	var world: Node = _world_ref if _world_ref != null else Global.world_node
+	var world: Node = _world()
 	if world != null and world.has_method("unregister_block"):
 		world.call("unregister_block", _world_cell)
 	# Debris burst coloured like the block, spawned under the world so it
@@ -476,7 +519,7 @@ func _break() -> void:
 		drop.call("set_item_data", item_data)
 		# World itself (via _world_ref, falling back to Global.world_node)
 		# rather than get_parent() — see chest_block.gd's _break() for why.
-		var drop_parent: Node = _world_ref if _world_ref != null else Global.world_node
+		var drop_parent: Node = _world()
 		if drop_parent != null:
 			drop_parent.add_child(drop)
 			drop.global_position = global_position + Vector2(0, -16)

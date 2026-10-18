@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/hitman.gd" id="1_hitman"]
+
+[sub_resource type="RectangleShape2D" id="RectShape_hitman"]
+size = Vector2(11, 8)
+
+[node name="Hitman" type="CharacterBody2D" groups=["Hitman"]]
+collision_layer = 2
+script = ExtResource("1_hitman")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+scale = Vector2(0.7, 0.7)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, 3)
+shape = SubResource("RectShape_hitman")

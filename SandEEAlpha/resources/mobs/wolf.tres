@@ -5,6 +5,7 @@
 [resource]
 script = ExtResource("1_script")
 mob_name = "Wolf"
+behavior = 1
 health = 100.0
 spawn_during_night = false
 spawn_plains = true

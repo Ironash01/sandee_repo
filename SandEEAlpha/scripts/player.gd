@@ -5,6 +5,7 @@ const SPRINT_MULTIPLIER:   float = 1.8
 
 const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png")
 const SWING_SCRIPT: GDScript = preload("res://scripts/sword_swing_effect.gd")
+const FISHING_SCRIPT: GDScript = preload("res://scripts/fishing_controller.gd")
 
 @onready var sprite:           AnimatedSprite2D = $PlayerSprite
 @onready var interaction_shape: CollisionShape2D = $Area2D/InteractionCol
@@ -24,6 +25,7 @@ var _face_dir:   String = "south"
 # grass cutting, etc.) connect to this so their swing-coupled gameplay runs
 # on the same trigger regardless of which world scene is active.
 signal swing_performed
+var _fishing: Node2D = null   # FishingController child (created in _ready)
 var _sprinting:          bool  = false
 var _stamina_exhausted:  bool  = false
 var _move_mission_done:      bool  = false
@@ -100,6 +102,9 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	$mainCam.make_current()
 	Global.set_player_reference(self)
+	_fishing = FISHING_SCRIPT.new()
+	_fishing.name = "FishingController"
+	add_child(_fishing)
 	$mainCam.zoom = Vector2(Global.camera_zoom, Global.camera_zoom)
 	Global.camera_zoom_changed.connect(_on_camera_zoom_changed)
 	if _shared_frames == null:
@@ -517,6 +522,11 @@ func _get_world_node() -> Node:
 func get_facing_dir() -> String:
 	return _face_dir
 
+# Public read of the sprint state — a combat LUA uses it to decide whether to
+# accelerate into a sprint to run the player down.
+func is_sprinting() -> bool:
+	return _sprinting
+
 # The 8-way facing name for the cursor direction, or "" when the cursor sits on
 # the player (the caller then keeps the movement facing).
 func _mouse_facing_dir() -> String:
@@ -732,6 +742,8 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
 			and event.pressed:
 		_attack_held = true
+		if _try_use_held_item():
+			return
 		swing_held_item()
 
 # Auto-repeat: while the left mouse is held, start the next swing the moment the
@@ -753,6 +765,78 @@ func _tick_attack_hold() -> void:
 	if _active_swing != null and is_instance_valid(_active_swing):
 		return
 	swing_held_item()
+
+# ── Held-item "use" (runs before the swing fallback) ───────────────
+# A plain left-click normally swings whatever is held. Two item kinds instead
+# USE on the click: the fishing rod (cast at a water tile) and cooked food (eat
+# to heal). Returns true when the click was consumed by a use, so _input skips
+# the swing — the swing is the fallback, not a parallel action.
+func _try_use_held_item() -> bool:
+	var held: Variant = Global.get_hotbar_item()
+	if held == null:
+		return false
+	var data: ItemData = (held as Dictionary).get("data") as ItemData
+	if data == null:
+		return false
+	if data.is_fishing_rod:
+		return _try_cast_fishing_rod()
+	if data.heal_amount > 0.0:
+		return _try_eat_food(data)
+	return false
+
+# Fishing rod: only a click on a WATER tile casts, so clicking a mob / ground
+# still swings the rod normally. Reuses the player's existing water lookup and
+# never starts a second cast while one is live.
+func _try_cast_fishing_rod() -> bool:
+	if _fishing == null or not is_instance_valid(_fishing):
+		return false
+	if bool(_fishing.call("is_active")):
+		return true   # already fishing — swallow the click, don't restart the timer
+	if not _cursor_on_water():
+		return false
+	_fishing.call("start", get_global_mouse_position())
+	return true
+
+# Cooked food: eat one only when it would actually heal (never at full health),
+# and never when the cursor is over a solid world object (a wall / placed block /
+# furnace) the click should interact with instead. Raw fish have heal_amount 0,
+# so they fall through to a normal swing and never heal.
+func _try_eat_food(data: ItemData) -> bool:
+	if _cursor_over_world_object():
+		return false
+	if Global.health >= Global.max_health:
+		Global.log_chat("[color=#ffaa66]You're already at full health.[/color]")
+		return true
+	var healed: float = Global.heal_player(data.heal_amount)
+	if healed <= 0.0:
+		return true
+	Global.remove_item(data)
+	Global.log_chat("[color=#9be89b]Ate a %s (+%d health).[/color]" % [data.item_name, int(healed)])
+	return true
+
+# True when the mouse is over a water cell of the active world.
+func _cursor_on_water() -> bool:
+	var world := _get_world_node()
+	if world == null:
+		return false
+	var water_layer: TileMapLayer = world.get_node_or_null("Water") as TileMapLayer
+	if water_layer == null:
+		return false
+	return _water_at(water_layer, get_global_mouse_position())
+
+# True when the cursor is over a solid body on the world layer (walls, placed
+# blocks, furnace/crafting station). Eating is skipped then so clicking an
+# object interacts with it instead of being swallowed by a bite.
+func _cursor_over_world_object() -> bool:
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return false
+	var params := PhysicsPointQueryParameters2D.new()
+	params.position = get_global_mouse_position()
+	params.collision_mask = 1          # world / walls / placed blocks
+	params.collide_with_bodies = true
+	params.collide_with_areas = false
+	return not space.intersect_point(params, 1).is_empty()
 
 func apply_item_effect(item) -> void:
 	match item["effect"]:

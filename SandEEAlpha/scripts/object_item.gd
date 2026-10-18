@@ -50,6 +50,10 @@ const INTERACT_RADIUS_PX: float = 48.0
 
 func _ready() -> void:
 	col_interact_shape.disabled = true
+	# Always process so a cook keeps ticking while a menu pauses the tree (the
+	# smelting menu is PROCESS_MODE_ALWAYS and pauses gameplay, so an INHERIT
+	# furnace would freeze its own timer while the player watches it).
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	if obj_type == "furnace":
 		furnace()
 	Global.request_close_all_ui.connect(_on_close_all_ui)
@@ -87,6 +91,7 @@ func _on_close_all_ui() -> void:
 
 func _process(delta: float) -> void:
 	_tick_progress_expiry()
+	_tick_cook(delta)
 	if not _breaking:
 		return
 	if not _player_nearby \
@@ -265,6 +270,15 @@ var fuel_quantity:   int      = 0
 var output_item:     ItemData = null
 var output_quantity: int      = 0
 
+# ── Timed smelting ────────────────────────────────────────────────
+# The manual SMELT button cooks over the recipe's smelt_time instead of
+# resolving instantly, and keeps going while input + fuel remain. The menu shows
+# the progress + countdown. The program API keeps the INSTANT smelt_request()
+# (automation loops its own).
+var _cooking:      bool  = false
+var _cook_elapsed: float = 0.0
+var _cook_total:   float = 0.0
+
 var program_code:     String = ""
 var program_language: String = "python"
 var _program_host: Node = null
@@ -414,6 +428,78 @@ func smelt_request(amount: int) -> int:
 		Global.add_mission_progress("smelt_iron", n)
 	furnace_state_changed.emit()
 	return n
+
+# ── Timed cook (manual SMELT button) ──────────────────────────────
+func is_cooking() -> bool:
+	return _cooking
+
+func cook_progress() -> float:
+	if not _cooking or _cook_total <= 0.0:
+		return 0.0
+	return clampf(_cook_elapsed / _cook_total, 0.0, 1.0)
+
+func cook_remaining() -> float:
+	if not _cooking:
+		return 0.0
+	return maxf(0.0, _cook_total - _cook_elapsed)
+
+# The recipe that could cook right now, or null when input / fuel / output
+# space don't allow it.
+func _can_cook() -> SmeltingRecipe:
+	var rec: SmeltingRecipe = smelting_recipe_for(input_item)
+	if input_item == null or input_quantity <= 0 or rec == null or rec.output_item == null:
+		return null
+	if output_item != null and output_item != rec.output_item:
+		return null
+	if output_quantity >= _stack_limit(rec.output_item):
+		return null
+	if fuel_item == null or not fuel_item.is_fuel or fuel_item.fuel_level < rec.fuel_level_required:
+		return null
+	if fuel_quantity <= 0:
+		return null
+	return rec
+
+# Start (or resume) cooking one item. Returns false when nothing can cook.
+func begin_cook() -> bool:
+	if _cooking:
+		return true
+	var rec: SmeltingRecipe = _can_cook()
+	if rec == null:
+		return false
+	_cooking = true
+	_cook_elapsed = 0.0
+	_cook_total = maxf(0.1, rec.smelt_time)
+	furnace_state_changed.emit()
+	return true
+
+func stop_cook() -> void:
+	if not _cooking:
+		return
+	_cooking = false
+	_cook_elapsed = 0.0
+	_cook_total = 0.0
+	furnace_state_changed.emit()
+
+func _tick_cook(delta: float) -> void:
+	if not _cooking:
+		return
+	# Input/fuel/output changed under us → the cook can't continue.
+	if _can_cook() == null:
+		stop_cook()
+		return
+	_cook_elapsed += delta
+	if _cook_elapsed < _cook_total:
+		return
+	# Finish one item (smelt_request consumes input + one fuel, adds the output),
+	# then keep cooking while there's more to do.
+	if smelt_request(1) <= 0:
+		stop_cook()
+		return
+	_cook_elapsed = 0.0
+	if _can_cook() == null:
+		stop_cook()
+	else:
+		furnace_state_changed.emit()
 
 # Load named items from the player's inventory into a specific slot. Returns
 # how many were loaded. Input and fuel are SEPARATE (an item can be both a

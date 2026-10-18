@@ -45,6 +45,8 @@ const CUSTOM_LUA_ROBOT: Array = [
 		"desc": "Mine every placed block whose name matches within radius blocks of the station, walking to each and storing the drops, e.g. mine(\"Stone\"). Radius defaults to 20."},
 	{"sig": "rename(name)",
 		"desc": "Give the robot a custom name. It is shown above the robot itself."},
+	{"sig": "combat_mode(on)",
+		"desc": "true: send this LUA into COMBAT MODE — it abandons its station, follows you, and attacks whatever you attack with its TOOL slot. A combat LUA cannot run code, has HP (enemies can hurt it), and can be terminated for good (remote, or STOP on its station). false: leave combat mode."},
 ]
 
 # ── Custom: Lua crafting-station API ───────────────────────────────

@@ -21,6 +21,12 @@ const HIT_RADIUS: float = 7.0
 const GLOW_COLOR: Color = Color(1.0, 0.55, 0.22)
 
 var direction: Vector2 = Vector2.RIGHT
+# Per-instance damage. Defaults to the obstacle flare's 40; the Hitman enemy
+# overrides it to 20 (see hitman.gd) so the two never share a value.
+var damage: float = DAMAGE
+# When true the bolt stops at walls/obstacles (layer 1) via a raycast. Off by
+# default so the DungeonFlare obstacle is unchanged; the Hitman turns it on.
+var collide_walls: bool = false
 var _life: float = 0.0
 var _glow: PointLight2D = null
 var _parried: bool = false
@@ -79,7 +85,16 @@ func _add_glow() -> void:
 func _physics_process(delta: float) -> void:
 	if _parried:
 		return
-	global_position += direction * SPEED * delta
+	var step: Vector2 = direction * SPEED * delta
+	# Optional wall/obstacle collision (layer 1). TileMapLayer collision isn't a
+	# Node, so an Area2D body test can't see it — a raycast can.
+	if collide_walls and is_inside_tree():
+		var from: Vector2 = global_position
+		var q := PhysicsRayQueryParameters2D.create(from, from + step, 1)
+		if not get_world_2d().direct_space_state.intersect_ray(q).is_empty():
+			queue_free()
+			return
+	global_position += step
 	z_index = int(global_position.y / 32)   # y-sort against the player/walls
 	_life += delta
 	if _life >= LIFETIME:
@@ -88,7 +103,7 @@ func _physics_process(delta: float) -> void:
 func _on_body_entered(body: Node) -> void:
 	if _parried or not body.is_in_group("Player"):
 		return
-	Global.damage_player(DAMAGE, global_position, direction)
+	Global.damage_player(damage, global_position, direction)
 	queue_free()
 
 # Called by the sword swing hitbox when the blade sweeps over this bolt.

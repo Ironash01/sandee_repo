@@ -191,6 +191,7 @@ func _try_attack_player(delta: float) -> void:
 func take_hit(damage: float, source_pos: Vector2) -> void:
 	if damage <= 0.0:
 		return
+	damage = COMBAT_DATA.damage_taken(damage)
 	_mob_health = maxf(0.0, _mob_health - damage)
 	_last_damage_ms = Time.get_ticks_msec()
 	var away: Vector2 = global_position - source_pos

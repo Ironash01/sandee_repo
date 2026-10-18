@@ -9,6 +9,8 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 # the editor has re-scanned/registered the new script's class.
 const CHAT_CONSOLE_SCRIPT: Script = preload("res://scripts/chat_console.gd")
 const MINIMAP_SCRIPT: Script = preload("res://scripts/minimap.gd")
+# Left-middle LUA status HUD (what each placed LUA is doing; click for all).
+const LUA_STATUS_SCRIPT: Script = preload("res://scripts/lua_status_ui.gd")
 # Touch tap-tooltip popup (built-in tooltips are hover-only).
 const TOOLTIP_TAP_SCRIPT: Script = preload("res://scripts/tooltip_tap.gd")
 
@@ -73,6 +75,8 @@ func _ready() -> void:
 	# Bottom-left minimap (click / M opens the full map). Background HUD layer,
 	# so panels dim it.
 	_hud_backdrop.add_child(MINIMAP_SCRIPT.new())
+	# Left-middle LUA status panel (3 most-current LUAs; click to expand to all).
+	_hud_backdrop.add_child(LUA_STATUS_SCRIPT.new())
 	# Tap tooltips (touch screens have no hover) — owns its own high layer.
 	add_child(TOOLTIP_TAP_SCRIPT.new())
 

@@ -44,7 +44,7 @@ func physics_update(mob: CharacterBody2D, speed: float, water_layer: TileMapLaye
 	# without this the worm resumes chasing the frozen death position.
 	if Global.player_is_dead:
 		return Vector2.ZERO
-	_target = Global.player_node as Node2D if Global.player_node != null else null
+	_target = _combat_target(mob)
 	_world = Global.world_node
 
 	if _target == null or not is_instance_valid(_target) or _world == null:
@@ -144,3 +144,10 @@ func walk_dir() -> Vector2:
 
 func is_burrowing() -> bool:
 	return _burrowing
+
+# The node this worm chases: the provoked combat LUA when a LUA has hit it, else
+# the player.
+func _combat_target(mob: CharacterBody2D) -> Node2D:
+	if mob.has_method("combat_target"):
+		return mob.call("combat_target") as Node2D
+	return Global.player_node as Node2D

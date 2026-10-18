@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dm6yckjahswqp"
-path="res://.godot/imported/ocean-autotiles-anim.png-265fac095635fabddd07834542f46816.ctex"
+uid="uid://da5pixknn44uk"
+path="res://.godot/imported/fishing_rod.png-22644fe4192e2c57d9d0f7f35be951c0.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/tilesets/ocean-autotiles-anim.png"
-dest_files=["res://.godot/imported/ocean-autotiles-anim.png-265fac095635fabddd07834542f46816.ctex"]
+source_file="res://sprites/items/fishing_rod.png"
+dest_files=["res://.godot/imported/fishing_rod.png-22644fe4192e2c57d9d0f7f35be951c0.ctex"]
 
 [params]
 

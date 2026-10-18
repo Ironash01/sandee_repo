@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/items/fishing_rod.png" id="2_tex"]
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Fishing Rod"
+description = "Cast it into a body of water to catch fish."
+item_type = "weapon"
+is_fishing_rod = true
+icon = ExtResource("2_tex")
+stackable = false
+is_craftable = true

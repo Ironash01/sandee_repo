@@ -19,6 +19,7 @@ const C_ERR     := Color(0.45, 0.20, 0.20, 1.00)
 # preload (not class_name) so name-argument completion works before the class
 # global is registered by the editor.
 const NameComplete: GDScript = preload("res://scripts/lua_name_complete.gd")
+const PYTHON_SPEC: LanguageSpecification = preload("res://resources/python_language_spec.tres")
 
 var furnace: Node = null
 
@@ -213,6 +214,11 @@ func _build() -> void:
 	_code.add_theme_stylebox_override("focus", es)
 	_code.add_theme_color_override("font_color", C_TITLE)
 	_code.add_theme_font_size_override("font_size", int(13 * s))
+	# Python syntax highlighting + light editor chrome. Without this the editor
+	# was plain text AND CodeHighlighter's default token colours are pure black.
+	_code.syntax_highlighter = LanguageSpecification.build_highlighter(PYTHON_SPEC)
+	LanguageSpecification.style_code_edit(_code, C_TITLE, C_MUTED)
+	_code.set_code_completion_enabled(true)
 	_code.caret_changed.connect(_on_code_caret_changed)
 	vbox.add_child(_code)
 

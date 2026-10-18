@@ -176,6 +176,22 @@ func _physics_process(delta: float) -> void:
 		queue_redraw()
 	_try_attack_player(delta)
 
+# ── Provoked aggro (combat LUA) ───────────────────────────────────
+# A hostile mob that a combat LUA damages targets the LUA instead of the player,
+# until the LUA dies or gets this far away.
+const PROVOKE_LEASH_PX: float = 420.0
+var _provoked_by: Node2D = null
+
+func provoke(node: Node2D) -> void:
+	_provoked_by = node
+
+func combat_target() -> Node2D:
+	if _provoked_by != null and is_instance_valid(_provoked_by) and _provoked_by.is_inside_tree():
+		if (_provoked_by as Node2D).global_position.distance_to(global_position) <= PROVOKE_LEASH_PX:
+			return _provoked_by
+	_provoked_by = null
+	return Global.player_node as Node2D
+
 # Contact attack: fly close enough and the pixie bites for COMBAT_DATA.damage.
 func _try_attack_player(delta: float) -> void:
 	if COMBAT_DATA.damage <= 1.0:
@@ -183,6 +199,9 @@ func _try_attack_player(delta: float) -> void:
 	_attack_cooldown = maxf(0.0, _attack_cooldown - delta)
 	var p: Node2D = Global.player_node as Node2D
 	if p == null or _attack_cooldown > 0.0:
+		return
+	# Provoked by a combat LUA → the LUA is the target, not the player.
+	if combat_target() != p:
 		return
 	if global_position.distance_to(p.global_position) > ATTACK_RANGE:
 		return
@@ -197,6 +216,7 @@ func _try_attack_player(delta: float) -> void:
 func take_hit(damage: float, source_pos: Vector2) -> void:
 	if damage <= 0.0:
 		return
+	damage = COMBAT_DATA.damage_taken(damage)
 	_mob_health = maxf(0.0, _mob_health - damage)
 	_last_damage_ms = Time.get_ticks_msec()
 	var away: Vector2 = global_position - source_pos

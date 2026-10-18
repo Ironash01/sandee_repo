@@ -56,7 +56,29 @@ func _ready() -> void:
 			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 			t.add_child(bg)
-			t.move_child(bg, 0)
+			# The ICON must be a CHILD: a Control's children draw OVER its own
+			# texture, so setting the slot's own texture hid the item behind the
+			# opaque bg (the hotbar looked empty / out of sync).
+			var icon := TextureRect.new()
+			icon.name = "ItemIcon"
+			icon.expand_mode  = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+			icon.offset_left = int(4 * s); icon.offset_top = int(4 * s)
+			icon.offset_right = -int(4 * s); icon.offset_bottom = -int(4 * s)
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			icon.visible = false
+			t.add_child(icon)
+			var qty := Label.new()
+			qty.name = "Quantity"
+			qty.add_theme_font_size_override("font_size", int(10 * s))
+			qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+			qty.offset_left = -int(16 * s); qty.offset_top = -int(14 * s)
+			qty.offset_right = -int(2 * s); qty.offset_bottom = -int(2 * s)
+			qty.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			qty.visible = false
+			t.add_child(qty)
 			row.add_child(t)
 			_hotbar_slots.append(t)
 
@@ -92,5 +114,20 @@ func _refresh() -> void:
 		var slot: TextureRect = _hotbar_slots[i]
 		if not is_instance_valid(slot):
 			continue
+		var icon: TextureRect = slot.get_node_or_null("ItemIcon") as TextureRect
+		var qty:  Label       = slot.get_node_or_null("Quantity") as Label
+		if icon == null:
+			continue
 		var item: Variant = Global.Hotbar[i] if i < Global.Hotbar.size() else null
-		slot.texture = ((item as Dictionary)["data"] as ItemData).icon if item != null else null
+		if item != null:
+			icon.texture = ((item as Dictionary)["data"] as ItemData).icon
+			icon.visible = true
+			var q: int = int((item as Dictionary)["quantity"])
+			if qty != null:
+				qty.text = str(q)
+				qty.visible = q > 1
+		else:
+			icon.texture = null
+			icon.visible = false
+			if qty != null:
+				qty.visible = false

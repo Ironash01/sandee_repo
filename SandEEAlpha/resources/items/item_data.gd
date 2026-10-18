@@ -9,6 +9,16 @@ class_name ItemData
 @export_enum("material", "block", "door", "weapon", "consumable") var item_type: String = "material"
 @export var effect: String = ""
 
+# ── Fishing rod ───────────────────────────────────────────────────
+## True for the fishing rod: selecting it and left-clicking a body of water
+## casts a fishing attempt (see scripts/fishing_controller.gd).
+@export var is_fishing_rod: bool = false
+
+# ── Food ──────────────────────────────────────────────────────────
+## Health restored when this item is eaten (left-click while selected). 0 = not
+## food. Consumption is handled by player.gd.
+@export var heal_amount: float = 0.0
+
 # ── Dev items ─────────────────────────────────────────────────────
 ## World-gen/game-placed only (e.g. cave ore placeholders) — never appears
 ## in any player-facing UI (Hotbar, Inventory, crafting menu) and can never

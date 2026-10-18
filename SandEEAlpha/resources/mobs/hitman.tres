@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="MobCombatData" format=3]
+
+[ext_resource type="Script" path="res://resources/mobs/combat.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+mob_name = "Hitman"
+behavior = 0
+damage = 0.0
+health = 30.0
+speed = 0.0
+spawn_during_day = false
+spawn_during_night = false

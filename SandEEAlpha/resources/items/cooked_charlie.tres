@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/smiling_fishes.png" id="2_tex"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_fish"]
+atlas = ExtResource("2_tex")
+region = Rect2(32, 0, 32, 32)
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Cooked Charlie"
+description = "A cooked yellow fish. Still not smiling. Eat it to restore 50 health."
+item_type = "consumable"
+icon = SubResource("AtlasTexture_fish")
+heal_amount = 50.0

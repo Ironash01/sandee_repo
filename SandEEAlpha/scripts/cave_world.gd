@@ -402,6 +402,9 @@ func _rebuild_ghost_sprite(item: Dictionary) -> void:
 	ghost_sprite.position = Vector2.ZERO
 
 func place_block() -> void:
+	# A DEAD player must not place blocks (see world.gd:place_block()).
+	if Global.player_is_dead:
+		return
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		return
@@ -455,9 +458,19 @@ func has_placed_block(cell: Vector2i) -> bool:
 # A torch mounts to a solid neighbour: a placed block OR a solid cave wall.
 # Cave rock is TileMapLayer cells, NOT placed blocks, so without this a torch
 # placed against a wall never used its connected sprite (unlike the overworld,
-# where world-gen stone/charcoal live in _placed_blocks).
+# where world-gen stone/charcoal live in _placed_blocks). A placed FLOOR is
+# walkable decor, not a wall, so it never counts as support.
 func torch_support(cell: Vector2i) -> bool:
-	return _placed_blocks.has(cell) or _cell_is_wall(cell)
+	if _cell_is_wall(cell):
+		return true
+	var e: Variant = _placed_blocks.get(cell)
+	if e == null:
+		return false
+	var n: Variant = (e as Dictionary).get("node")
+	if not is_instance_valid(n):
+		return false
+	var d = n.get("item_data")
+	return d != null and not d.is_floor
 
 # Not the overworld — a Bonfire here must not set the respawn point.
 func is_overworld() -> bool:
@@ -472,7 +485,7 @@ func _refresh_neighbor_u_collision(cell: Vector2i) -> void:
 		var c: Vector2i = cell + (off as Vector2i)
 		if not _placed_blocks.has(c):
 			continue
-		var n: Node = (_placed_blocks[c] as Dictionary).get("node")
+		var n: Variant = (_placed_blocks[c] as Dictionary).get("node")
 		if is_instance_valid(n) and n.has_method("refresh_u_collision"):
 			n.call("refresh_u_collision")
 		if is_instance_valid(n) and n.has_method("refresh_torch_connection"):

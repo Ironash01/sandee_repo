@@ -12,8 +12,9 @@ class_name Minimap
 #
 # Markers:
 #   • white circle  = player (centred unless panned)
-#   • red circle    = enemies        ("Mob" group)
-#   • green circle  = bonfires/flags ("Bonfire"/"Flag" groups — future)
+#   • red circle    = hostile mobs   ("Mob" group, Behavior HOSTILE)
+#   • green circle  = friendly mobs  ("Mob" group, Behavior PASSIVE)
+#                     + bonfires/flags ("Bonfire"/"Flag" groups)
 #   • portal icon   = dungeon portals ("DungeonPortal"; tooltip = dungeon name)
 #
 # ── Merged dungeon map ───────────────────────────────────────────────
@@ -58,7 +59,7 @@ const C_FOG     := Color(0.04, 0.05, 0.09, 1.00)   # unexplored tint
 const C_VOID    := Color(0.10, 0.11, 0.16)
 const C_PLAYER  := Color(1.00, 1.00, 1.00)
 const C_ENEMY   := Color(0.90, 0.20, 0.20)   # HOSTILE mobs
-const C_FRIEND  := Color(0.95, 0.85, 0.25)   # PASSIVE mobs (yellow)
+const C_FRIEND  := Color(0.25, 0.85, 0.35)   # PASSIVE/friendly mobs (green)
 const C_GREEN   := Color(0.25, 0.85, 0.35)
 
 # Dungeon content (see the merged-map note at the top): the grid is drawn from
@@ -576,10 +577,13 @@ func _hovered_icon() -> Dictionary:
 		for b in get_tree().get_nodes_in_group(grp[0]):
 			entries.append({"node": b, "text": grp[1], "icon": false})
 	for e in entries:
-		var node: Node = e["node"]
-		if not (node is Node2D) or not is_instance_valid(node):
+		# Untyped + validity: a node freed between the group query and here would
+		# throw if assigned to a typed `Node` var.
+		var node_ref: Variant = e["node"]
+		if not (node_ref is Node2D) or not is_instance_valid(node_ref):
 			continue
-		var pos: Vector2 = center + ((node as Node2D).global_position / TILE - Vector2(_view_center)) * ppt
+		var node := node_ref as Node2D
+		var pos: Vector2 = center + (node.global_position / TILE - Vector2(_view_center)) * ppt
 		if not map_rect.has_point(pos):
 			continue
 		var d2: float = mouse.distance_to(pos)
@@ -620,7 +624,7 @@ func _mob_name(mob: Node) -> String:
 			return n
 	return "Enemy"
 
-# HOSTILE (Behavior 0) is red; PASSIVE (1) is yellow. Unknown data defaults to
+# HOSTILE (Behavior 0) is red; PASSIVE (1) is green. Unknown data defaults to
 # hostile so an unfamiliar mob is never quietly marked friendly.
 func _mob_is_hostile(mob: Node) -> bool:
 	var data = mob.get("COMBAT_DATA")
