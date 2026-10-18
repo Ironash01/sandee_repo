@@ -31,7 +31,7 @@ func physics_update(mob: CharacterBody2D, speed: float, water_layer: TileMapLaye
 		return Vector2.ZERO
 
 	var next_pos: Vector2 = mob.global_position + _walk_dir * speed * delta
-	if _is_on_water(water_layer, next_pos):
+	if _footprint_touches_water(mob, water_layer, next_pos):
 		_state    = State.IDLE
 		_walk_dir = Vector2.ZERO
 		_timer    = 0.0
@@ -44,6 +44,33 @@ func is_walking() -> bool:
 
 func walk_dir() -> Vector2:
 	return _walk_dir
+
+# True when the mob's OWN BODY would overlap water at `world_pos`. Sampling the
+# footprint (not just the centre point ~2px ahead) is what stops a wolf's edge
+# from slipping over the shoreline; it also makes the wolf turn away and pick a
+# new heading instead of grinding against the shore while wolf.gd's hard water
+# veto holds it back.
+func _footprint_touches_water(mob: CharacterBody2D, water_layer: TileMapLayer, world_pos: Vector2) -> bool:
+	if water_layer == null:
+		return false
+	var col := _collision_shape(mob)
+	var rect: RectangleShape2D = col.shape as RectangleShape2D if col != null else null
+	if rect == null:
+		return _is_on_water(water_layer, world_pos)
+	var c: Vector2 = world_pos + col.position
+	var hw: float = rect.size.x * 0.5
+	var hh: float = rect.size.y * 0.5
+	for dx in [-1.0, 0.0, 1.0]:
+		for dy in [-1.0, 0.0, 1.0]:
+			if _is_on_water(water_layer, c + Vector2(hw * dx, hh * dy)):
+				return true
+	return false
+
+func _collision_shape(mob: CharacterBody2D) -> CollisionShape2D:
+	for c in mob.get_children():
+		if c is CollisionShape2D and (c as CollisionShape2D).shape != null:
+			return c as CollisionShape2D
+	return null
 
 func _is_on_water(water_layer: TileMapLayer, world_pos: Vector2) -> bool:
 	if water_layer == null:

@@ -14,5 +14,6 @@ description = "A good pick for almost about anything."
 item_type = "block"
 icon = SubResource("AtlasTexture_f30i1")
 is_craftable = true
+is_pickaxe = true
 pickaxe_level = 5
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

@@ -404,14 +404,10 @@ func _break_tile(cell: Vector2i) -> void:
 	var offset := Vector2(randf_range(-8, 8), randf_range(-8, 8))
 	drop.global_position = _tilemap.to_global(_tilemap.map_to_local(cell)) + offset
 
+# The held PICKAXE's mining tier, or -1 when none is in hand. Delegates to
+# Global so every break path shares one definition (see Global.held_pickaxe_level).
 func _get_held_pickaxe_level() -> int:
-	var slot = Global.get_hotbar_item()
-	if slot == null:
-		return -1
-	var data: ItemData = slot["data"] as ItemData
-	if data == null or not data.item_name.to_lower().contains("pickaxe"):
-		return -1
-	return data.pickaxe_level
+	return Global.held_pickaxe_level()
 
 # ── Build mode (ghost preview + placement, mirrors CaveWorld) ──────────
 # Only FLOOR tiles are buildable — walls/ores are the mineable resource here.

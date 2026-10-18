@@ -16,5 +16,4 @@ is_sword = true
 sword_level = 50
 icon = SubResource("AtlasTexture_wfjx1")
 is_craftable = true
-pickaxe_level = 1
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

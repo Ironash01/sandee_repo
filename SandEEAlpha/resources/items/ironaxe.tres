@@ -13,6 +13,5 @@ item_name = "Iron Axe"
 description = "Chopper"
 icon = SubResource("AtlasTexture_176gl")
 is_craftable = true
-pickaxe_level = 1
 axe_level = 2
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

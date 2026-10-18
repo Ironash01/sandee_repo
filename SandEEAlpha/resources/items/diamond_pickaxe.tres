@@ -13,5 +13,6 @@ item_name = "Diamond Pickaxe"
 description = "The fastest pick."
 icon = SubResource("AtlasTexture_f3gyt")
 is_craftable = true
+is_pickaxe = true
 pickaxe_level = 10
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

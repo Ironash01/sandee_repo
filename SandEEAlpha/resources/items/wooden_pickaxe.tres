@@ -14,5 +14,6 @@ description = "Mines stone and iron. It's uh pretty slow? "
 item_type = "weapon"
 icon = SubResource("AtlasTexture_trikl")
 is_craftable = true
+is_pickaxe = true
 pickaxe_level = 1
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

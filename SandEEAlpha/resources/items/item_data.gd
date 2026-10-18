@@ -117,10 +117,14 @@ func sword_slash_radius() -> int:
 @export var is_craftable: bool = false
 
 # ── Block breaking ────────────────────────────────────────────────
-## For block items: hardness 0-10; break duration = block_level - pickaxe_level (seconds, min 0.1)
+## For block items: hardness 0-10; break duration = block_level - mining level
+## (seconds, min 0.1), where the mining level is the held pickaxe's tier.
 @export_range(0, 10) var block_level: int = 0
 
-## Minimum pickaxe_level required to break this block (0 = any pickaxe works)
+## Minimum MINING level required to break this block. The mining level is 0 with
+## bare hands (or any non-pickaxe item) and equals the held PICKAXE's tier
+## otherwise — see Global.held_pickaxe_level(). So 0 = any pickaxe works, and
+## 1+ = that tier of pickaxe or better (bare hands never qualify).
 @export_range(0, 10) var min_pickaxe_level: int = 0
 
 ## True for wooden blocks (Wood, Planks). Axes chop these without needing a
@@ -128,6 +132,12 @@ func sword_slash_radius() -> int:
 @export var wooden_block: bool = false
 
 # ── Pickaxe tier ──────────────────────────────────────────────────
+## True for PICKAXES — the ONLY items that grant a mining level. Kept separate
+## from pickaxe_level because axes/swords/other items carry stray
+## pickaxe_level values that must never be read as a mining tier (that let a
+## sword or a Color Crafter mine stone/ore). See Global.held_pickaxe_level().
+@export var is_pickaxe: bool = false
+
 ## For pickaxe items: mining tier (0 = wooden, higher = faster / unlocks harder blocks)
 @export_range(0, 10) var pickaxe_level: int = 0
 
@@ -163,8 +173,10 @@ func axe_wood_block_bonus() -> float:
 # ── Validation: tools cannot stack ──────────────────────────────────
 func _validate_property(property: Dictionary) -> void:
 	if property["name"] == "stackable" and stackable:
-		# Tools (weapons, pickaxes, swords) cannot stack
-		if is_sword or sword_level > 0 or pickaxe_level > 0 or axe_level > 0:
+		# Tools (weapons, pickaxes, swords, axes) cannot stack. Keyed off the
+		# item's KIND, not pickaxe_level — non-pickaxe items carry stray
+		# pickaxe_level values that must not decide this.
+		if is_sword or is_pickaxe or sword_level > 0 or axe_level > 0:
 			property["value"] = false
 
 # ── Helper: build the inventory dict the game uses internally ─────

@@ -81,7 +81,7 @@ func _effect_text(d: ItemData) -> String:
 	var parts: Array = []
 	if d.sword_level > 0:
 		parts.append("Damage %d" % d.sword_damage())
-	if d.pickaxe_level > 0:
+	if d.is_pickaxe:
 		parts.append("Pickaxe T%d" % d.pickaxe_level)
 	if d.axe_level > 0:
 		parts.append("Axe T%d" % d.axe_level)

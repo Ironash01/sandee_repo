@@ -72,6 +72,19 @@ const MOB_NAME_LABEL_SCRIPT: GDScript = preload("res://scripts/mob_name_label.gd
 const YSORT_FEET_OFFSET: float = 11.0
 const YSORT_TIEBREAK:    float = 16.0
 
+# ── Water veto ─────────────────────────────────────────────────────
+# A wolf must never end up in (or cross) water. WolfAI's own wander check only
+# samples ONE point ~2px ahead of the wolf's centre and only guards the AI's
+# walk direction — so the soft separation force and the sword KNOCKBACK were
+# free to shove wolves into a lake and straight across it. This veto clamps the
+# FINAL velocity per axis (mirroring player.gd's _clamp_velocity_for_water), so
+# the wolf slides along the shoreline instead of sticking, and NO movement
+# source can bypass it.
+# Sample points mirror Wolf.tscn's body: a 16x12 rect at y +5.
+const WATER_HALF_W: float = 8.0
+const WATER_HALF_H: float = 6.0
+const WATER_OY:     float = 5.0
+
 var _last_dir: String = "south"
 var _name_label: Node2D = null
 
@@ -136,9 +149,7 @@ func _physics_process(delta: float) -> void:
 		velocity = _flee.direction(global_position) \
 			* COMBAT_DATA.speed * COMBAT_DATA.flee_speed_mult + _knockback
 		_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
-		if velocity != Vector2.ZERO:
-			_update_walk_anim(velocity)
-			move_and_slide()
+		_move_with_water_veto(delta)
 		return
 
 	# Player-death dispersal overrides AI movement
@@ -150,9 +161,7 @@ func _physics_process(delta: float) -> void:
 			velocity = _disperse_direction * DISPERSE_SPEED
 			velocity += _knockback
 			_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
-			if velocity != Vector2.ZERO:
-				_update_walk_anim(velocity)
-				move_and_slide()
+			_move_with_water_veto(delta)
 			return
 
 	if _ai != null:
@@ -160,11 +169,7 @@ func _physics_process(delta: float) -> void:
 	velocity += _apply_separation()
 	velocity += _knockback
 	_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
-	if velocity != Vector2.ZERO:
-		_update_walk_anim(velocity)
-		move_and_slide()
-	else:
-		_play_idle(_last_dir)
+	_move_with_water_veto(delta)
 	if _last_damage_ms > 0 and Time.get_ticks_msec() - _last_damage_ms < HP_BAR_SHOW_MS:
 		queue_redraw()
 	_try_attack_player(delta)
@@ -311,6 +316,51 @@ func _apply_separation() -> Vector2:
 	if force.length_squared() > 0.001:
 		return force.normalized() * SEPARATION_STRENGTH
 	return Vector2.ZERO
+
+# Apply the water veto, then move. EVERY branch (flee / dispersal / AI) goes
+# through this, so no code path can skip the check.
+func _move_with_water_veto(delta: float) -> void:
+	_clamp_velocity_for_water(delta)
+	if velocity != Vector2.ZERO:
+		_update_walk_anim(velocity)
+		move_and_slide()
+	else:
+		_play_idle(_last_dir)
+
+# Clamp velocity per axis so the wolf slides along a shoreline instead of
+# sticking to it. The leading EDGE of the wolf's body is sampled (3 points per
+# axis), so a diagonal can't clip a corner into the water either.
+func _clamp_velocity_for_water(delta: float) -> void:
+	if _water_layer == null or not is_instance_valid(_water_layer):
+		return
+	# Already in the water (spawned or pushed there by an older build): let it
+	# walk OUT instead of freezing it against the shoreline forever.
+	if _water_at(global_position + Vector2(0.0, WATER_OY)):
+		return
+
+	if velocity.x != 0.0:
+		var sx: float = sign(velocity.x)
+		var lead_x: float = global_position.x + velocity.x * delta + sx * WATER_HALF_W
+		var cy: float = global_position.y + WATER_OY
+		if _water_at(Vector2(lead_x, cy - WATER_HALF_H)) \
+		or _water_at(Vector2(lead_x, cy)) \
+		or _water_at(Vector2(lead_x, cy + WATER_HALF_H)):
+			velocity.x = 0.0
+
+	if velocity.y != 0.0:
+		var sy: float = sign(velocity.y)
+		var lead_y: float = global_position.y + WATER_OY + velocity.y * delta + sy * WATER_HALF_H
+		var cx: float = global_position.x
+		if _water_at(Vector2(cx - WATER_HALF_W, lead_y)) \
+		or _water_at(Vector2(cx, lead_y)) \
+		or _water_at(Vector2(cx + WATER_HALF_W, lead_y)):
+			velocity.y = 0.0
+
+func _water_at(global_pt: Vector2) -> bool:
+	if _water_layer == null or not is_instance_valid(_water_layer):
+		return false
+	var tc: Vector2i = _water_layer.local_to_map(_water_layer.to_local(global_pt))
+	return _water_layer.get_cell_source_id(tc) != -1
 
 func _play_idle(dir: String) -> void:
 	var anim := "idle_" + dir.replace("-", "_")

@@ -13,8 +13,8 @@ class_name Minimap
 # Markers:
 #   • white circle  = player (centred unless panned)
 #   • red circle    = hostile mobs   ("Mob" group, Behavior HOSTILE)
-#   • green circle  = friendly mobs  ("Mob" group, Behavior PASSIVE)
-#                     + bonfires/flags ("Bonfire"/"Flag" groups)
+#   • yellow circle = friendly mobs  ("Mob" group, Behavior PASSIVE)
+#   • orange circle = bonfires       ("Bonfire" group; flags stay green)
 #   • portal icon   = dungeon portals ("DungeonPortal"; tooltip = dungeon name)
 #
 # ── Merged dungeon map ───────────────────────────────────────────────
@@ -59,8 +59,9 @@ const C_FOG     := Color(0.04, 0.05, 0.09, 1.00)   # unexplored tint
 const C_VOID    := Color(0.10, 0.11, 0.16)
 const C_PLAYER  := Color(1.00, 1.00, 1.00)
 const C_ENEMY   := Color(0.90, 0.20, 0.20)   # HOSTILE mobs
-const C_FRIEND  := Color(0.25, 0.85, 0.35)   # PASSIVE/friendly mobs (green)
-const C_GREEN   := Color(0.25, 0.85, 0.35)
+const C_FRIEND  := Color(1.00, 0.95, 0.20)   # PASSIVE/friendly mobs (bright yellow)
+const C_BONFIRE := Color(1.00, 0.55, 0.12)   # bonfire respawn markers (orange)
+const C_GREEN   := Color(0.25, 0.85, 0.35)   # flags
 
 # Dungeon content (see the merged-map note at the top): the grid is drawn from
 # the DungeonGenerator directly — walls/floor, plus altar/exit markers.
@@ -469,7 +470,7 @@ func _draw_expanded() -> void:
 	lx = _legend_item(font, lx, ly, s, C_PLAYER, "You")
 	lx = _legend_item(font, lx, ly, s, C_ENEMY, "Enemies")
 	lx = _legend_item(font, lx, ly, s, C_FRIEND, "Friendly")
-	lx = _legend_item(font, lx, ly, s, C_GREEN, "Bonfires / Flags")
+	lx = _legend_item(font, lx, ly, s, C_BONFIRE, "Bonfires")
 	var isz: float = 16.0 * s
 	draw_texture_rect(PORTAL_TEX, Rect2(Vector2(lx, ly - isz * 0.7), Vector2(isz, isz)), false)
 	draw_string(font, Vector2(lx + isz + 4 * s, ly + 4 * s), "Dungeon",
@@ -502,9 +503,10 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 	else:
 		for m in get_tree().get_nodes_in_group("Mob"):
 			_marker(map_rect, center, ppt, m, C_ENEMY if _mob_is_hostile(m) else C_FRIEND, 3.0 * s)
-		for grp in ["Bonfire", "Flag"]:
-			for b in get_tree().get_nodes_in_group(grp):
-				_marker(map_rect, center, ppt, b, C_GREEN, 3.0 * s)
+		# Bonfires (respawn points) read orange; flags keep the green they had.
+		for grp in [["Bonfire", C_BONFIRE], ["Flag", C_GREEN]]:
+			for b in get_tree().get_nodes_in_group(grp[0]):
+				_marker(map_rect, center, ppt, b, grp[1], 3.0 * s)
 		for d in get_tree().get_nodes_in_group("DungeonPortal"):
 			_portal_marker(map_rect, center, ppt, d, s)
 	var ppos: Vector2 = center + (p.global_position / TILE - Vector2(_view_center)) * ppt

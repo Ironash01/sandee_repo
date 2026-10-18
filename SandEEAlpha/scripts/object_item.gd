@@ -228,14 +228,10 @@ func _cancel_breaking() -> void:
 	_breaking        = false
 	_sprite.rotation = 0.0
 
+# The held PICKAXE's mining tier, or -1 when none is in hand. Delegates to
+# Global so every break path shares one definition (see Global.held_pickaxe_level).
 func _held_pickaxe_level() -> int:
-	var slot = Global.get_hotbar_item()
-	if slot == null:
-		return -1
-	var data: ItemData = (slot as Dictionary)["data"] as ItemData
-	if data == null or data.pickaxe_level <= 0:
-		return -1
-	return data.pickaxe_level
+	return Global.held_pickaxe_level()
 
 # Break on completion: unregister from the world and drop the block item.
 func _do_break() -> void:

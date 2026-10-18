@@ -1177,6 +1177,32 @@ func get_hotbar_item() -> Variant:
 		return Hotbar[hotbar_selected]
 	return null
 
+# ── Mining level ──────────────────────────────────────────────────
+# The ONE place the player's mining tier is read. Returns the held PICKAXE's
+# tier, or -1 when no pickaxe is in hand, so callers can tell "no pickaxe at
+# all" (cannot mine) from "a tier-0 pickaxe". Bare hands / any non-tool item is
+# a mining level of 0, which never satisfies a min_pickaxe_level of 1+.
+#
+# The gate is ItemData.is_pickaxe, NOT pickaxe_level: axes, swords and the
+# Color Crafter all carry stray pickaxe_level values (1..10), and reading those
+# as a mining tier is what let a sword — or a block — mine stone/ore.
+func held_pickaxe_level() -> int:
+	var data: ItemData = _held_item_data()
+	if data == null or not data.is_pickaxe:
+		return -1
+	return maxi(0, data.pickaxe_level)
+
+# The player's MINING level: 0 when bare-handed or holding a non-tool.
+func held_mining_level() -> int:
+	return maxi(0, held_pickaxe_level())
+
+# The ItemData of the currently selected hotbar slot, or null (empty slot).
+func _held_item_data() -> ItemData:
+	var slot: Variant = get_hotbar_item()
+	if slot == null or not (slot is Dictionary):
+		return null
+	return (slot as Dictionary).get("data") as ItemData
+
 # Total quantity of `data` the player is carrying (hotbar + inventory). Single
 # source of truth shared by the crafting menu and the crafting station's
 # automation validation.

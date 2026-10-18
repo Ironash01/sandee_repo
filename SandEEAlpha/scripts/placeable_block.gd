@@ -339,11 +339,23 @@ func _process(delta: float) -> void:
 	if not _mouse_held or not _hovered or not _player_within_radius():
 		_cancel_breaking()
 		return
+	# `_breaking` is the TOOL GATE — it is only ever set by a successful
+	# _try_start_breaking(). WITHOUT this check a rejected click (bare hands, or
+	# a non-pickaxe item) still latched _mouse_held, and _process kept feeding
+	# delta into _add_break_progress until the stale/default _break_duration
+	# (1.0s) elapsed — so a stone block broke with no tool at all. Every other
+	# mining path (chest/station/object_item) already guards on _breaking here.
+	if not _breaking:
+		return
 	_add_break_progress(delta)
 
 # Adds damage (in seconds of break work) from one source — a held frame's
 # delta or a click's flat CLICK_BREAK_SECONDS — then breaks when full.
 func _add_break_progress(seconds: float) -> void:
+	# Choke point: never advance a break that a valid tool did not start, no
+	# matter which caller got here (this is what let bare hands break blocks).
+	if not _breaking:
+		return
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
@@ -424,8 +436,10 @@ func _input(event: InputEvent) -> void:
 			if get_viewport().is_input_handled():
 				return
 			get_viewport().set_input_as_handled()
-			_mouse_held = true
 			_try_start_breaking()
+			# Only latch the hold when a valid tool actually started the break:
+			# a rejected click must not leave _mouse_held on (see _process).
+			_mouse_held = _breaking
 			if _breaking:
 				# Every fresh click is worth CLICK_BREAK_SECONDS of break
 				# work, so spam clicking chips away just like holding does.
@@ -449,9 +463,8 @@ func _try_start_breaking() -> void:
 	var held_data: ItemData = slot["data"] as ItemData
 	if held_data == null:
 		return
-	var held_name: String = held_data.item_name.to_lower()
 	var is_axe: bool      = held_data.axe_level > 0
-	var is_pickaxe: bool  = held_name.contains("pickaxe")
+	var is_pickaxe: bool  = held_data.is_pickaxe
 	var is_wood_block: bool = item_data != null and item_data.wooden_block
 	var block_lvl: int = item_data.block_level if item_data != null else 0
 
@@ -462,7 +475,10 @@ func _try_start_breaking() -> void:
 		_break_duration = maxf(0.1, float(block_lvl)) / (1.0 + held_data.axe_wood_block_bonus())
 	elif is_pickaxe:
 		var min_lvl: int = item_data.min_pickaxe_level if item_data != null else 0
-		if held_data.pickaxe_level < min_lvl:
+		# Mining tier comes from the PICKAXE only (Global.held_pickaxe_level
+		# reads ItemData.is_pickaxe) — reading held_data.pickaxe_level directly
+		# let axes/swords, which carry stray pickaxe_level values, mine here.
+		if Global.held_pickaxe_level() < min_lvl:
 			return  # pickaxe tier too low for this block
 		# Wood-tagged blocks penalise a pickaxe by 75% (speed x0.25). The
 		# penalty is applied to the block's HARDNESS rather than to the clamped
@@ -472,7 +488,7 @@ func _try_start_breaking() -> void:
 		var hardness: float = float(block_lvl)
 		if is_wood_block:
 			hardness /= (1.0 - PICKAXE_WOOD_PENALTY)
-		_break_duration = maxf(0.1, hardness - float(held_data.pickaxe_level))
+		_break_duration = maxf(0.1, hardness - float(Global.held_mining_level()))
 	else:
 		return  # no tool that can break this block
 	# The swing animation plays for ANY item used to break — route through the
