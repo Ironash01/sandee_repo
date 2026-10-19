@@ -43,6 +43,9 @@ func _ready() -> void:
 		Global.ui_scale_set = true
 	Global.ui_scale_changed.emit(Global.ui_scale)
 	Global.game_node = self
+	# A fresh game scene must never inherit a pause/UI state from the previous
+	# one (quit-to-menu with a UI open, a leaked open_ui(), etc).
+	Global.reset_pause_state()
 
 	# Background HUD layer (map + quest list + pause button). Layer 1 is BELOW
 	# every panel (2+), so a panel's dim overlay covers and dims it along with

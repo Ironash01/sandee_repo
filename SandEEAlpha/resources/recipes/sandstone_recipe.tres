@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3]
+
+[ext_resource type="Script" path="res://resources/items/crafting_recipe.gd" id="1_rec"]
+[ext_resource type="Resource" path="res://resources/items/coarse_sand.tres" id="1_sand"]
+[ext_resource type="Resource" path="res://resources/items/sandstone.tres" id="2_sandstone"]
+
+[resource]
+script = ExtResource("1_rec")
+result_item = ExtResource("2_sandstone")
+ingredient_1 = ExtResource("1_sand")
+ingredient_1_quantity = 4
+category = "Blocks"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

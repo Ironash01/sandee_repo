@@ -107,6 +107,7 @@ func _ready() -> void:
 	add_child(_fishing)
 	$mainCam.zoom = Vector2(Global.camera_zoom, Global.camera_zoom)
 	Global.camera_zoom_changed.connect(_on_camera_zoom_changed)
+	_update_camera_limits(true)
 	if _shared_frames == null:
 		_shared_frames = _build_frames()
 	sprite.sprite_frames = _shared_frames
@@ -142,6 +143,70 @@ func _ready() -> void:
 
 func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
+	# The visible world size changed, so an area that was wider than the viewport
+	# may no longer be — re-derive the limits immediately.
+	_update_camera_limits(true)
+
+# ── Camera bounds (per-area clamping) ───────────────────────────────
+# The camera must never scroll past the ACTIVE area's playable rect — the
+# overworld, the cave/pixie cave, or the dungeon it is currently in. The bounds
+# come from the LIVE world (camera_bounds() on world.gd / cave_world.gd /
+# pixie_cave_world.gd / dungeon_world.gd) rather than a constant, so entering,
+# regenerating or leaving an area re-clamps automatically, and there is no
+# cached rect that could go stale when the map changes.
+#
+# Godot's Camera2D limits clamp the VISIBLE RECT, so viewport size and zoom are
+# handled for free. The one case they don't cover is an area SMALLER than the
+# viewport: there the limits are widened to exactly one viewport, centred on the
+# area, which pins the camera to the area's centre on that axis.
+var _cam_bounds: Rect2 = Rect2()
+var _cam_view:   Vector2 = Vector2.ZERO
+var _cam_set:    bool = false
+
+func _update_camera_limits(force: bool = false) -> void:
+	var cam: Camera2D = $mainCam
+	if cam == null:
+		return
+	var world: Node = Global.world_node
+	var bounds: Rect2 = Rect2()
+	if world != null and is_instance_valid(world) and world.has_method("camera_bounds"):
+		bounds = world.call("camera_bounds") as Rect2
+
+	if bounds.size.x <= 0.0 or bounds.size.y <= 0.0:
+		# No active area (or one that can't report bounds yet): leave the camera
+		# unclamped rather than pinning it to the previous map's rect.
+		if _cam_set:
+			cam.limit_left   = -10000000
+			cam.limit_top    = -10000000
+			cam.limit_right  =  10000000
+			cam.limit_bottom =  10000000
+			_cam_set = false
+		return
+
+	var view: Vector2 = get_viewport().get_visible_rect().size / cam.zoom
+	if not force and _cam_set and _cam_bounds == bounds and _cam_view.is_equal_approx(view):
+		return   # nothing changed — don't touch the camera every frame
+
+	_cam_bounds = bounds
+	_cam_view   = view
+	_cam_set    = true
+
+	var l: float = bounds.position.x
+	var r: float = bounds.end.x
+	var t: float = bounds.position.y
+	var b: float = bounds.end.y
+	if bounds.size.x < view.x:
+		var cx: float = bounds.position.x + bounds.size.x * 0.5
+		l = cx - view.x * 0.5
+		r = cx + view.x * 0.5
+	if bounds.size.y < view.y:
+		var cy: float = bounds.position.y + bounds.size.y * 0.5
+		t = cy - view.y * 0.5
+		b = cy + view.y * 0.5
+	cam.limit_left   = int(floor(l))
+	cam.limit_top    = int(floor(t))
+	cam.limit_right  = int(ceil(r))
+	cam.limit_bottom = int(ceil(b))
 
 # ── Build SpriteFrames ────────────────────────────────────────────
 # New player sheet: 128x576 = 4 frames (cols) x 9 rows of 32x64. Rows are
@@ -261,6 +326,10 @@ func become_invincible() -> void:
 func _physics_process(delta: float) -> void:
 	if get_tree().paused:
 		return
+	# Re-derive the camera's clamp from the LIVE area every frame, so a cave /
+	# dungeon transition (or a regenerated map) can never leave the camera
+	# using a previously visited map's limits.
+	_update_camera_limits()
 	z_index = int((global_position.y + YSORT_FEET_OFFSET + YSORT_TIEBREAK) / 32)
 	get_input()
 	# Knockback rides on top of the player's own velocity.

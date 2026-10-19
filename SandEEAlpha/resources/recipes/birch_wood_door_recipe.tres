@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3]
+
+[ext_resource type="Script" path="res://resources/items/crafting_recipe.gd" id="1_rec"]
+[ext_resource type="Resource" path="res://resources/items/birch_planks.tres" id="1_planks"]
+[ext_resource type="Resource" path="res://resources/items/birch_wood_door.tres" id="2_door"]
+
+[resource]
+script = ExtResource("1_rec")
+result_item = ExtResource("2_door")
+ingredient_1 = ExtResource("1_planks")
+ingredient_1_quantity = 6
+category = "Blocks"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

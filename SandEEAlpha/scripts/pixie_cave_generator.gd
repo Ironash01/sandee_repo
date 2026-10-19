@@ -10,7 +10,7 @@ class_name PixieCaveGenerator
 # Deterministic from a single int seed (same seed -> identical grid every
 # time), matching the rest of world-gen's seeded-RNG convention.
 
-enum Tile { FLOOR, WALL, CRYSTAL_COPPER, CRYSTAL_IRON, CRYSTAL_SILICON, CRYSTAL_DIAMOND }
+enum Tile { FLOOR, WALL, CRYSTAL_COPPER, CRYSTAL_IRON, CRYSTAL_SILICON, CRYSTAL_DIAMOND, DIORITE, GRANITE }
 
 # Pixie caves come in three sizes, randomly chosen per-cave (seeded).
 const CAVE_SIZES: Array = [
@@ -54,6 +54,9 @@ func generate(seed_value: int) -> void:
 	_connect_rooms(rng)
 	_carve_entrance(rng)
 	_place_ores(rng)
+	# Diorite / granite veins LAST so the ore layout (and therefore every
+	# existing pixie cave) is unchanged.
+	_place_stone_variants(rng)
 
 func _init_walls() -> void:
 	grid = []
@@ -187,6 +190,52 @@ func _place_ores(rng: RandomNumberGenerator) -> void:
 	if rng.randf() < DIAMOND_CHANCE:
 		var room: Dictionary = rooms[rng.randi_range(0, rooms.size() - 1)]
 		_place_ore_in_room(room, Tile.CRYSTAL_DIAMOND, rng)
+
+# ── Diorite / granite veins ─────────────────────────────────────────
+# A few small veins of the two stone variants grown inside the pixie cave's
+# plain WALL tiles, so ordinary pixie stone stays dominant. Runs AFTER
+# _place_ores so the ore layout is untouched.
+const STONE_VARIANTS: Array = [
+	{"name": "DIORITE", "tile": Tile.DIORITE, "min": 2, "max": 6},
+	{"name": "GRANITE", "tile": Tile.GRANITE, "min": 2, "max": 6},
+]
+const VARIANT_VEINS: int = 3
+
+func _place_stone_variants(rng: RandomNumberGenerator) -> void:
+	for _i in range(VARIANT_VEINS):
+		var walls: Array = []
+		for x in range(1, width - 1):
+			for y in range(1, height - 1):
+				if grid[x][y] == Tile.WALL:
+					walls.append(Vector2i(x, y))
+		if walls.is_empty():
+			return
+		var origin: Vector2i = walls[rng.randi_range(0, walls.size() - 1)]
+		var variant: Dictionary = STONE_VARIANTS[rng.randi_range(0, STONE_VARIANTS.size() - 1)]
+		var count: int = rng.randi_range(int(variant["min"]), int(variant["max"]))
+		var frontier: Array = [origin]
+		var seen: Dictionary = {origin: true}
+		var placed: int = 0
+		while placed < count and not frontier.is_empty():
+			var idx: int = rng.randi_range(0, frontier.size() - 1)
+			var cur: Vector2i = frontier[idx]
+			frontier.remove_at(idx)
+			if grid[cur.x][cur.y] != Tile.WALL:
+				continue
+			grid[cur.x][cur.y] = int(variant["tile"])
+			placed += 1
+			var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+			for k in range(dirs.size() - 1, 0, -1):
+				var j: int = rng.randi_range(0, k)
+				var tmp = dirs[k]
+				dirs[k] = dirs[j]
+				dirs[j] = tmp
+			for d in dirs:
+				var n: Vector2i = cur + d
+				if n.x < 1 or n.y < 1 or n.x >= width - 1 or n.y >= height - 1 or seen.has(n):
+					continue
+				seen[n] = true
+				frontier.append(n)
 
 # Replace a pixie-stone (WALL) cell adjacent to the room with an ore — ores
 # embed in the cave-stone around rooms/corridors and NEVER sit on the walkable

@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/items/diorite.png" id="2_tex"]
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Diorite"
+description = "A light speckled stone found in cave veins."
+item_type = "block"
+icon = ExtResource("2_tex")
+is_placeable = true
+placeable_sprite = ExtResource("2_tex")
+block_level = 5
+min_pickaxe_level = 1
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"
+metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

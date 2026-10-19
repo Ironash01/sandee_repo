@@ -1274,6 +1274,19 @@ func close_ui() -> void:
 func any_ui_open() -> bool:
 	return _ui_open_count > 0
 
+# ── Scene-change safety net ───────────────────────────────────────
+# Global is an autoload, so the pause model outlives every scene. If a UI node
+# is ever freed without releasing its open_ui() — or the tree is left paused by
+# a transition — the NEXT scene would inherit that: a new game / Continue that
+# starts paused, or a game where every world click is silently ignored because
+# any_ui_open() is stuck true. Every scene (re)load calls this so a fresh scene
+# always begins from a clean, unpaused state.
+func reset_pause_state() -> void:
+	_ui_open_count  = 0
+	pause_menu_open = false
+	if get_tree() != null:
+		get_tree().paused = false
+
 # ── Block hover label ─────────────────────────────────────────────
 var _current_hover_name: String = ""
 

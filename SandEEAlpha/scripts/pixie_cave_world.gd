@@ -48,6 +48,8 @@ const WALL_ITEM_PATHS: Dictionary = {
 	PixieCaveGenerator.Tile.CRYSTAL_IRON:    "res://resources/items/crystal_iron_ore.tres",
 	PixieCaveGenerator.Tile.CRYSTAL_SILICON: "res://resources/items/crystal_silicon_ore.tres",
 	PixieCaveGenerator.Tile.CRYSTAL_DIAMOND: "res://resources/items/crystal_diamond_ore.tres",
+	PixieCaveGenerator.Tile.DIORITE:         "res://resources/items/diorite.tres",
+	PixieCaveGenerator.Tile.GRANITE:         "res://resources/items/granite.tres",
 }
 
 const FLOOR_ITEM_PATHS: Array = [
@@ -672,6 +674,17 @@ func get_player_spawn_position() -> Vector2:
 # Grid indices run 0..width-1 / 0..height-1; the map is centered on the origin
 # (non-square, unlike CaveWorld's size/2 for both axes), so every grid<->cell
 # conversion uses separate width/2 and height/2 offsets.
+# ── Camera bounds ───────────────────────────────────────────────────
+# The playable rect of THIS pixie cave, in world coordinates (the grid is
+# centred on the origin — see _grid_to_cell). Deliberately NOT the overworld's
+# limits: a pixie cave is a different size on both axes.
+func camera_bounds() -> Rect2:
+	if generator == null:
+		return Rect2()
+	var half := Vector2i(generator.width / 2, generator.height / 2)
+	return Rect2(-Vector2(half) * float(TILE_SIZE),
+		Vector2(generator.width, generator.height) * float(TILE_SIZE))
+
 func _grid_to_cell(tile: Vector2i) -> Vector2i:
 	return tile - Vector2i(generator.width / 2, generator.height / 2)
 

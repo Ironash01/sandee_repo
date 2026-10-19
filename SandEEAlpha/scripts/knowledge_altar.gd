@@ -37,6 +37,10 @@ var entry_file: String = ""   # set by dungeon generator
 var _player_nearby:  bool   = false
 var _entry:          KnowledgeEntry = null
 var _panel:          Control = null
+# True while this popup holds a Global.open_ui() reference. A dedicated flag is
+# required because _build_panel() leaves the panel visible by default, so
+# `_panel.visible` can't be used to tell whether we already registered.
+var _pause_registered: bool = false
 var _glow:           PointLight2D = null
 var _glow_time:      float = 0.0
 # True when the panel was opened for an entry the player hadn't learned yet —
@@ -132,10 +136,19 @@ func _on_body_exited(body: Node) -> void:
 		_player_nearby = false
 		if _panel != null and _panel.visible:
 			_panel.visible = false
-			get_tree().paused = false
+			_release_pause()
+
+# Releases the open_ui() reference exactly once. Writing get_tree().paused =
+# false directly (the old behaviour) resumed the game even when the pause menu
+# or another UI still required it to stay paused.
+func _release_pause() -> void:
+	if _pause_registered:
+		_pause_registered = false
+		Global.close_ui()
 
 func _input(event: InputEvent) -> void:
-	if not _player_nearby or Global.block_mode or Global.any_ui_open():
+	if not _player_nearby or Global.block_mode \
+			or Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if _panel != null and _panel.visible:
 		return
@@ -151,8 +164,14 @@ func _show() -> void:
 	_is_first_time = _entry != null and not Global.has_learned_entry(_entry.id())
 	if _panel == null:
 		_panel = _build_panel()
+	if not _pause_registered:
+		_pause_registered = true
+		# Register with the shared pause model so any_ui_open() is true while
+		# this popup is up — that is what stops the player swinging / using
+		# items and world nodes (blocks, trees, chests) reacting to clicks
+		# THROUGH the popup, and it keeps the pause refcounted.
+		Global.open_ui()
 	_panel.visible = true
-	get_tree().paused = true
 	if _is_first_time and _keyword_lbl != null:
 		# Defer one frame so the Label has its final laid-out size before the
 		# pop sets its centre pivot (otherwise the pivot is (0,0)).
@@ -168,9 +187,9 @@ func _play_keyword_emphasis() -> void:
 		Global.emphasize_keyword(_keyword_lbl, _keyword_lbl.get_theme_color("font_color"))
 
 func _finish() -> void:
-	if _panel != null:
+	if _panel != null and _panel.visible:
 		_panel.visible = false
-	get_tree().paused = false
+		_release_pause()
 	Global.learn_entry(_entry)
 
 func _build_panel() -> Control:

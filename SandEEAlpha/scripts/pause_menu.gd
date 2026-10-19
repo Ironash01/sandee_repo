@@ -462,7 +462,11 @@ func show_menu() -> void:
 func hide_menu() -> void:
 	Global.pause_menu_open = false
 	visible = false
-	get_tree().paused = false
+	# Resume only when NOTHING else still needs the game paused — the same rule
+	# Global.close_ui() uses. Writing paused = false unconditionally here would
+	# resume gameplay while another UI/dialog was still open.
+	if not Global.any_ui_open():
+		get_tree().paused = false
 
 func _on_resume() -> void:
 	hide_menu()

@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CraftingRecipe" format=3]
+
+[ext_resource type="Script" path="res://resources/items/crafting_recipe.gd" id="1_rec"]
+[ext_resource type="Resource" path="res://resources/items/birch_wood.tres" id="1_wood"]
+[ext_resource type="Resource" path="res://resources/items/birch_planks.tres" id="2_planks"]
+
+[resource]
+script = ExtResource("1_rec")
+result_item = ExtResource("2_planks")
+result_quantity = 4
+ingredient_1 = ExtResource("1_wood")
+category = "Blocks"
+requires_station = true
+metadata/_custom_type_script = "uid://bfxcb6bsffusb"

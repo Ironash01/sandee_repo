@@ -14,7 +14,7 @@ class_name CaveGenerator
 # global RNG (Array.shuffle(), etc.), or re-entering the same cave would
 # produce a different layout each time.
 
-enum Tile { FLOOR, STONE, COPPER, SILICON, IRON, DIAMOND }
+enum Tile { FLOOR, STONE, COPPER, SILICON, IRON, DIAMOND, DIORITE, GRANITE }
 
 const ORE_TYPES: Array = [
 	{"name": "COPPER",  "tile": Tile.COPPER,  "chance": 0.50, "min": 5, "max": 10},
@@ -22,6 +22,16 @@ const ORE_TYPES: Array = [
 	{"name": "IRON",    "tile": Tile.IRON,    "chance": 0.20, "min": 2, "max": 5},
 	{"name": "DIAMOND", "tile": Tile.DIAMOND, "chance": 0.10, "min": 1, "max": 3},
 ]
+
+# Stone VARIANTS (diorite / granite): small veins grown inside the remaining
+# plain STONE so ordinary stone stays the dominant material. Rolled per chunk,
+# exactly like ore, but with a lower chance and smaller veins — the brief is
+# "small clusters or veins, occasional larger formations, never dominant".
+const STONE_VARIANTS: Array = [
+	{"name": "DIORITE", "tile": Tile.DIORITE, "chance": 0.5, "min": 4, "max": 14},
+	{"name": "GRANITE", "tile": Tile.GRANITE, "chance": 0.5, "min": 4, "max": 14},
+]
+const VARIANT_CHUNK_CHANCE: float = 0.45
 
 const FILL_PROB:         float = 0.58  # starting fraction of floor (vs. stone) — raised from 0.45 -> 0.50 -> 0.58, still too much stone at 0.50
 const SMOOTH_ITERATIONS: int   = 5
@@ -50,6 +60,10 @@ func generate(seed_value: int) -> void:
 	_force_border_walls()
 	_connect_main_region()
 	_place_ore(rng)
+	# Diorite / granite veins LAST: _place_ore has already run, so the ore
+	# layout (and therefore every existing cave) is byte-for-byte unchanged —
+	# the extra rng draws only affect this new pass.
+	_place_stone_variants(rng)
 
 func _random_fill(rng: RandomNumberGenerator) -> void:
 	grid = []
@@ -220,6 +234,22 @@ func _place_ore(rng: RandomNumberGenerator) -> void:
 				continue  # too close to the entrance — drop this chunk's roll rather than relocate it
 			var count: int = rng.randi_range(int(ore["min"]), int(ore["max"]))
 			_grow_cluster(origin, ore, count, rng)
+
+# Diorite / granite veins. Per chunk, like ore, but a lower chance and a
+# smaller vein; grown with the SAME frontier growth (restricted to plain
+# STONE), so the shapes read as organic veins instead of blobs.
+func _place_stone_variants(rng: RandomNumberGenerator) -> void:
+	for cx in range(chunk_cols):
+		for cy in range(chunk_rows):
+			var stone_tiles: Array = _stone_tiles_in_chunk(Vector2i(cx, cy))
+			if stone_tiles.is_empty():
+				continue
+			if rng.randf() >= VARIANT_CHUNK_CHANCE:
+				continue
+			var origin: Vector2i = stone_tiles[rng.randi_range(0, stone_tiles.size() - 1)]
+			var variant: Dictionary = STONE_VARIANTS[rng.randi_range(0, STONE_VARIANTS.size() - 1)]
+			var count: int = rng.randi_range(int(variant["min"]), int(variant["max"]))
+			_grow_cluster(origin, variant, count, rng)
 
 func _stone_tiles_in_chunk(chunk: Vector2i) -> Array:
 	var result: Array = []

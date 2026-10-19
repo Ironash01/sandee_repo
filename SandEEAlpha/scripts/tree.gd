@@ -1,6 +1,6 @@
 extends Node2D
 
-enum TreeType { Plain = 0, Snowy = 2 }
+enum TreeType { Plain = 0, Snowy = 2, Birch = 3 }
 
 @export var tree_type: TreeType = TreeType.Plain
 
@@ -9,6 +9,7 @@ const WOOD_DROP_COUNT: int        = 4
 const ITEM_SCENE:  PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 const WOOD_DATA:   ItemData    = preload("res://resources/items/wood.tres")
 const SNOWY_WOOD_DATA: ItemData = preload("res://resources/items/snowy_wood.tres")
+const BIRCH_WOOD_DATA: ItemData = preload("res://resources/items/birch_wood.tres")
 const OBJECT_BURST_SCRIPT: GDScript = preload("res://scripts/object_burst.gd")
 # Leaf-fade shader (see world.gd _update_tree_fade): the canopy becomes
 # translucent while the player hides behind it; the trunk stays opaque.
@@ -231,8 +232,12 @@ func _destroy() -> void:
 	queue_free()
 
 func _drop_wood() -> void:
-	# Snow biome trees drop snowy wood; every other tree drops plain wood.
-	var wood: ItemData = SNOWY_WOOD_DATA if tree_type == TreeType.Snowy else WOOD_DATA
+	# Each tree type drops its own wood: snowy trees drop snowy wood, birch
+	# trees drop birch wood, every other tree drops plain wood.
+	var wood: ItemData = WOOD_DATA
+	match tree_type:
+		TreeType.Snowy: wood = SNOWY_WOOD_DATA
+		TreeType.Birch: wood = BIRCH_WOOD_DATA
 	for i in range(WOOD_DROP_COUNT):
 		var item: Node      = ITEM_SCENE.instantiate()
 		var offset: Vector2 = Vector2(randf_range(-24, 24), randf_range(-24, 24))

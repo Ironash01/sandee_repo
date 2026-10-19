@@ -49,6 +49,8 @@ const WALL_ITEM_PATHS: Dictionary = {
 	CaveGenerator.Tile.SILICON: "res://resources/items/silicon_ore.tres",
 	CaveGenerator.Tile.IRON:    "res://resources/items/iron_ore.tres",
 	CaveGenerator.Tile.DIAMOND: "res://resources/items/diamond_ore.tres",
+	CaveGenerator.Tile.DIORITE: "res://resources/items/diorite.tres",
+	CaveGenerator.Tile.GRANITE: "res://resources/items/granite.tres",
 }
 
 # Floor tiles pick one of these at random (deterministically, by tile
@@ -701,6 +703,18 @@ func get_player_spawn_position() -> Vector2:
 # (matching how the overworld's own chunk coordinates are centered around
 # Vector2i.ZERO) means every grid->cell conversion needs this same offset —
 # painting, mining, placement, and spawn position must all agree on it.
+# ── Camera bounds ───────────────────────────────────────────────────
+# The playable rect of THIS cave, in world coordinates. The cave grid is centred
+# on the origin (see _grid_to_cell), so the bounds are simply the grid extent —
+# deliberately NOT the overworld's limits. Guarded for the moment before
+# setup() has built the generator.
+func camera_bounds() -> Rect2:
+	if generator == null:
+		return Rect2()
+	var half: int = generator.size / 2
+	var span: float = float(generator.size * TILE_SIZE)
+	return Rect2(Vector2(-half * TILE_SIZE, -half * TILE_SIZE), Vector2(span, span))
+
 func _grid_to_cell(tile: Vector2i) -> Vector2i:
 	var half: int = generator.size / 2
 	return tile - Vector2i(half, half)

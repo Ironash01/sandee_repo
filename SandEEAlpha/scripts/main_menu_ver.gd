@@ -14,6 +14,9 @@ var _settings_overlay: Control = null
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Returning to the title must not inherit the gameplay scene's pause/UI state
+	# (e.g. quitting to menu while a UI was open), or the menu would be frozen.
+	Global.reset_pause_state()
 	_build_all()
 	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
 		Global.ui_scale_changed.connect(_on_ui_scale)

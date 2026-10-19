@@ -452,6 +452,19 @@ func get_player_spawn_pos() -> Vector2:
 # Generator grid indices run 0..width-1 / 0..height-1; centering the map on
 # the origin (matching the overworld/cave convention) means every grid->cell
 # conversion needs this same per-axis offset.
+# ── Camera bounds ───────────────────────────────────────────────────
+# The playable rect of THIS dungeon, in world coordinates — the generated grid
+# (rooms + corridors) is centred on the origin (see _grid_to_cell). The band of
+# dungeon wall painted around the grid (SURROUND_BAND_TILES) is deliberately
+# EXCLUDED so the camera stops at the real playable area instead of drifting out
+# into the surround.
+func camera_bounds() -> Rect2:
+	if generator == null:
+		return Rect2()
+	var half := Vector2i(generator.width / 2, generator.height / 2)
+	return Rect2(-Vector2(half) * float(TILE_SIZE),
+		Vector2(generator.width, generator.height) * float(TILE_SIZE))
+
 func _grid_to_cell(tile: Vector2i) -> Vector2i:
 	return tile - Vector2i(generator.width / 2, generator.height / 2)
 

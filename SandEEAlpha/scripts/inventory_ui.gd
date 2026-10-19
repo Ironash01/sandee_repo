@@ -598,7 +598,14 @@ func _on_slot_clicked(idx: int) -> void:
 	_tip_desc.text   = data.description
 
 func _close() -> void:
-	get_parent().visible = false
+	# Idempotent: releasing the pause twice for one open would underflow the
+	# shared refcount and resume gameplay while another UI was still open.
+	# Same guard crafting_menu/smelting_menu use.
+	var layer: Node = get_parent()
+	if layer != null and not (layer as CanvasItem).visible:
+		return
+	if layer != null:
+		(layer as CanvasItem).visible = false
 	Global.close_ui()
 
 # ── Helpers ───────────────────────────────────────────────────────

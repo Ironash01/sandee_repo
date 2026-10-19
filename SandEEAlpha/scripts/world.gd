@@ -9,6 +9,7 @@ const WORM_SCENE:      PackedScene = preload("res://scenes/mobs/Worm.tscn")
 const HEADLESS_FISH_SCENE: PackedScene = preload("res://scenes/mobs/HeadlessFish.tscn")
 const PLAIN_TREE_TEX:  Texture2D   = preload("res://sprites/tree/tree.png")
 const SNOWY_TREE_TEX:  Texture2D   = preload("res://sprites/tree/snowy_tree.png")
+const BIRCH_TREE_TEX:  Texture2D   = preload("res://sprites/tree/birch_tree.png")
 const SHADOW_TEXTURE:  Texture2D   = preload("res://sprites/shadow/shadow_base.png")
 const SWORD_SWING_SCRIPT: GDScript = preload("res://scripts/sword_swing_effect.gd")
 const CACTUS_SCENE:    PackedScene = preload("res://scenes/objects/PlaceableBlock.tscn")
@@ -100,6 +101,28 @@ const CHARCOAL_PATCH_CHANCE:  float    = 0.70
 const CHARCOAL_PATCH_MIN:     int      = 1
 const CHARCOAL_PATCH_MAX:     int      = 15
 
+# ── Birch trees ─────────────────────────────────────────────────────
+# Birch trees grow AMONG the plains forest (they never replace it): a
+# deterministic per-tile roll promotes that fraction of plains trees to birch.
+# The roll is a coordinate hash, NOT a draw from the shared generation rng —
+# taking from that stream here would shift every later world-gen roll and change
+# existing worlds for a given seed.
+const BIRCH_CHANCE:           float    = 0.22
+
+# ── Coarse sand (desert surface variant + mineable blocks) ──────────
+# The terrain itself is a darker, rougher desert tile painted in irregular
+# clumps (see _paint_coarse_sand_patches); the mineable blocks are a separate
+# pass (see _place_coarse_sand_patches) so the player has a source for the
+# sandstone recipe. Both are chunk-seeded so a world seed always produces the
+# same pattern without touching the shared rng.
+const COARSE_SAND_DATA:            ItemData = preload("res://resources/items/coarse_sand.tres")
+const COARSE_SAND_CHUNK_CHANCE:    float    = 0.55
+const COARSE_SAND_PATCH_MIN:       int      = 8
+const COARSE_SAND_PATCH_MAX:       int      = 34
+const COARSE_SAND_BLOCK_CHANCE:    float    = 0.35
+const COARSE_SAND_BLOCK_MIN:       int      = 2
+const COARSE_SAND_BLOCK_MAX:       int      = 7
+
 # For Large Forest Gen (plains and snowy only)
 const LARGE_FOREST_MIN_SEP:   int   = 100
 const LARGE_FOREST_R_MIN:     int   = 10  # was 15
@@ -117,6 +140,9 @@ const LARGE_FOREST_D_EDGE:    float = 0.07 # was 0.15
 
 var _exp_ground_src:  int = -1
 var _exp_ground_cols: int = 0
+# Runtime TileSetAtlasSource for the coarse-sand desert tile (see
+# _apply_coarse_sand_source); -1 when the texture is missing.
+var _coarse_sand_src: int = -1
 var _exp_ground_rows: int = 0
 
 const WOLF_SPAWN_CHANCE: float = 0.003  # was 0.08 — 8% of 5000 plains tiles = ~400 wolves
@@ -397,6 +423,7 @@ func _ready() -> void:
 	_set_up_noise(altitude,    0.005)
 	if use_experimental_ground:
 		_apply_experimental_ground()
+	_apply_coarse_sand_source()
 	_setup_ghost()
 	_setup_grid_overlay()
 	_setup_cursor_highlight()
@@ -789,6 +816,9 @@ func _deferred_foliage() -> void:
 	# the cell if the two ever overlap). Dungeon entrances spawn later and will
 	# clear any natural block sitting in their footprint.
 	_place_stone_patches()
+	# Coarse sand blocks follow the same rule (after foliage, before the save
+	# restore) but on DESERT tiles — they are the player's source of coarse sand.
+	_place_coarse_sand_patches()
 	if not Global.pending_world_data.is_empty():
 		apply_world_save_data(Global.pending_world_data)
 		Global.pending_world_data.clear()
@@ -2031,6 +2061,16 @@ func _fix_sprite_offset(obj: Node) -> void:
 	if frame_height > 0.0:
 		sprite.position = Vector2(0.0, (TILE_SIZE / 2.0) - (frame_height / 2.0))
 
+# ── Camera bounds ───────────────────────────────────────────────────
+# The playable rect of THIS area, in world coordinates. The generated grid is
+# centred on the origin (see _generate_terrain's cell_offset), so the bounds are
+# simply the grid extent — the camera clamps to it (player.gd) and never scrolls
+# past the overworld's edge.
+func camera_bounds() -> Rect2:
+	var half := Vector2i(width, height) / 2
+	return Rect2(-Vector2(half) * float(TILE_SIZE),
+		Vector2(width, height) * float(TILE_SIZE))
+
 func _get_player() -> Node2D:
 	if player != null:
 		return player as Node2D
@@ -2069,11 +2109,30 @@ func _apply_experimental_ground() -> void:
 	_exp_ground_cols = num_cols
 	_exp_ground_rows = num_rows
 
+# ── Coarse sand tile source ─────────────────────────────────────────
+# Coarse sand is a DESERT surface variant. Its 32x32 tile is added as a runtime
+# TileSetAtlasSource (the same approach as the experimental ground above) so no
+# scene edit is needed, and _cell_biome_type can recognise the source as desert.
+func _apply_coarse_sand_source() -> void:
+	var tex := load("res://sprites/tilesets/coarse_sand.png") as Texture2D
+	if tex == null:
+		push_warning("coarse_sand.png not found — coarse sand will not generate")
+		return
+	var src := TileSetAtlasSource.new()
+	src.texture             = tex
+	src.texture_region_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	src.create_tile(Vector2i(0, 0))
+	_coarse_sand_src = ground_layer.tile_set.add_source(src)
+
 # Returns 0=Plain, 1=Desert, 2=Snowy, -1=Water/none
 func _cell_biome_type(tile_coord: Vector2i) -> int:
 	var src: int = ground_layer.get_cell_source_id(tile_coord)
 	if src == -1:
 		return -1
+	# Coarse sand is a desert surface VARIANT: it must read as desert so trees
+	# never spawn on it and every other desert rule still applies.
+	if src == _coarse_sand_src:
+		return 1
 	var a: Vector2i = ground_layer.get_cell_atlas_coords(tile_coord)
 	if src == _exp_ground_src:
 		if a.y == 0: return 0
@@ -2221,6 +2280,81 @@ func _generate_terrain() -> void:
 						ground_layer.set_cell(c, 0, Vector2i(1, 1))
 					_:
 						water_layer.set_cell(c, 0, Vector2i(0, 0))
+
+	# Desert surface variant: paint coarse-sand clumps over the finished terrain.
+	_paint_coarse_sand_patches(cell_offset)
+
+# ── Coarse sand patches (desert surface variant) ────────────────────
+# Irregular clumps of darker sand inside deserts. Grown per chunk from a
+# chunk-seeded rng (the same pattern the grass fill uses) so the layout is
+# stable for a world seed WITHOUT drawing from the shared generation rng, which
+# would shift every later world-gen roll and change existing worlds.
+#
+# Clumps are grown as a random-walk frontier rather than as squares or per-tile
+# noise, so they read as natural drifts, and a small fraction of steps also drop
+# an ISOLATED tile a couple of tiles out — the "occasional isolated tile near
+# cluster edges" the desert should have.
+func _paint_coarse_sand_patches(cell_offset: Vector2i) -> void:
+	if _coarse_sand_src == -1:
+		return
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			var crng := RandomNumberGenerator.new()
+			crng.seed = int(random_seed) ^ (_chunk_hash(chunk) * 31)
+			if crng.randf() >= COARSE_SAND_CHUNK_CHANCE:
+				continue
+			var tl := Vector2i(chunk.x * CHUNK_SIZE, chunk.y * CHUNK_SIZE) - cell_offset
+			var desert: Array[Vector2i] = []
+			for dx in range(CHUNK_SIZE):
+				for dy in range(CHUNK_SIZE):
+					var c: Vector2i = tl + Vector2i(dx, dy)
+					if _is_desert_ground(c):
+						desert.append(c)
+			if desert.size() < COARSE_SAND_PATCH_MIN:
+				continue
+			for _clump in range(crng.randi_range(1, 2)):
+				var target: int = crng.randi_range(COARSE_SAND_PATCH_MIN, COARSE_SAND_PATCH_MAX)
+				var origin: Vector2i = desert[crng.randi_range(0, desert.size() - 1)]
+				var frontier: Array = [origin]
+				var seen: Dictionary = {origin: true}
+				var placed := 0
+				while placed < target and not frontier.is_empty():
+					var idx: int = crng.randi_range(0, frontier.size() - 1)
+					var cur: Vector2i = frontier[idx]
+					frontier.remove_at(idx)
+					if not _is_plain_desert_ground(cur):
+						continue
+					ground_layer.set_cell(cur, _coarse_sand_src, Vector2i(0, 0))
+					placed += 1
+					if crng.randf() < 0.10:
+						var stray: Vector2i = cur + Vector2i(crng.randi_range(-2, 2), crng.randi_range(-2, 2))
+						if _is_plain_desert_ground(stray):
+							ground_layer.set_cell(stray, _coarse_sand_src, Vector2i(0, 0))
+					var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+					for k in range(dirs.size() - 1, 0, -1):
+						var j: int = crng.randi_range(0, k)
+						var tmp = dirs[k]
+						dirs[k] = dirs[j]
+						dirs[j] = tmp
+					for d in dirs:
+						var n: Vector2i = cur + d
+						if seen.has(n):
+							continue
+						seen[n] = true
+						frontier.append(n)
+
+# A desert ground tile (plain sand OR already-painted coarse sand), dry.
+func _is_desert_ground(c: Vector2i) -> bool:
+	if ground_layer.get_cell_source_id(c) == -1:
+		return false
+	if water_layer.get_cell_source_id(c) != -1:
+		return false
+	return _cell_biome_type(c) == 1
+
+# Desert ground that has NOT already been turned into coarse sand.
+func _is_plain_desert_ground(c: Vector2i) -> bool:
+	return ground_layer.get_cell_source_id(c) != _coarse_sand_src and _is_desert_ground(c)
 
 func _set_up_noise(noise: FastNoiseLite, frequency: float, type: FastNoiseLite.FractalType = FastNoiseLite.FractalType.FRACTAL_FBM) -> void:
 	noise.fractal_type = type
@@ -2484,6 +2618,15 @@ func _chunk_hash(chunk: Vector2i) -> int:
 	var h: int = chunk.x * 374761393 + chunk.y * 668265263
 	return h & 0x7FFFFFFF
 
+# Stable per-(seed, tile) roll in 0..1 for the birch promotion. Mixes the tile
+# coords with the world seed and large primes, so birch placement is
+# deterministic for a given seed and NEVER draws from the shared gen rng.
+func _birch_roll(cell: Vector2i) -> float:
+	var h: int = cell.x * 73856093 ^ cell.y * 19349663 ^ random_seed
+	h = (h ^ (h >> 13)) * 1274126177
+	h = h ^ (h >> 16)
+	return float(absi(h) % 100000) / 100000.0
+
 # Spread across many frames (chunks_per_frame chunks at a time, then yield)
 # instead of one long synchronous burst. The INITIAL fill is awaited by
 # _deferred_foliage() so the loading screen stays up until every tuft exists
@@ -2693,6 +2836,62 @@ func _can_host_natural_block(tile: Vector2i) -> bool:
 		return false
 	return true
 
+# ── Coarse sand patches (world-gen, mineable) ───────────────────────
+# The same idea as _place_stone_patches but on DESERT tiles: a chance per chunk
+# to grow a small cluster of mineable Coarse Sand blocks sitting on the desert.
+# This is how the player obtains coarse sand for the sandstone recipe. Uses a
+# chunk-seeded rng, so the shared generation stream (and therefore every other
+# world-gen roll) is untouched.
+func _place_coarse_sand_patches() -> void:
+	var half_w: int = width  / 2
+	var half_h: int = height / 2
+	var placed_count: int = 0
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if _cave_claimed_chunks.has(chunk) or _structure_claimed_chunks.has(chunk):
+				continue
+			if _is_chunk_all_ocean(chunk):
+				continue
+			var crng := RandomNumberGenerator.new()
+			crng.seed = int(random_seed) ^ (_chunk_hash(chunk) * 17)
+			if crng.randf() >= COARSE_SAND_BLOCK_CHANCE:
+				continue
+			var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+			var free: Array[Vector2i] = []
+			for dx in range(CHUNK_SIZE):
+				for dy in range(CHUNK_SIZE):
+					var tile: Vector2i = tl + Vector2i(dx, dy)
+					if _can_host_desert_block(tile):
+						free.append(tile)
+			if free.size() < COARSE_SAND_BLOCK_MIN:
+				continue
+			_shuffle_tiles(free, crng)
+			var n: int = mini(crng.randi_range(COARSE_SAND_BLOCK_MIN, COARSE_SAND_BLOCK_MAX), free.size())
+			for i in range(n):
+				_spawn_natural_block(free[i], COARSE_SAND_DATA)
+				placed_count += 1
+	print("[SAND] placed %d natural coarse sand blocks" % placed_count)
+
+# A tile a world-gen coarse-sand block may occupy: DESERT only, dry, no tree /
+# structure / cave / entrance, nothing already placed.
+func _can_host_desert_block(tile: Vector2i) -> bool:
+	if _cell_biome_type(tile) != 1:
+		return false
+	if water_layer.get_cell_source_id(tile) != -1:
+		return false
+	if _is_tree_occupied(tile):
+		return false
+	if _placed_blocks.has(tile):
+		return false
+	if editable_layer.get_cell_source_id(tile) != -1:
+		return false
+	if structures_layer.get_cell_source_id(tile) != -1:
+		return false
+	if _cave_entrance_cells.has(tile) or _dungeon_entrance_cells.has(tile):
+		return false
+	return true
+
 # Instantiates a PlaceableBlock for a world-gen natural block and registers it
 # in _placed_blocks tagged "natural". Mirrors the save-restore path (no debris
 # burst, no mission credit — those belong to PLAYER placement only).
@@ -2873,9 +3072,20 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 		return
 	_tree_spawn_count += 1
 
-	# Biome picks the sprite: snowy (type 2) uses the snow tree, everything
-	# else uses the normal plains tree.
-	var tree_tex: Texture2D = SNOWY_TREE_TEX if tree_type_val == 2 else PLAIN_TREE_TEX
+	# Birch grows AMONG the plains trees rather than replacing them: a
+	# deterministic per-tile roll promotes some plain trees to birch (see
+	# BIRCH_CHANCE / _birch_roll — a hash, so the shared gen rng is untouched
+	# and every other world-gen roll keeps producing exactly what it did before).
+	if tree_type_val == 0 \
+			and _birch_roll(editable_layer.local_to_map(editable_layer.to_local(world_pos))) < BIRCH_CHANCE:
+		tree_type_val = 3
+
+	# Biome picks the sprite: snowy (2) uses the snow tree, birch (3) the birch
+	# tree, everything else the normal plains tree.
+	var tree_tex: Texture2D = PLAIN_TREE_TEX
+	match tree_type_val:
+		2: tree_tex = SNOWY_TREE_TEX
+		3: tree_tex = BIRCH_TREE_TEX
 	var sprite := tree.get_node_or_null("Sprite2D") as Sprite2D
 	var frame_w: float = 32.0
 	var frame_h: float = 32.0
