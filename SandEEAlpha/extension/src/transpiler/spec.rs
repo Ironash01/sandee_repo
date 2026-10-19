@@ -88,7 +88,7 @@ impl PythonType {
             Expr::List(_) | Expr::ListComp(_) => Ok(Self::List),
             Expr::FString(_) | Expr::TString(_) | Expr::StringLiteral(_) => Ok(Self::String),
             Expr::NumberLiteral(_) => Ok(Self::Number),
-            Expr::BooleanLiteral(_) => Ok(Self::Bool),
+            Expr::BooleanLiteral(_) | Expr::BoolOp(_) => Ok(Self::Bool),
             Expr::NoneLiteral(_) => Ok(Self::None),
             Expr::Name(name) => symbols
                 .find(&name.id)
@@ -99,10 +99,8 @@ impl PythonType {
                 })
                 .ok_or(anyhow!("Cannot find type of {:?}", name)),
             Expr::Tuple(_) => Ok(Self::Tuple),
-            Expr::Call(_) => Ok(Self::Any),
-            // Anything else (BinOp, Compare, ...) only feeds attribute lookups,
-            // so fall back to Any rather than failing the whole transpile —
-            // `total = a + b` is valid Python and must not error here.
+            Expr::BinOp(op) => PythonType::from_expr(&op.left, &symbols),
+            Expr::UnaryOp(op) => PythonType::from_expr(&op.operand, &symbols),
             _ => Ok(Self::Any),
         }
     }
@@ -199,6 +197,11 @@ impl SymbolsStack {
     }
 
     pub fn exists(&self, name: &str) -> bool {
+        let name = if let Some(idx) = name.find(".") {
+            &name[..idx]
+        } else {
+            name
+        };
         self.stack
             .iter()
             .any(|frame| frame.iter().any(|sym| sym == name))
@@ -272,72 +275,6 @@ impl SymbolsStack {
             Symbol::Function(
                 "pow".to_string(),
                 Arguments::new(false, false, 2, Vec::new()),
-            ),
-            // ── Crafting Station automation API ──────────────────────
-            // Implemented by resources/godot_station_base.gd (the base used by
-            // a Crafting Station's Python host). Seeding them here lets the
-            // transpiler accept the calls; a program that uses them outside a
-            // station host compiles against that host's base and reports a
-            // normal "function not found" error instead.
-            Symbol::Function(
-                "craft".to_string(),
-                Arguments::new(false, false, 1, Vec::new()),
-            ),
-            Symbol::Function(
-                "get_recipe".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            Symbol::Function(
-                "set_recipe".to_string(),
-                Arguments::new(false, false, 1, Vec::new()),
-            ),
-            Symbol::Function(
-                "output_item".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            Symbol::Function(
-                "output_count".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            Symbol::Function(
-                "take_output".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            // ── Furnace automation API ───────────────────────────────
-            // Implemented by resources/godot_furnace_base.gd (the base used by
-            // a Furnace's Python host). output_count / take_output above are
-            // shared with the station.
-            Symbol::Function(
-                "feed".to_string(),
-                Arguments::new(false, false, 2, Vec::new()),
-            ),
-            Symbol::Function(
-                "fuel".to_string(),
-                Arguments::new(false, false, 2, Vec::new()),
-            ),
-            Symbol::Function(
-                "smelt".to_string(),
-                Arguments::new(false, false, 1, Vec::new()),
-            ),
-            Symbol::Function(
-                "input_name".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            Symbol::Function(
-                "input_count".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            Symbol::Function(
-                "fuel_name".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            Symbol::Function(
-                "fuel_count".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
-            ),
-            Symbol::Function(
-                "output_name".to_string(),
-                Arguments::new(false, false, 0, Vec::new()),
             ),
         ]]
     }
