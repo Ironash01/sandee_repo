@@ -600,12 +600,18 @@ func _on_slot_clicked(idx: int) -> void:
 func _close() -> void:
 	# Idempotent: releasing the pause twice for one open would underflow the
 	# shared refcount and resume gameplay while another UI was still open.
-	# Same guard crafting_menu/smelting_menu use.
+	#
+	# NOTE: the parent is a CanvasLayer — it HAS a `visible` property but is NOT
+	# a CanvasItem. Casting it to CanvasItem yields null, so the access must be
+	# duck-typed (this is what crashed every close with
+	# "Invalid access to property or key 'visible' on a base object of type 'Nil'").
 	var layer: Node = get_parent()
-	if layer != null and not (layer as CanvasItem).visible:
+	if layer == null:
+		Global.close_ui()
 		return
-	if layer != null:
-		(layer as CanvasItem).visible = false
+	if not bool(layer.get("visible")):
+		return
+	layer.set("visible", false)
 	Global.close_ui()
 
 # ── Helpers ───────────────────────────────────────────────────────

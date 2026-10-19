@@ -82,7 +82,7 @@ func _fire_at(target: Vector2) -> void:
 	proj.global_position = global_position
 
 # Sword hit — same shape mobs expose (see sword_swing_effect.gd).
-func take_hit(damage: float, _source_pos: Vector2) -> void:
+func take_hit(damage: float, _source_pos: Vector2, _apply_knockback: bool = true) -> void:
 	if damage <= 0.0 or _hp <= 0.0:
 		return
 	_hp = maxf(0.0, _hp - damage)

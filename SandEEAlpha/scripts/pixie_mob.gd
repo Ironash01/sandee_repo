@@ -213,7 +213,7 @@ func _try_attack_player(delta: float) -> void:
 # Called by the player's swing hitbox (see sword_swing_effect.gd) when the
 # blade overlaps this pixie. Reduces HP and knocks it back from the hit
 # origin; bosses take the damage but are NOT knocked back. Dies at 0 HP.
-func take_hit(damage: float, source_pos: Vector2) -> void:
+func take_hit(damage: float, source_pos: Vector2, apply_knockback: bool = true) -> void:
 	if damage <= 0.0:
 		return
 	damage = COMBAT_DATA.damage_taken(damage)
@@ -222,9 +222,9 @@ func take_hit(damage: float, source_pos: Vector2) -> void:
 	var away: Vector2 = global_position - source_pos
 	if away.length_squared() > 0.001:
 		away = away.normalized()
-	if COMBAT_DATA.is_boss:
-		pass  # bosses shrug off knockback
-	else:
+	# Bosses shrug off knockback; a caller may also suppress it (a LUA attacks
+	# with apply_knockback = false).
+	if not COMBAT_DATA.is_boss and apply_knockback:
 		var strength: float = 60.0 + damage * 6.0
 		_knockback += away * strength
 	# Hit feedback: red flash for ~1s (Terraria-style), plus the floating

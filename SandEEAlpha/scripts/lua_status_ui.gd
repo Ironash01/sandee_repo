@@ -15,7 +15,9 @@ const C_NAME   := Color(0.55, 0.85, 1.00, 1.00)
 
 const LEFT_MARGIN := 12.0
 const PANEL_WIDTH := 220.0
-const SHOWN       := 3
+# Up to this many most-recently-active LUAs show in the collapsed panel. The
+# expanded list (click the panel) still shows EVERY LUA.
+const SHOWN       := 5
 const POLL_SEC    := 0.25
 
 var _panel:    PanelContainer = null
@@ -30,10 +32,24 @@ func _ready() -> void:
 	_build()
 	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
 		Global.ui_scale_changed.connect(_on_ui_scale)
+	# SAME background setting as the missions bar: this panel follows
+	# Global.quest_opaque_bg so the two interfaces stay consistent.
+	if not Global.quest_bg_changed.is_connected(_on_quest_bg):
+		Global.quest_bg_changed.connect(_on_quest_bg)
 	call_deferred("_refit")
 	call_deferred("_refresh")
 
 func _on_ui_scale(_s: float) -> void:
+	if _panel != null:
+		_panel.queue_free()
+		_panel = null
+	_build()
+	_refit()
+	_refresh()
+
+# Rebuild when the shared "Opaque Quest Background" setting changes (the same
+# signal the missions bar listens to).
+func _on_quest_bg(_opaque: bool) -> void:
 	if _panel != null:
 		_panel.queue_free()
 		_panel = null
@@ -46,11 +62,15 @@ func _build() -> void:
 	var s: float = Global.ui_scale
 	_panel = PanelContainer.new()
 	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	# Same presentation rule as the missions bar (mission_ui.gd): transparent by
+	# default (text floats over the world) and a solid panel + border only while
+	# the shared "Opaque Quest Background" setting is on.
+	var opaque: bool = Global.quest_opaque_bg
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_PANEL
-	sb.border_color = C_BORDER
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(4)
+	sb.bg_color = C_PANEL  if opaque else Color(0, 0, 0, 0)
+	sb.border_color = C_BORDER if opaque else Color(0, 0, 0, 0)
+	sb.set_border_width_all(1 if opaque else 0)
+	sb.set_corner_radius_all(4 if opaque else 0)
 	sb.content_margin_left   = int(8 * s)
 	sb.content_margin_right  = int(8 * s)
 	sb.content_margin_top    = int(6 * s)
@@ -149,19 +169,9 @@ func _make_row(npc: Node) -> Control:
 	var st := _make_label(status, C_ACTIVE)
 	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(st)
-	# Remote terminate for combat LUAs (the player can't terminate normal ones).
-	if combat:
-		var kill := Button.new()
-		kill.text = "☠"
-		kill.tooltip_text = "Terminate this combat LUA (permanent)."
-		kill.add_theme_font_size_override("font_size", int(11 * s))
-		kill.add_theme_color_override("font_color", Color(1.0, 0.6, 0.6))
-		kill.custom_minimum_size = Vector2(int(22 * s), 0)
-		kill.pressed.connect(func() -> void:
-			if is_instance_valid(npc) and npc.has_method("terminate"):
-				npc.call("terminate")
-			_refresh())
-		row.add_child(kill)
+	# NOTE: there is deliberately NO terminate control here any more. Terminating
+	# a LUA is now a menu action (pause menu -> LUA Management), where the player
+	# picks the specific LUA from the active list. This panel is display-only.
 	return row
 
 func _make_label(text: String, col: Color) -> Label:

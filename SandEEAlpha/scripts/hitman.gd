@@ -428,7 +428,7 @@ func _add_sheet(sf: SpriteFrames, anim_name: String, tex: Texture2D,
 		sf.add_frame(anim_name, at)
 
 # ── Sword hit / death (mirrors wolf.gd) ───────────────────────────
-func take_hit(damage: float, _source_pos: Vector2) -> void:
+func take_hit(damage: float, _source_pos: Vector2, _apply_knockback: bool = true) -> void:
 	if damage <= 0.0 or _mob_health <= 0.0:
 		return
 	damage = COMBAT_DATA.damage_taken(damage)

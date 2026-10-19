@@ -63,17 +63,27 @@ func refresh() -> void:
 		return
 	var palette: Array = _npc.call("get_build_palette")
 	var slot: Variant = palette[slot_index] if slot_index < palette.size() else null
-	if slot == null:
-		_icon.texture = null
-		_icon.visible = false
-		_qty.visible  = false
-	else:
-		var data: ItemData = (slot as Dictionary)["data"] as ItemData
-		_icon.texture = data.icon if data != null else null
-		_icon.visible = true
-		var qty: int = int((slot as Dictionary)["quantity"])
-		_qty.visible = qty > 1
-		_qty.text    = str(qty)
+	# This slot is only a VIEW of the NPC's authoritative palette, so a missing
+	# or FREED ItemData must clear the icon instead of leaving a stale one (or
+	# crashing on a freed instance).
+	var data: Variant = null
+	if slot is Dictionary:
+		data = (slot as Dictionary).get("data")
+	if not (data is ItemData) or not is_instance_valid(data) \
+			or int((slot as Dictionary).get("quantity", 0)) <= 0:
+		_clear_icon()
+		return
+	_icon.texture = (data as ItemData).icon
+	_icon.visible = true
+	var qty: int = int((slot as Dictionary).get("quantity", 0))
+	_qty.visible = qty > 1
+	_qty.text    = str(qty)
+	queue_redraw()
+
+func _clear_icon() -> void:
+	_icon.texture = null
+	_icon.visible = false
+	_qty.visible  = false
 	queue_redraw()
 
 func _draw() -> void:

@@ -28,7 +28,15 @@ const CHOP_RADIUS_PX:     float = CHOP_RADIUS_BLOCKS * TILE_SIZE  # 640 px
 # matching sprite scale (0.75) and RobotCol size (15x15 at y 7.5); keep the two
 # in sync (the shape is a scene sub-resource, not built here).
 const LUA_SIZE_SCALE:     float = 0.75
-const APPROACH_PX:        float = 40.0 * LUA_SIZE_SCALE
+# Interaction reach. The robot acts on anything inside a 3x3 tile area centred
+# on ITSELF (1.5 tiles = 48 px) — which is exactly the radius the game already
+# gives actors: Tree.tscn's InteractArea is a 48 px circle. The robot must NOT
+# have to walk right up to a target. With the old 30 px approach it could not
+# always get there (a tree in dense forest is walled in by its neighbours), so
+# _walk_to_node timed out, _handle_stuck() recalled the robot to its station and
+# the job looked like it "did nothing" — no swing, no chop, walk home.
+const INTERACT_RADIUS_TILES: int   = 1     # 3x3 tiles around the robot
+const INTERACT_RADIUS_PX:    float = TILE_SIZE * (float(INTERACT_RADIUS_TILES) + 0.5)
 const CHOP_DELAY:         float = 0.25
 const PICKUP_DELAY:       float = 0.4
 const NPC_SPEED:          float = 90.0
@@ -113,9 +121,20 @@ const S_CHEST_ITEMS:   float = -5.0  # move(0, -5) + interact() → print chest 
 
 # ── State ─────────────────────────────────────────────────────────
 var _show_radius:     bool    = false
+# Work radius used by the TREE search. chop_trees(radius) sends the requested
+# radius through move(radius, S_SET_RADIUS); before this existed the value was
+# dropped and every job used the fixed 20-block constant, so chop_trees(4)
+# actually cleared a 20-block circle and looked like it would never finish.
+var _work_radius_px:  float   = CHOP_RADIUS_PX
+const WORK_RADIUS_MIN_BLOCKS: float = 1.0
+const WORK_RADIUS_MAX_BLOCKS: float = 64.0
 var _player_nearby:   bool    = false
 var _is_working:      bool    = false
 var _stop_requested:  bool    = false
+# Trees the robot could not path to during the CURRENT job. Without this a
+# walled-in tree aborted the whole job (walk fails -> return), so the robot went
+# home having done nothing; now it is remembered and the next tree is tried.
+var _unreachable:     Array   = []
 var _pending_action:  String  = "chop"   # action dispatched on next interact()
 var _last_dir:        String  = "south"
 var _robot_vel:       Vector2 = Vector2.ZERO
@@ -138,7 +157,10 @@ var _tool: Dictionary = {}
 var program_code: String = ""
 # rename(name) — custom name shown above the robot.
 var _custom_name: String = ""
-var _name_label:  Label  = null
+# The station's presentational component (name label + code-editor panel). See
+# lua_ui.gd — this node keeps NO UI state of its own.
+var _lua_ui: Node = null
+const LUA_UI_SCRIPT: GDScript = preload("res://scripts/lua_ui.gd")
 # Auto-assigned index (0..MAX_LUA_INDEX) for the default "LUA N" label.
 var _name_index:  int    = -1
 # Current action shown in the LUA status HUD ("Mining Stone", "Idle", …).
@@ -151,7 +173,7 @@ var _status_ms:   int    = 0
 # attacks using its TOOL slot, has HP (enemies can hurt it), and can be
 # terminated (remote, or STOP on its station). A terminated combat LUA is gone
 # for good. It cannot run code while in combat.
-const COMBAT_MAX_HP:        float = 400.0
+const COMBAT_MAX_HP:        float = 250.0
 const COMBAT_FOLLOW_GAP:    float = 44.0 * LUA_SIZE_SCALE  # keep this far from the player
 const COMBAT_CONTACT_PX:    float = 26.0 * LUA_SIZE_SCALE  # a mob this close to the LUA hurts it
 const COMBAT_CONTACT_DMG:   float = 8.0
@@ -246,7 +268,6 @@ var _selected_slot: int   = 0            # 0-based; the slot place_item uses
 
 # ── Node refs ─────────────────────────────────────────────────────
 var _lua_state:    Node    = null
-var _ui:           Control = null
 # The world this station was placed in (normally the overworld). A combat LUA
 # hides its station whenever another world is active.
 var _home_world:   Node    = null
@@ -334,47 +355,29 @@ func _ready() -> void:
 	_lua_state.connect("signal_rename",      _on_lua_rename)
 	_lua_state.connect("signal_combat_mode", _on_lua_combat_mode)
 
-	# Persistent name label above the robot (set by rename()).
-	_name_label = Label.new()
-	_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_name_label.add_theme_font_size_override("font_size", 12)
-	_name_label.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0, 1.0))
-	_name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
-	_name_label.add_theme_constant_override("outline_size", 3)
-	# Sits just above the (now smaller) robot sprite; x/width stay centered on the
-	# robot's origin.
-	_name_label.position = Vector2(-60, -42)
-	_name_label.size     = Vector2(120, 16)
-	_name_label.visible  = false
-	_robot.add_child(_name_label)
-
-	# Code editor UI
-	var ui_scene: PackedScene = load("res://scenes/ui/LuaEditorUI.tscn") as PackedScene
-	var canvas := CanvasLayer.new()
-	canvas.layer        = 12
-	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(canvas)
-	_ui = ui_scene.instantiate() as Control
-	canvas.add_child(_ui)
-	_ui.visible = false
+	# Presentational component: the name label above the robot + the code-editor
+	# panel. All UI state lives there (see lua_ui.gd) — this node only calls it.
+	_lua_ui = LUA_UI_SCRIPT.new()
+	_lua_ui.name = "LuaUI"
+	add_child(_lua_ui)
+	_lua_ui.call("setup", self, _robot)
 
 	# Default "LUA N" label (lowest unused index). Done after the label + group
 	# exist so the scan sees the other placed LUAs.
 	_assign_default_name()
 
 func _on_close_all_ui() -> void:
-	if _ui != null and _ui.visible:
-		Global.close_ui()
-		_ui.visible = false
+	if _lua_ui != null and is_instance_valid(_lua_ui):
+		_lua_ui.call("close_editor")
 
 # ── Draw radius ring ──────────────────────────────────────────────
 func _draw() -> void:
 	if not _show_radius:
 		return
 	# Filled tint
-	draw_circle(Vector2.ZERO, CHOP_RADIUS_PX, Color(0.3, 0.8, 1.0, 0.06))
+	draw_circle(Vector2.ZERO, _work_radius_px, Color(0.3, 0.8, 1.0, 0.06))
 	# Solid border ring
-	draw_arc(Vector2.ZERO, CHOP_RADIUS_PX, 0.0, TAU, 96, Color(0.3, 0.8, 1.0, 0.55), 2.5)
+	draw_arc(Vector2.ZERO, _work_radius_px, 0.0, TAU, 96, Color(0.3, 0.8, 1.0, 0.55), 2.5)
 
 # ── Physics: move robot child each frame ─────────────────────────
 # Robot is a CharacterBody2D so move_and_slide() gives it real collision
@@ -426,15 +429,8 @@ func _on_station_input_event(_viewport, event: InputEvent, _shape) -> void:
 		_show_radius = not _show_radius
 		queue_redraw()
 	elif event.button_index == MOUSE_BUTTON_LEFT and _player_nearby and not Global.block_mode:
-		if _ui != null and not _ui.visible and not Global.pause_menu_open:
-			Global.open_ui()
-			# open_panel() re-syncs RUN/STOP with the robot's real state —
-			# plainly setting visible=true would leave STOP disabled (and a
-			# still-running robot unstoppable) after a close/reopen.
-			if _ui.has_method("open_panel"):
-				_ui.call("open_panel")
-			else:
-				_ui.visible = true
+		if _lua_ui != null and is_instance_valid(_lua_ui) and not Global.pause_menu_open:
+			_lua_ui.call("open_editor")
 
 # ── Player proximity ──────────────────────────────────────────────
 func _on_body_entered(body: Node) -> void:
@@ -462,7 +458,9 @@ func _on_lua_move(vec: Vector2) -> void:
 		S_CHEST_ITEMS:
 			_pending_action = "chest_items"
 		S_SET_RADIUS:
-			pass  # radius is fixed at 20 blocks — ignore custom radius (kept for debug)
+			# chop_trees(radius) → move(radius, -1). Apply it to the tree search
+			# (clamped so a stray value can't clear the whole overworld).
+			_work_radius_px = clampf(vec.x, WORK_RADIUS_MIN_BLOCKS, WORK_RADIUS_MAX_BLOCKS) * TILE_SIZE
 		_:
 			_robot_vel = vec   # normal velocity move
 
@@ -479,8 +477,11 @@ func _on_lua_interact() -> void:
 	_pending_action = "chop"
 
 # The robot has no weapon-swing art, so an attack reads as a magic slash aimed
-# the way it last faced (see magic_swing.gd).
+# the way it last faced (see magic_swing.gd). Tool-gated: attack() swings the
+# EQUIPPED tool, so it aborts with "No tool equipped" when the slot is empty.
 func _on_lua_attack() -> void:
+	if not _tool_gate("attack"):
+		return
 	_swing_at(Vector2.INF, 1.0, 6)
 
 # _last_dir (a DIRS name) -> a unit vector.
@@ -716,6 +717,63 @@ func get_tool() -> Dictionary:
 func has_tool() -> bool:
 	return not _tool.is_empty()
 
+# ── Custom-function TOOL VALIDATION ───────────────────────────────
+# Which custom LUA API functions need a TOOL equipped in the robot's tool slot
+# before they may run. Declared in ONE table (checked by the shared _tool_gate
+# below) instead of being duplicated inside every handler, so the rule stays
+# maintainable as the API grows.
+#
+# Everything NOT listed here is tool-INDEPENDENT and keeps working with an empty
+# slot: move/interact/print/rename/select_block/withdraw/drop_item/place_item/
+# place_at (those need BLOCKS, not tools), the crafting-station calls
+# (craft/set_recipe/take_output/put_input/input_slot) and combat_mode.
+const TOOL_REQUIRED_FUNCS: Dictionary = {
+	"mine":   true,   # mines blocks with the equipped tool
+	"attack": true,   # swings the equipped tool
+}
+# The exact message required when a tool-dependent function runs with no tool.
+const NO_TOOL_MSG: String = "No tool equipped"
+# Throttle: a program that retries the same call in a tight loop must not flood
+# the console with the same line.
+const NO_TOOL_REPORT_MS: int = 1500
+var _last_no_tool_ms: int = -1000000
+
+# Does this custom function require a tool? Public so the editor / docs can ask.
+func tool_required_for(func_name: String) -> bool:
+	return bool(TOOL_REQUIRED_FUNCS.get(func_name, false))
+
+# True when the robot has a USABLE tool equipped. The robot's own `_tool` slot IS
+# the authoritative equipment state (the editor's slot widget is only a view of
+# it), so an empty slot, a missing ItemData, a FREED reference or a zero-quantity
+# stack all count as "no tool".
+func has_valid_tool() -> bool:
+	if _tool.is_empty():
+		return false
+	var d: Variant = _tool.get("data")
+	if not (d is ItemData) or not is_instance_valid(d):
+		return false
+	return int(_tool.get("quantity", 0)) > 0
+
+# Shared gate every tool-dependent handler calls FIRST. Returns false (after
+# reporting) when the function needs a tool and none is equipped, so the caller
+# aborts before any tool-dependent action — no item consumed, no terrain
+# modified, no damage dealt, no work started.
+func _tool_gate(func_name: String) -> bool:
+	if not tool_required_for(func_name):
+		return true
+	if has_valid_tool():
+		return true
+	_report_no_tool()
+	return false
+
+func _report_no_tool() -> void:
+	var now: int = Time.get_ticks_msec()
+	if now - _last_no_tool_ms < NO_TOOL_REPORT_MS:
+		return
+	_last_no_tool_ms = now
+	# The exact console message the validation contract requires.
+	print(NO_TOOL_MSG)
+
 
 # ── Crafting Station bridge ───────────────────────────────────────
 # The nearest placed Crafting Station within range, or null. Stations are
@@ -764,6 +822,10 @@ func _on_lua_input_slot(quantity: int) -> void:
 
 # ── mine(name, radius) + rename(name) ─────────────────────────────
 func _on_lua_mine(name: String, radius: int) -> void:
+	# Tool-gated BEFORE anything else: mine() uses the equipped tool, so with an
+	# empty slot it must abort with "No tool equipped" and start no work at all.
+	if not _tool_gate("mine"):
+		return
 	if _is_working:
 		_lua_state.emit_signal("signal_print", "[mine] robot is busy — mine() ignored.")
 		return
@@ -787,10 +849,9 @@ func get_display_name() -> String:
 	return "LUA"
 
 func _update_name_label() -> void:
-	if _name_label == null:
+	if _lua_ui == null or not is_instance_valid(_lua_ui):
 		return
-	_name_label.text    = get_display_name()
-	_name_label.visible = true
+	_lua_ui.call("set_name_text", get_display_name())
 
 # Lowest unused index 0..MAX_LUA_INDEX across the placed LUAs, so the default
 # "LUA N" labels stay stable and gaps are reused after a Lua is destroyed.
@@ -1227,7 +1288,11 @@ func _combat_attack(center: Vector2) -> void:
 		if d > COMBAT_AOE_RADIUS:
 			continue
 		if mob.has_method("take_hit"):
-			mob.call("take_hit", dmg, center)
+			# NO KNOCKBACK from a LUA hit (the trailing `false`). The shove used
+			# to fight the mob's own steering — re-applied on every player swing
+			# and every autonomous attack — which made provoked enemies look like
+			# they were moving and attacking in slow motion.
+			mob.call("take_hit", dmg, center, false)
 		# Hostile mobs now target this LUA instead of the player.
 		if mob.has_method("provoke"):
 			mob.call("provoke", _robot)
@@ -1824,10 +1889,11 @@ func is_working() -> bool:
 	return _is_working
 
 func stop_work() -> void:
-	# STOP on a COMBAT LUA terminates it for good (see terminate()).
-	if _combat:
-		terminate()
-		return
+	# NOTE: STOP no longer terminates a combat LUA. Termination is a MENU action
+	# now (pause menu -> LUA Management), so the player always has to pick the
+	# specific LUA from the active list. STOP on a combat LUA just halts whatever
+	# work it was doing; the internal terminate() path (death to enemies) is
+	# unaffected.
 	_stop_requested = true
 	_robot_vel      = Vector2.ZERO
 	# Nothing is running, so no loop will consume the flag — clear it now or
@@ -1855,19 +1921,30 @@ func _abort_work() -> void:
 
 func _auto_work() -> void:
 	_set_status("Working")
+	_unreachable.clear()
 	while true:
 		if _stop_requested: break
 		var tree: Node2D = _nearest_tree_in_radius()
 		if tree == null: break
 		_set_status("Chopping trees")
-		if not await _walk_to_node(tree):
-			_is_working = false
-			return
+		if not await _walk_to_node(tree, false):
+			if _stop_requested or not is_inside_tree():
+				_is_working = false
+				return
+			# Could not path to this tree (walled in, or the walk timed out and
+			# recalled us home). Remember it and try the NEXT tree — bailing out
+			# here is what made a LUA walk home having done nothing at all.
+			_unreachable.append(tree)
+			continue
 		if _stop_requested: break
+		# ONE interaction beat as we START on this tree, then chop at CHOP_DELAY
+		# so the tree falls in its real break time. Routing EVERY chop through
+		# _interact() put the 1.5s modify cooldown INSIDE the loop, so a single
+		# 4-second tree took ~27s and the robot looked permanently stuck.
+		await _interact(tree.global_position, 0.9, 5)
 		while is_instance_valid(tree):
 			if _stop_requested: break
-			await _interact(tree.global_position, 0.9, 5)
-			if _stop_requested or not is_instance_valid(tree): break
+			_swing_at(tree.global_position, 0.9, 5)   # FX only — no cooldown
 			tree.call("chop", CHOP_DELAY)
 			await get_tree().create_timer(CHOP_DELAY).timeout
 		await get_tree().create_timer(PICKUP_DELAY).timeout
@@ -1885,18 +1962,29 @@ func _auto_work() -> void:
 
 func _chop_all_trees() -> void:
 	_set_status("Chopping trees")
+	_unreachable.clear()
 	while true:
 		if _stop_requested: break
 		var tree: Node2D = _nearest_tree_in_radius()
 		if tree == null: break
-		if not await _walk_to_node(tree):
-			_is_working = false
-			return
+		if not await _walk_to_node(tree, false):
+			if _stop_requested or not is_inside_tree():
+				_is_working = false
+				return
+			# Could not path to this tree (walled in, or the walk timed out and
+			# recalled us home). Remember it and try the NEXT tree — bailing out
+			# here is what made a LUA walk home having done nothing at all.
+			_unreachable.append(tree)
+			continue
 		if _stop_requested: break
+		# ONE interaction beat as we START on this tree, then chop at CHOP_DELAY
+		# so the tree falls in its real break time. Routing EVERY chop through
+		# _interact() put the 1.5s modify cooldown INSIDE the loop, so a single
+		# 4-second tree took ~27s and the robot looked permanently stuck.
+		await _interact(tree.global_position, 0.9, 5)
 		while is_instance_valid(tree):
 			if _stop_requested: break
-			await _interact(tree.global_position, 0.9, 5)
-			if _stop_requested or not is_instance_valid(tree): break
+			_swing_at(tree.global_position, 0.9, 5)   # FX only — no cooldown
 			tree.call("chop", CHOP_DELAY)
 			await get_tree().create_timer(CHOP_DELAY).timeout
 		await get_tree().create_timer(PICKUP_DELAY).timeout
@@ -1941,7 +2029,7 @@ func _print_chest_items() -> void:
 # Walk robot toward a world node, rerouting around solid obstacles (trees,
 # placed blocks, chests). Returns false if it got stuck and had to be
 # recalled to the station instead of arriving normally.
-func _walk_to_node(target: Node2D) -> bool:
+func _walk_to_node(target: Node2D, recall_on_stuck: bool = true) -> bool:
 	var exclude_rids:  Array = _collision_rids_of(target)
 	var last_dist:     float = INF
 	var stuck_since_ms: int  = -1
@@ -1953,7 +2041,7 @@ func _walk_to_node(target: Node2D) -> bool:
 			_abort_work()
 			return false
 		var dist: float = _robot.global_position.distance_to(target.global_position)
-		if dist <= APPROACH_PX:
+		if dist <= INTERACT_RADIUS_PX:
 			_robot_vel = Vector2.ZERO
 			return true
 
@@ -1967,7 +2055,7 @@ func _walk_to_node(target: Node2D) -> bool:
 		elif stuck_since_ms == -1:
 			stuck_since_ms = Time.get_ticks_msec()
 		elif Time.get_ticks_msec() - stuck_since_ms > STUCK_TIMEOUT_MS:
-			_handle_stuck()
+			_handle_stuck(recall_on_stuck)
 			return false
 
 		await get_tree().process_frame
@@ -2050,22 +2138,26 @@ func _collision_rids_of(node: Node) -> Array:
 		rids.append((body as StaticBody2D).get_rid())
 	return rids
 
-# Shows the stuck dialogue and instantly recalls the robot to its station.
-func _handle_stuck() -> void:
+# Shows the stuck dialogue and (optionally) instantly recalls the robot to its
+# station. A chop job passes recall = false: it just skips the unreachable tree
+# and carries on from where it stands, instead of being yanked home.
+func _handle_stuck(recall: bool = true) -> void:
 	Global.lua_stuck_notice.emit("A LUA got stuck!")
 	_robot_vel      = Vector2.ZERO
-	_robot.position = Vector2.ZERO
+	if recall:
+		_robot.position = Vector2.ZERO
 
 # ── Search helpers ────────────────────────────────────────────────
 
-# Nearest tree within CHOP_RADIUS_PX of the STATION (not the robot).
+# Nearest tree within the work radius of the STATION (not the robot).
 func _nearest_tree_in_radius() -> Node2D:
 	if not is_inside_tree():
 		return null
 	var best:  Node2D = null
-	var best2: float  = CHOP_RADIUS_PX * CHOP_RADIUS_PX
+	var best2: float  = _work_radius_px * _work_radius_px
 	for node in get_tree().get_nodes_in_group("Tree"):
 		if not (node is Node2D): continue
+		if _unreachable.has(node): continue
 		var d: float = (node as Node2D).global_position.distance_squared_to(global_position)
 		if d < best2:
 			best2 = d
@@ -2093,7 +2185,7 @@ func _collect_drops_nearby() -> void:
 	for item_node in get_tree().get_nodes_in_group("items"):
 		if not (item_node is Node2D): continue
 		var dist: float = (item_node as Node2D).global_position.distance_to(_robot.global_position)
-		if dist > APPROACH_PX * 2.0: continue
+		if dist > INTERACT_RADIUS_PX * 2.0: continue
 		var data = item_node.get("item_data")
 		if data == null and item_node.has_method("get_item_data"):
 			data = item_node.call("get_item_data")

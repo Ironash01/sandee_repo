@@ -51,6 +51,56 @@ const REEL_ARC: float = 28.0         # px the reel arc bows upward
 ## Cancel the attempt once the player has wandered this far (px) from the cast.
 @export var move_cancel_dist: float = 64.0
 
+# ── Casting range ─────────────────────────────────────────────────
+# The rod can only be cast into water within this many BLOCKS (tiles) of the
+# player. This is the ONE place the limit is configured — the player's cast
+# dispatch asks is_in_cast_range()/max_cast_blocks() rather than hardcoding a
+# distance of its own. Allowed 5..10 blocks, default 8.
+#
+# Measured EUCLIDEAN from the player's casting origin (their global_position —
+# the FishingController is a child at (0,0), so this is the cast origin; the
+# 4px HAND_OFFSET below is only where the line is DRAWN) to the CENTRE of the
+# tile containing the target, divided by TILE_SIZE. So the limit is a real tile
+# distance, and it stays correct when the cursor sits between tiles.
+const TILE_SIZE: float = 32.0
+const CAST_MAX_BLOCKS_MIN: float = 5.0
+const CAST_MAX_BLOCKS_MAX: float = 10.0
+@export_range(5.0, 10.0, 0.5) var cast_max_blocks: float = 8.0
+
+# The configured maximum, clamped to the allowed 5..10 block band.
+func max_cast_blocks() -> float:
+	return clampf(cast_max_blocks, CAST_MAX_BLOCKS_MIN, CAST_MAX_BLOCKS_MAX)
+
+# Euclidean distance, in BLOCKS, from the player's casting origin to the centre
+# of the tile containing `world_pos`. INF when there is no player to cast from.
+func cast_distance_blocks(world_pos: Vector2) -> float:
+	var p := get_parent() as Node2D
+	if p == null or not is_instance_valid(p):
+		return INF
+	return p.global_position.distance_to(tile_center_of(world_pos)) / TILE_SIZE
+
+# True when `world_pos`'s tile is at or within the configured maximum range.
+# `<=` so a cast EXACTLY at the limit is accepted (no off-by-one).
+func is_in_cast_range(world_pos: Vector2) -> bool:
+	return cast_distance_blocks(world_pos) <= max_cast_blocks()
+
+# The CENTRE of the tile containing `world_pos`, resolved through the active
+# world's Water layer so the mapping matches every other tile lookup in the game
+# (and is correct when the cursor is between tiles). Falls back to the raw point
+# when there is no water layer to resolve against.
+func tile_center_of(world_pos: Vector2) -> Vector2:
+	var layer: TileMapLayer = _water_layer()
+	if layer == null:
+		return world_pos
+	var cell: Vector2i = layer.local_to_map(layer.to_local(world_pos))
+	return layer.to_global(layer.map_to_local(cell))
+
+func _water_layer() -> TileMapLayer:
+	var world: Node = Global.world_node
+	if world == null or not is_instance_valid(world):
+		return null
+	return world.get_node_or_null("Water") as TileMapLayer
+
 var _active: bool = false
 var _elapsed: float = 0.0
 var _bob_time: float = 0.0

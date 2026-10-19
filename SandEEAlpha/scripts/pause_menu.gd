@@ -11,6 +11,15 @@ const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.55)
 var _overlay:         ColorRect
 var _pause_center:    CenterContainer
 var _settings_center: CenterContainer
+# LUA Management panel (pause menu -> LUA Management). This is the ONLY
+# player-facing way to terminate a LUA now, so the player always has to pick the
+# specific LUA out of the list of currently-active ones.
+var _lua_center:      CenterContainer
+var _lua_rows:        VBoxContainer
+var _lua_confirm:     PanelContainer
+var _lua_confirm_lbl: Label
+var _lua_pending:     Node = null
+var _lua_poll:        float = 0.0
 
 # Live-update value labels keyed by setting name
 var _val_labels: Dictionary = {}
@@ -43,6 +52,7 @@ func _ready() -> void:
 	_build_overlay()
 	_build_pause_panel()
 	_build_settings_panel()
+	_build_lua_panel()
 	Global.ui_scale_changed.connect(_on_ui_scale)
 	visible = false
 
@@ -54,9 +64,14 @@ func _on_ui_scale(_s: float) -> void:
 	if _settings_center != null:
 		_settings_center.queue_free()
 		_settings_center = null
+	if _lua_center != null:
+		_lua_center.queue_free()
+		_lua_center = null
+	_lua_pending = null
 	_val_labels.clear()
 	_build_pause_panel()
 	_build_settings_panel()
+	_build_lua_panel()
 
 # ── Dark overlay ──────────────────────────────────────────────────
 func _build_overlay() -> void:
@@ -106,6 +121,7 @@ func _build_pause_panel() -> void:
 	_add_spacer(vbox, int(10 * s))
 	_make_btn(vbox, "Resume",       _on_resume).tooltip_text       = "Return to the game."
 	_make_btn(vbox, "Settings",     _on_open_settings).tooltip_text = "Audio, display, gameplay and controls."
+	_make_btn(vbox, "LUA Management", _on_open_lua).tooltip_text   = "List the active LUAs and terminate one."
 	_make_btn(vbox, "Quit to Menu", _on_quit).tooltip_text         = "Save and return to the main menu."
 
 # ── Settings panel (sidebar categories + content) ─────────────────
@@ -244,11 +260,14 @@ func _build_settings_display() -> void:
 	fs_lbl.text = "Fullscreen"
 	fs_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fs_lbl.add_theme_font_size_override("font_size", int(13 * s))
-	fs_lbl.tooltip_text = "Play in fullscreen mode."
+	fs_lbl.tooltip_text = "Play in fullscreen mode. Saved for the next launch."
 	fs_row.add_child(fs_lbl)
 	var fs_btn := CheckButton.new()
-	fs_btn.button_pressed = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
-	fs_btn.tooltip_text = "Play in fullscreen mode."
+	# Single source of truth: the persisted setting (applied at startup), not a
+	# live query of the OS window.
+	fs_btn.button_pressed = Global.fullscreen
+	fs_btn.disabled = Global.is_mobile()   # the platform owns the display
+	fs_btn.tooltip_text = "Play in fullscreen mode. Saved for the next launch."
 	fs_btn.toggled.connect(_on_fullscreen_toggled)
 	fs_row.add_child(fs_btn)
 
@@ -444,10 +463,9 @@ func _on_ui_scale_preset(scale_val: float) -> void:
 	Global.ui_scale_changed.emit(scale_val)
 
 func _on_fullscreen_toggled(pressed: bool) -> void:
-	if pressed:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-	else:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	# Applies the mode immediately AND persists it for the next launch (a no-op
+	# on mobile, where the platform owns the display).
+	Global.set_fullscreen(pressed)
 
 # ── Panel navigation ──────────────────────────────────────────────
 func show_menu() -> void:
@@ -457,6 +475,11 @@ func show_menu() -> void:
 	visible = true
 	_pause_center.visible    = true
 	_settings_center.visible = false
+	if _lua_center != null:
+		_lua_center.visible = false
+	if _lua_confirm != null:
+		_lua_confirm.visible = false
+	_lua_pending = null
 	get_tree().paused = true
 
 func hide_menu() -> void:
@@ -478,6 +501,226 @@ func _on_open_settings() -> void:
 func _on_back() -> void:
 	_settings_center.visible = false
 	_pause_center.visible    = true
+
+# ── LUA Management panel ──────────────────────────────────────────
+# Lists every currently-active LUA. Terminating one from here is the ONLY
+# player-facing way to remove a LUA: the status-HUD ☠ button, the per-station
+# TERMINATE button and STOP-on-a-combat-LUA were all removed. The list is rebuilt
+# from the live "LuaNPC" group, never a cached copy, so it can't hold a stale
+# entry.
+func _build_lua_panel() -> void:
+	var s: float = Global.ui_scale
+	_lua_center = CenterContainer.new()
+	_lua_center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_lua_center.visible = false
+	add_child(_lua_center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(480 * s, 380 * s)
+	var ps := StyleBoxFlat.new()
+	ps.bg_color     = C_PANEL
+	ps.border_color = C_BORDER
+	ps.set_border_width_all(1)
+	ps.set_corner_radius_all(6)
+	ps.content_margin_left   = 24
+	ps.content_margin_right  = 24
+	ps.content_margin_top    = 20
+	ps.content_margin_bottom = 24
+	panel.add_theme_stylebox_override("panel", ps)
+	_lua_center.add_child(panel)
+
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", int(10 * s))
+	panel.add_child(outer)
+
+	var title := Label.new()
+	title.text = "LUA MANAGEMENT"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", int(22 * s))
+	title.add_theme_color_override("font_color", C_TITLE)
+	outer.add_child(title)
+
+	var hint := Label.new()
+	hint.text = "Select a LUA to terminate it permanently."
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", int(11 * s))
+	hint.add_theme_color_override("font_color", C_MUTED)
+	outer.add_child(hint)
+
+	# Scrollable so a long list can't overflow the panel.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(0, int(230 * s))
+	outer.add_child(scroll)
+
+	_lua_rows = VBoxContainer.new()
+	_lua_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_lua_rows.add_theme_constant_override("separation", int(6 * s))
+	scroll.add_child(_lua_rows)
+
+	# Destructive-action confirmation — the same centred-panel convention the
+	# cave / dungeon portal confirm dialogs use.
+	_lua_confirm = PanelContainer.new()
+	_lua_confirm.visible = false
+	var cs := StyleBoxFlat.new()
+	cs.bg_color     = C_PANEL
+	cs.border_color = Color(1.0, 0.45, 0.45, 1.0)
+	cs.set_border_width_all(2)
+	cs.set_corner_radius_all(6)
+	cs.content_margin_left   = 16
+	cs.content_margin_right  = 16
+	cs.content_margin_top    = 12
+	cs.content_margin_bottom = 12
+	_lua_confirm.add_theme_stylebox_override("panel", cs)
+	outer.add_child(_lua_confirm)
+
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", int(8 * s))
+	_lua_confirm.add_child(cv)
+
+	_lua_confirm_lbl = Label.new()
+	_lua_confirm_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lua_confirm_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	_lua_confirm_lbl.add_theme_color_override("font_color", Color(1.0, 0.7, 0.7, 1.0))
+	cv.add_child(_lua_confirm_lbl)
+
+	var crow := HBoxContainer.new()
+	crow.alignment = BoxContainer.ALIGNMENT_CENTER
+	crow.add_theme_constant_override("separation", int(12 * s))
+	cv.add_child(crow)
+	var yes := Button.new()
+	yes.text = "Terminate"
+	yes.pressed.connect(_confirm_terminate)
+	crow.add_child(yes)
+	var no := Button.new()
+	no.text = "Cancel"
+	no.pressed.connect(_cancel_terminate)
+	crow.add_child(no)
+
+	_add_spacer(outer, int(4 * s))
+	_make_btn(outer, "Back", _on_lua_back).tooltip_text = "Return to the pause menu."
+
+func _on_open_lua() -> void:
+	_pause_center.visible    = false
+	_settings_center.visible = false
+	_lua_center.visible      = true
+	_lua_confirm.visible     = false
+	_lua_pending             = null
+	_refresh_lua_list()
+
+func _on_lua_back() -> void:
+	_lua_confirm.visible  = false
+	_lua_pending          = null
+	_lua_center.visible   = false
+	_pause_center.visible = true
+
+# Keeps the open list in step with the world (a LUA can be removed by combat
+# death). Cheap: only runs while the panel is actually showing.
+func _process(delta: float) -> void:
+	if _lua_center == null or not _lua_center.visible:
+		return
+	_lua_poll += delta
+	if _lua_poll < 0.5:
+		return
+	_lua_poll = 0.0
+	# A pending confirmation whose LUA vanished must not stay armed.
+	if _lua_pending != null and (not is_instance_valid(_lua_pending) or _lua_pending.is_queued_for_deletion()):
+		_lua_confirm.visible = false
+		_lua_pending         = null
+	_refresh_lua_list()
+
+# Rebuild from the live registry: skip freed / terminating / terminated nodes so
+# nothing stale or already-gone is ever listed.
+func _refresh_lua_list() -> void:
+	if _lua_rows == null:
+		return
+	for c in _lua_rows.get_children():
+		_lua_rows.remove_child(c)
+		c.queue_free()
+
+	var all: Array = []
+	for n in get_tree().get_nodes_in_group("LuaNPC"):
+		if not is_instance_valid(n) or n.is_queued_for_deletion():
+			continue
+		if n.has_method("is_terminated") and bool(n.call("is_terminated")):
+			continue
+		all.append(n)
+	all.sort_custom(func(a, b) -> bool:
+		return int(a.call("get_status_ms")) > int(b.call("get_status_ms")))
+
+	if all.is_empty():
+		var empty := Label.new()
+		empty.text = "No active LUAs."
+		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		empty.add_theme_font_size_override("font_size", int(12 * Global.ui_scale))
+		empty.add_theme_color_override("font_color", C_MUTED)
+		_lua_rows.add_child(empty)
+		return
+
+	for n in all:
+		_lua_rows.add_child(_make_lua_row(n))
+
+func _make_lua_row(npc: Node) -> Control:
+	var s: float = Global.ui_scale
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(8 * s))
+
+	var name_lbl := Label.new()
+	name_lbl.text = str(npc.call("get_display_name"))
+	name_lbl.custom_minimum_size = Vector2(int(96 * s), 0)
+	name_lbl.add_theme_font_size_override("font_size", int(12 * s))
+	name_lbl.add_theme_color_override("font_color", C_TITLE)
+	row.add_child(name_lbl)
+
+	var combat: bool = npc.has_method("is_combat") and bool(npc.call("is_combat"))
+	var status: String = str(npc.call("get_status"))
+	if combat and npc.has_method("get_combat_hp"):
+		status += "  HP %d/%d" % [int(npc.call("get_combat_hp")), int(npc.call("get_combat_max_hp"))]
+	var st := Label.new()
+	st.text = status
+	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	st.add_theme_font_size_override("font_size", int(12 * s))
+	st.add_theme_color_override("font_color", Color(0.95, 0.95, 0.80, 1.0))
+	row.add_child(st)
+
+	# Only COMBAT LUAs are terminable — the same rule the removed controls used
+	# (a normal LUA is stopped, not destroyed). The button stays visible so the
+	# list still shows every active LUA.
+	var term := Button.new()
+	term.text = "Terminate"
+	term.add_theme_font_size_override("font_size", int(11 * s))
+	term.disabled = not combat
+	term.tooltip_text = ("Terminate %s permanently." % str(npc.call("get_display_name"))) if combat \
+		else "Only combat LUAs can be terminated."
+	term.pressed.connect(func() -> void: _ask_terminate(npc))
+	row.add_child(term)
+	return row
+
+# Ask first. The pending node is re-validated at confirm time, so a list change
+# between opening and confirming can never terminate a different LUA.
+func _ask_terminate(npc: Node) -> void:
+	if not is_instance_valid(npc) or npc.is_queued_for_deletion():
+		_refresh_lua_list()
+		return
+	_lua_pending = npc
+	_lua_confirm_lbl.text = "Terminate %s permanently?" % str(npc.call("get_display_name"))
+	_lua_confirm.visible = true
+
+func _cancel_terminate() -> void:
+	_lua_confirm.visible = false
+	_lua_pending         = null
+
+func _confirm_terminate() -> void:
+	var npc: Node = _lua_pending
+	_lua_confirm.visible = false
+	_lua_pending         = null
+	if npc == null or not is_instance_valid(npc) or npc.is_queued_for_deletion():
+		_refresh_lua_list()
+		return
+	# Reuse the existing safe termination path (see lua_npc.terminate()).
+	if npc.has_method("terminate"):
+		npc.call("terminate")
+	_refresh_lua_list()
 
 func _on_quit() -> void:
 	# Leave any active cave/pixie cave/dungeon first so the cave's node tree is
@@ -504,7 +747,11 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("escape"):
-		if visible and _settings_center.visible:
+		if visible and _lua_confirm != null and _lua_confirm.visible:
+			_cancel_terminate()
+		elif visible and _lua_center != null and _lua_center.visible:
+			_on_lua_back()
+		elif visible and _settings_center.visible:
 			_on_back()
 		elif visible:
 			hide_menu()

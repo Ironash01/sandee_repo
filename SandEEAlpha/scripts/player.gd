@@ -863,7 +863,16 @@ func _try_cast_fishing_rod() -> bool:
 		return true   # already fishing — swallow the click, don't restart the timer
 	if not _cursor_on_water():
 		return false
-	_fishing.call("start", get_global_mouse_position())
+	# RANGE GATE (the rod's configurable cast distance lives in the controller —
+	# see fishing_controller.cast_max_blocks). A rejected cast never starts the
+	# 5-second attempt, never consumes an item and never rolls the catch chance.
+	var target: Vector2 = get_global_mouse_position()
+	if not bool(_fishing.call("is_in_cast_range", target)):
+		var max_b: float = float(_fishing.call("max_cast_blocks"))
+		Global.log_chat("[color=#ffaa66]Too far to cast — the rod reaches %d blocks.[/color]"
+			% int(round(max_b)))
+		return true   # swallow the click so the rod doesn't swing instead
+	_fishing.call("start", target)
 	return true
 
 # Cooked food: eat one only when it would actually heal (never at full health),

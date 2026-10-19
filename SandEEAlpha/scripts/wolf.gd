@@ -193,7 +193,7 @@ func _try_attack_player(delta: float) -> void:
 # blade overlaps this mob. Reduces HP, knocks the wolf back from the hit
 # origin (unless it's a boss), shows the red hit flash + floating damage
 # number, and dies at 0 HP.
-func take_hit(damage: float, source_pos: Vector2) -> void:
+func take_hit(damage: float, source_pos: Vector2, apply_knockback: bool = true) -> void:
 	if damage <= 0.0:
 		return
 	damage = COMBAT_DATA.damage_taken(damage)
@@ -202,10 +202,10 @@ func take_hit(damage: float, source_pos: Vector2) -> void:
 	var away: Vector2 = global_position - source_pos
 	if away.length_squared() > 0.001:
 		away = away.normalized()
-	if COMBAT_DATA.is_boss:
-		# Bosses shrug off knockback — they take damage but don't get shoved.
-		pass
-	else:
+	# Bosses shrug off knockback; a caller may also suppress it entirely (a LUA
+	# attacks with apply_knockback = false so its repeated hits never shove a mob
+	# out of its own attack range and make it look sluggish).
+	if not COMBAT_DATA.is_boss and apply_knockback:
 		var strength: float = 60.0 + damage * 6.0
 		_knockback += away * strength
 	# Hit feedback: red flash for ~1s (Terraria-style), plus the floating

@@ -211,7 +211,7 @@ func _try_attack_player(delta: float) -> void:
 
 # ── Sword hit ─────────────────────────────────────────────────────
 
-func take_hit(damage: float, source_pos: Vector2) -> void:
+func take_hit(damage: float, source_pos: Vector2, apply_knockback: bool = true) -> void:
 	if damage <= 0.0:
 		return
 	damage = COMBAT_DATA.damage_taken(damage)
@@ -220,7 +220,7 @@ func take_hit(damage: float, source_pos: Vector2) -> void:
 	var away: Vector2 = global_position - source_pos
 	if away.length_squared() > 0.001:
 		away = away.normalized()
-	if not COMBAT_DATA.is_boss:
+	if not COMBAT_DATA.is_boss and apply_knockback:
 		_knockback += away * (60.0 + damage * 6.0)
 	modulate = Color(1.0, 0.4, 0.4, 1.0)
 	if _sprite != null:

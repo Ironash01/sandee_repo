@@ -35,7 +35,9 @@ var _transition_overlay: CanvasLayer = null
 var _hud_backdrop: CanvasLayer = null
 
 func _ready() -> void:
-	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	# Honour the player's saved window/fullscreen choice instead of forcing
+	# fullscreen (see Global.apply_display_mode — a no-op on mobile).
+	Global.apply_display_mode()
 	# Large is only the DEFAULT: if the player already chose a scale (persisted
 	# in the save) we keep it, so Small/Medium/Large survives scene loads.
 	if not Global.ui_scale_set:

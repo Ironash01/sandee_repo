@@ -751,6 +751,51 @@ func load_keybinds() -> void:
 			ev.physical_keycode = int(code)
 			InputMap.action_add_event(action, ev)
 
+# ── Display mode persistence ──────────────────────────────────────
+# Windowed vs fullscreen, kept in its OWN user:// config so it is GLOBAL (not
+# tied to one world's save) and survives restarts. Applied from Global._ready —
+# which runs before the main scene's _ready — so the title screen opens in the
+# configured mode.
+#
+# Mobile is deliberately excluded: the platform owns its display, so the desktop
+# window-mode controls are hidden there and apply_display_mode() is a no-op.
+const DISPLAY_PATH: String = "user://settings.cfg"
+const DISPLAY_SECTION: String = "display"
+# Default matches project.godot's window mode (2 = maximized), so a fresh install
+# behaves exactly as before until the player chooses otherwise.
+var fullscreen: bool = false
+
+func is_mobile() -> bool:
+	return OS.has_feature("mobile")
+
+func load_display_settings() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(DISPLAY_PATH) != OK:
+		return
+	fullscreen = bool(cfg.get_value(DISPLAY_SECTION, "fullscreen", fullscreen))
+
+func save_display_settings() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(DISPLAY_PATH)          # keep any other keys already in the file
+	cfg.set_value(DISPLAY_SECTION, "fullscreen", fullscreen)
+	cfg.save(DISPLAY_PATH)
+
+# Puts the OS window into the configured mode. A no-op on mobile, and it never
+# forces a fixed resolution — fullscreen uses the desktop's own dimensions, and
+# windowed uses the project's configured window size.
+func apply_display_mode() -> void:
+	if is_mobile():
+		return
+	DisplayServer.window_set_mode(
+		DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen \
+		else DisplayServer.WINDOW_MODE_WINDOWED)
+
+# Player-facing setter: applies immediately AND persists for the next launch.
+func set_fullscreen(on: bool) -> void:
+	fullscreen = on
+	apply_display_mode()
+	save_display_settings()
+
 # ── Shared floating item tooltip ──────────────────────────────────
 # Slots and recipe buttons call these on hover; the popup follows the mouse.
 # Lazily created and parented to the scene root so it draws above every UI.
@@ -805,6 +850,10 @@ func _ready() -> void:
 	# would silently stop receiving _input. ALWAYS keeps this responsive.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	load_keybinds()
+	# Apply the saved window/fullscreen mode THIS early so the very first scene
+	# (the title screen) is already presented in the right mode.
+	load_display_settings()
+	apply_display_mode()
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
 	_init_missions()
@@ -1313,13 +1362,25 @@ var pending_player_pos: Vector2    = Vector2.ZERO
 var pending_world_data: Dictionary = {}
 var pending_time_of_day: float = -1.0  # -1 = no saved time, keep the noon default
 
+# ── Build version ─────────────────────────────────────────────────
+# The ONE authoritative version string for the RUNNING build, read from the
+# Godot project setting `application/config/version` (project.godot) so there is
+# a single place to bump it. Keep the export presets' application/file_version
+# in step with it. Never confuse this with a SAVED WORLD's version — a world
+# records the build it was last saved with (see world_version_of()).
+const VERSION_FALLBACK: String = "Unknown version"
+
+func game_version() -> String:
+	var v: String = str(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+	return v if not v.is_empty() else VERSION_FALLBACK
+
 func has_save(slot: int) -> bool:
 	return FileAccess.file_exists("user://save_slot_%d.json" % slot)
 
 func get_last_slot() -> int:
 	var newest_slot: int   = -1
 	var newest_time: float = 0.0
-	for s in range(1, 4):
+	for s in range(1, MAX_WORLDS + 1):
 		if not has_save(s):
 			continue
 		var f := FileAccess.open("user://save_slot_%d.json" % s, FileAccess.READ)
@@ -1345,6 +1406,86 @@ func get_save_info(slot: int) -> Dictionary:
 	if data is Dictionary:
 		return data
 	return {}
+
+# ── Worlds (save slots) ───────────────────────────────────────────
+# A "world" is one save slot file (user://save_slot_N.json). Slots are fully
+# independent, so creating / loading / renaming / deleting one can never touch
+# another. 10 worlds max; slots 1..3 predate this and keep working unchanged.
+const MAX_WORLDS: int = 10
+# The player-facing name of the world currently loaded (saved with it).
+var world_name: String = ""
+
+# The version this world was CREATED with, else the one it was last SAVED with,
+# else a fallback. Never invents a version for an old save that has neither.
+func world_version_of(slot: int) -> String:
+	var info: Dictionary = get_save_info(slot)
+	for key in ["created_version", "world_version"]:
+		var v: String = str(info.get(key, "")).strip_edges()
+		if not v.is_empty():
+			return v
+	return VERSION_FALLBACK
+
+func world_name_of(slot: int) -> String:
+	var n: String = str(get_save_info(slot).get("world_name", "")).strip_edges()
+	return n if not n.is_empty() else "World %d" % slot
+
+# Every existing world slot, oldest-first by slot number.
+func list_worlds() -> Array:
+	var out: Array = []
+	for s in range(1, MAX_WORLDS + 1):
+		if has_save(s):
+			out.append(s)
+	return out
+
+func world_count() -> int:
+	return list_worlds().size()
+
+func can_create_world() -> bool:
+	return world_count() < MAX_WORLDS
+
+# True when `name` is free (case-insensitive) across every existing world.
+func is_world_name_free(name: String) -> bool:
+	var want: String = name.strip_edges().to_lower()
+	if want.is_empty():
+		return false
+	for s in list_worlds():
+		if world_name_of(s).to_lower() == want:
+			return false
+	return true
+
+# The lowest free slot, or -1 when the 10-world limit is reached.
+func next_free_slot() -> int:
+	for s in range(1, MAX_WORLDS + 1):
+		if not has_save(s):
+			return s
+	return -1
+
+# Deletes a world. Callers MUST have confirmed with the player first — this
+# only ever removes the one slot file.
+func delete_world(slot: int) -> bool:
+	if not has_save(slot):
+		return false
+	var dir := DirAccess.open("user://")
+	if dir == null:
+		return false
+	var err := dir.remove("save_slot_%d.json" % slot)
+	if err != OK:
+		return false
+	if active_save_slot == slot:
+		active_save_slot = -1
+	return true
+
+# Starts a brand-new world in `slot` (name + empty inventory + reset missions),
+# leaving every other slot untouched.
+func begin_new_world(slot: int, name: String) -> void:
+	active_save_slot    = slot
+	world_name          = name.strip_edges()
+	Hotbar.fill(null)
+	Inventory.fill(null)
+	has_pending_pos     = false
+	pending_world_data.clear()
+	pending_time_of_day = -1.0
+	reset_missions()
 
 # ── Item (de)serialization ─────────────────────────────────────────
 # Items are normally saved by resource_path. Runtime-generated color blocks
@@ -1381,6 +1522,11 @@ func deserialize_item(entry: Variant) -> Variant:
 
 func save_game(slot: int) -> void:
 	active_save_slot = slot
+	# World metadata. `world_version` is the build that last SAVED this world;
+	# `created_version` is preserved from the first save so the world list can
+	# show where it came from. A save made before this existed simply has neither
+	# and is reported as the fallback version — nothing is migrated or invented.
+	var existing: Dictionary = get_save_info(slot)
 	var save_data: Dictionary = {
 		"slot":         slot,
 		"timestamp":    Time.get_unix_time_from_system(),
@@ -1388,6 +1534,9 @@ func save_game(slot: int) -> void:
 		"player_pos_y": 0.0,
 		"hotbar":       [],
 		"inventory":    [],
+		"world_name":       world_name,
+		"world_version":    game_version(),
+		"created_version":  str(existing.get("created_version", game_version())),
 	}
 	if player_node != null:
 		save_data["player_pos_x"] = (player_node as Node2D).global_position.x
@@ -1443,6 +1592,8 @@ func load_game(slot: int) -> void:
 		return
 	Hotbar.fill(null)
 	Inventory.fill(null)
+	# Restore the world's player-facing name (older saves have none).
+	world_name = str((data as Dictionary).get("world_name", "")).strip_edges()
 	if data.has("hotbar"):
 		var arr: Array = data["hotbar"] as Array
 		for i in range(mini(arr.size(), HOTBAR_SIZE)):

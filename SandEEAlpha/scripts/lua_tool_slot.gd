@@ -60,16 +60,30 @@ func refresh() -> void:
 		return
 	var tool: Dictionary = _npc.call("get_tool")
 	if tool.is_empty():
-		_icon.texture = null
-		_icon.visible = false
-		_qty.visible  = false
-	else:
-		var data: ItemData = tool["data"] as ItemData
-		_icon.texture = data.icon if data != null else null
-		_icon.visible = true
-		var qty: int = int(tool["quantity"])
-		_qty.visible = qty > 1
-		_qty.text    = str(qty)
+		_clear_icon()
+		return
+	# The tool is only a VIEW of the NPC's authoritative slot, so a missing or
+	# FREED ItemData must clear the icon rather than leave a stale one (or crash
+	# on a freed instance).
+	var data: Variant = tool.get("data")
+	if not (data is ItemData) or not is_instance_valid(data):
+		_clear_icon()
+		return
+	var idata := data as ItemData
+	_icon.texture = idata.icon
+	_icon.visible = true
+	var qty: int = int(tool.get("quantity", 0))
+	if qty <= 0:
+		_clear_icon()
+		return
+	_qty.visible = qty > 1
+	_qty.text    = str(qty)
+	queue_redraw()
+
+func _clear_icon() -> void:
+	_icon.texture = null
+	_icon.visible = false
+	_qty.visible  = false
 	queue_redraw()
 
 func _draw() -> void:

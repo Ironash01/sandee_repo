@@ -21,7 +21,9 @@ var _stop_btn:  Button
 var _name_edit: LineEdit   # rename field (reflects in the robot label + status HUD)
 var _tool_slot: Control = null      # the LUA's tool slot (lua_tool_slot.gd)
 var _combat_btn: Button = null      # combat-mode toggle
-var _terminate_btn: Button = null   # terminate a combat LUA
+# NOTE: there is deliberately no per-station TERMINATE button. Terminating a
+# LUA is a menu action (pause menu -> LUA Management) so the player has to pick
+# the specific LUA from the active list.
 var _body:      Control   # code + output view
 var _encycl:    Control   # encyclopedia view
 var _knowledge_box: VBoxContainer   # unlocked dungeon-knowledge entries
@@ -182,12 +184,14 @@ func _build() -> void:
 	add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(i(1280, s), i(720, s))
+	# A TABBED panel needs far less room than the old 4-column layout, so this is
+	# much smaller than it was (1280x720 -> 680x420 before ui_scale).
+	panel.custom_minimum_size = Vector2(i(680, s), i(420, s))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
-	ps.content_margin_left = i(18, s); ps.content_margin_right  = i(18, s)
-	ps.content_margin_top  = i(14, s); ps.content_margin_bottom = i(18, s)
+	ps.content_margin_left = i(12, s); ps.content_margin_right  = i(12, s)
+	ps.content_margin_top  = i(10, s); ps.content_margin_bottom = i(12, s)
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
 
@@ -278,21 +282,34 @@ func _build() -> void:
 	vbox.add_child(_encycl)
 
 # ── Body: code editor + output ────────────────────────────────────
+# The LUA panel is TABBED so only ONE area is on screen at a time — the old
+# layout put snippets | player items | code | output side by side across the
+# whole screen. Tabs:
+#   Code      — snippets + the editor + RUN / STOP / CLEAR / COMBAT
+#   Inventory — the player's items/hotbar + the robot's TOOL and 3 BUILD slots
+#   Output    — the program's log
+# Each tab is its own container, so the inventory and coding areas are separate
+# components that are navigated independently. They share no state of their own:
+# the slots are views of the NPC's authoritative palette/tool.
 func _build_body(s: float) -> Control:
-	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", i(14, s))
+	var tabs := TabContainer.new()
+	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tabs.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	tabs.add_theme_font_size_override("font_size", i(13, s))
+	tabs.clip_tabs = false
+
+	# ── Code tab ──
+	var code_page := HBoxContainer.new()
+	code_page.name = "Code"
+	code_page.add_theme_constant_override("separation", i(10, s))
 
 	# Snippets column (left of the code editor).
-	body.add_child(_build_snippets(s))
+	code_page.add_child(_build_snippets(s))
 
-	# Player inventory + hotbar (drag items straight into the BUILD SLOTS).
-	body.add_child(_build_player_items(s))
-
-	# Code editor
 	var ed_wrap := VBoxContainer.new()
 	ed_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ed_wrap.add_theme_constant_override("separation", i(6, s))
-	body.add_child(ed_wrap)
+	code_page.add_child(ed_wrap)
 
 	var ed_lbl := Label.new()
 	ed_lbl.text = "CODE"
@@ -315,11 +332,6 @@ func _build_body(s: float) -> Control:
 	_code_edit.add_theme_font_size_override("font_size", i(14, s))
 	ed_wrap.add_child(_code_edit)
 
-	# Build palette — the 3 slots the robot places FROM. Drag a block from the
-	# inventory/hotbar into a slot to give it to the robot; the robot also
-	# fills them itself (chopping wood, or withdraw() from a chest).
-	ed_wrap.add_child(_build_palette_row(s))
-
 	# Buttons: RUN  STOP  CLEAR
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", i(6, s))
@@ -340,26 +352,51 @@ func _build_body(s: float) -> Control:
 	clear_btn.tooltip_text = "Clear the editor."
 	btn_row.add_child(clear_btn)
 
-	# Combat mode + terminate (see lua_npc.gd combat section).
+	# Combat mode (see lua_npc.gd combat section). Termination lives in the pause
+	# menu's LUA Management list.
 	_combat_btn = _make_btn("⚔ COMBAT", Color(1.0, 0.85, 0.6, 1.0), C_STOP, _toggle_combat, s)
-	_combat_btn.tooltip_text = "Send this LUA into combat mode: it abandons its station, follows you and fights. PERMANENT — a combat LUA can't run code, can't revert to a normal LUA, and can only be terminated for good."
+	_combat_btn.tooltip_text = "Send this LUA into combat mode: it abandons its station, follows you and fights. PERMANENT - a combat LUA can't run code, can't revert to a normal LUA, and can only be terminated from the pause menu's LUA Management list."
 	btn_row.add_child(_combat_btn)
-	_terminate_btn = _make_btn("☠ TERMINATE", Color(1.0, 0.6, 0.6, 1.0), C_ERR, _terminate_lua, s)
-	_terminate_btn.tooltip_text = "Terminate this combat LUA for good (it can never be used again)."
-	_terminate_btn.visible = false
-	btn_row.add_child(_terminate_btn)
 
-	# Output panel
+	tabs.add_child(code_page)
+
+	# ── Inventory tab ──
+	var inv_page := HBoxContainer.new()
+	inv_page.name = "Inventory"
+	inv_page.add_theme_constant_override("separation", i(10, s))
+
+	# Player inventory + hotbar (drag items straight into the BUILD SLOTS).
+	inv_page.add_child(_build_player_items(s))
+
+	var pal_wrap := VBoxContainer.new()
+	pal_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pal_wrap.add_theme_constant_override("separation", i(6, s))
+	inv_page.add_child(pal_wrap)
+
+	var pal_lbl := Label.new()
+	pal_lbl.text = "TOOL + BUILD SLOTS"
+	pal_lbl.add_theme_font_size_override("font_size", i(11, s))
+	pal_lbl.add_theme_color_override("font_color", C_MUTED)
+	pal_wrap.add_child(pal_lbl)
+
+	# Build palette — the 3 slots the robot places FROM. Drag a block from the
+	# inventory/hotbar into a slot to give it to the robot; the robot also fills
+	# them itself (chopping wood, or withdraw() from a chest).
+	pal_wrap.add_child(_build_palette_row(s))
+
+	var hint := Label.new()
+	hint.text = "Drag a tool into the left slot and blocks into the build slots."
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.add_theme_font_size_override("font_size", i(11, s))
+	hint.add_theme_color_override("font_color", C_MUTED)
+	pal_wrap.add_child(hint)
+
+	tabs.add_child(inv_page)
+
+	# ── Output tab ──
 	var out_wrap := VBoxContainer.new()
-	out_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	out_wrap.name = "Output"
 	out_wrap.add_theme_constant_override("separation", i(6, s))
-	body.add_child(out_wrap)
-
-	var out_lbl := Label.new()
-	out_lbl.text = "OUTPUT"
-	out_lbl.add_theme_font_size_override("font_size", i(11, s))
-	out_lbl.add_theme_color_override("font_color", C_MUTED)
-	out_wrap.add_child(out_lbl)
 
 	var out_panel := PanelContainer.new()
 	out_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -384,7 +421,9 @@ func _build_body(s: float) -> Control:
 	_output.add_theme_color_override("default_color", C_TITLE)
 	scroll.add_child(_output)
 
-	return body
+	tabs.add_child(out_wrap)
+
+	return tabs
 
 # ── Snippets column ───────────────────────────────────────────────
 # A narrow column of example programs. Clicking one replaces the editor's
@@ -653,21 +692,15 @@ func _toggle_combat() -> void:
 	npc.call("_enter_combat")
 	_update_combat_ui()
 
-func _terminate_lua() -> void:
-	var npc: Node = _find_npc()
-	if npc != null and npc.has_method("terminate"):
-		npc.call("terminate")
-	_close()
-
-# Reflect combat state: code/RUN disabled, TERMINATE shown, COMBAT button relabelled.
+# Terminating a LUA is a MENU action now: pause menu -> LUA Management, where
+# the player picks the specific LUA from the active list. There is deliberately
+# no per-station terminate control any more.
 func _update_combat_ui() -> void:
 	var npc: Node = _find_npc()
 	var combat: bool = npc != null and npc.has_method("is_combat") and bool(npc.call("is_combat"))
-	# No exit-combat: once a LUA is in combat it stays there (only TERMINATE).
+	# No exit-combat: once a LUA is in combat it stays there.
 	if _combat_btn != null:
 		_combat_btn.visible = not combat
-	if _terminate_btn != null:
-		_terminate_btn.visible = combat
 	if combat:
 		if _code_edit != null:
 			_code_edit.editable = false
