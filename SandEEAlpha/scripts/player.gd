@@ -129,9 +129,15 @@ func _ready() -> void:
 	# base and left the shadow floating above the new taller art's feet.
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, FEET_LINE_Y), Vector2(0.8, 0.4), 0.35))
 	sprite.play("idle_south")
+	_setup_summon_fx()
 	Global.request_close_all_ui.connect(_on_close_all_ui)
 	# Turning the optional scheme OFF mid-order must stop the character cleanly.
 	Global.point_and_click_changed.connect(func(_on: bool) -> void: _pnc_cancel())
+	# Losing window focus must not leave a tap order, held key/joystick or sprint
+	# running while the player is not actually driving the game.
+	var win := get_window()
+	if win != null and not win.focus_exited.is_connected(_on_window_focus_exited):
+		win.focus_exited.connect(_on_window_focus_exited)
 	if Global.has_pending_pos:
 		global_position    = Global.pending_player_pos
 		Global.has_pending_pos = false
@@ -150,6 +156,15 @@ func _ready() -> void:
 	add_child(_biome_check_timer)
 	Global.day_started.connect(_on_day_started)
 	Global.night_started.connect(_on_night_started)
+
+func _exit_tree() -> void:
+	# A scene/world swap can free the player mid-order. Release synthetic holds
+	# and the shared touch cursor so the next player does not inherit a stale
+	# world-space click position.
+	_pnc_cancel()
+	Global.clear_touch_mouse()
+	Global.mobile_move  = Vector2.ZERO
+	Global.mobile_shift = false
 
 func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
@@ -266,13 +281,30 @@ func _add_sheet_anim(sf: SpriteFrames, anim: String, row: int, fps: float) -> vo
 		sf.add_frame(anim, at)
 
 # ── Input ─────────────────────────────────────────────────────────
+# Desktop focus loss and Android app pause both route through the same reset.
+# Window.focus_exited covers the desktop path; these notifications cover the
+# app-level focus/pause events a mobile window may not emit as focus_exited.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT \
+			or what == NOTIFICATION_APPLICATION_PAUSED \
+			or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_on_window_focus_exited()
+
+func _on_window_focus_exited() -> void:
+	_pnc_cancel()
+	Global.mobile_move  = Vector2.ZERO
+	Global.mobile_shift = false
+	_attack_held = false
+	for action in ["gameplay_left", "gameplay_right", "gameplay_up", "gameplay_down"]:
+		if InputMap.has_action(action):
+			Input.action_release(action)
+	_apply_movement_direction(Vector2.ZERO, false)
+
 func get_input(delta: float = 0.0) -> void:
 	# While the chat console's input is focused, don't let WASD walk the player.
 	if Global.chat_open:
-		input_direction = Vector2.ZERO
-		velocity = Vector2.ZERO
-		_sprinting = false
 		_pnc_cancel()
+		_apply_movement_direction(Vector2.ZERO, false)
 		return
 	# Keyboard and touch joystick feed the SAME direction: the joystick's analog
 	# value is added to the keyboard vector and clamped to unit length, so speed,
@@ -284,17 +316,27 @@ func get_input(delta: float = 0.0) -> void:
 	# Direct control always wins: any WASD/joystick input cancels a move order.
 	if manual != Vector2.ZERO:
 		_pnc_cancel()
-	input_direction = manual
-	# Optional point-and-click: with no manual input, the active move order
-	# supplies the direction. Runs before the shared velocity math so speed,
-	# collision, animation, water and mission logic are the same as manual play.
-	if input_direction == Vector2.ZERO and Global.point_and_click:
+	var direction: Vector2 = manual
+	# Tap-to-control supplies the SAME direction vector a held WASD key would:
+	# it never drives velocity/physics directly. _pnc_steer only chooses where to
+	# point the shared movement handler below.
+	if direction == Vector2.ZERO and Global.point_and_click:
+		input_direction = Vector2.ZERO
 		_pnc_steer(delta)
-	var want_sprint: bool = Global.is_shift_held() and manual != Vector2.ZERO \
-		and input_direction != Vector2.ZERO
+		direction = input_direction
+	_apply_movement_direction(direction, Global.is_shift_held())
+
+## The single movement engine for every control scheme. WASD/joystick and
+## tap-to-control all arrive here with a direction vector, so speed, diagonal
+## normalization, sprinting, stamina gating, snowstorm slowdown and physics
+## remain identical no matter how the direction was produced.
+func _apply_movement_direction(direction: Vector2, sprint_held: bool) -> void:
+	input_direction = direction
+	var want_sprint: bool = sprint_held and input_direction != Vector2.ZERO
 	_sprinting = want_sprint and not _stamina_exhausted
 	var storm_mult: float = SNOWSTORM_SPEED_MULT if Global.snowstorm_active else 1.0
-	velocity = input_direction * movement_speed * (SPRINT_MULTIPLIER if _sprinting else 1.0) * storm_mult
+	velocity = input_direction * movement_speed \
+		* (SPRINT_MULTIPLIER if _sprinting else 1.0) * storm_mult
 
 # ── Optional point-and-click movement (Global.point_and_click) ──────
 # OFF by default. When ON, a world click/tap issues one move order:
@@ -320,9 +362,11 @@ const PNC_CHOP_INTERVAL_MS: int     = 420
 const PNC_CHOP_AMOUNT: float        = 0.45
 const PNC_INTERACT_STOP: float      = 44.0
 const PNC_PATH_CELL: float          = 32.0
+const PNC_TREE_BUCKET: float        = 128.0
 const PNC_PATH_RECALC_MS: int       = 800
 const PNC_PATH_TARGET_EPS: float    = 24.0
 const PNC_PATH_RADIUS: int          = 18
+const PNC_PATH_MAX_VISITS: int      = 900
 const PNC_INTERACT_HOLD_MS: int     = 12000
 const PNC_INDICATOR_SCRIPT: GDScript = preload("res://scripts/pnc_indicator.gd")
 
@@ -345,6 +389,19 @@ var _pnc_path_target:      Vector2 = Vector2.ZERO
 var _pnc_path_ms:          int     = 0
 var _pnc_path_dynamic:     bool    = false
 var _pnc_path_retries:     int     = 0
+var _pnc_path_attempted:   bool    = false
+# Spatial buckets keep PNC tree tap tests from scanning every tree in the
+# overworld (1,300+ on a normal save). Rebuilt when the active world changes;
+# chopped trees are skipped via their queued/freed state.
+var _pnc_tree_bucket_map:  Dictionary = {}
+var _pnc_tree_bucket_world: int = -1
+# Reused line-of-sight query: PNC steering checks it every frame in open space,
+# so avoid allocating a fresh PhysicsRayQueryParameters2D each tick.
+var _pnc_los_query:        PhysicsRayQueryParameters2D = null
+var _pnc_walk_query:       PhysicsPointQueryParameters2D = null
+var _pnc_los_target:       Vector2 = Vector2.ZERO
+var _pnc_los_result:       bool = true
+var _pnc_los_at_ms:        int = -1000
 var _pnc_hold_click:       bool    = false
 var _pnc_hold_pos:         Vector2 = Vector2.ZERO
 var _pnc_hold_started_ms:  int     = 0
@@ -374,6 +431,10 @@ func _pnc_cancel() -> void:
 	_pnc_path_index   = 0
 	_pnc_path_dynamic = false
 	_pnc_path_retries = 0
+	_pnc_path_attempted = false
+	# Stopping a tap order stops movement on the very next physics tick; do not
+	# leave the last steering vector behind when the scheme is toggled off.
+	input_direction = Vector2.ZERO
 	if _pnc_marker != null:
 		_pnc_marker.call("hide_marker")
 
@@ -398,7 +459,14 @@ func _pnc_begin(dest: Vector2, chase: Node2D, pending: String, mode: String) -> 
 	_pnc_last_progress_ms = Time.get_ticks_msec()
 	_pnc_path_dynamic = chase != null
 	_pnc_path_retries = 0
-	_pnc_repath(dest, PNC_ATTACK_STOP if chase != null else _pnc_stop_for_pending(pending), true)
+	# Do NOT build a grid path here. Most taps have a clear line of sight; the
+	# old eager pathfind cost 2-65 ms per click and was the main PNC frame spike.
+	# _pnc_next_waypoint builds one lazily only when the direct line is blocked.
+	_pnc_path = PackedVector2Array()
+	_pnc_path_index = 0
+	_pnc_path_target = dest
+	_pnc_path_ms = Time.get_ticks_msec()
+	_pnc_path_attempted = false
 	CrashLogger.event("PNC", "order mode=%s pending=%s chase=%s dest=(%.1f, %.1f) path=%d" % [
 		mode, pending, _pnc_node_text(chase), dest.x, dest.y, _pnc_path.size()])
 	if _pnc_marker != null:
@@ -419,18 +487,21 @@ func _pnc_cell(pos: Vector2) -> Vector2i:
 func _pnc_cell_center(cell: Vector2i) -> Vector2:
 	return Vector2((cell.x + 0.5) * PNC_PATH_CELL, (cell.y + 0.5) * PNC_PATH_CELL)
 
-func _pnc_cell_walkable(cell: Vector2i, cache: Dictionary) -> bool:
+func _pnc_cell_walkable(cell: Vector2i, cache: Dictionary,
+		space: PhysicsDirectSpaceState2D = null) -> bool:
 	if cache.has(cell):
 		return bool(cache[cell])
-	var space := get_world_2d().direct_space_state
+	if space == null:
+		space = get_world_2d().direct_space_state
 	var clear := true
 	if space != null:
-		var q := PhysicsPointQueryParameters2D.new()
-		q.position = _pnc_cell_center(cell)
-		q.collide_with_bodies = true
-		q.collide_with_areas = false
-		q.collision_mask = 1
-		for hit in space.intersect_point(q, 8):
+		if _pnc_walk_query == null:
+			_pnc_walk_query = PhysicsPointQueryParameters2D.new()
+			_pnc_walk_query.collide_with_bodies = true
+			_pnc_walk_query.collide_with_areas = false
+			_pnc_walk_query.collision_mask = 1
+		_pnc_walk_query.position = _pnc_cell_center(cell)
+		for hit in space.intersect_point(_pnc_walk_query, 8):
 			var c = hit.get("collider")
 			if c != null and c != self:
 				clear = false
@@ -438,12 +509,13 @@ func _pnc_cell_walkable(cell: Vector2i, cache: Dictionary) -> bool:
 	cache[cell] = clear
 	return clear
 
-# BFS on the 32px world grid. It is only recomputed for a new target or when a
-# moving target drifts, so the cost is paid on clicks, not every frame.
-# Eight directions are used so a diagonal tap actually produces diagonal
-# movement instead of a staircase of horizontal/vertical steps. A diagonal step
-# is allowed only when BOTH cardinal cells beside it are clear, preventing the
-# player's feet box from cutting through a wall corner.
+# A* on the 32px world grid. The old breadth-first search explored a whole
+# rectangle around the start/target and ran on EVERY point-and-click order,
+# including open-ground taps; that caused 2-65 ms frame spikes. This version
+# searches only toward the target, caches walkability, and is called lazily by
+# _pnc_next_waypoint only when the direct line is obstructed.
+# Eight directions are used so a diagonal tap produces diagonal movement. A
+# diagonal step needs BOTH cardinal cells open, preventing corner cutting.
 func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float) -> PackedVector2Array:
 	var start := _pnc_cell(from_pos)
 	var target_cell := _pnc_cell(target)
@@ -453,51 +525,56 @@ func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float) -> PackedVe
 	var max_y: int = maxi(start.y, target_cell.y) + PNC_PATH_RADIUS
 	if (max_x - min_x + 1) * (max_y - min_y + 1) > 3200:
 		return PackedVector2Array()
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return PackedVector2Array()
 	var cache: Dictionary = {start: true}
-	var goals: Array = []
-	var radius: int = 2
-	for y in range(target_cell.y - radius, target_cell.y + radius + 1):
-		for x in range(target_cell.x - radius, target_cell.x + radius + 1):
-			var c := Vector2i(x, y)
-			if c.x < min_x or c.x > max_x or c.y < min_y or c.y > max_y:
-				continue
-			var d := _pnc_cell_center(c).distance_to(target)
-			if d <= maxf(stop, 40.0) and _pnc_cell_walkable(c, cache):
-				goals.append(c)
-	if goals.is_empty():
-		return PackedVector2Array()
-	goals.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
-		return _pnc_cell_center(a).distance_squared_to(target) 			< _pnc_cell_center(b).distance_squared_to(target))
-	if goals[0] == start:
-		return PackedVector2Array()
-	var queue: Array = [start]
+	var goal_radius: float = maxf(stop, 40.0)
+	var open: Array = [start]
+	var g: Dictionary = {start: 0.0}
+	var f: Dictionary = {start: _pnc_path_heuristic(start, target_cell)}
 	var came: Dictionary = {}
-	var visited: Dictionary = {start: true}
-	var goal_set: Dictionary = {}
-	for g in goals:
-		goal_set[g] = true
+	var closed: Dictionary = {}
 	var found := Vector2i(999999, 999999)
-	while not queue.is_empty():
-		var cur: Vector2i = queue.pop_front()
-		if goal_set.has(cur):
+	var steps: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
+	while not open.is_empty() and closed.size() < PNC_PATH_MAX_VISITS:
+		var best_i := 0
+		var best_f := float(f.get(open[0], INF))
+		for i in range(1, open.size()):
+			var candidate_f := float(f.get(open[i], INF))
+			if candidate_f < best_f:
+				best_f = candidate_f
+				best_i = i
+		var cur: Vector2i = open[best_i]
+		open.remove_at(best_i)
+		if closed.has(cur):
+			continue
+		closed[cur] = true
+		if _pnc_cell_center(cur).distance_to(target) <= goal_radius:
 			found = cur
 			break
-		for step in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
-				Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]:
+		for step in steps:
 			var nxt: Vector2i = cur + step
 			if nxt.x < min_x or nxt.x > max_x or nxt.y < min_y or nxt.y > max_y:
 				continue
-			if visited.has(nxt) or not _pnc_cell_walkable(nxt, cache):
+			if closed.has(nxt):
 				continue
-			# No corner cutting: a diagonal step needs both adjoining cardinal
-			# cells open (the player's collision box is wider than a point).
+			if not _pnc_cell_walkable(nxt, cache, space):
+				continue
 			if step.x != 0 and step.y != 0:
-				if not _pnc_cell_walkable(cur + Vector2i(step.x, 0), cache) \
-						or not _pnc_cell_walkable(cur + Vector2i(0, step.y), cache):
+				if not _pnc_cell_walkable(cur + Vector2i(step.x, 0), cache, space) \
+						or not _pnc_cell_walkable(cur + Vector2i(0, step.y), cache, space):
 					continue
-			visited[nxt] = true
+			var step_cost: float = 1.41421356 if step.x != 0 and step.y != 0 else 1.0
+			var tentative: float = float(g[cur]) + step_cost
+			if tentative >= float(g.get(nxt, INF)):
+				continue
 			came[nxt] = cur
-			queue.append(nxt)
+			g[nxt] = tentative
+			f[nxt] = tentative + _pnc_path_heuristic(nxt, target_cell)
+			if not open.has(nxt):
+				open.append(nxt)
 	if found.x == 999999:
 		return PackedVector2Array()
 	var cells: Array = []
@@ -512,6 +589,11 @@ func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float) -> PackedVe
 		path.append(_pnc_cell_center(cell))
 	return path
 
+func _pnc_path_heuristic(cell: Vector2i, target_cell: Vector2i) -> float:
+	var dx: int = absi(cell.x - target_cell.x)
+	var dy: int = absi(cell.y - target_cell.y)
+	return float(maxi(dx, dy)) + (sqrt(2.0) - 1.0) * float(mini(dx, dy))
+
 func _pnc_repath(target: Vector2, stop: float, force: bool = false) -> void:
 	var now := Time.get_ticks_msec()
 	if not force and not _pnc_path.is_empty() \
@@ -520,18 +602,26 @@ func _pnc_repath(target: Vector2, stop: float, force: bool = false) -> void:
 		return
 	_pnc_path_target = target
 	_pnc_path_ms = now
+	_pnc_path_attempted = true
 	_pnc_path = _pnc_find_path(global_position, target, stop)
 	_pnc_path_index = 0
 
 func _pnc_next_waypoint(target: Vector2, stop: float) -> Vector2:
 	if global_position.distance_to(target) <= stop:
 		return target
+	# Open ground: move exactly toward the tapped point. The grid path's first
+	# waypoint is a cell centre, so following it would convert a straight tap
+	# into a slight diagonal and no longer match the equivalent WASD direction.
+	# Pathfinding is lazy: open taps never pay for a grid search.
+	if _pnc_has_line_of_sight(target):
+		return target
 	var stale_path := _pnc_path_dynamic \
 		and Time.get_ticks_msec() - _pnc_path_ms > PNC_PATH_RECALC_MS
+	var target_changed: bool = _pnc_path_target.distance_to(target) > PNC_PATH_TARGET_EPS
 	if _pnc_path.is_empty():
-		if stale_path or _pnc_path_target.distance_to(target) > PNC_PATH_TARGET_EPS:
+		if not _pnc_path_attempted or target_changed or stale_path:
 			_pnc_repath(target, stop)
-	elif _pnc_path_target.distance_to(target) > PNC_PATH_TARGET_EPS or stale_path:
+	elif target_changed or stale_path:
 		_pnc_repath(target, stop)
 	while _pnc_path_index < _pnc_path.size() \
 			and global_position.distance_to(_pnc_path[_pnc_path_index]) < 8.0:
@@ -579,6 +669,9 @@ func _pnc_begin_hold(world_pos: Vector2) -> void:
 	_pnc_chop = null
 	_pnc_path = PackedVector2Array()
 	_pnc_path_index = 0
+	_pnc_path_target = world_pos
+	_pnc_path_ms = Time.get_ticks_msec()
+	_pnc_path_attempted = false
 	_pnc_hold_click = true
 	Global.pnc_hold_active = true
 	_pnc_hold_pos = world_pos
@@ -599,7 +692,15 @@ func _pnc_handle_click(world_pos: Vector2) -> bool:
 	_pnc_cancel()
 	var mob := _pnc_mob_near(world_pos)
 	if mob != null:
-		_pnc_begin(mob.global_position, mob, "", "attack")
+		# Wolves are deliberately not click-to-attack targets. Treat a tap on
+		# one as an ordinary move so PNC cannot auto-chase or auto-swing at it;
+		# manual swings/combat remain unchanged.
+		# Sheep share the Wolf/Mob groups for AI dispatch; they are still valid
+		# PNC targets. Only true wolves (not in the Sheep group) are excluded.
+		if mob.is_in_group("Wolf") and not mob.is_in_group("Sheep"):
+			_pnc_begin(world_pos, null, "", "move")
+		else:
+			_pnc_begin(mob.global_position, mob, "", "attack")
 		return true
 	# Fishing: tapping water with a rod shows the rod icon and casts; if the
 	# spot is beyond the rod's range, walk to the shore first, then cast.
@@ -642,6 +743,9 @@ func _pnc_handle_click(world_pos: Vector2) -> bool:
 	return true
 
 func _pnc_steer(_delta: float) -> void:
+	# Whatever happens below, this frame starts from "no PNC movement"; active
+	# branches either set a direction or deliberately leave it at zero.
+	input_direction = Vector2.ZERO
 	if not _pnc_active:
 		return
 	if not Global.point_and_click or Global.any_ui_open() or Global.pause_menu_open \
@@ -783,31 +887,72 @@ func _pnc_grass_at(world_pos: Vector2) -> bool:
 	var rect := Rect2(world_pos - Vector2(10.0, 10.0), Vector2(20.0, 20.0))
 	return not ((world.call("grass_tufts_in_world_rect", rect) as Array).is_empty())
 
+# Rebuild the bucket index of live trees for the active world.
+func _pnc_tree_buckets() -> Dictionary:
+	var world := _get_world_node()
+	var world_id: int = world.get_instance_id() \
+		if world != null and is_instance_valid(world) else 0
+	# Trees are only spawned during world generation. Once the cache is built
+	# for the active world it stays valid; removals and freed nodes are skipped.
+	if world_id == _pnc_tree_bucket_world and not _pnc_tree_bucket_map.is_empty():
+		return _pnc_tree_bucket_map
+	var buckets: Dictionary = {}
+	for node in get_tree().get_nodes_in_group("Tree"):
+		if not is_instance_valid(node):
+			continue
+		var tree := node as Node2D
+		if tree == null or not tree.is_inside_tree():
+			continue
+		var key := Vector2i(
+			floori(tree.global_position.x / PNC_TREE_BUCKET),
+			floori(tree.global_position.y / PNC_TREE_BUCKET))
+		if buckets.has(key):
+			(buckets[key] as Array).append(tree)
+		else:
+			buckets[key] = [tree]
+	_pnc_tree_bucket_map = buckets
+	_pnc_tree_bucket_world = world_id
+	return _pnc_tree_bucket_map
+
 # The tree under the tap, if any (trees expose chop()). The physics collider
 # only covers the trunk; point-and-click should also accept the canopy/visible
 # sprite so tapping the tree does not silently become a move order.
 func _pnc_tree_at(world_pos: Vector2) -> Node2D:
 	var best: Node2D = null
 	var best_d: float = INF
-	for node in get_tree().get_nodes_in_group("Tree"):
-		if not (node is Node2D) or not is_instance_valid(node):
-			continue
-		var tree := node as Node2D
-		var sprite := tree.get_node_or_null("Sprite2D") as Sprite2D
-		if sprite != null and sprite.texture != null:
-			var local := sprite.to_local(world_pos)
-			if sprite.get_rect().grow(2.0).has_point(local):
-				var d := tree.global_position.distance_squared_to(world_pos)
-				if d < best_d:
-					best = tree
-					best_d = d
+	var buckets := _pnc_tree_buckets()
+	var click_bucket := Vector2i(
+		floori(world_pos.x / PNC_TREE_BUCKET),
+		floori(world_pos.y / PNC_TREE_BUCKET))
+	# A tree origin within 128 px may live in any adjacent bucket. Only test
+	# that 3x3 neighborhood instead of walking all 1,300+ trees (~2-5 ms/tap).
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var bucket: Variant = buckets.get(click_bucket + Vector2i(dx, dy))
+			if not (bucket is Array):
 				continue
-		# Fallback for unusual tree scenes whose collider is the only target.
-		if tree.has_method("chop") and tree.global_position.distance_to(world_pos) <= 24.0:
-			var d := tree.global_position.distance_squared_to(world_pos)
-			if d < best_d:
-				best = tree
-				best_d = d
+			for node in bucket:
+				if not is_instance_valid(node):
+					continue
+				var tree := node as Node2D
+				if tree == null or tree.is_queued_for_deletion() or not tree.is_inside_tree():
+					continue
+				var d := tree.global_position.distance_squared_to(world_pos)
+				if d > 128.0 * 128.0:
+					continue
+				var sprite := tree.get_node_or_null("Sprite2D") as Sprite2D
+				if sprite != null and sprite.texture != null:
+					var local := sprite.to_local(world_pos)
+					if sprite.get_rect().grow(2.0).has_point(local):
+						if d < best_d:
+							best = tree
+							best_d = d
+						continue
+				# Fallback for unusual tree scenes whose collider is the only target.
+				if tree.has_method("chop") and d <= 24.0 * 24.0:
+					if d < best_d:
+						best = tree
+						best_d = d
 	if best != null:
 		return best
 	var space := get_world_2d().direct_space_state
@@ -836,6 +981,10 @@ func _pnc_begin_chop(tree: Node2D) -> void:
 		tree.call("set_pnc_auto_chop", true)
 	_pnc_chop_at_ms   = 0
 	_pnc_path         = PackedVector2Array()
+	_pnc_path_index   = 0
+	_pnc_path_target  = _pnc_dest
+	_pnc_path_ms      = Time.get_ticks_msec()
+	_pnc_path_attempted = false
 	_pnc_path_dynamic = false
 	_pnc_path_retries = 0
 	_pnc_last_pos     = global_position
@@ -937,13 +1086,26 @@ func _pnc_face(world_pos: Vector2) -> void:
 		_last_dir = _get_closest_dir(d.normalized())
 
 func _pnc_has_line_of_sight(target: Vector2) -> bool:
+	var now: int = Time.get_ticks_msec()
+	# Direct steering asks every physics tick. A 50 ms cache is well below
+	# player/target movement that could make a wall appear, and avoids paying
+	# for a physics ray query at 120 Hz during every tap-to-move order.
+	if now - _pnc_los_at_ms <= 50 \
+			and _pnc_los_target.distance_squared_to(target) <= 64.0:
+		return _pnc_los_result
 	var space := get_world_2d().direct_space_state
 	if space == null:
 		return true
-	var q := PhysicsRayQueryParameters2D.create(
-		global_position, target, 1, [get_rid()])
-	var hit := space.intersect_ray(q)
-	return hit.is_empty()
+	if _pnc_los_query == null:
+		_pnc_los_query = PhysicsRayQueryParameters2D.new()
+		_pnc_los_query.collision_mask = 1
+		_pnc_los_query.exclude = [get_rid()]
+	_pnc_los_query.from = global_position
+	_pnc_los_query.to = target
+	_pnc_los_target = target
+	_pnc_los_at_ms = now
+	_pnc_los_result = space.intersect_ray(_pnc_los_query).is_empty()
+	return _pnc_los_result
 
 func _pnc_maybe_attack(target: Vector2) -> void:
 	var now: int = Time.get_ticks_msec()
@@ -983,7 +1145,7 @@ func _pnc_check_stuck() -> void:
 func _pnc_mob_alive(m: Node2D) -> bool:
 	if m == null or not is_instance_valid(m):
 		return false
-	for prop in ["health", "hp"]:
+	for prop in ["health", "hp", "_mob_health"]:
 		var v: Variant = m.get(prop)
 		if v != null and float(v) <= 0.0:
 			return false
@@ -992,14 +1154,21 @@ func _pnc_mob_alive(m: Node2D) -> bool:
 func _pnc_mob_near(world_pos: Vector2) -> Node2D:
 	var best: Node2D = null
 	var best_d: float = PNC_MOB_PICK_RADIUS
-	for n in get_tree().get_nodes_in_group("Mob"):
-		var m := n as Node2D
-		if not _pnc_mob_alive(m):
-			continue
-		var d: float = m.global_position.distance_to(world_pos)
-		if d <= best_d:
-			best_d = d
-			best = m
+	var seen: Dictionary = {}
+	# Sheep are their own group rather than "Mob", but they are legitimate
+	# point-and-click targets. Include both groups and de-duplicate.
+	for group_name in ["Mob", "Sheep"]:
+		for n in get_tree().get_nodes_in_group(group_name):
+			if seen.has(n):
+				continue
+			seen[n] = true
+			var m := n as Node2D
+			if not _pnc_mob_alive(m):
+				continue
+			var d: float = m.global_position.distance_to(world_pos)
+			if d <= best_d:
+				best_d = d
+				best = m
 	return best
 
 # True when something solid/interactive sits under the point (block, tree,
@@ -1410,11 +1579,61 @@ func _get_closest_dir(vec: Vector2) -> String:
 # arc's alignment. world.gd calls _trigger_swing() when the player swings.
 var _swing_lock_until_ms: int = 0
 var _active_swing:        Node = null   # the live swing effect (single instance)
+# One reusable summon burst owned by the player; every swing re-emits it instead
+# of allocating a GPUParticles2D + material + gradients per attack.
+var _summon_fx:           GPUParticles2D = null
 const SWING_LOCK_MS:     int = 240   # a touch longer than the swing effect
 # True while the left mouse is held — drives auto-repeat swings (see
 # _tick_attack_hold): holding keeps swinging, restarting the instant each
 # swing finishes instead of only firing on the initial press.
 var _attack_held:        bool = false
+
+func _setup_summon_fx() -> void:
+	if not ClassDB.class_exists("GPUParticles2D"):
+		return
+	_summon_fx = GPUParticles2D.new()
+	_summon_fx.name = "SummonMagic"
+	_summon_fx.texture = Global.get_smooth_light_texture(32)
+	_summon_fx.amount = 34
+	_summon_fx.lifetime = 0.7
+	_summon_fx.one_shot = true
+	_summon_fx.explosiveness = 0.65
+	_summon_fx.local_coords = false
+	_summon_fx.emitting = false
+	_summon_fx.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_summon_fx.z_as_relative = false
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0.0, -1.0, 0.0)
+	mat.spread = 360.0
+	mat.gravity = Vector3(0.0, -50.0, 0.0)
+	mat.initial_velocity_min = 24.0
+	mat.initial_velocity_max = 70.0
+	mat.scale_min = 0.28
+	mat.scale_max = 0.62
+	mat.color = Color(1.0, 0.82, 1.0, 1.0)
+	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	mat.emission_sphere_radius = 16.0
+	var grad := Gradient.new()
+	grad.colors = PackedColorArray([
+		Color(1.0, 0.85, 1.0, 0.0),
+		Color(1.0, 0.9, 1.0, 1.0),
+		Color(0.9, 0.7, 1.0, 0.0)])
+	grad.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = grad
+	mat.color_ramp = ramp
+	_summon_fx.process_material = mat
+	add_child(_summon_fx)
+
+## Re-emits the single cached summon effect at a world position. The node and
+## all particle resources are created once in _ready, never per swing.
+func emit_summon_fx(world_pos: Vector2) -> void:
+	if _summon_fx == null:
+		return
+	_summon_fx.global_position = world_pos
+	_summon_fx.z_index = z_index + 1
+	_summon_fx.restart()
+	_summon_fx.emitting = true
 
 # Public: perform a swing with whatever item is currently held. Callable from
 # any interaction (plain click, block/tool breaking, tree chopping) so the
@@ -1595,6 +1814,15 @@ func _on_close_all_ui() -> void:
 			Global.close_ui()
 			Global.inventory_toggled.emit(false)
 
+# Convert a real mouse/touch event to world space from its OWN position. Do not
+# read the shared touch-cursor override here: that override can still point at
+# an old tap while a new tap arrives, which made PNC act on the wrong tile.
+func _mouse_event_world(event: InputEventMouse) -> Vector2:
+	var vp := get_viewport()
+	if vp == null:
+		return Global.mouse_world(self)
+	return vp.get_canvas_transform().affine_inverse() * event.position
+
 func _input(event: InputEvent) -> void:
 	# Any real tap/click outside the hotbar releases an active PNC mining lock.
 	# A hotbar tap is an item switch instead: the lock stays alive and the block
@@ -1637,7 +1865,8 @@ func _input(event: InputEvent) -> void:
 			and not event.has_meta("pnc_synthetic") \
 			and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
 			and event.pressed:
-		if _pnc_handle_click(Global.mouse_world(self)):
+		var click_world: Vector2 = _mouse_event_world(event as InputEventMouse)
+		if _pnc_handle_click(click_world):
 			get_viewport().set_input_as_handled()
 			return
 	# Plain left-click swings the held item. This runs from the PLAYER, which

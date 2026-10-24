@@ -73,8 +73,10 @@ func _run() -> void:
 	await _test_ui_back_actual()
 	_test_cloud_save_identity()
 	_test_android_config()
+	_test_display_frame_limits()
 	await _test_interpreters()
 	await _test_crash_logger()
+	await _test_control_scheme_parity()
 
 
 func _test_registry() -> void:
@@ -2039,10 +2041,21 @@ func _test_mining_tool_switch() -> void:
 	add_child(block)
 	await get_tree().process_frame
 	block.set("_player_nearby", true)
-	block.set("_hovered", true)
+	block.set("_hovered", false)
 	block.set("_mouse_held", true)
 	block.set_process(true)
-	block.call("_try_start_breaking")
+	await get_tree().process_frame
+	# A PNC order walked here from a distant tap: the real cursor/camera moved,
+	# so the cached hover is stale. The synthetic press must rebuild hover from
+	# the PNC target cursor and still start mining.
+	Global.set_touch_mouse(block.global_position)
+	var pnc_press := InputEventMouseButton.new()
+	pnc_press.button_index = MOUSE_BUTTON_LEFT
+	pnc_press.pressed = true
+	pnc_press.position = get_viewport().get_canvas_transform() * block.global_position
+	block.call("_input", pnc_press)
+	check(bool(block.get("_breaking")),
+		"PNC synthetic press starts mining after a stale-hover approach")
 	var block_old_dur: float = float(block.get("_break_duration"))
 	block.call("_add_break_progress", 0.5)
 	var block_before: float = float(block.get("_break_progress"))
@@ -2085,6 +2098,7 @@ func _test_mining_tool_switch() -> void:
 	await get_tree().process_frame
 
 	Global.pnc_hold_active = old_pnc_hold
+	Global.clear_touch_mouse()
 	Global.Hotbar = old_hotbar
 	Global.set_hotbar_selection(old_selected)
 	Global.player_node = old_player if is_instance_valid(old_player) else null
@@ -2454,6 +2468,39 @@ func _test_android_config() -> void:
 		"application/config/quit_on_go_back", true)),
 		"Android Back does not quit without giving the player a pause menu")
 
+func _test_display_frame_limits() -> void:
+	var all_values_valid := true
+	for value in [30, 60, 90, 120, 144, 165, 240, 0]:
+		if Global._sanitize_fps_limit(int(value)) != int(value):
+			all_values_valid = false
+	check(all_values_valid,
+		"every FPS limit menu value (including Unlimited) is accepted unchanged")
+	check(Global.FPS_LIMIT_OPTIONS.has(Global.DEFAULT_FPS_LIMIT)
+		and Global.DEFAULT_FPS_LIMIT > 0,
+		"the default FPS limit is a real selectable cap")
+	check(Global._sanitize_fps_limit(-5) == 0
+		and Global._sanitize_fps_limit(59) == 60
+		and Global._sanitize_fps_limit(1000) == 240,
+		"invalid/out-of-range FPS limits map to the nearest safe option")
+
+	var old_limit: int = Global.fps_limit
+	var old_max: int = Engine.max_fps
+	Global.fps_limit = 60
+	Global.apply_frame_settings()
+	check(Engine.max_fps == 60, "the FPS cap applies through Engine.max_fps")
+	Global.fps_limit = 0
+	Global.apply_frame_settings()
+	check(Engine.max_fps == 0, "Unlimited maps to Godot's zero FPS cap")
+	Global.fps_limit = old_limit
+	Global.apply_frame_settings()
+	Engine.max_fps = old_max
+
+	var panel_src := FileAccess.get_file_as_string("res://scripts/settings_panel.gd")
+	check(panel_src.contains("FPS Limit")
+		and panel_src.contains("VSync")
+		and panel_src.contains("if not Global.is_mobile():"),
+		"settings expose the FPS limit everywhere and VSync only on desktop")
+
 func _test_interpreters() -> void:
 	var lua := LuaState.new()
 	add_child(lua)
@@ -2523,6 +2570,386 @@ func _test_crash_logger() -> void:
 	check(text.contains("QA regression diagnostic marker"), "manual diagnostics reach the log")
 	check(text.contains("QA runtime error sentinel"), "script errors reach the log")
 	check(text.contains("at ") or text.contains("SCRIPT_ERROR"), "script backtrace/log tag is present")
+
+
+const PARITY_MOVE_ACTIONS: Array[String] = [
+	"gameplay_left", "gameplay_right", "gameplay_up", "gameplay_down",
+]
+
+
+func _release_parity_moves() -> void:
+	for action in PARITY_MOVE_ACTIONS:
+		Input.action_release(action)
+
+
+func _movement_snapshot(player: Node) -> Dictionary:
+	var sprite: AnimatedSprite2D = player.get("sprite") as AnimatedSprite2D
+	return {
+		"dir": player.get("input_direction") as Vector2,
+		"vel": player.get("velocity") as Vector2,
+		"sprint": bool(player.get("_sprinting")),
+		"anim": str(sprite.animation) if sprite != null else "",
+	}
+
+
+func _test_control_scheme_parity() -> void:
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_inventory: Array = Global.Inventory.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+	var old_player := Global.player_node
+	var old_world := Global.world_node
+	var old_pnc: bool = Global.point_and_click
+	var old_mobile_move: Vector2 = Global.mobile_move
+	var old_mobile_shift: bool = Global.mobile_shift
+	var old_stamina: float = Global.stamina
+	var old_snowstorm: bool = Global.snowstorm_active
+	var old_pause: bool = Global.pause_menu_open
+	var old_pending: bool = Global.has_pending_pos
+	var old_pending_pos: Vector2 = Global.pending_player_pos
+
+	_release_parity_moves()
+	Global.reset_pause_state()
+	Global.Hotbar.resize(Global.HOTBAR_SIZE)
+	Global.Inventory.resize(Global.INVENTORY_SIZE)
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	Global.Hotbar[0] = {"data": load("res://resources/items/wooden_pickaxe.tres"), "quantity": 1}
+	Global.set_hotbar_selection(0)
+	Global.point_and_click = false
+	Global.clear_touch_mouse()
+	Global.mobile_move = Vector2.ZERO
+	Global.mobile_shift = false
+	Global.snowstorm_active = false
+	Global.pause_menu_open = false
+	Global.has_pending_pos = false
+	Global.stamina = 100.0
+	Global.player_node = null
+	Global.world_node = null
+
+	var player: Node = load("res://scenes/player/player.tscn").instantiate()
+	add_child(player)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	player.set_physics_process(false)
+	player.set("_move_mission_done", true)
+	player.global_position = Vector2(100, 100)
+	player.velocity = Vector2.ZERO
+
+	# Wolves are not click-to-attack targets: the tap becomes a move order.
+	var wolf_probe := Node2D.new()
+	wolf_probe.global_position = player.global_position + Vector2(60, 0)
+	add_child(wolf_probe)
+	wolf_probe.add_to_group("Mob")
+	wolf_probe.add_to_group("Wolf")
+	player.call("_pnc_handle_click", wolf_probe.global_position)
+	check(bool(player.get("_pnc_active"))
+		and player.get("_pnc_chase") == null
+		and str(player.get("_pnc_pending")) == "",
+		"clicking a wolf creates a move order, not a chase/attack order")
+	player.call("_pnc_cancel")
+
+	# Other mobs keep their original click-to-attack behavior.
+	var mob_probe := Node2D.new()
+	mob_probe.global_position = player.global_position + Vector2(40, 0)
+	add_child(mob_probe)
+	mob_probe.add_to_group("Mob")
+	player.call("_pnc_handle_click", mob_probe.global_position)
+	check(player.get("_pnc_chase") == mob_probe,
+		"clicking a non-wolf mob still starts a chase/attack order")
+	player.call("_pnc_cancel")
+
+	# Sheep share Wolf/Mob groups for AI dispatch but must remain clickable.
+	var sheep_probe := Node2D.new()
+	sheep_probe.global_position = player.global_position + Vector2(40, 0)
+	add_child(sheep_probe)
+	sheep_probe.add_to_group("Mob")
+	sheep_probe.add_to_group("Wolf")
+	sheep_probe.add_to_group("Sheep")
+	player.call("_pnc_handle_click", sheep_probe.global_position)
+	check(player.get("_pnc_chase") == sheep_probe,
+		"clicking a sheep still starts a chase/attack order")
+	player.call("_pnc_cancel")
+	wolf_probe.queue_free()
+	mob_probe.queue_free()
+	sheep_probe.queue_free()
+	await get_tree().process_frame
+
+	# A new PNC order must not build a grid path before checking line of sight;
+	# eager pathfinding was a 2-65 ms hitch on every tap.
+	player.call("_pnc_begin", player.global_position + Vector2(320, 0),
+		null, "", "move")
+	check(not bool(player.get("_pnc_path_attempted"))
+		and (player.get("_pnc_path") as PackedVector2Array).is_empty(),
+		"PNC starts direct and defers grid pathfinding until the line is blocked")
+	player.call("_pnc_cancel")
+
+	# Canopy taps still resolve through the new spatial tree buckets.
+	var tree_probe := Node2D.new()
+	tree_probe.global_position = player.global_position + Vector2(0, 200)
+	var tree_sprite := Sprite2D.new()
+	tree_sprite.name = "Sprite2D"
+	tree_sprite.texture = load("res://sprites/tree/tree.png")
+	tree_probe.add_child(tree_sprite)
+	tree_probe.add_to_group("Tree")
+	add_child(tree_probe)
+	await get_tree().process_frame
+	check(player.call("_pnc_tree_at",
+		tree_probe.global_position + Vector2(0, -24)) == tree_probe,
+		"PNC still resolves canopy taps from its spatial tree index")
+	tree_probe.queue_free()
+	await get_tree().process_frame
+
+	# Cardinal and diagonal taps must produce the exact same direction, speed
+	# and animation as the equivalent held WASD action.
+	var dirs: Array = [
+		{"label": "right", "actions": ["gameplay_right"], "vec": Vector2(1, 0)},
+		{"label": "left", "actions": ["gameplay_left"], "vec": Vector2(-1, 0)},
+		{"label": "up", "actions": ["gameplay_up"], "vec": Vector2(0, -1)},
+		{"label": "down", "actions": ["gameplay_down"], "vec": Vector2(0, 1)},
+		{"label": "down-right", "actions": ["gameplay_right", "gameplay_down"], "vec": Vector2(1, 1)},
+		{"label": "down-left", "actions": ["gameplay_down", "gameplay_left"], "vec": Vector2(-1, 1)},
+		{"label": "up-right", "actions": ["gameplay_right", "gameplay_up"], "vec": Vector2(1, -1)},
+		{"label": "up-left", "actions": ["gameplay_up", "gameplay_left"], "vec": Vector2(-1, -1)},
+	]
+	for d in dirs:
+		_release_parity_moves()
+		player.call("_pnc_cancel")
+		Global.point_and_click = false
+		for action in (d["actions"] as Array):
+			Input.action_press(str(action))
+		player.call("get_input", 0.016)
+		player.call("_update_animation")
+		var wasd := _movement_snapshot(player)
+		_release_parity_moves()
+
+		player.call("_pnc_cancel")
+		Global.point_and_click = true
+		player.set("_pnc_active", true)
+		player.set("_pnc_dest", player.global_position + (d["vec"] as Vector2) * 1000.0)
+		player.set("_pnc_last_pos", player.global_position)
+		player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+		player.call("get_input", 0.016)
+		player.call("_update_animation")
+		var pnc := _movement_snapshot(player)
+
+		var wd: Vector2 = wasd["dir"]
+		var pd: Vector2 = pnc["dir"]
+		var wv: Vector2 = wasd["vel"]
+		var pv: Vector2 = pnc["vel"]
+		check(wd.is_equal_approx(pd) and wv.is_equal_approx(pv),
+			"tap %s produces the same direction and speed as WASD" % str(d["label"]))
+		check(str(wasd["anim"]) == str(pnc["anim"]),
+			"tap %s plays the same movement animation as WASD" % str(d["label"]))
+
+	# Sprint parity, including the animation state.
+	Global.point_and_click = false
+	player.call("_pnc_cancel")
+	player.set("_stamina_exhausted", false)
+	Global.stamina = 100.0
+	Global.mobile_shift = true
+	Input.action_press("gameplay_right")
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var wasd_sprint := _movement_snapshot(player)
+	_release_parity_moves()
+
+	player.call("_pnc_cancel")
+	Global.point_and_click = true
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var pnc_sprint := _movement_snapshot(player)
+	check((wasd_sprint["vel"] as Vector2).is_equal_approx(pnc_sprint["vel"] as Vector2)
+		and (wasd_sprint["vel"] as Vector2).length() > 100.0,
+		"tap sprint matches WASD sprint speed")
+	check(bool(wasd_sprint["sprint"]) and bool(pnc_sprint["sprint"])
+		and str(wasd_sprint["anim"]) == str(pnc_sprint["anim"]),
+		"tap sprint uses the same sprint state and animation")
+	Global.mobile_shift = false
+
+	# Snowstorm is a shared movement modifier, not a control-scheme modifier.
+	Global.snowstorm_active = true
+	player.call("_pnc_cancel")
+	Global.point_and_click = false
+	Input.action_press("gameplay_right")
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var wasd_storm := _movement_snapshot(player)
+	_release_parity_moves()
+	player.call("_pnc_cancel")
+	Global.point_and_click = true
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var pnc_storm := _movement_snapshot(player)
+	check((wasd_storm["vel"] as Vector2).is_equal_approx(pnc_storm["vel"] as Vector2),
+		"snowstorm slowdown applies identically to tap and WASD movement")
+	Global.snowstorm_active = false
+
+	# Stop: releasing the direction/Canceling the order settles both schemes.
+	player.call("_pnc_cancel")
+	Global.point_and_click = false
+	_release_parity_moves()
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var stopped := _movement_snapshot(player)
+	check((stopped["dir"] as Vector2) == Vector2.ZERO
+		and (stopped["vel"] as Vector2) == Vector2.ZERO
+		and str(stopped["anim"]).begins_with("idle_"),
+		"releasing movement input stops the shared movement path")
+
+	# A UI opening cancels the tap order and produces no movement.
+	Global.point_and_click = true
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	Global.pause_menu_open = true
+	player.call("get_input", 0.016)
+	var ui_stopped := _movement_snapshot(player)
+	check(not bool(player.get("_pnc_active"))
+		and (ui_stopped["dir"] as Vector2) == Vector2.ZERO
+		and (ui_stopped["vel"] as Vector2) == Vector2.ZERO,
+		"opening a UI cancels tap movement without moving the player")
+	Global.pause_menu_open = false
+
+	# Turning tap-to-control off cancels the order immediately.
+	Global.point_and_click = true
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	Global.point_and_click = false
+	Global.point_and_click_changed.emit(false)
+	player.call("get_input", 0.016)
+	check(not bool(player.get("_pnc_active"))
+		and (player.get("input_direction") as Vector2) == Vector2.ZERO,
+		"switching tap-to-control off clears movement immediately")
+
+	# A real tap must use its OWN event position. A stale touch-cursor override
+	# (for example after a previous PNC hold) must not redirect the new order.
+	Global.point_and_click = true
+	player.call("_pnc_cancel")
+	Global.set_touch_mouse(Vector2(-9999, -9999))
+	var expected_dest := Vector2(300, 100)
+	var tap := InputEventMouseButton.new()
+	tap.button_index = MOUSE_BUTTON_LEFT
+	tap.pressed = true
+	tap.position = get_viewport().get_canvas_transform() * expected_dest
+	player.call("_input", tap)
+	check((player.get("_pnc_dest") as Vector2).distance_to(expected_dest) <= 1.0,
+		"a new PNC tap ignores a stale shared-cursor position")
+	player.call("_pnc_cancel")
+	Global.clear_touch_mouse()
+
+	# Simultaneous manual input wins once, cancelling the tap order rather than
+	# applying both direction sources in the same physics tick.
+	Global.point_and_click = true
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(-1000, 0))
+	Input.action_press("gameplay_right")
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	check(not bool(player.get("_pnc_active"))
+		and (player.get("input_direction") as Vector2).is_equal_approx(Vector2.RIGHT),
+		"manual input cancels tap movement without double-processing")
+	_release_parity_moves()
+
+	# Focus loss clears tap orders, held joystick input and sprint state.
+	Global.point_and_click = true
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	Input.action_press("gameplay_right")
+	Global.mobile_move = Vector2.RIGHT
+	Global.mobile_shift = true
+	player.set("_attack_held", true)
+	get_window().focus_exited.emit()
+	var focus_lost := _movement_snapshot(player)
+	check(not bool(player.get("_pnc_active"))
+		and (focus_lost["dir"] as Vector2) == Vector2.ZERO
+		and (focus_lost["vel"] as Vector2) == Vector2.ZERO
+		and Global.mobile_move == Vector2.ZERO
+		and not Global.mobile_shift
+		and not bool(player.get("_attack_held"))
+		and not Input.is_action_pressed("gameplay_right"),
+		"window focus loss clears tap movement and held input")
+
+	# Collision parity: the same wall stops both schemes at the same position.
+	# The wall is offset below the ray so the tap steers straight (the player's
+	# wider collision box still meets it), making the paths directly comparable.
+	Global.point_and_click = false
+	player.call("_pnc_cancel")
+	Global.mobile_move = Vector2.ZERO
+	Global.mobile_shift = false
+	player.set_physics_process(false)
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	wall.global_position = Vector2(160, 130)
+	var wall_shape := CollisionShape2D.new()
+	var wall_rect := RectangleShape2D.new()
+	wall_rect.size = Vector2(20, 40)
+	wall_shape.shape = wall_rect
+	wall.add_child(wall_shape)
+	add_child(wall)
+	await get_tree().physics_frame
+
+	# Isolate the collision probe from any stray knockback left by earlier QA
+	# combat tests, and make the player immune for the duration of the run.
+	player.set("_knockback", Vector2.ZERO)
+	player.set("_invincible_until_ms", Time.get_ticks_msec() + 100000)
+	player.set("_hit_flash_until_ms", 0)
+	player.set("_stamina_exhausted", false)
+	player.global_position = Vector2(100, 100)
+	player.velocity = Vector2.ZERO
+	player.set_physics_process(true)
+	Input.action_press("gameplay_right")
+	for i in range(100):
+		await get_tree().physics_frame
+	Input.action_release("gameplay_right")
+	var wasd_wall_x: float = (player as Node2D).global_position.x
+	player.set_physics_process(false)
+
+	player.global_position = Vector2(100, 100)
+	player.velocity = Vector2.ZERO
+	player.set("_knockback", Vector2.ZERO)
+	player.set("_invincible_until_ms", Time.get_ticks_msec() + 100000)
+	Global.point_and_click = true
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", Vector2(300, 100))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	player.set_physics_process(true)
+	for i in range(100):
+		await get_tree().physics_frame
+	var pnc_wall_x: float = (player as Node2D).global_position.x
+	player.set_physics_process(false)
+	Global.point_and_click = false
+	player.call("_pnc_cancel")
+	check(absf(wasd_wall_x - pnc_wall_x) <= 1.0 and wasd_wall_x > 130.0,
+		"tap and WASD collision against a wall resolve at the same position")
+
+	wall.queue_free()
+	player.queue_free()
+	await get_tree().process_frame
+	Global.point_and_click = old_pnc
+	Global.mobile_move = old_mobile_move
+	Global.mobile_shift = old_mobile_shift
+	Global.stamina = old_stamina
+	Global.snowstorm_active = old_snowstorm
+	Global.pause_menu_open = old_pause
+	Global.has_pending_pos = old_pending
+	Global.pending_player_pos = old_pending_pos
+	Global.Hotbar = old_hotbar
+	Global.Inventory = old_inventory
+	Global.set_hotbar_selection(old_selected)
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	Global.world_node = old_world if is_instance_valid(old_world) else null
+	_release_parity_moves()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

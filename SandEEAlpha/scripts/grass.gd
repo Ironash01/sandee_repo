@@ -16,7 +16,6 @@ class_name GrassTuft
 # ── Source art ────────────────────────────────────────────────────
 const GRASS_TEX:    Texture2D = preload("res://sprites/ground/grass.png")
 const GRASS_SHADER: Shader    = preload("res://shaders/grass_sway.gdshader")
-const GRASS_CUT_BURST_SCRIPT: GDScript = preload("res://scripts/grass_cut_burst.gd")
 const FRAME_COUNT:  int = 6   # grass.png is a 576x96 strip, 6 frames of 96x96
 const FRAME_SIZE:   int = 96
 # grass.png has real transparent padding below the visible roots within each
@@ -50,18 +49,6 @@ const ART_CENTER_X_PX: float = 50.0
 # tile below, which read as misaligned with the block grid).
 const BASE_EXTRA_OFFSET_PX: float = 0.0
 
-# ── Y-sort reference point ───────────────────────────────────────────
-# The point used for z_index/Y-sort purposes is deliberately NOT the same
-# as ground_anchor above (which is the *visual* base the sprite is pinned
-# to, near the tile's bottom edge, for correct grounding). Value found by
-# the user directly in the Godot editor: they added a test TileMapLayer with
-# grass tiles and used its native "Y Sort Origin" property (a pixel offset
-# from a cell's top edge, exactly this same concept) — 15px is what visually
-# looked correct there. Re-tune this the same way (test a value live
-# in-editor, report the new number) rather than re-deriving it from theory;
-# it's a feel/appearance value, not a measured one like BOTTOM_PADDING_PX.
-const SORT_ORIGIN_OFFSET_PX: float = 15.0
-
 # ── Cutting ───────────────────────────────────────────────────────────
 # Grass is solid (StaticBody2D above) instead of walkable — the player must
 # cut it first, and only with a sword equipped. UNLIKE tree.gd's chopping,
@@ -76,7 +63,15 @@ const SORT_ORIGIN_OFFSET_PX: float = 15.0
 # instant (no hold timer) so this tuft just exposes cut() (to remove
 # itself). See world.gd's _on_swing_performed / _cut_grass_row.
 
-static var _frames:   Array          = []    # Array[ImageTexture], lazily built, shared
+# One baked 576x96 sheet per biome (6 frames in one texture). Sharing a single
+# texture lets the renderer batch all grass tufts instead of splitting them by
+# six separate frame textures, while Sprite2D.hframes still gives every tuft
+# its original visual variety.
+static var _sheet:        Texture2D    = null
+static var _snowy_sheet:  Texture2D    = null
+# Precomputed average visible colour per frame, keyed by source path. Grass
+# cut particles reuse these instead of sampling images at cut time.
+static var _sheet_colors: Dictionary = {}
 static var _material: ShaderMaterial = null  # lazily built, shared by every instance
 
 # ── Shadow ────────────────────────────────────────────────────────────
@@ -100,34 +95,30 @@ static var _shadow_overlay_image: Image = null
 # the green one. Same layout (576x96 = 6 frames of 96x96, same bottom padding),
 # so it's built and sliced identically, shadow and all.
 const SNOWY_GRASS_TEX: Texture2D = preload("res://sprites/ground/snowy_grass.png")
-static var _snowy_frames: Array = []
+static func get_grass_sheet() -> Texture2D:
+	if _sheet == null:
+		_sheet = _build_sheet(GRASS_TEX)
+	return _sheet
 
-static func get_grass_frames() -> Array:
-	if _frames.is_empty():
-		_frames = _build_frame_textures(GRASS_TEX)
-	return _frames
+static func get_snowy_grass_sheet() -> Texture2D:
+	if _snowy_sheet == null:
+		_snowy_sheet = _build_sheet(SNOWY_GRASS_TEX)
+	return _snowy_sheet
 
-static func get_snowy_grass_frames() -> Array:
-	if _snowy_frames.is_empty():
-		_snowy_frames = _build_frame_textures(SNOWY_GRASS_TEX)
-	return _snowy_frames
-
-# Slices a horizontal sheet into FRAME_SIZE frames and bakes the ground shadow
-# under each. Shared by the plains and snowy sheets.
-static func _build_frame_textures(tex: Texture2D) -> Array:
-	var out: Array = []
+# Bakes the ground shadow under all six frames and returns them as one
+# horizontal texture sheet. Sprite2D.hframes then selects the frame with zero
+# extra texture resources or render batches.
+static func _build_sheet(tex: Texture2D) -> Texture2D:
 	var full_img: Image = tex.get_image()
-	var shadow: Image   = _get_shadow_overlay_image()
+	full_img.convert(Image.FORMAT_RGBA8)
+	var shadow: Image = _get_shadow_overlay_image()
+	var out := Image.create_empty(FRAME_SIZE * FRAME_COUNT, FRAME_SIZE, false, Image.FORMAT_RGBA8)
+	var colors: Array[Color] = []
 	for i in range(FRAME_COUNT):
-		var region := Rect2i(i * FRAME_SIZE, 0, FRAME_SIZE, FRAME_SIZE)
-		var frame_img: Image = full_img.get_region(region)
+		var frame_img: Image = full_img.get_region(Rect2i(i * FRAME_SIZE, 0, FRAME_SIZE, FRAME_SIZE))
 		frame_img.convert(Image.FORMAT_RGBA8)
 		if shadow != null:
 			var composite := Image.create_empty(FRAME_SIZE, FRAME_SIZE, false, Image.FORMAT_RGBA8)
-			# Centered on the frame's visible root line (FRAME_SIZE -
-			# BOTTOM_PADDING_PX), the same point setup() anchors to the
-			# tile's ground line — keeps the shadow under the roots
-			# regardless of how the padding measurement is ever re-tuned.
 			var shadow_pos := Vector2i(
 				(FRAME_SIZE - shadow.get_width()) / 2,
 				int(FRAME_SIZE - BOTTOM_PADDING_PX) - shadow.get_height() / 2
@@ -135,8 +126,36 @@ static func _build_frame_textures(tex: Texture2D) -> Array:
 			composite.blend_rect(shadow, Rect2i(Vector2i.ZERO, shadow.get_size()), shadow_pos)
 			composite.blend_rect(frame_img, Rect2i(Vector2i.ZERO, Vector2i(FRAME_SIZE, FRAME_SIZE)), Vector2i.ZERO)
 			frame_img = composite
-		out.append(ImageTexture.create_from_image(frame_img))
-	return out
+		out.blit_rect(frame_img, Rect2i(Vector2i.ZERO, Vector2i(FRAME_SIZE, FRAME_SIZE)), Vector2i(i * FRAME_SIZE, 0))
+		colors.append(_average_visible_color(frame_img))
+	_sheet_colors[tex.resource_path] = colors
+	return ImageTexture.create_from_image(out)
+
+static func _average_visible_color(img: Image) -> Color:
+	var total := Color(0.0, 0.0, 0.0, 0.0)
+	var count := 0
+	for y in range(0, img.get_height(), 2):
+		for x in range(0, img.get_width(), 2):
+			var c := img.get_pixel(x, y)
+			if c.a < 0.55:
+				continue
+			total.r += c.r
+			total.g += c.g
+			total.b += c.b
+			total.a += 1.0
+			count += 1
+	if count == 0:
+		return Color(0.55, 1.0, 0.45, 1.0)
+	return Color(total.r / count, total.g / count, total.b / count, 1.0)
+
+static func get_frame_color(frame: int, snowy: bool = false) -> Color:
+	var key: String = SNOWY_GRASS_TEX.resource_path if snowy else GRASS_TEX.resource_path
+	if not _sheet_colors.has(key):
+		get_snowy_grass_sheet() if snowy else get_grass_sheet()
+	var colors: Array = _sheet_colors.get(key, []) as Array
+	if colors.is_empty():
+		return Color(0.70, 0.90, 1.0, 1.0) if snowy else Color(0.55, 1.0, 0.45, 1.0)
+	return colors[absi(frame) % colors.size()] as Color
 
 # Built once and cached — scaled down to a flat oval sized for a single
 # grass frame (not a full tile, since a tuft's visible root cluster is
@@ -182,9 +201,12 @@ var _tile: Vector2i = Vector2i.ZERO
 # their lower body. Instead of a StaticBody2D, the world temporarily
 # raises a tuft's z_index above the player's while the player's feet are
 # inside this tuft's blade band AND north of its root line, and restores
-# static_z otherwise. static_z is the bucket this tuft sorts at vs
-# trees/blocks/other tufts whenever the player is not overlapping it.
+# static_z otherwise. All grass shares one static bucket (0), which lets the
+# renderer batch it; grass is ground foliage and never needs to draw over a
+# tree, block or mob. The dynamic raise above the player remains exact.
 var static_z: int = 0
+# Average colour of this tuft's frame, cached when the grass sheet was built.
+var cut_color: Color = Color(0.55, 1.0, 0.45, 1.0)
 
 # World-space Y of the visible root line — the sort reference the world
 # compares the player's feet against. World tufts are anchored with their
@@ -217,9 +239,13 @@ func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 	_tile = tile
 	# The snowy biome uses its OWN sprite sheet (snowy_grass.png).
 	var snowy: bool = _tile_biome() == 2
-	var frames: Array = get_snowy_grass_frames() if snowy else get_grass_frames()
+	var sheet: Texture2D = get_snowy_grass_sheet() if snowy else get_grass_sheet()
 	var h: int = int(tile.x) * 374761393 ^ int(tile.y) * 668265263
-	_sprite.texture  = frames[absi(h) % frames.size()] as Texture2D
+	_sprite.texture  = sheet
+	_sprite.hframes = FRAME_COUNT
+	_sprite.vframes = 1
+	_sprite.frame    = absi(h) % FRAME_COUNT
+	cut_color        = get_frame_color(_sprite.frame, snowy)
 	_sprite.material = get_grass_material()
 	_sprite.scale    = Vector2(FILL_SCALE, FILL_SCALE)
 	_sprite.flip_h   = absi(h >> 8) % 2 == 1
@@ -242,15 +268,10 @@ func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 	_sprite.offset = Vector2(-side_fix, -shift_up)
 
 	global_position = ground_anchor
-	# Same quantized-bucket scheme player/trees/placed blocks all use
-	# (z_index = int(y / TILE_SIZE)) — but the Y fed into it is the tile's
-	# top edge + SORT_ORIGIN_OFFSET_PX, not ground_anchor's own (visual,
-	# bottom-edge) Y. ground_anchor = tile_top + TILE_SIZE + BASE_EXTRA_OFFSET_PX
-	# (see world.gd's _spawn_grass_at), so back that out to reach tile_top.
-	var tile_top_y: float = ground_anchor.y - TILE_SIZE - BASE_EXTRA_OFFSET_PX
-	var sort_y:     float = tile_top_y + SORT_ORIGIN_OFFSET_PX
-	z_index = int(sort_y / TILE_SIZE)
-	static_z = z_index
+	# One shared static bucket keeps all grass batchable. world.gd's nearby
+	# grass-sort pass raises only tufts that must cover the player.
+	z_index = 0
+	static_z = 0
 
 # Block-placement path (place_block in world.gd/cave_world.gd). The caller
 # anchors this node at the tile center and runs _fix_sprite_offset() for the
@@ -262,7 +283,11 @@ func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 func _setup_placed_block(data: ItemData) -> void:
 	item_data = data
 	_tile = Vector2i.ZERO
-	_sprite.texture  = get_grass_frames()[0] as Texture2D
+	_sprite.texture  = get_grass_sheet()
+	_sprite.hframes  = FRAME_COUNT
+	_sprite.vframes  = 1
+	_sprite.frame     = 0
+	cut_color         = get_frame_color(0, false)
 	_sprite.material = get_grass_material()
 	_sprite.scale    = Vector2(FILL_SCALE, FILL_SCALE)
 	call_deferred("_finish_placed_block")
@@ -273,16 +298,19 @@ func _finish_placed_block() -> void:
 	var cell := Vector2i(floori(global_position.x / TILE_SIZE), floori(global_position.y / TILE_SIZE))
 	var h: int = int(cell.x) * 374761393 ^ int(cell.y) * 668265263
 	var snowy: bool = _tile_biome() == 2
-	var frames: Array = get_snowy_grass_frames() if snowy else get_grass_frames()
-	_sprite.texture = frames[absi(h) % frames.size()] as Texture2D
+	_sprite.texture = get_snowy_grass_sheet() if snowy else get_grass_sheet()
+	_sprite.hframes = FRAME_COUNT
+	_sprite.vframes = 1
+	_sprite.frame    = absi(h) % FRAME_COUNT
+	cut_color        = get_frame_color(_sprite.frame, snowy)
 	_sprite.flip_h  = absi(h >> 8) % 2 == 1
 	# Same horizontal grid fix as world-gen tufts (keep the placement anchor's y).
 	var side_fix: float = (ART_CENTER_X_PX - FRAME_SIZE * 0.5) * FILL_SCALE
 	if _sprite.flip_h:
 		side_fix = -side_fix
 	_sprite.offset.x = -side_fix
-	z_index = int(global_position.y / TILE_SIZE)
-	static_z = z_index
+	z_index = 0
+	static_z = 0
 
 # Biome code at this tuft's tile (0=Plain, 1=Desert, 2=Snowy, -1=none/water)
 # via the world's own _cell_biome_type, so grass.gd doesn't duplicate the
@@ -322,6 +350,9 @@ func visible_rect() -> Rect2:
 	if _sprite == null or _sprite.texture == null:
 		return Rect2(global_position, Vector2.ZERO)
 	var tex_size: Vector2 = _sprite.texture.get_size()
+	var frame_size := Vector2(
+		tex_size.x / float(maxi(_sprite.hframes, 1)),
+		tex_size.y / float(maxi(_sprite.vframes, 1)))
 	var sc: Vector2 = _sprite.scale
 	# Measured alpha bounds inside one frame (grass.png / snowy_grass.png).
 	var art_min := Vector2(25.0, 22.0)
@@ -332,13 +363,13 @@ func visible_rect() -> Rect2:
 	var x0: float
 	var x1: float
 	if _sprite.flip_h:
-		x0 = center.x + (tex_size.x - art_max.x - tex_size.x * 0.5) * sc.x
-		x1 = center.x + (tex_size.x - art_min.x - tex_size.x * 0.5) * sc.x
+		x0 = center.x + (frame_size.x - art_max.x - frame_size.x * 0.5) * sc.x
+		x1 = center.x + (frame_size.x - art_min.x - frame_size.x * 0.5) * sc.x
 	else:
-		x0 = center.x + (art_min.x - tex_size.x * 0.5) * sc.x
-		x1 = center.x + (art_max.x - tex_size.x * 0.5) * sc.x
-	var y0: float = center.y + (art_min.y - tex_size.y * 0.5) * sc.y
-	var y1: float = center.y + (art_max.y - tex_size.y * 0.5) * sc.y
+		x0 = center.x + (art_min.x - frame_size.x * 0.5) * sc.x
+		x1 = center.x + (art_max.x - frame_size.x * 0.5) * sc.x
+	var y0: float = center.y + (art_min.y - frame_size.y * 0.5) * sc.y
+	var y1: float = center.y + (art_max.y - frame_size.y * 0.5) * sc.y
 	return Rect2(Vector2(minf(x0, x1), y0), Vector2(absf(x1 - x0), y1 - y0))
 
 # The cuttable area: the tuft's whole tile UNION the visible blades. This is
@@ -348,13 +379,9 @@ func grass_rect() -> Rect2:
 	return tile_rect().merge(visible_rect())
 
 func cut() -> void:
-	# Green blade burst at the tuft (spawned as a sibling so it survives this
-	# tuft's free). Snowy tufts burst white-blue to match their snow cover.
-	var burst: Node2D = GRASS_CUT_BURST_SCRIPT.new() as Node2D
-	if burst != null and get_parent() != null:
-		burst.set("snow", _tile_biome() == 2)
-		get_parent().add_child(burst)
-		burst.global_position = global_position + Vector2(0.0, -12.0)
+	# The world spawns one shared cut burst per swing; spawning a full
+	# GPUParticles2D per tuft caused visible hitching when a sword cut a 3x3
+	# grass patch. This method only unregisters and frees the tuft.
 	# Use the global reference rather than get_parent() to avoid coupling to
 	# scene structure — same convention tree.gd uses.
 	var world: Node = Global.world_node

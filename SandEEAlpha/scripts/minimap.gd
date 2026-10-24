@@ -44,6 +44,9 @@ const REFRESH_SEC:    float = 0.30
 # to run at 60fps; input handlers (pan/zoom/open) call queue_redraw() directly
 # for instant feedback, so this only throttles the idle/while-walking case.
 const REDRAW_SEC:     float = 0.033
+# Walking used to re-read all 3,721 tiles in one frame every 0.3 s. Spread the
+# same work across frames; the map is at most a few frames behind while moving.
+const SAMPLE_ROWS_PER_FRAME: int = 8
 
 # Fog-of-war: radius (tiles) around the player revealed as they move.
 const EXPLORE_RADIUS: int = 26
@@ -90,6 +93,13 @@ var _redraw_accum: float = 999.0
 # Set by pan/zoom/open so the next _process re-samples immediately (keeps those
 # interactions responsive) instead of waiting out REFRESH_SEC.
 var _force_sample: bool = false
+var _sample_active: bool = false
+var _sample_rows_done: int = 0
+var _sample_center: Vector2i = Vector2i.ZERO
+var _sample_world_id: int = -1
+var _sample_ground: TileMapLayer = null
+var _sample_water: TileMapLayer = null
+var _sample_structs: TileMapLayer = null
 var _player_tile: Vector2i = Vector2i(1 << 20, 1 << 20)
 var _pan: Vector2i = Vector2i.ZERO
 var _view_center: Vector2i = Vector2i(1 << 20, 1 << 20)
@@ -164,12 +174,20 @@ func _process(delta: float) -> void:
 	# The old code ALSO re-sampled on EVERY tile crossing, so walking triggered
 	# a full 61x61 tile read + GPU texture upload several times a second — the
 	# main walking stutter. The map still follows, just in small steps.
-	if _force_sample or _since_sample >= REFRESH_SEC:
+	# Stationary play has no new terrain to sample. Only resample when the view
+	# tile changed (or a pan/zoom/open explicitly requested it); previously this
+	# re-read the 61x61 tile disc every 0.3 s even while standing still.
+	if _force_sample:
 		_force_sample = false
+		_sample_active = false
 		_view_center = vc
 		_since_sample = 0.0
 		_sample_terrain()
 		_redraw_accum = REDRAW_SEC
+	elif _sample_active:
+		_continue_terrain_sample()
+	elif vc != _view_center and _since_sample >= REFRESH_SEC:
+		_start_terrain_sample(vc)
 	# Redraw throttled — _draw allocates the marker lists via get_nodes_in_group.
 	if _redraw_accum >= REDRAW_SEC:
 		_redraw_accum = 0.0
@@ -310,6 +328,67 @@ func _set_expanded(on: bool) -> void:
 	queue_redraw()
 
 # ── Terrain sampling (real tileset colours) ─────────────────────────────
+func _world_instance_id() -> int:
+	var world: Node = Global.world_node
+	return world.get_instance_id() if world != null and is_instance_valid(world) else 0
+
+func _start_terrain_sample(vc: Vector2i) -> void:
+	# Dungeon/cave maps are cheap enough to refresh whole; the overworld's
+	# 61x61 tile disc is spread across frames so walking never stalls a frame.
+	if _dungeon() != null or not _cave_info().is_empty():
+		_sample_active = false
+		_view_center = vc
+		_since_sample = 0.0
+		_sample_terrain()
+		_redraw_accum = REDRAW_SEC
+		return
+	var world: Node = Global.world_node
+	_sample_ground  = null
+	_sample_water   = null
+	_sample_structs = null
+	if world != null:
+		_sample_ground  = world.get_node_or_null("Ground") as TileMapLayer
+		_sample_water   = world.get_node_or_null("Water") as TileMapLayer
+		_sample_structs = world.get_node_or_null("Structures") as TileMapLayer
+	_sample_center = vc
+	_sample_world_id = _world_instance_id()
+	_sample_rows_done = 0
+	_sample_active = true
+	_since_sample = 0.0
+
+func _continue_terrain_sample() -> void:
+	if _sample_world_id != _world_instance_id():
+		_sample_active = false
+		_force_sample = true
+		return
+	var end_row: int = mini(_sample_rows_done + SAMPLE_ROWS_PER_FRAME, GRID)
+	for gy in range(_sample_rows_done, end_row):
+		_sample_world_row(gy, _sample_center, _sample_ground,
+			_sample_water, _sample_structs)
+	_sample_rows_done = end_row
+	if _sample_rows_done >= GRID:
+		_tex.update(_terrain)
+		_view_center = _sample_center
+		_sample_active = false
+		_redraw_accum = REDRAW_SEC
+
+func _sample_world_row(gy: int, center: Vector2i,
+		ground: TileMapLayer, water: TileMapLayer, structs: TileMapLayer) -> void:
+	var half: int = GRID / 2
+	for gx in range(GRID):
+		var cell: Vector2i = center + Vector2i(
+			roundi((gx - half) / _zoom), roundi((gy - half) / _zoom))
+		var c: Color = C_VOID
+		if structs != null and structs.get_cell_source_id(cell) != -1:
+			c = _tile_color(structs, cell)
+		elif water != null and water.get_cell_source_id(cell) != -1:
+			c = _tile_color(water, cell)
+		else:
+			c = _tile_color(ground, cell)
+		if not Global.explored_tiles.has(cell):
+			c = c.lerp(C_FOG, 0.62)
+		_terrain.set_pixel(gx, gy, c)
+
 func _sample_terrain() -> void:
 	var dun := _dungeon()
 	if dun != null:
@@ -327,22 +406,9 @@ func _sample_terrain() -> void:
 		ground  = world.get_node_or_null("Ground") as TileMapLayer
 		water   = world.get_node_or_null("Water") as TileMapLayer
 		structs = world.get_node_or_null("Structures") as TileMapLayer
-	var half: int = GRID / 2
 	for gy in range(GRID):
-		for gx in range(GRID):
-			# Zoomed in → fewer world tiles across the same grid (repeat cells).
-			var cell: Vector2i = _view_center + Vector2i(
-				roundi((gx - half) / _zoom), roundi((gy - half) / _zoom))
-			var c: Color = C_VOID
-			if structs != null and structs.get_cell_source_id(cell) != -1:
-				c = _tile_color(structs, cell)
-			elif water != null and water.get_cell_source_id(cell) != -1:
-				c = _tile_color(water, cell)
-			else:
-				c = _tile_color(ground, cell)
-			if not Global.explored_tiles.has(cell):
-				c = c.lerp(C_FOG, 0.62)   # dim unexplored, still readable
-			_terrain.set_pixel(gx, gy, c)
+		# Zoomed in -> fewer world tiles across the same grid (repeat cells).
+		_sample_world_row(gy, _view_center, ground, water, structs)
 	_tex.update(_terrain)
 
 # Dungeon terrain: read the generator grid directly (walls/floor), converted

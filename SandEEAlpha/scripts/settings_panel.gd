@@ -209,6 +209,46 @@ func _build_settings_display() -> void:
 	fs_btn.toggled.connect(func(on: bool) -> void: Global.set_fullscreen(on))
 	fs_row.add_child(fs_btn)
 
+	var limit_row := HBoxContainer.new()
+	_settings_content.add_child(limit_row)
+	var limit_lbl := Label.new()
+	limit_lbl.text = "FPS Limit"
+	limit_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	limit_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	limit_lbl.tooltip_text = "Maximum frames per second. Lower values reduce heat and battery use; Unlimited removes the cap."
+	limit_row.add_child(limit_lbl)
+	var limit_opt := OptionButton.new()
+	limit_opt.custom_minimum_size = Vector2(int(132 * s), 0)
+	limit_opt.add_theme_font_size_override("font_size", int(12 * s))
+	limit_opt.tooltip_text = limit_lbl.tooltip_text
+	for raw_limit in Global.FPS_LIMIT_OPTIONS:
+		var limit_value := int(raw_limit)
+		limit_opt.add_item("Unlimited" if limit_value == 0 else str(limit_value))
+		limit_opt.set_item_id(limit_opt.item_count - 1, limit_value)
+	for i in range(limit_opt.item_count):
+		if limit_opt.get_item_id(i) == Global.fps_limit:
+			limit_opt.select(i)
+			break
+	limit_opt.item_selected.connect(func(index: int) -> void:
+		Global.set_fps_limit(limit_opt.get_item_id(index)))
+	limit_row.add_child(limit_opt)
+
+	# VSync is desktop-only: Android's compositor owns presentation timing.
+	if not Global.is_mobile():
+		var vsync_row := HBoxContainer.new()
+		_settings_content.add_child(vsync_row)
+		var vsync_lbl := Label.new()
+		vsync_lbl.text = "VSync"
+		vsync_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		vsync_lbl.add_theme_font_size_override("font_size", int(13 * s))
+		vsync_lbl.tooltip_text = "Sync presentation to the monitor refresh rate. Turn off for lower input latency; the FPS Limit still applies."
+		vsync_row.add_child(vsync_lbl)
+		var vsync_btn := CheckButton.new()
+		vsync_btn.button_pressed = Global.vsync_enabled
+		vsync_btn.tooltip_text = vsync_lbl.tooltip_text
+		vsync_btn.toggled.connect(func(on: bool) -> void: Global.set_vsync(on))
+		vsync_row.add_child(vsync_btn)
+
 	var fps_row := HBoxContainer.new()
 	_settings_content.add_child(fps_row)
 	var fps_lbl := Label.new()

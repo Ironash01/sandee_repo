@@ -1,62 +1,52 @@
 extends Node2D
-# ── Grass-cut burst ────────────────────────────────────────────────
-# A short-lived burst of small green blades/specks spawned where a grass
-# tuft is cut (Terraria-style). Uses one frame of the grass sheet as the
-# particle texture, tinted green. Added as a sibling of the tuft (under the
-# world) so it outlives the freed tuft, then frees itself.
+# Reusable grass-cut particle emitter. The world pre-creates a small pool of
+# these once, and every cut just moves/re-emits a pooled instance. Previously a
+# fresh GPUParticles2D + ParticleProcessMaterial + Gradient was allocated for
+# each swing, which caused a visible hitch during sword sweeps.
 
-const GRASS_TEX: Texture2D = preload("res://sprites/ground/grass.png")
-const SNOWY_GRASS_TEX: Texture2D = preload("res://sprites/ground/snowy_grass.png")
-const FRAME_SIZE: int   = 96
-const AMOUNT:     int   = 12
-const LIFETIME:   float = 0.55
-
-# Set before add_child() by GrassTuft.cut() — snowy tufts burst white-blue
-# instead of green so the effect matches the grass it came from.
-var snow: bool = false
+var _particles: GPUParticles2D = null
 
 func _ready() -> void:
-	z_index = 40   # above grass/player, like the other burst effects
+	z_index = 40
+	z_as_relative = false
+	_particles = GPUParticles2D.new()
+	_particles.amount = 10
+	_particles.lifetime = 0.45
+	_particles.one_shot = true
+	_particles.explosiveness = 0.95
+	_particles.local_coords = false
+	_particles.emitting = false
+	_particles.texture = Global.get_smooth_light_texture(16)
+	_particles.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_particles.z_index = 40
 
-	var p := GPUParticles2D.new()
-	p.amount        = AMOUNT
-	p.lifetime      = 0.45
-	p.one_shot      = true
-	p.explosiveness = 0.95
-	p.emitting      = true
-	p.local_coords  = false
-	p.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var mat := ParticleProcessMaterial.new()
+	mat.direction = Vector3(0.0, -1.0, 0.0)
+	mat.spread = 180.0
+	mat.gravity = Vector3(0.0, 220.0, 0.0)
+	mat.initial_velocity_min = 28.0
+	mat.initial_velocity_max = 78.0
+	mat.angular_velocity_min = -220.0
+	mat.angular_velocity_max = 220.0
+	mat.scale_min = 0.10
+	mat.scale_max = 0.22
+	mat.color = Color.WHITE
+	mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	mat.emission_sphere_radius = 6.0
 
-	# One frame of the grass sheet as the particle art — the SNOWY sheet for
-	# snowy tufts (tinting the green art still read as green blades).
-	var at := AtlasTexture.new()
-	at.atlas  = SNOWY_GRASS_TEX if snow else GRASS_TEX
-	at.region = Rect2(0, 0, FRAME_SIZE, FRAME_SIZE)
-	p.texture = at
-
-	var m := ParticleProcessMaterial.new()
-	m.direction            = Vector3(0.0, -1.0, 0.0)
-	m.spread               = 180.0
-	m.gravity              = Vector3(0.0, 220.0, 0.0)   # arc back down
-	m.initial_velocity_min = 28.0
-	m.initial_velocity_max = 78.0
-	m.angular_velocity_min = -220.0
-	m.angular_velocity_max = 220.0
-	m.scale_min            = 0.10
-	m.scale_max            = 0.20
-	m.color                = Color(0.90, 0.95, 1.0, 1.0) if snow else Color(0.55, 1.0, 0.45, 1.0)
-	m.emission_shape       = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	m.emission_sphere_radius = 6.0
-
-	# Fade out over the tail of the lifetime.
 	var grad := Gradient.new()
-	grad.colors  = PackedColorArray([Color(1, 1, 1, 1), Color(1, 1, 1, 1), Color(1, 1, 1, 0)])
+	grad.colors = PackedColorArray([Color(1, 1, 1, 1), Color(1, 1, 1, 1), Color(1, 1, 1, 0)])
 	grad.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
 	var ramp := GradientTexture1D.new()
 	ramp.gradient = grad
-	m.color_ramp = ramp
+	mat.color_ramp = ramp
+	_particles.process_material = mat
+	add_child(_particles)
 
-	p.process_material = m
-	add_child(p)
-
-	get_tree().create_timer(LIFETIME).timeout.connect(queue_free)
+func emit_at(at: Vector2, color: Color) -> void:
+	if _particles == null:
+		return
+	global_position = at + Vector2(0.0, -12.0)
+	modulate = color
+	_particles.restart()
+	_particles.emitting = true

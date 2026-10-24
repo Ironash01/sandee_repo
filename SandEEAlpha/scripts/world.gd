@@ -69,8 +69,8 @@ const REJECTION_THRESHOLD: int  = 30
 # WHICH tiles get grass — how a single tuft looks/sizes/anchors/animates
 # lives in scripts/grass.gd (GrassTuft), instantiated via GRASS_SCENE.
 const GRASS_SCENE: PackedScene = preload("res://scenes/objects/Grass.tscn")
-const GRASS_CHUNK_COVERAGE_MIN: float = 0.10
-const GRASS_CHUNK_COVERAGE_MAX: float = 0.15
+const GRASS_CHUNK_COVERAGE_MIN: float = 0.08
+const GRASS_CHUNK_COVERAGE_MAX: float = 0.12
 # Per chunk fill, 70% of the time the target tile count is taken as one
 # compact cluster (nearest tiles to a random seed point) instead of spread
 # uniformly across the whole chunk.
@@ -272,6 +272,12 @@ var _dungeon_grass_clearance: Dictionary = {}   # cell (Vector2i) -> true
 # O(1) dictionary-lookup approach the _placed_blocks map already uses for
 # placed blocks.
 const TREE_INTERACT_RADIUS: float = 300.0
+# Static collision is only needed near the player. Keeping all ~3k tree/block
+# shapes registered made the first physics step after world generation take
+# 15+ seconds; enabling a 1k-pixel neighbourhood keeps movement/collision
+# identical while avoiding that startup spike.
+const TREE_PHYSICS_RADIUS: float = 1024.0
+const BLOCK_PHYSICS_RADIUS: float = 1024.0
 # ── Tree leaf-fade (player hides behind the canopy) ──────────────────
 # When the player's feet are north of a tree's trunk base AND within the
 # canopy's horizontal span, the canopy (see tree_canopy_fade.gdshader)
@@ -395,6 +401,8 @@ const GRASS_BESIDE_SOUTH_PX: float = 10.0
 const BLOCK_COVER_BASE_OFFSET_PX: float = 16.0
 var _grass_sort_touched: Array = []   # tufts whose z was raised last frame
 var _grass_spawn_count:    int          = 0
+var _grass_fx_pool:         Array        = []
+var _grass_fx_index:        int          = 0
 
 # ── Block placement ──────────────────────────────────────────────────
 var ghost:           Node2D   = null
@@ -408,6 +416,19 @@ var _placed_blocks:     Dictionary = {}
 # Dictionary value is a reference count so overlapping tree footprints don't
 # unblock a tile just because ONE of several nearby trees was chopped down.
 var _tree_occupied_tiles: Dictionary = {}
+# Flat water lookup grid (1 byte per tile). Grass/foliage validation queries the
+# water map tens of thousands of times; TileMapLayer.get_cell_source_id() in
+# those inner loops dominated world load. Built once after terrain generation.
+var _water_grid: PackedByteArray = PackedByteArray()
+var _water_grid_ready: bool = false
+# Cells within 2 tiles of water. Grass validation runs for every map tile, so
+# this removes its 25-neighbour water scan from the hot generation loop.
+var _water_margin2: PackedByteArray = PackedByteArray()
+var _water_margin2_ready: bool = false
+# 0=plain, 1=desert, 2=snowy, 255=water/none. Built during terrain generation,
+# so grass/foliage validation does not hit TileMapLayer for every tile.
+var _biome_grid: PackedByteArray = PackedByteArray()
+var _biome_grid_ready: bool = false
 const TREE_PLACE_BLOCK_RADIUS: int = 1  # 1 => 3x3 footprint around the tree's cell
 
 # ── Chunk border debug overlay (Ctrl+Shift+C) ────────────────────────
@@ -606,7 +627,7 @@ func cut_grass_at_world(world_pos: Vector2) -> bool:
 	if tuft == null:
 		return false
 	var tile: Vector2i = tuft.call("tile_index") as Vector2i
-	var at: Vector2 = _cut_grass_tile(tile)
+	var at: Vector2 = _cut_grass_tile(tile, true)
 	if at == Vector2.INF:
 		return false
 	if randf() < GRASS_SEED_DROP_CHANCE:
@@ -636,10 +657,14 @@ func _cut_grass_row(p: Node2D) -> void:
 	# A 3x3 patch around the aimed tile (was a single tile). The patch makes both
 	# mouse swings and tap-to-cut forgiving without changing the sword-only rule.
 	var first_cut: Vector2 = Vector2.INF
+	var first_color := Color(0.55, 1.0, 0.45, 1.0)
 	for tile in grass_cut_tiles(center):
-		var at: Vector2 = _cut_grass_tile(tile as Vector2i)
+		var at: Vector2 = _cut_grass_tile(tile as Vector2i, false, true)
 		if at != Vector2.INF and first_cut == Vector2.INF:
 			first_cut = at
+			first_color = _last_cut_grass_color
+	if first_cut != Vector2.INF:
+		_spawn_grass_cut_fx(first_cut, first_color)
 	# Farming's seed source: one roll per swing (not per tuft, so a wide cut
 	# can't flood the world with seeds).
 	if first_cut != Vector2.INF and randf() < GRASS_SEED_DROP_CHANCE:
@@ -647,9 +672,11 @@ func _cut_grass_row(p: Node2D) -> void:
 
 # Cuts the tuft on one tile (if any). Returns its world position, or
 # Vector2.INF when the tile had no live tuft.
-func _cut_grass_tile(tile: Vector2i) -> Vector2:
+var _last_cut_grass_color: Color = Color(0.55, 1.0, 0.45, 1.0)
+
+func _cut_grass_tile(tile: Vector2i, spawn_fx: bool = false, capture_color: bool = false) -> Vector2:
 	# NOTE: `x as GrassTuft` itself CRASHES on a freed object ("Trying to cast
-	# a freed object") before any is_instance_valid() can run — so validate the
+	# a freed object") before any is_instance_valid() can run - so validate the
 	# raw Variant FIRST, and erase the stale key so it can't be hit again.
 	var raw: Variant = _grass_occupied_tiles.get(tile)
 	if raw == null or not is_instance_valid(raw):
@@ -659,9 +686,34 @@ func _cut_grass_tile(tile: Vector2i) -> Vector2:
 	if tuft == null or not is_instance_valid(tuft):
 		return Vector2.INF
 	var at: Vector2 = tuft.global_position
+	var cut_color := Color(0.55, 1.0, 0.45, 1.0)
+	var raw_color: Variant = tuft.get("cut_color")
+	if raw_color is Color:
+		cut_color = raw_color
+	if capture_color:
+		_last_cut_grass_color = cut_color
 	tuft.cut()
-	_spawn_sword_effect(at, "puff")
+	if spawn_fx:
+		_spawn_grass_cut_fx(at, cut_color)
 	return at
+
+func _ensure_grass_fx_pool() -> void:
+	if not _grass_fx_pool.is_empty():
+		return
+	for i in range(4):
+		var fx: Node2D = GRASS_CUT_BURST_SCRIPT.new() as Node2D
+		if fx == null:
+			break
+		add_child(fx)
+		_grass_fx_pool.append(fx)
+
+func _spawn_grass_cut_fx(at: Vector2, color: Color) -> void:
+	_ensure_grass_fx_pool()
+	if _grass_fx_pool.is_empty():
+		return
+	var fx: Node = _grass_fx_pool[_grass_fx_index]
+	_grass_fx_index = (_grass_fx_index + 1) % _grass_fx_pool.size()
+	fx.call("emit_at", at, color)
 
 # ── Grass: bounded spatial query (sword swing) ─────────────────────────
 # Returns the grass tufts whose ORIGIN lies inside `rect` (WORLD space).
@@ -719,10 +771,9 @@ func grass_tufts_in_world_rect(rect: Rect2) -> Array:
 # diagonals) from a single small lookup + two integer ops — no per-direction
 # tile-offset table to keep in sync.
 #
-# Every swing swallows the click and shows the sword-swing arc sheet
-# (_spawn_sword_effect mode "swing"); every tuft broken sprays the mellow
-# puff sheet (mode "puff") — so a whiff still reads as a deliberate attack
-# and each cut grass visibly pops.
+# The player's own swing effect shows the sword arc. A swing that cuts grass
+# spawns ONE cheap region-sprite pop at the first cut tile instead of a
+# separate effect per tuft, which used to hitch during 3x3-patch cuts.
 const GRASS_CUT_DIR_VECTORS: Dictionary = {
 	"south":      Vector2i(0, 1),
 	"north":      Vector2i(0, -1),
@@ -800,6 +851,7 @@ func place_water_at(cell: Vector2i) -> bool:
 		return false
 	# Same tile the generator paints water with.
 	water_layer.set_cell(cell, 0, Vector2i(0, 0))
+	_note_water_cell_added(cell)
 	return true
 
 # Seeds click: plant wheat on the tilled soil under the cursor.
@@ -849,17 +901,6 @@ func _cut_crop_row(p: Node2D) -> void:
 	if bool(crop.call("harvest")):
 		_crops.erase(cell)
 
-# Spawns a transient sword-swing / mellow-puff effect at a world position,
-# oriented to the player's facing direction. mode is "swing" (arc + puff) or
-# "puff" (grass break, puff only).
-func _spawn_sword_effect(world_pos: Vector2, mode: String) -> void:
-	var fx: Node2D = SWORD_SWING_SCRIPT.new() as Node2D
-	if fx == null:
-		return
-	fx.set("_mode", mode)
-	# Child of this world, so place in world-local space from the world pos.
-	fx.position = to_local(world_pos)
-	add_child(fx)
 
 # ── Walkable grass y-sort (dynamic, per-frame, O(25) dict lookups) ─────
 # Grass has no collision (Grass.tscn) — the player wades THROUGH it, and
@@ -949,6 +990,8 @@ func _update_grass_sort() -> void:
 # overlap between the two sprites, so the static bucket is correct and
 # tie-free in every other position.
 var _block_sort_touched: Array = []   # blocks whose z was raised last frame
+var _block_collision_active: Dictionary = {}
+var _block_collision_initialized: bool = false
 
 func _update_block_sort() -> void:
 	var p: Node2D = _get_player()
@@ -1080,6 +1123,7 @@ func _begin_generation() -> void:
 	_build_water_tileset()
 	_build_ocean_base()
 	_generate_terrain()
+	_invalidate_water_grid()
 	# Mirror every water cell onto the static seabed layer (one pass).
 	_sync_ocean_base()
 	print("[TERRAIN] done in %dms — %d tiles processed" % [Time.get_ticks_msec() - t0, width * height])
@@ -1145,18 +1189,14 @@ func _deferred_foliage() -> void:
 	# Everything (terrain, trees, structures, mobs, grass) now exists — the
 	# loading screen can come down.
 	print("[WORLD] fully loaded in %dms since scene start" % [Time.get_ticks_msec() - _gen_start_ms])
-	# Pre-warm the transient attack effects BEFORE the loading screen lifts.
-	# The first instantiation of a GPUParticles2D + ParticleProcessMaterial in a
-	# process is expensive (measured 35-61 ms on the first sword swing / first
-	# grass cut in a real world), which the player paid as a visible hitch on
-	# their first attack. Their one-off setup cost now lands here instead.
+	# Pre-warm the transient attack effects BEFORE the loading screen lifts so
+	# the first swing/cut does not pay first-instantiation cost in gameplay.
 	_prewarm_attack_effects()
 	generation_complete.emit()
 
-# Builds (and immediately frees) one sword-swing effect and one grass-cut burst
+# Builds (and immediately frees) one sword-swing effect and one grass-cut pop
 # so the first real swing/cut doesn't pay first-instantiation cost. Spawned far
-# off-screen; queue_free runs at the end of the frame, after _ready has built
-# every sub-resource (arc/puff frames, summon particles, burst particles).
+# off-screen; queue_free runs at the end of the frame.
 func _prewarm_attack_effects() -> void:
 	var fx: Node2D = SWORD_SWING_SCRIPT.new() as Node2D
 	if fx != null:
@@ -1167,11 +1207,7 @@ func _prewarm_attack_effects() -> void:
 		fx.position = Vector2(-100000, -100000)
 		add_child(fx)
 		fx.queue_free()
-	var burst: Node2D = GRASS_CUT_BURST_SCRIPT.new() as Node2D
-	if burst != null:
-		burst.position = Vector2(-100000, -100000)
-		add_child(burst)
-		burst.queue_free()
+	_ensure_grass_fx_pool()
 
 func _start_interaction_updater() -> void:
 	# Immediate pass so trees near spawn are active the moment the player
@@ -1190,6 +1226,10 @@ func _start_interaction_updater() -> void:
 # old code allocated a ~1200-element array ~70 times a second.
 var _tree_cache:    Array = []
 var _tree_cache_ms: int   = -100000
+const TREE_SPATIAL_BUCKET: float = 512.0
+var _tree_spatial: Dictionary = {}
+var _tree_collision_active: Dictionary = {}
+var _tree_interactions_initialized: bool = false
 
 func _get_trees() -> Array:
 	var now: int = Time.get_ticks_msec()
@@ -1198,22 +1238,176 @@ func _get_trees() -> Array:
 		_tree_cache_ms = now
 	return _tree_cache
 
+func _build_tree_spatial() -> void:
+	var buckets: Dictionary = {}
+	for node in _get_trees():
+		if not is_instance_valid(node):
+			continue
+		var tree := node as Node2D
+		if tree == null or not tree.is_inside_tree():
+			continue
+		var key := Vector2i(
+			floori(tree.global_position.x / TREE_SPATIAL_BUCKET),
+			floori(tree.global_position.y / TREE_SPATIAL_BUCKET))
+		if buckets.has(key):
+			(buckets[key] as Array).append(tree)
+		else:
+			buckets[key] = [tree]
+	_tree_spatial = buckets
+
+# Nearby trees only. Tree iteration used to run over every tree in the world
+# (1,300+) at 10 Hz and every render frame. A 512px bucket grid keeps both the
+# collision-LOD update and canopy-fade driver proportional to what is nearby.
+func _trees_near(pos: Vector2, radius: float) -> Array:
+	if _tree_spatial.is_empty():
+		_build_tree_spatial()
+	var result: Array = []
+	var center := Vector2i(
+		floori(pos.x / TREE_SPATIAL_BUCKET),
+		floori(pos.y / TREE_SPATIAL_BUCKET))
+	var reach := int(ceil(radius / TREE_SPATIAL_BUCKET))
+	for dy in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var bucket: Variant = _tree_spatial.get(center + Vector2i(dx, dy))
+			if not (bucket is Array):
+				continue
+			for node in bucket:
+				if not is_instance_valid(node):
+					continue
+				var tree := node as Node2D
+				if tree == null or tree.is_queued_for_deletion() \
+						or not tree.is_inside_tree():
+					continue
+				if tree.global_position.distance_to(pos) <= radius:
+					result.append(tree)
+	return result
+
+func _set_solid_collision(node: Node, active: bool) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	var col := node.get_node_or_null("StaticBody2D/CollisionShape2D") as CollisionShape2D
+	if col == null:
+		return
+	var disabled := not active
+	if col.disabled != disabled:
+		col.set_deferred("disabled", disabled)
+
+func _block_needs_solid_collision(node: Node) -> bool:
+	var data: Variant = node.get("item_data")
+	if data is ItemData:
+		var item := data as ItemData
+		if item.is_floor or item.is_torch:
+			return false
+	return node.get_node_or_null("StaticBody2D/CollisionShape2D") != null
+
+func _update_block_collision(node: Node) -> void:
+	var p := _get_player()
+	if p == null or not is_instance_valid(node) or not (node is Node2D):
+		return
+	if not _block_needs_solid_collision(node):
+		return
+	var active := (node as Node2D).global_position.distance_to(p.global_position) <= BLOCK_PHYSICS_RADIUS
+	_set_solid_collision(node, active)
+	if active:
+		_block_collision_active[node] = true
+	else:
+		_block_collision_active.erase(node)
+
+func _update_block_collisions(player_pos: Vector2) -> void:
+	# Blocks are keyed by tile. Scan only tiles in the collision-LOD radius
+	# instead of every placed block/natural stone patch in the world (which was
+	# ~5-6 ms every 100 ms), and only toggle colliders that change state.
+	var player_cell: Vector2i = editable_layer.local_to_map(
+		editable_layer.to_local(player_pos))
+	var reach: int = int(ceil(BLOCK_PHYSICS_RADIUS / float(TILE_SIZE))) + 1
+	var radius_sq: float = BLOCK_PHYSICS_RADIUS * BLOCK_PHYSICS_RADIUS
+	var near: Dictionary = {}
+	for dx in range(-reach, reach + 1):
+		for dy in range(-reach, reach + 1):
+			var entry: Variant = _placed_blocks.get(player_cell + Vector2i(dx, dy))
+			if not (entry is Dictionary):
+				continue
+			var node_ref: Variant = (entry as Dictionary).get("node")
+			if node_ref == null or not is_instance_valid(node_ref) \
+					or not (node_ref is Node2D):
+				continue
+			var node := node_ref as Node2D
+			if node.global_position.distance_squared_to(player_pos) > radius_sq:
+				continue
+			near[node] = true
+			if _block_collision_active.has(node):
+				continue
+			if not _block_needs_solid_collision(node):
+				continue
+			_set_solid_collision(node, true)
+			_block_collision_active[node] = true
+	# Disable colliders that were active last update but are no longer near.
+	for node in _block_collision_active.keys():
+		if not is_instance_valid(node) or not near.has(node):
+			if is_instance_valid(node):
+				_set_solid_collision(node, false)
+			_block_collision_active.erase(node)
+	# On the first pass, make sure distant blocks that have never been tracked
+	# are disabled too (saved worlds may have restored their colliders active).
+	if not _block_collision_initialized:
+		_block_collision_initialized = true
+		for entry in _placed_blocks.values():
+			if not (entry is Dictionary):
+				continue
+			var node_ref: Variant = (entry as Dictionary).get("node")
+			if node_ref == null or not is_instance_valid(node_ref) \
+					or not (node_ref is Node2D):
+				continue
+			var node := node_ref as Node2D
+			if not near.has(node):
+				_set_solid_collision(node, false)
+
 func _update_tree_interactions() -> void:
 	var p := _get_player()
 	if p == null:
 		return
+	# First pass after world generation disables every tree's interaction and
+	# collider; subsequent passes only touch trees near the player. Without the
+	# first pass, distant scene colliders would stay enabled forever now that
+	# this no longer scans the whole tree group.
+	if not _tree_interactions_initialized:
+		_tree_interactions_initialized = true
+		for tree in _get_trees():
+			if not is_instance_valid(tree):
+				continue
+			var init_node := tree as Node2D
+			var init_interact := init_node.get_node_or_null("InteractArea") as Area2D
+			if init_interact != null:
+				init_interact.monitoring = false
+				init_interact.monitorable = false
+			_set_solid_collision(init_node, false)
+		_tree_collision_active.clear()
+
 	var player_pos := p.global_position
-	for tree in _get_trees():
-		if not is_instance_valid(tree):
-			continue
+	var near_lookup: Dictionary = {}
+	for tree in _trees_near(player_pos, TREE_PHYSICS_RADIUS):
 		var t_node := tree as Node2D
+		near_lookup[t_node] = true
 		var interact := t_node.get_node_or_null("InteractArea") as Area2D
 		if interact == null:
 			continue
-		var should_be_active := t_node.global_position.distance_to(player_pos) <= TREE_INTERACT_RADIUS
+		var dist := t_node.global_position.distance_to(player_pos)
+		var should_be_active := dist <= TREE_INTERACT_RADIUS
 		if interact.monitoring != should_be_active:
 			interact.monitoring  = should_be_active
 			interact.monitorable = should_be_active
+		# Physics collision is kept active in a wider bubble so the player
+		# cannot reach a tree before its collider has been enabled.
+		_set_solid_collision(t_node, true)
+		_tree_collision_active[t_node] = true
+	# Disable trees that were enabled during the previous pass but are now out
+	# of the collision bubble.
+	for node in _tree_collision_active.keys():
+		if not is_instance_valid(node) or not near_lookup.has(node):
+			if is_instance_valid(node):
+				_set_solid_collision(node, false)
+			_tree_collision_active.erase(node)
+	_update_block_collisions(player_pos)
 
 # ── Tree leaf-fade driver (per-frame, ~nearby trees only) ────────────
 # Called every frame from _process. A tree's canopy hides the player when
@@ -1241,9 +1435,7 @@ func _update_tree_fade(delta: float) -> void:
 	# keep fading back down for this extra stretch south of it so the tree
 	# has time to return to opaque before it's skipped.
 	const RESET_WINDOW: float = 32.0
-	for tree in _get_trees():
-		if not is_instance_valid(tree):
-			continue
+	for tree in _trees_near(p.global_position, 160.0):
 		var t_node := tree as Node2D
 		var base_y: float = t_node.global_position.y
 		var base_x: float = t_node.global_position.x
@@ -1897,6 +2089,11 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 	var obj: Node = obj_scene.instantiate()
 	if obj == null:
 		return null
+	var solid_block: bool = item_data != null and not item_data.is_floor and not item_data.is_torch
+	if solid_block:
+		var block_col := obj.get_node_or_null("StaticBody2D/CollisionShape2D") as CollisionShape2D
+		if block_col != null:
+			block_col.disabled = true
 	# ChestBlock caches its @onready sprite, so its item texture must be applied
 	# after add_child(). Other placeables keep setup-before-add.
 	var chest_like := item_data.place_scene_path.ends_with("ChestBlock.tscn")
@@ -1941,6 +2138,8 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 	# Floors render UNDER the world (fixed low z); everything else y-sorts.
 	obj.z_index  = FLOOR_Z if (item_data != null and item_data.is_floor) else int(world_pos.y / TILE_SIZE)
 	_fix_sprite_offset(obj)
+	if solid_block:
+		_update_block_collision(obj)
 	_refresh_neighbor_u_collision(cell)
 	housing_rebuild_around(cell)
 	# Debris burst coloured like the block (also the visual feedback the robot's
@@ -2504,6 +2703,12 @@ func _apply_coarse_sand_source() -> void:
 
 # Returns 0=Plain, 1=Desert, 2=Snowy, -1=Water/none
 func _cell_biome_type(tile_coord: Vector2i) -> int:
+	if _biome_grid_ready:
+		var idx: int = _water_grid_index(tile_coord)
+		if idx < 0:
+			return -1
+		var code: int = int(_biome_grid[idx])
+		return -1 if code == 255 else code
 	var src: int = ground_layer.get_cell_source_id(tile_coord)
 	if src == -1:
 		return -1
@@ -2615,6 +2820,8 @@ func _generate_terrain() -> void:
 		desert_cols.append(2 if _exp_ground_cols >= 3 else 1 if _exp_ground_cols >= 2 else 0)
 
 	var use_exp: bool = use_experimental_ground and _exp_ground_src != -1
+	_biome_grid.resize(width * height)
+	_biome_grid.fill(255)
 	for x in width:
 		for y in height:
 			var cell := Vector2i(x, y)
@@ -2658,9 +2865,13 @@ func _generate_terrain() -> void:
 						ground_layer.set_cell(c, 0, Vector2i(1, 1))
 					_:
 						water_layer.set_cell(c, 0, Vector2i(0, 0))
+			var grid_idx: int = _water_grid_index(c)
+			if grid_idx >= 0:
+				_biome_grid[grid_idx] = 255 if t == Terrain.Water else int(t) - 1
 
 	# Desert surface variant: paint coarse-sand clumps over the finished terrain.
 	_paint_coarse_sand_patches(cell_offset)
+	_biome_grid_ready = true
 
 # ── Coarse sand patches (desert surface variant) ────────────────────
 # Irregular clumps of darker sand inside deserts. Grown per chunk from a
@@ -2820,12 +3031,12 @@ func _is_valid_grass_tile(tile: Vector2i) -> bool:
 		return false
 	if _cave_entrance_cells.has(tile) or _dungeon_entrance_cells.has(tile):
 		return false
-	if water_layer.get_cell_source_id(tile) != -1:
+	if _has_water_at(tile):
 		return false
 	# No grass within 2 tiles of water. A tuft's sprite is ~2.7 tiles wide and
 	# overhangs its tile, so one sitting right on a shoreline visually reads as
 	# growing IN the water — keep a 2-tile dry margin.
-	if _has_water_nearby(tile, 2):
+	if _has_water_within_2(tile):
 		return false
 	return true
 
@@ -3414,13 +3625,92 @@ func _place_foliage() -> void:
 		_spawn_scattered_group(tile_coord, tree_type_val, rng.randi_range(0, 3), occupied_tiles)
 	print("[SCATTER] spawned %d trees in %dms" % [_tree_spawn_count - scatter_tree_start, Time.get_ticks_msec() - t3])
 
+func _water_grid_index(tile: Vector2i) -> int:
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	var x: int = tile.x + half_w
+	var y: int = tile.y + half_h
+	if x < 0 or y < 0 or x >= width or y >= height:
+		return -1
+	return y * width + x
+
+func _invalidate_water_grid() -> void:
+	_water_grid_ready = false
+	_water_grid.clear()
+	_water_margin2_ready = false
+	_water_margin2.clear()
+
+func _note_water_cell_added(cell: Vector2i) -> void:
+	# Player-poured water should not force a full water-grid rebuild (and a
+	# short freeze) later. Update the cached cells in place instead.
+	if _water_grid_ready:
+		var idx: int = _water_grid_index(cell)
+		if idx >= 0:
+			_water_grid[idx] = 1
+	if _water_margin2_ready:
+		for dx in range(-2, 3):
+			for dy in range(-2, 3):
+				if dx * dx + dy * dy > 4:
+					continue
+				var idx2: int = _water_grid_index(cell + Vector2i(dx, dy))
+				if idx2 >= 0:
+					_water_margin2[idx2] = 1
+
+func _ensure_water_grid() -> void:
+	if _water_grid_ready:
+		return
+	_water_grid_ready = true
+	_water_grid.resize(width * height)
+	if water_layer == null:
+		return
+	for cell in water_layer.get_used_cells():
+		var idx: int = _water_grid_index(cell)
+		if idx >= 0:
+			_water_grid[idx] = 1
+
+func _has_water_at(tile: Vector2i) -> bool:
+	_ensure_water_grid()
+	var idx: int = _water_grid_index(tile)
+	return idx >= 0 and _water_grid[idx] == 1
+
+func _ensure_water_margin2() -> void:
+	if _water_margin2_ready:
+		return
+	_water_margin2_ready = true
+	_water_margin2.resize(width * height)
+	if water_layer == null:
+		return
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	for cell in water_layer.get_used_cells():
+		for dx in range(-2, 3):
+			for dy in range(-2, 3):
+				if dx * dx + dy * dy > 4:
+					continue
+				var x: int = cell.x + dx + half_w
+				var y: int = cell.y + dy + half_h
+				if x >= 0 and y >= 0 and x < width and y < height:
+					_water_margin2[y * width + x] = 1
+
+func _has_water_within_2(tile: Vector2i) -> bool:
+	_ensure_water_margin2()
+	var idx: int = _water_grid_index(tile)
+	return idx >= 0 and _water_margin2[idx] == 1
+
 func _has_water_nearby(tile: Vector2i, radius: int) -> bool:
+	_ensure_water_grid()
 	var r_sq: int = radius * radius
+	var half_w: int = width / 2
+	var half_h: int = height / 2
 	for dx in range(-radius, radius + 1):
 		for dy in range(-radius, radius + 1):
 			if dx * dx + dy * dy > r_sq:
 				continue
-			if water_layer.get_cell_source_id(tile + Vector2i(dx, dy)) != -1:
+			var x: int = tile.x + dx + half_w
+			var y: int = tile.y + dy + half_h
+			if x < 0 or y < 0 or x >= width or y >= height:
+				continue
+			if _water_grid[y * width + x] == 1:
 				return true
 	return false
 
@@ -3502,6 +3792,9 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	var tree: Node2D = TREE_SCENE.instantiate() as Node2D
 	if tree == null:
 		return
+	var tree_col := tree.get_node_or_null("StaticBody2D/CollisionShape2D") as CollisionShape2D
+	if tree_col != null:
+		tree_col.disabled = true
 	_tree_spawn_count += 1
 
 	# Birch grows AMONG the plains trees rather than replacing them: a

@@ -76,9 +76,17 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * stable per-world save UID/revision, legacy-save migration, and cloud-sync
   conflict classification (different world, newer cloud, equal-revision
   divergence, legacy metadata, newer local upload)
+* WASD/tap-to-control movement parity: all eight directions, normalized
+  diagonal speed, sprint/stamina state, snowstorm slowdown, movement
+  animations, wall collision, and cancellation on UI/mode/focus changes
+* PNC tap latency: lazy (line-of-sight first) pathfinding and spatial tree
+  canopy lookup without repeated whole-world scans
 * Android release configuration: package id/version/INTERNET permission, GLES3
   compatibility renderer, responsive canvas scaling and first-touch UI
   emulation
+* global display settings: FPS limit options and Unlimited mapping on both
+  platforms, nearest-option sanitization, Engine.max_fps application, and a
+  desktop-only VSync control
 * valid/invalid Lua and Python execution, Python runtime errors
 * crash-log capture and backtraces
 

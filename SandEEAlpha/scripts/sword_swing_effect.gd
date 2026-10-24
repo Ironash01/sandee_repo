@@ -16,7 +16,7 @@ const SWING_FPS:         float     = 12.0
 const MELLOW_FRAME:      int       = 16
 const MELLOW_COUNT:      int       = 5
 const MELLOW_FPS:        float     = 20.0
-const MELLOW_PUFF_COUNT: int       = 3
+const MELLOW_PUFF_COUNT: int       = 1
 
 const SWING_DURATION:    float     = 0.24
 # The item icon is drawn at this scale while it sweeps. Raised from 0.60 so
@@ -49,15 +49,9 @@ const GRASS_CUT_PAD:     float     = 26.0
 const SWING_START_DEG:   float     = -110.0
 const SWING_END_DEG:     float     = 70.0
 
-# ── Magical summon motes ──────────────────────────────────────────
-# The item is (canonically) SUMMONED, not drawn from a sheath, so a swirl of
-# arcane motes trails out of it through the whole sweep. GPUParticles2D
-# (`_build_summon_particles`) is used where available; a tweened fallback of a
-# few mellow sprites runs if the backend can't spawn GPU particles.
-const SUMMON_GLOW:       Texture2D = preload("res://sprites/particles_effects/mellow_effect.png")
-const SUMMON_GLOW_SIZE:  int       = 16
-const SUMMON_FRAMES:     int       = 5
-const SUMMON_BLEND_COLOR: Color    = Color(1.00, 0.82, 1.00, 1.0)   # arcane violet
+# The item is (canonically) SUMMONED, not drawn from a sheath, so a cheap
+# violet bloom marks the conjured item at the start of the sweep. A per-swing
+# GPUParticles2D system was removed because creating it hitched every attack.
 
 # Arc size relative to the authored sprite (raised again so the swing reads
 # clearly at gameplay scale).
@@ -120,6 +114,12 @@ func _ready() -> void:
 		var pivot := _build_item_swing()
 		add_child(pivot)
 		lifespan = maxf(lifespan, SWING_DURATION)
+		# The player owns one reusable particle burst; reuse it here instead of
+		# allocating a new GPUParticles2D for every swing.
+		var owner := Global.player_node
+		if owner != null and owner.has_method("emit_summon_fx"):
+			var tip_pos: Vector2 = pivot.to_global(Vector2(ITEM_TIP + ITEM_TIP_GAP, 0.0))
+			owner.call("emit_summon_fx", tip_pos)
 
 		# The sword-swing flourish (crescent arc + burst at the blade tip) is
 		# SWORD-ONLY. Mining/chopping still sweeps the held tool sprite, but
@@ -166,61 +166,57 @@ func _spawn_mellow_burst(parent: Node2D, at_pos: Vector2, count: int = MELLOW_PU
 # throughout the ENTIRE animation — mobs caught mid-sweep are hit immediately
 # rather than waiting for a single mid-swing timer.
 var _hitbox_active: bool = false
-var _hitbox_area:  Area2D = null
-var _hit_mobs:     Array  = []
-var _parried_areas: Array = []
-var _cut_grass:    Array  = []
+var _pivot:          Node2D = null
+var _hitbox_shape:   RectangleShape2D = null
+var _hitbox_query:   PhysicsShapeQueryParameters2D = null
+var _hit_mobs:       Array = []
+var _parried_areas:  Array = []
+var _cut_grass:      Array = []
 
 func _spawn_hitbox(pivot: Node2D) -> void:
+	# Query the physics space directly instead of adding a fresh Area2D +
+	# CollisionShape2D + RectangleShape2D per swing. The old per-swing Area2D
+	# registration caused a visible frame spike on every attack; a cached shape
+	# query keeps the same blade volume with no physics-node churn.
+	_pivot = pivot
 	_hit_mobs.clear()
 	_parried_areas.clear()
 	_cut_grass.clear()
-	var area := Area2D.new()
-	area.collision_layer = 0
-	area.collision_mask  = 2   # layer 2 = mobs (see Wolf.tscn / Pixie.tscn)
-	area.monitoring      = true
-	var shape := CollisionShape2D.new()
-	var rect := RectangleShape2D.new()
-	# Cover the blade reach: a box hugging the drawn blade (base->tip), thin
-	# enough to match the sword but wide enough to catch a mob at the point.
-	rect.size = Vector2(BLADE_LEN, BLADE_W)
-	shape.shape = rect
-	shape.position = Vector2(BLADE_BASE + BLADE_LEN * 0.5, 0.0)
-	area.add_child(shape)
-	pivot.add_child(area)
-	_hitbox_area = area
-
-	# Signal-based hits for mobs that enter the area for the first time.
-	area.body_entered.connect(func(body: Node) -> void:
-		if body != null and body.has_method("take_hit") and not _hit_mobs.has(body):
-			_hit_mobs.append(body)
-			body.call("take_hit", _damage, global_position)
-	)
-
-	# Parryable areas (e.g. the dungeon flare projectile) that enter the blade.
-	area.area_entered.connect(func(other: Area2D) -> void:
-		_try_parry(other)
-	)
-
-	# Also check every frame so mobs already overlapping (or caught mid-sweep)
-	# are hit immediately — the hitbox is active throughout the ENTIRE animation.
+	if _hitbox_shape == null:
+		_hitbox_shape = RectangleShape2D.new()
+		_hitbox_shape.size = Vector2(BLADE_LEN, BLADE_W)
+		_hitbox_query = PhysicsShapeQueryParameters2D.new()
+		_hitbox_query.shape = _hitbox_shape
+		_hitbox_query.collision_mask = 2   # layer 2 = mobs
+		_hitbox_query.collide_with_bodies = true
+		_hitbox_query.collide_with_areas = true
 	_hitbox_active = true
+
+func _poll_hitbox() -> void:
+	if not _hitbox_active or _pivot == null or not is_instance_valid(_pivot):
+		return
+	var space := get_world_2d().direct_space_state
+	if space == null or _hitbox_query == null:
+		return
+	_hitbox_query.transform = _pivot.global_transform \
+		* Transform2D(0.0, Vector2(BLADE_BASE + BLADE_LEN * 0.5, 0.0))
+	for hit in space.intersect_shape(_hitbox_query, 32):
+		var collider: Variant = hit.get("collider")
+		if collider is Node and (collider as Node).has_method("take_hit"):
+			if not _hit_mobs.has(collider):
+				_hit_mobs.append(collider)
+				(collider as Node).call("take_hit", _damage, global_position)
+		elif collider is Area2D:
+			_try_parry(collider as Area2D)
 
 # Runs every frame for the WHOLE swing: mobs caught anywhere along the sweep
 # are hit immediately, parryable projectiles are deflected, and any grass tuft
 # the blade passes over is cut.
 func _process(_delta: float) -> void:
-	# The player can walk a sort row during the brief swing — keep the effect
+	# The player can walk a sort row during the brief swing - keep the effect
 	# on the row it should be occluded at for the whole animation.
 	_update_sort_row()
-	if not _hitbox_active or _hitbox_area == null or not is_instance_valid(_hitbox_area):
-		return
-	for body in _hitbox_area.get_overlapping_bodies():
-		if body.has_method("take_hit") and not _hit_mobs.has(body):
-			_hit_mobs.append(body)
-			body.call("take_hit", _damage, global_position)
-	for other in _hitbox_area.get_overlapping_areas():
-		_try_parry(other)
+	_poll_hitbox()
 	_cut_overlapping_grass()
 
 # Same sort row as whatever this effect rides on:
@@ -261,10 +257,10 @@ func _cut_overlapping_grass() -> void:
 	# Grass is sword-only: a normal held item plays the swing but never cuts.
 	if not _is_sword:
 		return
-	if _hitbox_area == null or not is_instance_valid(_hitbox_area):
+	if _pivot == null or not is_instance_valid(_pivot):
 		return
 	var world: Node = Global.world_node
-	var xf: Transform2D = _hitbox_area.global_transform
+	var xf: Transform2D = _pivot.global_transform
 	var inv: Transform2D = xf.affine_inverse()
 	# The padded blade box in pivot-local space, then its world-space AABB
 	# (four transformed corners, so a rotated/diagonal sweep is covered too).
@@ -333,7 +329,7 @@ func _build_item_swing() -> Node2D:
 	item.position = Vector2(ITEM_GAP + ITEM_HALF, 0.0)
 	pivot.add_child(item)
 
-	# Magical summon motes around the item, following it as the blade sweeps.
+	# Cheap violet bloom at the item; no per-swing GPU particle system.
 	_spawn_summon_magic(item)
 
 	var tw := create_tween()
@@ -403,16 +399,16 @@ func _arm_origin() -> Vector2:
 		return ARM_ORIGINS["south"]
 	return ARM_ORIGINS["north"]
 
-# ── Magical summon magic ──────────────────────────────────────────
-# A violet swirl of motes that streams out of the held item for the whole
-# sweep, so the item reads as being conjured rather than carried.
+# ── Magical summon flash ──────────────────────────────────────────
+# A cheap violet bloom at the held item, so it reads as being conjured rather
+# than carried without allocating a particle system for every swing.
 func _spawn_summon_magic(item: Sprite2D) -> void:
 	if item == null:
 		return
+	# Keep the cheap bloom flash. The 34-particle GPU system used to be
+	# recreated for every swing, causing a large per-attack hitch; the item and
+	# arc already carry the motion.
 	_spawn_summon_flash(item)
-	if _build_summon_particles(item):
-		return
-	_spawn_summon_fallback(item)
 
 # A bright violet flash that blooms out of the item at the start of the swing,
 # so the magic reads at a glance — the motes alone were too subtle.
@@ -430,59 +426,3 @@ func _spawn_summon_flash(item: Sprite2D) -> void:
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_property(flash, "modulate:a", 0.0, 0.24)
 	tw.chain().tween_callback(flash.queue_free)
-
-func _build_summon_particles(item: Sprite2D) -> bool:
-	if not ClassDB.class_exists("GPUParticles2D"):
-		return false
-	var p := GPUParticles2D.new()
-	p.name = "SummonMagic"
-	p.texture = Global.get_smooth_light_texture(32)
-	p.amount = 34
-	p.lifetime = 0.7
-	p.one_shot = false
-	p.local_coords = true
-	p.z_index = 1
-	p.modulate = SUMMON_BLEND_COLOR
-
-	var m := ParticleProcessMaterial.new()
-	m.direction = Vector3(0.0, -1.0, 0.0)
-	m.spread = 360.0
-	m.gravity = Vector3(0.0, -50.0, 0.0)
-	m.initial_velocity_min = 24.0
-	m.initial_velocity_max = 70.0
-	m.scale_min = 0.28
-	m.scale_max = 0.62
-	m.color = SUMMON_BLEND_COLOR
-	m.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	m.emission_sphere_radius = 16.0
-
-	var grad := Gradient.new()
-	grad.colors = PackedColorArray([
-		Color(1.0, 0.85, 1.0, 0.0),
-		Color(1.0, 0.9, 1.0, 1.0),
-		Color(0.9, 0.7, 1.0, 0.0)])
-	grad.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
-	var ramp := GradientTexture1D.new()
-	ramp.gradient = grad
-	m.color_ramp = ramp
-
-	p.process_material = m
-	p.emitting = true
-	item.add_child(p)
-	return true
-
-# Fallback for backends without GPU particles: a short burst of tweened motes
-# that spiral outward from the item and fade.
-func _spawn_summon_fallback(item: Sprite2D) -> void:
-	for i in range(10):
-		var mote := _build_anim_sprite(SUMMON_GLOW, SUMMON_GLOW_SIZE, SUMMON_FRAMES, 18.0)
-		mote.modulate = SUMMON_BLEND_COLOR
-		mote.position = Vector2(randf_range(-10, 10), randf_range(-10, 10))
-		mote.scale = Vector2(0.6, 0.6)
-		item.add_child(mote)
-		var tw := create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(mote, "position", mote.position + Vector2(randf_range(-22, 22), randf_range(-30, -8)), 0.45)
-		tw.tween_property(mote, "scale", Vector2(1.8, 1.8), 0.45)
-		tw.tween_property(mote, "modulate:a", 0.0, 0.45)
-		tw.chain().tween_callback(mote.queue_free)

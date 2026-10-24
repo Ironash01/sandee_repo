@@ -448,6 +448,12 @@ func _input(event: InputEvent) -> void:
 	# shift is held, so construction and demolition share one mode.
 	if Global.block_mode and not Global.is_shift_held():
 		return
+	# PNC's synthetic press fires after the player has walked to the tapped
+	# point. By then the real mouse/camera may have moved, leaving the cached
+	# hover stale; the PNC touch cursor is still pinned to the ordered block, so
+	# rebuild hover from that before deciding whether this click is ours.
+	if Global.pnc_hold_active:
+		_update_hover()
 	if not _hovered or not _player_within_radius():
 		if _breaking:
 			_cancel_breaking()

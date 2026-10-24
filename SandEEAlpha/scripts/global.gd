@@ -1181,6 +1181,14 @@ const DISPLAY_SECTION: String = "display"
 # Default matches project.godot's window mode (2 = maximized), so a fresh install
 # behaves exactly as before until the player chooses otherwise.
 var fullscreen: bool = false
+# Frame pacing is a global display preference, not a per-save setting. 120 is
+# the game's target refresh; 0 means unlimited. The same FPS cap is applied on
+# desktop and mobile, while VSync remains a desktop-only control (Android's
+# display compositor owns its presentation timing).
+const FPS_LIMIT_OPTIONS: Array = [30, 60, 90, 120, 144, 165, 240, 0]
+const DEFAULT_FPS_LIMIT: int = 120
+var fps_limit: int = DEFAULT_FPS_LIMIT
+var vsync_enabled: bool = true
 # Small read-only FPS counter over gameplay. Off for every existing install whose
 # settings.cfg predates this key, and off for fresh installs.
 signal show_fps_changed(enabled: bool)
@@ -1199,12 +1207,18 @@ func is_point_and_click_available() -> bool:
 func load_display_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(DISPLAY_PATH) != OK:
+		fullscreen = false
+		fps_limit = DEFAULT_FPS_LIMIT
+		vsync_enabled = true
 		point_and_click = false
 		point_and_click_changed.emit(false)
 		show_fps = false
 		show_fps_changed.emit(false)
 		return
 	fullscreen = bool(cfg.get_value(DISPLAY_SECTION, "fullscreen", fullscreen))
+	fps_limit = _sanitize_fps_limit(int(cfg.get_value(
+		DISPLAY_SECTION, "fps_limit", DEFAULT_FPS_LIMIT)))
+	vsync_enabled = bool(cfg.get_value(DISPLAY_SECTION, "vsync_enabled", true))
 	show_fps = bool(cfg.get_value(DISPLAY_SECTION, "show_fps", false))
 	show_fps_changed.emit(show_fps)
 	point_and_click = bool(cfg.get_value("controls", "point_and_click", false))
@@ -1214,9 +1228,38 @@ func save_display_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(DISPLAY_PATH)          # keep any other keys already in the file
 	cfg.set_value(DISPLAY_SECTION, "fullscreen", fullscreen)
+	cfg.set_value(DISPLAY_SECTION, "fps_limit", fps_limit)
+	cfg.set_value(DISPLAY_SECTION, "vsync_enabled", vsync_enabled)
 	cfg.set_value(DISPLAY_SECTION, "show_fps", show_fps)
 	cfg.set_value("controls", "point_and_click", point_and_click)
 	cfg.save(DISPLAY_PATH)
+
+func _sanitize_fps_limit(limit: int) -> int:
+	if limit <= 0:
+		return 0
+	if FPS_LIMIT_OPTIONS.has(limit):
+		return limit
+	var best := 0
+	var best_diff := 1 << 30
+	for raw in FPS_LIMIT_OPTIONS:
+		var option := int(raw)
+		if option <= 0:
+			continue
+		var diff := absi(option - limit)
+		if diff < best_diff:
+			best_diff = diff
+			best = option
+	return best
+
+# Applies the frame cap on every platform and VSync only on desktop. Android's
+# compositor owns its presentation timing, so mobile never exposes/changes VSync.
+func apply_frame_settings() -> void:
+	Engine.max_fps = fps_limit
+	if is_mobile() or DisplayServer.get_name() == "headless":
+		return
+	DisplayServer.window_set_vsync_mode(
+		DisplayServer.VSYNC_ENABLED if vsync_enabled \
+		else DisplayServer.VSYNC_DISABLED)
 
 # Puts the OS window into the configured mode. A no-op on mobile, and it never
 # forces a fixed resolution — fullscreen uses the desktop's own dimensions, and
@@ -1227,12 +1270,34 @@ func apply_display_mode() -> void:
 	DisplayServer.window_set_mode(
 		DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen \
 		else DisplayServer.WINDOW_MODE_WINDOWED)
+	# Fullscreen/window mode changes can reset VSync state on some drivers.
+	apply_frame_settings()
 
 # Player-facing setter: applies immediately AND persists for the next launch.
 func set_fullscreen(on: bool) -> void:
 	fullscreen = on
 	CrashLogger.event("SETTINGS", "fullscreen=%s" % on)
 	apply_display_mode()
+	save_display_settings()
+
+# Player-facing FPS cap setter. Works on both desktop and mobile.
+func set_fps_limit(limit: int) -> void:
+	var clean := _sanitize_fps_limit(limit)
+	var changed := clean != fps_limit
+	fps_limit = clean
+	apply_frame_settings()
+	if changed:
+		CrashLogger.event("SETTINGS", "fps_limit=%s" % (
+			"unlimited" if clean == 0 else str(clean)))
+		save_display_settings()
+
+# Desktop-only VSync setter. Mobile ignores it (and the setting UI is hidden).
+func set_vsync(on: bool) -> void:
+	if is_mobile() or vsync_enabled == on:
+		return
+	vsync_enabled = on
+	apply_frame_settings()
+	CrashLogger.event("SETTINGS", "vsync=%s" % on)
 	save_display_settings()
 
 # Player-facing setter: the overlay listens for the signal and hides instantly;
@@ -1320,6 +1385,7 @@ func _ready() -> void:
 	# (the title screen) is already presented in the right mode.
 	load_display_settings()
 	apply_display_mode()
+	apply_frame_settings()   # mobile needs the FPS cap even though display mode is fixed
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
 	_init_missions()
