@@ -63,20 +63,23 @@ func open() -> void:
 	visible = true
 	_fit()
 	Global.open_ui()
+	Global.register_ui_back(self, Callable(self, "hide_menu"))
 	_refresh_all()
 
 func hide_menu() -> void:
 	if not visible:
 		return
 	visible = false
+	Global.unregister_ui_back(self)
 	Global.close_ui()
 
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-		hide_menu()
+	if event.is_action_pressed("escape"):
 		get_viewport().set_input_as_handled()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			hide_menu()
 
 func _rebuild() -> void:
 	if _root != null:

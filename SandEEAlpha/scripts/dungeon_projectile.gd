@@ -15,7 +15,7 @@ const FRAME_COUNT: int  = 8
 const FRAME_SIZE:  int  = 32
 const FPS:        float = 12.0
 const SPEED:      float = 150.0
-const DAMAGE:     float = 40.0
+const DAMAGE:     float = 20.0
 const LIFETIME:   float = 3.0
 const HIT_RADIUS: float = 7.0
 const GLOW_COLOR: Color = Color(1.0, 0.55, 0.22)
@@ -27,9 +27,14 @@ var damage: float = DAMAGE
 # When true the bolt stops at walls/obstacles (layer 1) via a raycast. Off by
 # default so the DungeonFlare obstacle is unchanged; the Hitman turns it on.
 var collide_walls: bool = false
+# Multiplier on the player knockback this bolt applies. 1.0 = the old full
+# knockback (damage × Global.KNOCKBACK_PER_DAMAGE). The obstacle flare sets a
+# reduced value (see dungeon_flare.gd); the Hitman keeps 1.0.
+var knockback_scale: float = 1.0
 var _life: float = 0.0
 var _glow: PointLight2D = null
 var _parried: bool = false
+var _safe_gone: bool = false
 
 func _ready() -> void:
 	# Layer 2 is the "sword-hittable" layer (the swing hitbox masks it), so the
@@ -83,9 +88,15 @@ func _add_glow() -> void:
 	add_child(_glow)
 
 func _physics_process(delta: float) -> void:
-	if _parried:
+	if _parried or _safe_gone:
 		return
 	var step: Vector2 = direction * SPEED * delta
+	# Safe-zone protection: remove the bolt even if it crossed the boundary
+	# between frames (segment test) or was spawned inside a zone.
+	if Global.is_point_in_safe_zone(global_position) \
+			or Global.segment_intersects_safe_zone(global_position, global_position + step):
+		_vanish_in_safe_zone()
+		return
 	# Optional wall/obstacle collision (layer 1). TileMapLayer collision isn't a
 	# Node, so an Area2D body test can't see it — a raycast can.
 	if collide_walls and is_inside_tree():
@@ -101,9 +112,25 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 
 func _on_body_entered(body: Node) -> void:
-	if _parried or not body.is_in_group("Player"):
+	if _parried or _safe_gone or not body.is_in_group("Player"):
 		return
-	Global.damage_player(damage, global_position, direction)
+	if Global.is_player_in_safe_zone():
+		_vanish_in_safe_zone()
+		return
+	Global.damage_player(damage, global_position, direction, knockback_scale)
+	queue_free()
+
+func _vanish_in_safe_zone() -> void:
+	if _safe_gone:
+		return
+	_safe_gone = true
+	_parried = true
+	set_deferred("monitoring", false)
+	var b: Node2D = MELLOW_BURST_SCRIPT.new() as Node2D
+	var parent := get_parent()
+	if b != null and parent != null and is_instance_valid(parent):
+		b.position = global_position
+		parent.add_child(b)
 	queue_free()
 
 # Called by the sword swing hitbox when the blade sweeps over this bolt.

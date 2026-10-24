@@ -86,7 +86,7 @@ func _build() -> void:
 	_panel.add_child(vbox)
 
 	var title := Label.new()
-	title.text = "LUA STATUS  (click for all)"
+	title.text = "AUTOMATICA STATUS  (click for all)"
 	title.add_theme_font_size_override("font_size", int(10 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -144,7 +144,7 @@ func _refresh() -> void:
 
 	var shown: Array = all.slice(0, SHOWN)
 	if shown.is_empty():
-		_rows.add_child(_make_label("No LUAs placed", C_MUTED))
+		_rows.add_child(_make_label("No Automaticas placed", C_MUTED))
 	else:
 		for n in shown:
 			_rows.add_child(_make_row(n))

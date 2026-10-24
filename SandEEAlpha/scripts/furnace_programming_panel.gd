@@ -24,6 +24,7 @@ const PYTHON_SPEC: LanguageSpecification = preload("res://resources/python_langu
 var furnace: Node = null
 
 var _root:   Control = null
+var _panel_center: CenterContainer = null   # keyboard-aware centring area
 var _code:   CodeEdit = null
 var _output: RichTextLabel = null
 var _hint:   Label = null
@@ -59,27 +60,57 @@ func open(furnace_node: Node) -> void:
 	if _code != null and furnace != null:
 		var saved: String = str(furnace.get("program_code"))
 		if saved.strip_edges().is_empty():
-			_code.text = "# feed() loads the input; fuel() loads the FUEL slot.\n# feed(\"Iron Ore\", 5)\n# fuel(\"Charcoal\", 3)\n# smelt(5)\n# take_output()\n"
+			_code.text = "# item ids: iron_ore, charcoal\n# feed(\"iron_ore\", 5)\n# fuel(\"charcoal\", 3)\n# smelt(5)\n# take_output()\n"
 		else:
 			_code.text = saved
 	_connect_host()
 	Global.open_ui()
+	Global.register_ui_back(self, Callable(self, "_back"))
 	if _code != null:
 		_code.grab_focus()
+
+func _back() -> void:
+	if _name_popup != null and _name_popup.visible:
+		_name_popup.hide()
+		if visible:
+			Global.register_ui_back(self, Callable(self, "_back"))
+		return
+	close()
 
 func close() -> void:
 	if not visible:
 		return
+	# Closing the editor must never discard user-written code: persist the
+	# current draft on the furnace, exactly like the crafting station does.
+	if furnace != null and _code != null:
+		furnace.set("program_code", _code.text)
 	visible = false
+	Global.unregister_ui_back(self)
 	Global.close_ui()
 
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE \
-			and not Global.is_text_input_focused():
-		close()
+	# The item-name suggestion popup is a layer above the editor.
+	if _name_popup != null and _name_popup.visible and event.is_action_pressed("escape"):
+		Global.consume_ui_back_event(event)
+		_name_popup.hide()
 		get_viewport().set_input_as_handled()
+		return
+	if event.is_action_pressed("escape"):
+		# Escape is a command, not typed text: it must still work while the
+		# CodeEdit owns keyboard focus.
+		get_viewport().set_input_as_handled()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			close()
+
+# Android: keep the furnace Algorithmica panel above the software keyboard.
+func _process(_delta: float) -> void:
+	if not visible or _panel_center == null:
+		return
+	var inset: float = Global.mobile_keyboard_height()
+	if not is_equal_approx(_panel_center.offset_bottom, -inset):
+		_panel_center.offset_bottom = -inset
 
 func _connect_host() -> void:
 	if furnace == null:
@@ -96,6 +127,14 @@ func _connect_host() -> void:
 
 func _run() -> void:
 	if furnace == null or _code == null:
+		return
+	# A furnace program may only use furnace functions (the host enforces this
+	# too). Check here so the error lands in the visible output panel.
+	var foreign := AlgorithmicaAPI.foreign_calls(_code.text, AlgorithmicaAPI.FURNACE)
+	if not foreign.is_empty():
+		_output.clear()
+		_output.append_text("[color=#ff8888]✗ %s[/color]\n"
+			% AlgorithmicaAPI.rejection_message(foreign, AlgorithmicaAPI.FURNACE))
 		return
 	_connect_host()
 	_output.clear()
@@ -121,15 +160,27 @@ func _open_name_popup() -> void:
 	if _name_popup.visible:
 		return
 	_name_list.clear()
-	for n in NameComplete.item_names():
-		_name_list.add_item(str(n))
+	# Carried items first (inventory + hotbar), then the full catalogue — every
+	# entry is the scripting id the program should use.
+	var seen: Dictionary = {}
+	for data in Global.list_carried_items():
+		_name_list.add_item("%s   (%s)" % [data.item_id(), data.item_name])
+		_name_list.set_item_metadata(_name_list.item_count - 1, data.item_id())
+		seen[data.item_id()] = true
+	for id in Global.all_item_ids():
+		if seen.has(id):
+			continue
+		_name_list.add_item(id)
+		_name_list.set_item_metadata(_name_list.item_count - 1, id)
 	var local: Vector2 = _code.get_caret_draw_pos()
 	_name_popup.position = Vector2i(_code.get_screen_position() + local) + Vector2i(0, 22)
 	_name_popup.popup()
 
 func _on_name_item_selected(idx: int) -> void:
-	var name: String = _name_list.get_item_text(idx)
-	_code.insert_text_at_caret("\"%s\"" % name)
+	var id: String = str(_name_list.get_item_metadata(idx))
+	if id.is_empty():
+		id = _name_list.get_item_text(idx).split("   (")[0]
+	_code.insert_text_at_caret("\"%s\"" % id)
 	_name_popup.hide()
 	_code.grab_focus()
 
@@ -143,7 +194,30 @@ func _on_failed(e: String) -> void:
 
 func _on_executed() -> void:
 	if _output != null:
-		_output.append_text("[color=#88ffaa]Done.[/color]\n")
+		_output.append_text("[color=#88ffaa]✓ Finished running[/color]\n")
+
+# Small target chip, matching the Programming Encyclopedia's Algorithmica
+# target badges.
+func _target_badge(s: float) -> Control:
+	var col := Color(1.00, 0.66, 0.34, 1.00)
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color     = Color(col.r, col.g, col.b, 0.16)
+	sb.border_color = col
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(int(3 * s))
+	sb.content_margin_left   = int(7 * s)
+	sb.content_margin_right  = int(7 * s)
+	sb.content_margin_top    = int(2 * s)
+	sb.content_margin_bottom = int(2 * s)
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var lbl := Label.new()
+	lbl.text = AlgorithmicaAPI.FURNACE.to_upper()
+	lbl.add_theme_font_size_override("font_size", int(9 * s))
+	lbl.add_theme_color_override("font_color", col)
+	panel.add_child(lbl)
+	return panel
 
 # ── Build ─────────────────────────────────────────────────────────
 func _build() -> void:
@@ -162,6 +236,7 @@ func _build() -> void:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(center)
+	_panel_center = center
 
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(int(560 * s), int(420 * s))
@@ -181,11 +256,12 @@ func _build() -> void:
 	header.add_theme_constant_override("separation", int(8 * s))
 	vbox.add_child(header)
 	var title := Label.new()
-	title.text = "🐍  Furnace Programming"
+	title.text = "🐍  ALGORITHMICA — FURNACE"
 	title.add_theme_font_size_override("font_size", int(16 * s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
+	header.add_child(_target_badge(s))
 	var close_btn := Button.new()
 	close_btn.text = "✕"; close_btn.flat = true
 	close_btn.tooltip_text = "Close the program editor."
@@ -194,9 +270,10 @@ func _build() -> void:
 	close_btn.pressed.connect(close)
 	header.add_child(close_btn)
 
-	# Reference line
+	# Reference line — target first, then the API. The badge wording matches the
+	# Programming Encyclopedia's Algorithmica target labels.
 	var ref := Label.new()
-	ref.text = "feed(name, n) · fuel(name, n) · smelt(n) · take_output() · input_*/fuel_*/output_*"
+	ref.text = "TARGET: FURNACE  ·  feed(name, n) · fuel(name, n) · smelt(n) · take_output() · input_*/fuel_*/output_*"
 	ref.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ref.add_theme_font_size_override("font_size", int(11 * s))
 	ref.add_theme_color_override("font_color", C_MUTED)

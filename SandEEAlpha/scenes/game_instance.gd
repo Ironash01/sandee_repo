@@ -13,6 +13,17 @@ const MINIMAP_SCRIPT: Script = preload("res://scripts/minimap.gd")
 const LUA_STATUS_SCRIPT: Script = preload("res://scripts/lua_status_ui.gd")
 # Touch tap-tooltip popup (built-in tooltips are hover-only).
 const TOOLTIP_TAP_SCRIPT: Script = preload("res://scripts/tooltip_tap.gd")
+# Top-centre gameplay notifications (fishing/farming/deaths/…). The debug chat
+# keeps command output only.
+const NOTIFICATION_HUD_SCRIPT: Script = preload("res://scripts/notification_hud.gd")
+# Optional top-right FPS readout (Settings → Display → Show FPS).
+const FPS_OVERLAY_SCRIPT: Script = preload("res://scripts/fps_overlay.gd")
+# High-layer world-space mining progress ring (always above world sprites).
+const BREAK_OVERLAY_SCRIPT: Script = preload("res://scripts/break_progress_overlay.gd")
+# Android touch HUD (joystick + action buttons + tap-to-interact). Only added
+# on mobile; the desktop interface stays exactly as it is.
+const MOBILE_UI_SCRIPT: Script = preload("res://scripts/mobile_ui.gd")
+const TUTORIAL_GUIDE_SCRIPT: Script = preload("res://scripts/tutorial_guide.gd")
 
 @onready var pause_menu: Control         = $CanvasLayer/PauseMenu
 @onready var pause_btn:  Button          = $CanvasLayer/PauseButton
@@ -25,6 +36,12 @@ var _death_overlay:  ColorRect   = null
 var _cave_world:      CaveWorld  = null
 var _pixie_cave_world: PixieCaveWorld = null
 var _dungeon_world:   DungeonWorld = null
+# Visited cave worlds are kept alive off-tree (like the overworld) so their
+# runtime state survives re-entry; per-cave snapshots handle save/load.
+var _cave_instances: Dictionary = {}   # state_key -> CaveWorld/PixieCaveWorld
+var _cave_explored: Dictionary = {}    # state_key -> Dictionary[Vector2i,bool]
+var _active_cave_key: String = ""
+var _transitioning: bool = false
 # Full-screen fade used when swapping the world for a cave/pixie cave/dungeon
 # (and back), so those transitions read as a deliberate scene change.
 var _transition_overlay: CanvasLayer = null
@@ -33,6 +50,7 @@ var _transition_overlay: CanvasLayer = null
 # station/furnace/chest dims this along with the world. The hotbar is NOT here —
 # it stays on $CanvasLayer (10) so it remains bright and draggable on top.
 var _hud_backdrop: CanvasLayer = null
+var _tutorial_guide: Node = null
 
 func _ready() -> void:
 	# Honour the player's saved window/fullscreen choice instead of forcing
@@ -45,6 +63,8 @@ func _ready() -> void:
 		Global.ui_scale_set = true
 	Global.ui_scale_changed.emit(Global.ui_scale)
 	Global.game_node = self
+	CrashLogger.event("GAME", "ready version=%s slot=%d mobile=%s" % [
+		Global.game_version(), Global.active_save_slot, Global.is_mobile()])
 	# A fresh game scene must never inherit a pause/UI state from the previous
 	# one (quit-to-menu with a UI open, a leaked open_ui(), etc).
 	Global.reset_pause_state()
@@ -82,8 +102,26 @@ func _ready() -> void:
 	_hud_backdrop.add_child(MINIMAP_SCRIPT.new())
 	# Left-middle LUA status panel (3 most-current LUAs; click to expand to all).
 	_hud_backdrop.add_child(LUA_STATUS_SCRIPT.new())
+	# Optional top-right FPS counter; starts hidden for every existing install.
+	_hud_backdrop.add_child(FPS_OVERLAY_SCRIPT.new())
 	# Tap tooltips (touch screens have no hover) — owns its own high layer.
 	add_child(TOOLTIP_TAP_SCRIPT.new())
+	# Top-centre gameplay notifications (fishing, farming, deaths, warnings).
+	add_child(NOTIFICATION_HUD_SCRIPT.new())
+	# Mining ring lives above all world sprites/HUD panels; the object scripts
+	# only report progress, they no longer draw the world ring themselves.
+	var break_layer := CanvasLayer.new()
+	break_layer.name = "BreakProgressLayer"
+	break_layer.layer = 20
+	break_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(break_layer)
+	break_layer.add_child(BREAK_OVERLAY_SCRIPT.new())
+
+	# Android-only touch HUD. Global.is_mobile() uses Godot's "mobile" feature
+	# tag (Android/iOS), NOT a resolution guess, so a small desktop window still
+	# gets the normal keyboard/mouse interface.
+	if Global.is_mobile():
+		add_child(MOBILE_UI_SCRIPT.new())
 
 	_setup_death_overlay()
 
@@ -171,83 +209,211 @@ func _on_generation_complete() -> void:
 	# World is fully generated — safe to create the initial save now.
 	if Global.active_save_slot > 0 and not Global.has_save(Global.active_save_slot):
 		Global.save_game(Global.active_save_slot)
+	_setup_tutorial()
+
+func _setup_tutorial() -> void:
+	if Global.tutorial_completed or _tutorial_guide != null:
+		return
+	if Global.is_in_dungeon or _cave_world != null or _pixie_cave_world != null:
+		return
+	if _world == null or not is_instance_valid(_world):
+		return
+	var spawn := Vector2.ZERO
+	if _world.has_method("_world_spawn_pos"):
+		spawn = _world.call("_world_spawn_pos") as Vector2
+	_tutorial_guide = TUTORIAL_GUIDE_SCRIPT.new()
+	_tutorial_guide.name = "TutorialGuide"
+	_world.add_child(_tutorial_guide)
+	_tutorial_guide.call("setup", spawn)
 
 # ── Cave entry/exit ─────────────────────────────────────────────────────
-# Swaps $World out for a freshly generated CaveWorld rather than a full
+# Swaps $World out for a CaveWorld/PixieCaveWorld rather than a full
 # change_scene_to_file — Player/camera/Hotbar/PauseMenu all live as $World's
 # siblings here in Game, so a full scene change would destroy them (this is
 # also why the old Dungeon Portal system, which did use change_scene_to_file
 # against the legacy dungeon scenes, never worked — the legacy scenes
 # are gone now, replaced by code-generated DungeonWorld). The overworld
 # $World is only removed from the tree, never freed, so nothing about it
-# needs to regenerate on return.
+# needs to regenerate on return. Cave instances follow the same rule: they
+# are cached off-tree so re-entry keeps their live runtime state.
 func enter_cave(portal: CavePortal) -> void:
-	if _cave_world != null or _pixie_cave_world != null or _dungeon_world != null:
+	if _transitioning or _cave_world != null or _pixie_cave_world != null or _dungeon_world != null:
+		# Refusing the transition must not leave the portal permanently locked.
+		if portal != null and portal.has_method("reset_after_exit"):
+			portal.call("reset_after_exit")
 		return
 	_run_scene_transition(Callable(self, "_do_enter_cave").bind(portal), "Entering cave...")
 
-# Immediate swap (used by _run_scene_transition). A cave is never a dungeon —
-# make sure a leaked is_in_dungeon (e.g. from a prior dungeon visit) can't
-# block the build-mode toggle in here.
+# Previously visited caves are re-added from the cache with their live state;
+# new/loaded caves generate from the stable entrance seed, then restore the
+# saved per-cave state.
 func _do_enter_cave(portal: CavePortal) -> void:
 	Global.is_in_dungeon = false
-	# Each entrance generates a fresh cave, so cave-map fog starts clean.
-	Global.explored_cave_tiles.clear()
+	var key: String = portal.state_key() if portal != null and portal.has_method("state_key") else ""
 	var return_position: Vector2 = _player.global_position
+	var cached: Variant = _cave_instances.get(key) if key != "" else null
+	CrashLogger.event("WORLD", "enter cave key=%s type=%s cached=%s at=(%.1f, %.1f)" % [
+		key if key != "" else "<none>",
+		str(portal.cave_type) if portal != null else "?",
+		cached != null and is_instance_valid(cached), return_position.x, return_position.y])
 	remove_child(_world)
+	var node: Node = null
+	if cached != null and is_instance_valid(cached):
+		node = cached as Node
+		if node is PixieCaveWorld:
+			_pixie_cave_world = node as PixieCaveWorld
+			_cave_world = null
+		else:
+			_cave_world = node as CaveWorld
+			_pixie_cave_world = null
+		node.set("overworld_return_position", return_position)
+		add_child(node)
+		move_child(node, 0)
+	else:
+		if portal.cave_type == "pixie":
+			var pixie := PixieCaveWorld.new()
+			pixie.name = "World"
+			node = pixie
+			_pixie_cave_world = pixie
+			_cave_world = null
+		else:
+			var cave := CaveWorld.new()
+			cave.name = "World"
+			node = cave
+			_cave_world = cave
+			_pixie_cave_world = null
+		add_child(node)
+		move_child(node, 0)
+		node.call("setup", portal.cave_seed, return_position)
+		if key != "":
+			_cave_instances[key] = node
+			var saved: Variant = Global.cave_states.get(key, {})
+			if saved is Dictionary and not (saved as Dictionary).is_empty():
+				node.call("apply_state", saved)
 
-	# "pixie" entrances generate a PixieCaveWorld (128x64 dungeon-like, crystal
-	# ores); everything else is a regular CaveWorld. Both are code-built and
-	# swapped in for $World the same way — the overworld stays alive off-tree.
-	if portal.cave_type == "pixie":
-		_pixie_cave_world = PixieCaveWorld.new()
-		_pixie_cave_world.name = "World"
-		add_child(_pixie_cave_world)
-		move_child(_pixie_cave_world, 0)
-		_pixie_cave_world.setup(portal.cave_seed, return_position)
-		Global.world_node       = _pixie_cave_world
-		_player.global_position = _pixie_cave_world.get_player_spawn_position()
-		return
-
-	_cave_world = CaveWorld.new()
-	_cave_world.name = "World"
-	add_child(_cave_world)
-	move_child(_cave_world, 0)
-	_cave_world.setup(portal.cave_seed, return_position)
-
-	Global.world_node       = _cave_world
-	_player.global_position = _cave_world.get_player_spawn_position()
+	_active_cave_key = key
+	_restore_cave_exploration(key)
+	for child in node.get_children():
+		if child is CavePortal and (child as CavePortal).mode == CavePortal.Mode.EXIT:
+			child.call("reset_after_exit")
+	Global.world_node       = node
+	_player.global_position = node.call("get_player_spawn_position")
+	Global.reset_pause_state()
 
 func exit_cave() -> void:
+	if _transitioning:
+		return
 	if _pixie_cave_world != null or _cave_world != null:
 		_run_scene_transition(Callable(self, "_do_exit_cave"), "Leaving cave...")
 
-# Immediate swap (used by _run_scene_transition, and directly by the death /
-# menu-cleanup paths where the world must be restored synchronously). A pixie
-# cave exits the same way a regular cave does — swap the overworld back in and
-# free the cave world. Handle whichever kind is currently live.
+# The cave instance is snapshotted and kept alive off-tree, never freed on
+# exit. Re-entering the same entrance restores the live runtime state; the
+# snapshot feeds save/load across restarts.
 func _do_exit_cave() -> void:
+	var node: Node = null
 	if _pixie_cave_world != null:
-		var p_return: Vector2 = _pixie_cave_world.overworld_return_position
-		remove_child(_pixie_cave_world)
-		_pixie_cave_world.queue_free()
-		_pixie_cave_world = null
-		add_child(_world)
-		move_child(_world, 0)
-		Global.world_node       = _world
-		_player.global_position = p_return
+		node = _pixie_cave_world
+	elif _cave_world != null:
+		node = _cave_world
+	if node == null:
 		return
-	if _cave_world == null:
-		return
-	var return_position: Vector2 = _cave_world.overworld_return_position
-	remove_child(_cave_world)
-	_cave_world.queue_free()
+
+	var rp: Variant = node.get("overworld_return_position")
+	var return_position: Vector2 = rp if rp is Vector2 else _player.global_position
+	var key := _active_cave_key
+	CrashLogger.event("WORLD", "exit cave key=%s type=%s to=(%.1f, %.1f)" % [
+		key if key != "" else "<none>", node.get_class(), return_position.x, return_position.y])
+	if key != "":
+		_cave_explored[key] = Global.explored_cave_tiles.duplicate()
+		if node.has_method("snapshot_state"):
+			var snap: Dictionary = node.call("snapshot_state")
+			snap["explored"] = _explored_to_array(_cave_explored[key])
+			Global.cave_states[key] = snap
+		_cave_instances[key] = node
+		remove_child(node)
+	else:
+		remove_child(node)
+		node.queue_free()
 	_cave_world = null
+	_pixie_cave_world = null
+	_active_cave_key = ""
+	Global.explored_cave_tiles.clear()
 
 	add_child(_world)
 	move_child(_world, 0)
 	Global.world_node       = _world
 	_player.global_position = return_position
+	Global.reset_pause_state()
+	# Re-arm BOTH cave/pixie entrances after the overworld returns.
+	if _world.has_method("reset_cave_portals"):
+		_world.call("reset_cave_portals")
+	if Global.active_save_slot > 0:
+		Global.save_game(Global.active_save_slot)
+
+func get_cave_states() -> Dictionary:
+	var out: Dictionary = {}
+	# Preserve saved states for caves not instantiated this session.
+	for key in Global.cave_states:
+		if Global.cave_states[key] is Dictionary:
+			out[key] = (Global.cave_states[key] as Dictionary).duplicate(true)
+	for key in _cave_instances:
+		var node_ref: Variant = _cave_instances[key]
+		if not is_instance_valid(node_ref):
+			continue
+		var node := node_ref as Node
+		if not node.is_inside_tree():
+			continue   # cached snapshot already lives in Global.cave_states
+		if node.has_method("snapshot_state"):
+			var snap: Dictionary = node.call("snapshot_state")
+			var explored: Dictionary = Global.explored_cave_tiles if key == _active_cave_key \
+				else (_cave_explored.get(key, {}) as Dictionary)
+			snap["explored"] = _explored_to_array(explored)
+			out[key] = snap
+	return out
+
+func _restore_cave_exploration(key: String) -> void:
+	if key != "" and _cave_explored.has(key):
+		Global.explored_cave_tiles = (_cave_explored[key] as Dictionary).duplicate()
+	elif key != "" and Global.cave_states.has(key):
+		var state: Variant = Global.cave_states[key]
+		if state is Dictionary:
+			Global.explored_cave_tiles = _explored_from_array(
+				(state as Dictionary).get("explored", []))
+		else:
+			Global.explored_cave_tiles.clear()
+	else:
+		Global.explored_cave_tiles.clear()
+
+func _explored_to_array(explored: Dictionary) -> Array:
+	var out: Array = []
+	for cell in explored:
+		var c := cell as Vector2i
+		out.append([int(c.x), int(c.y)])
+	return out
+
+func _explored_from_array(values: Variant) -> Dictionary:
+	var out: Dictionary = {}
+	if values is Array:
+		for entry in values:
+			if entry is Array and (entry as Array).size() >= 2:
+				out[Vector2i(int(entry[0]), int(entry[1]))] = true
+	return out
+
+func _exit_tree() -> void:
+	CrashLogger.event("GAME", "scene exit slot=%d" % Global.active_save_slot)
+	# Cached cave worlds are orphans by design; free them with the Game scene.
+	for key in _cave_instances:
+		var node_ref: Variant = _cave_instances[key]
+		if is_instance_valid(node_ref):
+			var node := node_ref as Node
+			if node.get_parent() == null:
+				node.free()   # cached cave nodes are orphans; free immediately
+	_cave_instances.clear()
+	# Abrupt scene changes can happen while a structure holds the overworld
+	# off-tree; don't leak it if the Game itself is going away.
+	if _world != null and is_instance_valid(_world) and _world.get_parent() == null:
+		_world.free()
+
 
 # ── Dungeon entry (mission-accept portal) ─────────────────────────────────
 # dungeon_portal.gd dispatches here with the dungeon's index (matching
@@ -258,12 +424,16 @@ func _do_exit_cave() -> void:
 # first mission accept (Global.get_or_create_dungeon_seed), so re-entering
 # always reproduces the same dungeon.
 func enter_dungeon(dungeon_index: int) -> void:
-	if _cave_world != null or _pixie_cave_world != null or _dungeon_world != null:
+	if _transitioning or _cave_world != null or _pixie_cave_world != null or _dungeon_world != null:
 		return
 	var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(dungeon_index)
 	if mission == null:
 		push_warning("enter_dungeon: no DungeonMissionData for index %d" % dungeon_index)
+		CrashLogger.event("WORLD", "enter dungeon refused index=%d (no mission)" % dungeon_index)
 		return
+	CrashLogger.event("WORLD", "enter dungeon index=%d name=%s seed=%d" % [
+		dungeon_index, mission.mission_name,
+		Global.get_or_create_dungeon_seed(dungeon_index)])
 	_run_scene_transition(Callable(self, "_do_enter_dungeon").bind(dungeon_index, mission),
 		"Entering dungeon...")
 
@@ -290,8 +460,14 @@ func _do_enter_dungeon(dungeon_index: int, mission: DungeonMissionData) -> void:
 	if Global.block_mode:
 		Global.block_mode = false
 		Global.block_mode_changed.emit(false)
+	# Quest trigger: entering any dungeon counts once (complete_mission is idempotent).
+	Global.complete_mission("enter_dungeon")
+	# A portal/dialog from the overworld must not keep the dungeon paused.
+	Global.reset_pause_state()
 
 func exit_dungeon() -> void:
+	if _transitioning:
+		return
 	if _dungeon_world != null:
 		_run_scene_transition(Callable(self, "_do_exit_dungeon"), "Leaving dungeon...")
 
@@ -301,10 +477,11 @@ func _do_exit_dungeon() -> void:
 	if _dungeon_world == null:
 		return
 	var return_position: Vector2 = _dungeon_world.overworld_return_position
+	CrashLogger.event("WORLD", "exit dungeon index=%d to=(%.1f, %.1f)" % [
+		int(_dungeon_world.get("_dungeon_index")), return_position.x, return_position.y])
 	remove_child(_dungeon_world)
 	_dungeon_world.queue_free()
 	_dungeon_world = null
-	Global.is_in_dungeon = false
 
 	# Restore the notification log to its default top-left position.
 	_reset_chat_position()
@@ -313,9 +490,16 @@ func _do_exit_dungeon() -> void:
 	move_child(_world, 0)
 	Global.world_node       = _world
 	_player.global_position = return_position
+	# Restore is_in_dungeon, build mode (with a HUD resync) and the pause state
+	# AFTER the overworld is back in the tree.
+	Global.restore_overworld_interaction_state()
+	# The player returns to the entrance tile; remove any grass overlapping the
+	# sprite/collision area that may have grown since the entrance was placed.
+	if _world.has_method("clear_grass_around"):
+		_world.call("clear_grass_around", _player.global_position, 2)
 
 	# Persist the clear right away — entrance removal + reward + stars all
-	# need to survive a quit that never reaches the 5-minute autosave. The
+	# need to survive a quit that never reaches the 1-minute autosave. The
 	# overworld is back in the tree now, so the save captures real world data.
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
@@ -323,6 +507,8 @@ func _do_exit_dungeon() -> void:
 func _reset_chat_position() -> void:
 	for c in $CanvasLayer.get_children():
 		if c is ChatConsole:
+			if c.has_method("reset_interaction_state"):
+				c.call("reset_interaction_state")
 			if c.has_method("reset_position"):
 				c.call("reset_position")
 			break
@@ -333,20 +519,26 @@ func _reset_chat_position() -> void:
 # overworld sits orphaned off-tree) — avoids the "quit to menu inside caves
 # freezes" hang. Also restores the player to the entrance before the save.
 func cleanup_for_menu() -> void:
+	# Must be synchronous: the pause menu changes scenes immediately after
+	# this call, so an async fade transition would leave the overworld
+	# orphaned off-tree and skip the cave-state snapshot.
 	if _pixie_cave_world != null or _cave_world != null:
-		exit_cave()
+		_do_exit_cave()
 	elif _dungeon_world != null:
-		exit_dungeon()
+		_do_exit_dungeon()
 
 # Death respawn: leave any active cave/pixie cave/dungeon (so the overworld is
 # restored and the player isn't stuck inside the structure), then return the
 # OVERWORLD's world-spawn point. Dying anywhere — cave, dungeon, or overworld —
 # always puts the player back at the true world spawn.
 func get_world_spawn_position() -> Vector2:
+	# Respawn must have the overworld back synchronously before the caller
+	# places the player; an async transition would later overwrite the
+	# respawn position with the structure's return position.
 	if _pixie_cave_world != null or _cave_world != null:
-		exit_cave()
+		_do_exit_cave()
 	elif _dungeon_world != null:
-		exit_dungeon()
+		_do_exit_dungeon()
 	if _world != null and _world.has_method("_world_spawn_pos"):
 		return _world.call("_world_spawn_pos") as Vector2
 	return Vector2.ZERO
@@ -360,16 +552,48 @@ func _add_mission_ui() -> void:
 	else:
 		$CanvasLayer.add_child(ui)
 
+# Automatic crash protection: write the active world to its save slot once a
+# minute while playing. Saves are skipped until a slot exists and while the
+# loading screen is up (an empty world snapshot must never overwrite a good
+# save). Global.save_game() writes atomically, so a crash mid-save can only
+# leave a .tmp/.bak file, never a truncated save.
+const AUTOSAVE_INTERVAL_SEC: float = 60.0
+
 func _start_autosave() -> void:
 	var timer := Timer.new()
-	timer.wait_time = 300.0
+	timer.name = "AutosaveTimer"
+	timer.wait_time = AUTOSAVE_INTERVAL_SEC
 	timer.autostart = true
+	# Keep ticking while a menu/panel pauses the tree — a crash while the player
+	# is in a menu should still have a recent save.
+	timer.process_mode = Node.PROCESS_MODE_ALWAYS
 	timer.timeout.connect(_on_autosave)
 	add_child(timer)
 
 func _on_autosave() -> void:
-	if Global.active_save_slot > 0:
-		Global.save_game(Global.active_save_slot)
+	_save_if_safe()
+
+# Shared save guard for the timer and Android lifecycle interruptions. Never
+# snapshot a half-built world (initial generation / scene transition), and
+# never save while the player is dead (Global handles respawn separately).
+func _save_if_safe() -> void:
+	if Global.active_save_slot <= 0:
+		return
+	if _loading_screen != null and is_instance_valid(_loading_screen) and _loading_screen.visible:
+		return
+	if Global.world_node == null or not is_instance_valid(Global.world_node):
+		return
+	if Global.player_is_dead:
+		return
+	Global.save_game(Global.active_save_slot)
+
+func _notification(what: int) -> void:
+	if not Global.is_mobile():
+		return
+	# Android can kill a paused app without warning. Persist the active world on
+	# pause/focus loss; the atomic save path makes this safe to do at any time.
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_save_if_safe()
 
 # What a save should persist: the player's spawn position + the OVERWORLD's
 # world data. When the player saves while inside a cave/pixie cave/dungeon,
@@ -406,9 +630,9 @@ func get_overworld_save_context() -> Dictionary:
 # fades back out. The swap is synchronous but the fade makes it read as a
 # deliberate scene change rather than a hard cut.
 func _run_scene_transition(callback: Callable, label_text: String) -> void:
-	if _transition_overlay != null:
-		callback.call()
+	if _transitioning:
 		return
+	_transitioning = true
 	var layer := CanvasLayer.new()
 	layer.layer = 130  # above the loading screen and HUD
 	add_child(layer)
@@ -438,6 +662,7 @@ func _run_scene_transition(callback: Callable, label_text: String) -> void:
 	tween.tween_interval(0.15)
 	tween.tween_property(bg, "color:a", 0.0, 0.35)
 	tween.tween_callback(func() -> void:
+		_transitioning = false
 		layer.queue_free()
 		_transition_overlay = null
 	)

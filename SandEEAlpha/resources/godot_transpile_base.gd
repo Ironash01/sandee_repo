@@ -36,6 +36,9 @@ func godot_print(sep, end, ...objects: Array):
 		strings.append(python_like_str(object))
 	var result = sep.join(strings) + end
 	get_parent().signal_print.emit(result)
+	var logger := get_node_or_null("/root/CrashLogger")
+	if logger != null:
+		logger.call("code", "python", "OUT", result)
 	
 func create(object: String):
 	get_parent().signal_create.emit(object)

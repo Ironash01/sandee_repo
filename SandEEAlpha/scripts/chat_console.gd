@@ -48,7 +48,8 @@ func _build() -> void:
 	var width:  int = int(440 * s)
 	var height: int = int(150 * s)
 	var x: int = int(12 * s)
-	var y: int = int(12 * s)
+	# Middle-left: the minimap now owns the upper-left corner.
+	var y: int = int(get_viewport_rect().size.y * 0.30)
 
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -114,13 +115,19 @@ func _input(event: InputEvent) -> void:
 	var key: int = (event as InputEventKey).keycode
 	if _item_picker != null:
 		if key == KEY_ESCAPE:
-			_close_item_picker()
 			get_viewport().set_input_as_handled()
+			if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+				_close_item_picker()
 		return
 	if _entry.visible:
 		if key == KEY_ESCAPE:
-			_close_input()
 			get_viewport().set_input_as_handled()
+			if _completion != null and _completion.visible:
+				Global.consume_ui_back_event(event)
+				_completion.visible = false
+				return
+			if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+				_close_input()
 		return
 	if Global.any_ui_open():
 		return
@@ -142,10 +149,12 @@ func _open_input(prefill: String) -> void:
 	_entry.caret_column = prefill.length()
 	Global.chat_open = true
 	Global.open_ui()
+	Global.register_ui_back(_entry, Callable(self, "_close_input"))
 
 func _close_input() -> void:
 	if _entry == null:
 		return
+	Global.unregister_ui_back(_entry)
 	_entry.visible = false
 	_entry.text = ""
 	if _completion != null:
@@ -156,6 +165,15 @@ func _close_input() -> void:
 		_entry.release_focus()
 	Global.chat_open = false
 	Global.close_ui()
+
+## Scene-transition safety: close a chat input left open inside a dungeon and
+## release its focus. A focused chat LineEdit is one of the ways the Ctrl
+## build-mode toggle can silently stop responding after a world swap.
+func reset_interaction_state() -> void:
+	if Global.chat_open:
+		_close_input()
+	elif _entry != null and is_instance_valid(_entry) and _entry.has_focus():
+		_entry.release_focus()
 
 func _on_input_focus_exited() -> void:
 	# Clicking away closes the input; deferring avoids fighting the submit
@@ -327,6 +345,7 @@ func _open_item_picker() -> void:
 	root.process_mode = Node.PROCESS_MODE_ALWAYS
 	canvas.add_child(root)
 	_item_picker = root
+	Global.register_ui_back(_item_picker, Callable(self, "_close_item_picker"))
 
 	var overlay := ColorRect.new()
 	overlay.color        = C_OVERLAY
@@ -404,6 +423,7 @@ func _grant_and_close(data: ItemData) -> void:
 func _close_item_picker() -> void:
 	if _item_picker == null:
 		return
+	Global.unregister_ui_back(_item_picker)
 	_item_picker.queue_free()
 	_item_picker = null
 	Global.close_ui()
@@ -555,8 +575,11 @@ func _cmd_spawn(arg: String = "") -> void:
 	# spawn_desert is a biome flag (the Headless Fish also sets it), so
 	# key off the AI type instead.
 	if data.ai_type == "WORM" and world.has_method("_spawn_desert_worms_near_player"):
-		world.call("_spawn_desert_worms_near_player", scene, data)
-		add_line("Spawned %s near player" % id)
+		var spawned: bool = bool(world.call("_spawn_desert_worms_near_player", scene, data))
+		if spawned:
+			add_line("Spawned %s near player" % id)
+		else:
+			add_line("[color=#ffaa66]No valid dry desert spawn near the player.[/color]")
 	else:
 		# Spawn directly at the player
 		var mob = scene.instantiate() as Node2D

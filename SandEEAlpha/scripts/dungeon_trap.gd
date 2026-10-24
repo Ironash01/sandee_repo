@@ -51,6 +51,8 @@ func _physics_process(delta: float) -> void:
 func _on_body_entered(body: Node) -> void:
 	if not body.is_in_group("Player"):
 		return
+	if Global.is_player_in_safe_zone():
+		return
 	if _cooldown > 0.0:
 		return
 	_cooldown = RETRIGGER_COOLDOWN

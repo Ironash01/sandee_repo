@@ -98,6 +98,46 @@ var _shape: CollisionShape2D  = null
 var _gate_area:  Area2D           = null
 var _gate_shape: CollisionShape2D = null
 
+## Stable identity for this entrance's persistent cave state. The generated
+## cave seed is deterministic per world seed; the door position disambiguates
+## the astronomically unlikely case of two entrances rolling the same seed.
+func state_key() -> String:
+	return "%s:%d:%d:%d" % [cave_type, cave_seed,
+		int(round(global_position.x)), int(round(global_position.y))]
+
+## Re-arm the entrance after returning to the overworld. Entering disables the
+## gate Area2D and suppresses the prompt; without this the portal stayed dead
+## for the rest of the session (the "can't enter either cave again" bug).
+func reset_after_exit() -> void:
+	_prompt_shown = false
+	_in_gate = false
+	_gate_dwell = 0.0
+	_triggered = false
+	_beaconing = false
+	_player_nearby = false
+	if _confirm_ui != null and _confirm_ui.visible:
+		Global.unregister_ui_back(_confirm_ui)
+		_confirm_ui.visible = false
+		Global.close_ui()
+	if _gate_area != null:
+		_gate_area.set_deferred("monitoring", true)
+		# Re-enabling an Area2D does not always emit body_entered for a body
+		# that is already overlapping (the player returns standing in the
+		# gate), so re-arm the dwell from the current overlap explicitly.
+		call_deferred("_rearm_gate_overlap")
+	set_process(false)
+	queue_redraw()
+
+func _rearm_gate_overlap() -> void:
+	if mode != Mode.ENTER or _gate_area == null or not _gate_area.monitoring:
+		return
+	for body in _gate_area.get_overlapping_bodies():
+		if body.is_in_group("Player"):
+			_in_gate = true
+			_gate_dwell = 0.0
+			set_process(true)
+			return
+
 func _ready() -> void:
 	add_to_group("CavePortal")
 	_label_text = "CAVE" if mode == Mode.ENTER else "EXIT"
@@ -240,6 +280,14 @@ func _draw_cell_highlight(rects: Array[Rect2]) -> void:
 			draw_line(p + Vector2(s.x, 0.0), p + s, C_DOOR_HIGHLIGHT, line_w)
 
 func _input(event: InputEvent) -> void:
+	if Global.is_mouse_event_over_ui(event):
+		return
+	# Escape cancels the confirm dialog safely (never enters).
+	if _confirm_ui != null and _confirm_ui.visible and event.is_action_pressed("escape"):
+		get_viewport().set_input_as_handled()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			_cancel()
+		return
 	# Only while actually standing in the gate — clicking the rock from the
 	# outside no longer opens the prompt.
 	if mode != Mode.ENTER or not _in_gate or _prompt_shown:
@@ -256,7 +304,7 @@ func _input(event: InputEvent) -> void:
 func _click_is_on_entrance() -> bool:
 	if interact_rect.size == Vector2.ZERO:
 		return false
-	return interact_rect.has_point(get_global_mouse_position())
+	return interact_rect.has_point(Global.mouse_world(self))
 
 func _on_body_entered(body: Node) -> void:
 	if not body.is_in_group("Player"):
@@ -318,6 +366,7 @@ func _on_body_exited(body: Node) -> void:
 	_prompt_shown = false
 	queue_redraw()
 	if _confirm_ui != null and _confirm_ui.visible:
+		Global.unregister_ui_back(_confirm_ui)
 		_confirm_ui.visible = false
 		Global.close_ui()
 
@@ -458,9 +507,12 @@ func _show_confirm() -> void:
 	if _confirm_ui != null:
 		_confirm_ui.visible = true
 		Global.open_ui()
+		Global.register_ui_back(_confirm_ui, Callable(self, "_cancel"))
 
 func _cancel() -> void:
 	if _confirm_ui != null:
+		Global.unregister_ui_back(_confirm_ui)
+		Global.unregister_ui_back(_confirm_ui)
 		_confirm_ui.visible = false
 		Global.close_ui()
 
@@ -472,8 +524,14 @@ func _enter_cave() -> void:
 	if _gate_area != null:
 		_gate_area.set_deferred("monitoring", false)
 	if _confirm_ui != null:
+		Global.unregister_ui_back(_confirm_ui)
+		Global.unregister_ui_back(_confirm_ui)
 		_confirm_ui.visible = false
 		Global.close_ui()
 	Global.complete_mission("enter_cave")
+	Global.add_mission_progress("side_cave_explorer", 1)
 	if is_instance_valid(Global.game_node) and Global.game_node.has_method("enter_cave"):
 		Global.game_node.call("enter_cave", self)
+	else:
+		# No game scene to receive the transition: never leave the portal dead.
+		reset_after_exit()

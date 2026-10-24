@@ -8,7 +8,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Write a Lua program that defines a function called add that takes two parameters and returns their sum, then prints the result of add(3, 4)."
 language = "lua"
-starter_code = "function add(a, b)\n    return a + b\nend\nprint(add(3, 4))"
+starter_code = ""
 answer_output = "7"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
@@ -26,7 +26,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Write a Lua function called greet that takes a name parameter and returns the string \"Hello, \" .. name. Print the result of greet(\"Lua\")."
 language = "lua"
-starter_code = "function greet(name)\n    return \"Hello, \" .. name\nend\nprint(greet(\"Lua\"))"
+starter_code = ""
 answer_output = "Hello, Lua"
 
 [resource]
@@ -35,6 +35,7 @@ mission_name = "Lua Functions"
 mission_description = "Learn how to define and call functions in Lua using function/end and return."
 entry_resource_file = "entry_31_lua.tres"
 questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_category = "extra"
 dungeon_index = 31
 reward_item_path = "res://resources/items/lua.tres"
 size_modifier = 0

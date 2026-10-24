@@ -18,7 +18,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Write a Lua program that creates a coroutine that yields the values 1, 2, 3 one at a time, and resumes it three times printing each result."
 language = "lua"
-starter_code = "local co = coroutine.create(function()\n    coroutine.yield(1)\n    coroutine.yield(2)\n    coroutine.yield(3)\nend)\nprint(coroutine.resume(co))\nprint(coroutine.resume(co))\nprint(coroutine.resume(co))"
+starter_code = ""
 answer_output = "true\t1\ntrue\t2\ntrue\t3"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
@@ -37,6 +37,7 @@ mission_name = "Lua Coroutines"
 mission_description = "Learn how to use coroutines in Lua for cooperative multitasking with coroutine.create and coroutine.yield."
 entry_resource_file = "entry_36_lua.tres"
 questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+dungeon_category = "extra"
 dungeon_index = 36
 reward_item_path = "res://resources/items/lua.tres"
 size_modifier = 0

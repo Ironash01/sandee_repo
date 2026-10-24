@@ -18,7 +18,7 @@ script = ExtResource("2_question")
 type = 1
 question = "A simple shirt from the local supermarket costs 299.75. Store it in a variable named price and print it."
 language = "python"
-starter_code = "price = 299.75\nprint(price)"
+starter_code = ""
 answer_output = "299.75"
 
 [sub_resource type="Resource" script_class="DungeonQuestion" id="DungeonQuestion_3"]

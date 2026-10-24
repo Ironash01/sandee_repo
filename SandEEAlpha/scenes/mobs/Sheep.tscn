@@ -1,0 +1,16 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/sheep.gd" id="1_sheep"]
+
+[sub_resource type="RectangleShape2D" id="RectShape_sheep"]
+size = Vector2(16, 12)
+
+[node name="Sheep" type="CharacterBody2D" groups=["Sheep"]]
+collision_layer = 2
+script = ExtResource("1_sheep")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, 5)
+shape = SubResource("RectShape_sheep")

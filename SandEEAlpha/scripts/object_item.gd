@@ -49,6 +49,8 @@ const ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 const INTERACT_RADIUS_PX: float = 48.0
 
 func _ready() -> void:
+	_play_place_animation()
+	add_to_group("TouchInteractable")
 	col_interact_shape.disabled = true
 	# Always process so a cook keeps ticking while a menu pauses the tree (the
 	# smelting menu is PROCESS_MODE_ALWAYS and pauses gameplay, so an INHERIT
@@ -78,12 +80,33 @@ func _ready() -> void:
 func setup(data: ItemData) -> void:
 	item_data = data
 
+# Play the placed-object animation authored for this item (idle_furnace).
+# Done here, not only in world.gd's placement path, so save restores and the
+# cave worlds — which insert the node directly — animate too. The
+# AnimationPlayer lives at the scene root so the world's
+# `obj.get_node_or_null("AnimationPlayer")` lookup finds it.
+func _play_place_animation() -> void:
+	if item_data == null or not item_data.has_place_animation \
+			or item_data.place_animation_name.is_empty():
+		return
+	var ap: AnimationPlayer = get_node_or_null("AnimationPlayer") as AnimationPlayer
+	if ap != null and ap.has_animation(item_data.place_animation_name):
+		ap.play(item_data.place_animation_name)
+
 func set_world_cell(cell: Vector2i, world: Node) -> void:
 	_world_cell = cell
 	_world_ref  = world
 
 func furnace():
 	col_interact_shape.disabled = false
+
+func open_from_touch() -> bool:
+	if _ui == null or _ui.visible or not _player_nearby:
+		return false
+	if Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
+		return false
+	_ui.open_as_station()
+	return true
 
 func _on_close_all_ui() -> void:
 	if _ui != null and _ui.visible:
@@ -95,21 +118,21 @@ func _process(delta: float) -> void:
 	if not _breaking:
 		return
 	if not _player_nearby \
-			or not Input.is_key_pressed(KEY_SHIFT) \
-			or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			or not Global.is_shift_held() \
+			or not Global.is_left_action_held():
 		_cancel_breaking()
 		return
 	_break_elapsed  = minf(_break_elapsed + delta, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
+	Global.report_break_progress(_break_progress, global_position, -26.0, self)
 	_tick_wobble()
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_do_break()
 
 func _draw() -> void:
-	if _break_progress <= 0.0:
-		return
-	Global.draw_break_bar(self, _break_progress)
+	# Ring is drawn by BreakProgressOverlay above the world.
+	pass
 
 func _on_area_2d_body_entered(body: CharacterBody2D) -> void:
 	if body.is_in_group("Player"):
@@ -128,6 +151,7 @@ func _add_break_progress(seconds: float) -> void:
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
+	Global.report_break_progress(_break_progress, global_position, -26.0, self)
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_do_break()
@@ -143,6 +167,7 @@ func _tick_progress_expiry() -> void:
 	_break_progress = 0.0
 	_last_hit_ms    = -1
 	_sprite.rotation = 0.0
+	Global.clear_break_progress(self)
 	queue_redraw()
 
 # Snappy left↔right shake, played ONLY while actively breaking — releasing
@@ -169,12 +194,14 @@ func _cursor_over() -> bool:
 	var b: Vector2 = gt * (r.position + r.size)
 	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
 	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
-	var m: Vector2 = get_global_mouse_position()
+	var m: Vector2 = Global.mouse_world(self)
 	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
 
 # Left-click (nearby) opens the standalone smelting menu; Shift + left-click
 # mines this interactable off the wall (respecting pickaxe tier + break time).
 func _input(event: InputEvent) -> void:
+	if Global.is_mouse_event_over_ui(event):
+		return
 	if not (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT):
 		return
 	if Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
@@ -184,7 +211,7 @@ func _input(event: InputEvent) -> void:
 		return
 	if not _cursor_over():
 		return
-	if Input.is_key_pressed(KEY_SHIFT):
+	if Global.is_shift_held():
 		if event.pressed:
 			_try_start_breaking()
 			if _breaking:
@@ -226,6 +253,7 @@ func _cancel_breaking() -> void:
 	if not _breaking:
 		return
 	_breaking        = false
+	Global.clear_break_progress(self)
 	_sprite.rotation = 0.0
 
 # The held PICKAXE's mining tier, or -1 when none is in hand. Delegates to
@@ -420,8 +448,13 @@ func smelt_request(amount: int) -> int:
 		fuel_item = null
 	output_item = rec.output_item
 	output_quantity += n
-	if rec.output_item.item_name.to_lower().contains("iron bar"):
-		Global.add_mission_progress("smelt_iron", n)
+	CrashLogger.event("SMELT", "ok %s x%d" % [rec.output_item.item_name, n])
+	# Data-driven successful-production tracking. Credited once per output
+	# item, after input/fuel are committed and output space was reserved.
+	if not rec.mission_id.is_empty():
+		Global.add_mission_progress(rec.mission_id, n)
+	if rec.output_item != null and rec.output_item.item_id() == "ironbar":
+		Global.add_mission_progress("side_iron_bars", n)
 	furnace_state_changed.emit()
 	return n
 
@@ -521,6 +554,7 @@ func _load_from_inventory(data: ItemData, amount: int, as_fuel: bool) -> int:
 	return accepted
 
 func _smelt_fail(reason: String) -> int:
+	CrashLogger.event("SMELT", "fail: " + reason)
 	var msg: String = "[smelt] " + reason
 	if _program_host != null and is_instance_valid(_program_host):
 		_program_host.emit_signal("signal_print", msg)
@@ -538,6 +572,9 @@ func get_program_host() -> Node:
 
 func run_program(source: String) -> void:
 	program_code = source
+	CrashLogger.code("python", "RUN", "furnace=%s chars=%d\n%s" % [
+		item_data.item_name if item_data != null else "Furnace",
+		source.length(), source])
 	var host: Node = get_program_host()
 	host.set("code", source)
 	host.call("run_code")

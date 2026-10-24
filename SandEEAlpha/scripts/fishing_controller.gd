@@ -141,14 +141,14 @@ func start(cast_point: Vector2) -> void:
 	_show_rod()
 	set_process(true)
 	queue_redraw()
-	Global.log_chat("[color=#7fd0ff]You cast your line...[/color]")
+	Global.notify("[color=#7fd0ff]You cast your line...[/color]")
 
 func cancel(reason: String = "") -> void:
 	if not _active:
 		return
 	_end_cast()
 	if reason != "":
-		Global.log_chat("[color=#ffaa66]%s[/color]" % reason)
+		Global.notify("[color=#ffaa66]%s[/color]" % reason)
 
 # Show the held fishing-rod icon at the hands for the whole cast.
 func _show_rod() -> void:
@@ -209,7 +209,7 @@ func _resolve() -> void:
 	var chance: float = randf_range(catch_min, catch_max)
 	if randf() > chance:
 		_end_cast()
-		Global.log_chat("[color=#ffaa66]The fish got away...[/color]")
+		Global.notify("[color=#ffaa66]The fish got away...[/color]")
 		return
 	_begin_reel(RAW_FISH[randi() % RAW_FISH.size()])
 
@@ -220,7 +220,7 @@ func _begin_reel(fish: ItemData) -> void:
 	_reel_from = _float_local()      # capture the bobbing float BEFORE flipping to reeling
 	_reeling = true
 	_reel_t = 0.0
-	Global.log_chat("[color=#7fd0ff]Something's on the line![/color]")
+	Global.notify("[color=#7fd0ff]Something's on the line![/color]")
 	if _fish_sprite != null and is_instance_valid(_fish_sprite):
 		_fish_sprite.queue_free()
 	_fish_sprite = Sprite2D.new()
@@ -253,8 +253,9 @@ func _finish_reel() -> void:
 		_award(fish)
 
 func _award(fish: ItemData) -> void:
+	Global.add_mission_progress("side_master_angler", 1)
 	if Global.add_item(fish.to_dict(1)):
-		Global.log_chat("[color=#9be89b]Caught a %s![/color]" % fish.item_name)
+		Global.notify("[color=#9be89b]Caught a %s![/color]" % fish.item_name)
 		return
 	# Inventory full → drop it in the world via the shared drop path (one tile in
 	# FRONT OF THE PLAYER, on land). Dropping at the water cast point would put it
@@ -262,7 +263,7 @@ func _award(fish: ItemData) -> void:
 	var p := get_parent() as Node2D
 	var at: Vector2 = p.global_position if p != null and is_instance_valid(p) else _cast_point
 	Global.drop_item({"data": fish, "quantity": 1}, at)
-	Global.log_chat("[color=#9be89b]Caught a %s! (inventory full - dropped)[/color]" % fish.item_name)
+	Global.notify("[color=#9be89b]Caught a %s! (inventory full - dropped)[/color]" % fish.item_name)
 
 func _exit_tree() -> void:
 	_active = false

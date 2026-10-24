@@ -16,6 +16,7 @@ const BAR_H     := 8
 
 const SLOT_SIZE    := 40
 const SLOT_SCRIPT  := preload("res://scripts/hotbar_slot.gd")
+const BREAK_HUD_SCRIPT := preload("res://scripts/break_progress_hud.gd")
 
 # ── Stat bars ─────────────────────────────────────────────────────
 var _stat_container: Control  = null
@@ -58,6 +59,9 @@ func _ready() -> void:
 		# Attach hotbar_slot.gd so the TextureRect can handle drops
 		child.set_script(SLOT_SCRIPT)
 		child.set("slot_index", slot_index)
+		# PNC uses this tag to tell an item-switch tap (keep the mining lock and
+		# restart its bar with the new tool) from a tap elsewhere (cancel it).
+		child.add_to_group("hotbar_slot")
 		slot_index += 1
 
 		slots.append(child)
@@ -91,6 +95,10 @@ func _ready() -> void:
 		var this_idx: int = int(child.get("slot_index"))
 		child.mouse_entered.connect(_on_slot_mouse_entered.bind(this_idx))
 		child.mouse_exited.connect(_on_slot_mouse_exited)
+
+	# ── Mobile: reserve the last slot as the inventory button ────
+	if Global.is_mobile():
+		_setup_mobile_inventory_slot()
 
 	# ── Build Mode Label (above HBoxContainer) ────────────────────
 	var canvas: CanvasLayer = $CanvasLayer as CanvasLayer
@@ -170,6 +178,12 @@ func _ready() -> void:
 	_build_stat_bars(canvas)
 	_apply_label_scale()
 
+	# Mirror of the world-space break ring, immediately right of the hotbar.
+	var break_hud: Control = BREAK_HUD_SCRIPT.new()
+	break_hud.name = "BreakProgressRing"
+	break_hud.set("anchor_control", hbox)
+	canvas.add_child(break_hud)
+
 	Global.ui_scale_changed.connect(func(_s: float) -> void: _apply_label_scale())
 	Global.Hotbar_updated.connect(_refresh_hotbar)
 	Global.hotbar_selection_changed.connect(_on_selection_changed)
@@ -201,6 +215,46 @@ func _style_slot(slot: TextureRect) -> void:
 
 func _on_inventory_toggled(_is_open: bool) -> void:
 	pass  # hotbar stays fully visible when inventory is open
+
+# ── Mobile inventory button ───────────────────────────────────────
+# Android reserves the LAST visible hotbar slot (Minecraft-style). Any stack
+# that was parked there is moved into the inventory first, so no item becomes
+# unreachable; Global.add_item() also refuses to fill the reserved slot from
+# then on (see Global.hotbar_item_slots()).
+func _setup_mobile_inventory_slot() -> void:
+	var idx: int = Global.HOTBAR_SIZE - 1
+	if idx >= Global.Hotbar.size():
+		return
+	if Global.Hotbar[idx] != null:
+		# Detach first: add_item() must not stack onto the very slot we are
+		# about to clear (that would destroy the stack).
+		var carried: Dictionary = Global.Hotbar[idx] as Dictionary
+		Global.Hotbar[idx] = null
+		Global.add_item(carried)
+		Global.Hotbar_updated.emit()
+	var slot: TextureRect = slots[idx] as TextureRect if idx < slots.size() else null
+	if slot == null:
+		return
+	var bg: ColorRect = slot.get_node_or_null("SlotBG") as ColorRect
+	if bg != null:
+		bg.color = Color(0.15, 0.21, 0.34, 1.0)
+	var btn := Button.new()
+	btn.name = "InventoryButton"
+	btn.text = "INV"
+	btn.flat = true
+	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.focus_mode   = Control.FOCUS_NONE
+	btn.add_theme_font_size_override("font_size", int(20 * maxf(1.0, Global.ui_scale)))
+	btn.add_theme_color_override("font_color", Color(0.80, 0.90, 1.0, 1.0))
+	btn.tooltip_text = "Inventory"
+	btn.pressed.connect(_on_mobile_inventory_pressed)
+	slot.add_child(btn)
+
+func _on_mobile_inventory_pressed() -> void:
+	var p: Node = Global.player_node
+	if p != null and p.has_method("toggle_inventory"):
+		p.call("toggle_inventory")
 
 func _on_build_mode_changed(enabled: bool) -> void:
 	if _build_label != null:
@@ -243,15 +297,16 @@ func _input(event: InputEvent) -> void:
 	# wheel in _gui_input(), so without this guard both happened at once).
 	if Global.any_ui_open() or Global.pause_menu_open or Global.is_text_input_focused():
 		return
-	for i in range(9):
+	for i in range(Global.hotbar_item_slots()):
 		if event.is_action_pressed("hotbar_%d" % (i + 1)):
 			Global.set_hotbar_selection(i)
 			return
 	if event is InputEventMouseButton and event.pressed:
+		var n: int = Global.hotbar_item_slots()
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			Global.set_hotbar_selection((selected_index - 1 + 9) % 9)
+			Global.set_hotbar_selection((selected_index - 1 + n) % n)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			Global.set_hotbar_selection((selected_index + 1) % 9)
+			Global.set_hotbar_selection((selected_index + 1) % n)
 
 func _on_selection_changed(index: int) -> void:
 	_highlight_slot(index)

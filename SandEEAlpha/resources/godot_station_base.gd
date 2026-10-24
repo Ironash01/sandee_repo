@@ -29,6 +29,21 @@ func craft(amount) -> int:
 		return 0
 	return int(host.call("station_craft", amount))
 
+# craft_color(r, g, b, amount) -> int
+# Craft `amount` solid-color blocks using 8-bit RGB channels (0-255) and one
+# Cactus per block, matching the Color Crafter station. Returns the number
+# crafted, or 0 on failure; failures print the reason and consume nothing.
+# Example:
+#   craft_color(255, 0, 0, 2)   # two red blocks
+#   take_output()               # move them into the player's inventory
+# Insufficient Cactus prints "[craft_color] Insufficient Cactus" and consumes
+# nothing.
+func craft_color(r, g, b, amount) -> int:
+	var host := _station_host()
+	if host == null:
+		return 0
+	return int(host.call("station_craft_color", r, g, b, amount))
+
 # get_recipe() -> str — the selected recipe's result item name ("" if none).
 func get_recipe() -> String:
 	var host := _station_host()

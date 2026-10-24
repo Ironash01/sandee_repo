@@ -49,6 +49,18 @@ var _is_first_time:  bool  = false
 # The keyword Label inside the popup, kept so the animation can target it.
 var _keyword_lbl:    Label = null
 
+# ── Knowledge archive pagination ───────────────────────────────────
+# The altar still teaches its own entry, but the popup also acts as a
+# pageable archive of every knowledge entry this world has unlocked. The
+# registry is Global.all_learned_entries(); no separate page list exists.
+const ARCHIVE_PAGE_SIZE: int = 3
+var _archive_entries: Array[KnowledgeEntry] = []
+var _archive_box: VBoxContainer = null
+var _archive_page_label: Label = null
+var _archive_prev: Button = null
+var _archive_next: Button = null
+var _archive_page: int = 0
+
 func _ready() -> void:
 	add_to_group("KnowledgeAltar")
 	var tex := AtlasTexture.new()
@@ -75,6 +87,8 @@ func _ready() -> void:
 	call_deferred("_fix_z_index")
 	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
 		Global.ui_scale_changed.connect(_on_ui_scale)
+	if not Global.knowledge_updated.is_connected(_on_knowledge_updated):
+		Global.knowledge_updated.connect(_on_knowledge_updated)
 
 # The popup is built at the current UI scale and cached — rebuild it in place
 # (when open) so a Small/Medium/Large change applies live.
@@ -138,22 +152,56 @@ func _on_body_exited(body: Node) -> void:
 			_panel.visible = false
 			_release_pause()
 
+# The altar can be freed with the dungeon/world while its panel still holds an
+# open_ui() reference (death, exit transition, quit-to-menu). Without this the
+# refcount leaks and the next scene starts paused.
+func _exit_tree() -> void:
+	if _panel != null and is_instance_valid(_panel):
+		_panel.visible = false
+	_release_pause()
+
 # Releases the open_ui() reference exactly once. Writing get_tree().paused =
 # false directly (the old behaviour) resumed the game even when the pause menu
 # or another UI still required it to stay paused.
 func _release_pause() -> void:
+	if _panel != null:
+		Global.unregister_ui_back(_panel)
 	if _pause_registered:
 		_pause_registered = false
 		Global.close_ui()
 
+func _dismiss_panel() -> void:
+	if _panel != null and _panel.visible:
+		# Escape closes the encyclopedia WITHOUT marking the entry learned.
+		_panel.visible = false
+		_release_pause()
+
 func _input(event: InputEvent) -> void:
+	if _panel != null and _panel.visible:
+		if event.is_action_pressed("escape"):
+			get_viewport().set_input_as_handled()
+			if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+				_dismiss_panel()
+			return
+		if event.is_action_pressed("ui_left"):
+			_change_archive_page(-1)
+			get_viewport().set_input_as_handled()
+			return
+		if event.is_action_pressed("ui_right"):
+			_change_archive_page(1)
+			get_viewport().set_input_as_handled()
+			return
+		return
 	if not _player_nearby or Global.block_mode \
 			or Global.any_ui_open() or Global.pause_menu_open:
 		return
-	if _panel != null and _panel.visible:
-		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_show()
+
+func _on_knowledge_updated() -> void:
+	if _panel != null and _panel.visible:
+		_refresh_archive()
+
 
 func _show() -> void:
 	if _entry == null:
@@ -172,10 +220,91 @@ func _show() -> void:
 		# THROUGH the popup, and it keeps the pause refcounted.
 		Global.open_ui()
 	_panel.visible = true
+	Global.register_ui_back(_panel, Callable(self, "_dismiss_panel"))
+	_refresh_archive()
 	if _is_first_time and _keyword_lbl != null:
 		# Defer one frame so the Label has its final laid-out size before the
 		# pop sets its centre pivot (otherwise the pivot is (0,0)).
 		_play_keyword_emphasis.call_deferred()
+
+func _make_page_button(text: String, s: float) -> Button:
+	var btn := Button.new()
+	btn.text = text
+	btn.custom_minimum_size = Vector2(int(76 * s), int(28 * s))
+	btn.add_theme_font_size_override("font_size", int(10 * s))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = C_OK; sb.border_color = C_BORDER
+	sb.set_border_width_all(int(1 * s)); sb.set_corner_radius_all(int(4 * s))
+	btn.add_theme_stylebox_override("normal", sb)
+	btn.add_theme_stylebox_override("hover", sb)
+	btn.add_theme_color_override("font_color", C_TITLE)
+	return btn
+
+
+func _archive_page_count() -> int:
+	if _archive_entries.is_empty():
+		return 0
+	return ceili(float(_archive_entries.size()) / float(ARCHIVE_PAGE_SIZE))
+
+
+func _refresh_archive() -> void:
+	if _archive_box == null or not is_instance_valid(_archive_box):
+		return
+	var s: float = Global.ui_scale
+	for child in _archive_box.get_children():
+		_archive_box.remove_child(child)
+		child.queue_free()
+	_archive_entries = Global.all_learned_entries()
+	_archive_entries.sort_custom(func(a: KnowledgeEntry, b: KnowledgeEntry) -> bool:
+		return a.entry_name.naturalnocasecmp_to(b.entry_name) < 0)
+	var pages: int = _archive_page_count()
+	_archive_page = clampi(_archive_page, 0, maxi(pages - 1, 0))
+	if _archive_entries.is_empty():
+		var none := Label.new()
+		none.text = "No knowledge recorded yet."
+		none.add_theme_font_size_override("font_size", int(10 * s))
+		none.add_theme_color_override("font_color", C_MUTED)
+		_archive_box.add_child(none)
+		_archive_prev.visible = false
+		_archive_page_label.visible = false
+		_archive_next.visible = false
+		return
+	_archive_prev.visible = true
+	_archive_page_label.visible = true
+	_archive_next.visible = true
+	var start: int = _archive_page * ARCHIVE_PAGE_SIZE
+	var finish: int = mini(start + ARCHIVE_PAGE_SIZE, _archive_entries.size())
+	for i in range(start, finish):
+		var entry: KnowledgeEntry = _archive_entries[i]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", int(6 * s))
+		var name_lbl := Label.new()
+		name_lbl.text = entry.entry_name
+		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_lbl.add_theme_font_size_override("font_size", int(11 * s))
+		name_lbl.add_theme_color_override("font_color", C_TITLE)
+		row.add_child(name_lbl)
+		var lang_lbl := Label.new()
+		lang_lbl.text = entry.language.to_upper()
+		lang_lbl.add_theme_font_size_override("font_size", int(9 * s))
+		lang_lbl.add_theme_color_override("font_color", C_MUTED)
+		row.add_child(lang_lbl)
+		_archive_box.add_child(row)
+	_archive_page_label.text = "Page %d / %d" % [_archive_page + 1, pages]
+	_archive_prev.disabled = _archive_page <= 0
+	_archive_next.disabled = _archive_page >= pages - 1
+
+
+func _change_archive_page(delta: int) -> void:
+	var pages: int = _archive_page_count()
+	if pages <= 0:
+		return
+	var next: int = clampi(_archive_page + delta, 0, pages - 1)
+	if next == _archive_page:
+		return
+	_archive_page = next
+	_refresh_archive()
+
 
 func _play_keyword_emphasis() -> void:
 	# Wait one frame so the freshly built Label has been laid out — the pop
@@ -258,6 +387,33 @@ func _build_panel() -> Control:
 	body.add_theme_color_override("font_color", Color(0.85, 0.90, 1.00, 1.0))
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(body)
+
+	# Pageable archive of every knowledge entry already unlocked in this world.
+	# The current altar entry stays above; this list is read-only reference.
+	var archive_title := Label.new()
+	archive_title.text = "KNOWLEDGE ARCHIVE"
+	archive_title.add_theme_font_size_override("font_size", int(10 * s))
+	archive_title.add_theme_color_override("font_color", C_MUTED)
+	vbox.add_child(archive_title)
+	_archive_box = VBoxContainer.new()
+	_archive_box.add_theme_constant_override("separation", int(3 * s))
+	vbox.add_child(_archive_box)
+	var page_row := HBoxContainer.new()
+	page_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	page_row.add_theme_constant_override("separation", int(8 * s))
+	vbox.add_child(page_row)
+	_archive_prev = _make_page_button("‹ Prev", s)
+	_archive_prev.pressed.connect(func() -> void: _change_archive_page(-1))
+	page_row.add_child(_archive_prev)
+	_archive_page_label = Label.new()
+	_archive_page_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_archive_page_label.add_theme_font_size_override("font_size", int(10 * s))
+	_archive_page_label.add_theme_color_override("font_color", C_MUTED)
+	page_row.add_child(_archive_page_label)
+	_archive_next = _make_page_button("Next ›", s)
+	_archive_next.pressed.connect(func() -> void: _change_archive_page(1))
+	page_row.add_child(_archive_next)
+	_refresh_archive()
 
 	# "✔ Recorded in your Encyclopedia — "print" unlocked". The keyword is a
 	# SEPARATE Label so it can be animated on its own (first-time emphasis).

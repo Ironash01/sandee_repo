@@ -51,6 +51,9 @@ enum Behavior { HOSTILE, PASSIVE }
 # ── Spawning — legacy per-chunk amount (kept for reference/tuning) ────
 @export var min_spawn: int = 1
 @export var max_spawn: int = 3
+## Ambient director: spawn a whole GROUP of min_spawn..max_spawn together
+## (herds). Off for existing mobs so their spawn behaviour is unchanged.
+@export var group_spawn: bool = false
 
 # ── Daytime damage reduction ──────────────────────────────────────────
 ## Enemies that spawn during the day (sandworms, wolves, pixies) are daytime

@@ -9,8 +9,9 @@ region = Rect2(256, 64, 32, 32)
 
 [resource]
 script = ExtResource("1_script")
-item_name = "LUA"
-description = "Summons LUA, your coding companion"
+item_name = "Automatica"
+scripting_id = "lua"
+description = "Summons Automatica, your coding companion."
 item_type = "consumable"
 icon = SubResource("AtlasTexture_lua")
 is_placeable = true

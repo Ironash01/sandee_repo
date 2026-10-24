@@ -15,14 +15,10 @@ const OBJECT_BURST_SCRIPT: GDScript = preload("res://scripts/object_burst.gd")
 # translucent while the player hides behind it; the trunk stays opaque.
 const CANOPY_FADE_SHADER: Shader = preload("res://shaders/tree_canopy_fade.gdshader")
 # Tree's local origin (0,0) is the trunk's visual base, with the canopy
-# sprite extending UPWARD (negative y) from there — anywhere in that negative
-# range sits inside/behind the canopy, which is what made the old -24.0
-# value look like it was drawing behind the tree. Canopy height also differs
-# per tree type (Snowy is a different sprite from the plains tree), so a fixed
-# negative offset can't reliably clear it for every tree anyway. Positive y
-# (below the trunk base, on the ground) is always clear regardless of tree
-# type/size, and matches how the block break bar sits close to the sprite's base.
-const BREAK_BAR_Y_OFFSET: float = 10.0
+# extending upward. The break ring is drawn above the whole 96px sprite (not
+# over the trunk) so it reads as "on top of" the target and never hides behind
+# the leaves.
+const BREAK_RING_Y_OFFSET: float = -62.0
 
 # Choppable region: a vertical band this tall above the tree's visual base
 # (i.e. the TRUNK). The canopy/leaves above it can't be chopped — if the
@@ -51,9 +47,14 @@ var _canopy_material:  ShaderMaterial = null
 const CLICK_BREAK_SECONDS:      float = 0.25  # progress added per click
 const PROGRESS_PERSIST_SECONDS: float = 2.5   # damage memory window
 var _breaking:       bool  = false
+# Set by point-and-click chopping: the tree is being advanced by the PNC tick,
+# not by a held mouse, so _process must not cancel it between ticks.
+var _pnc_auto_chop:  bool  = false
 var _break_duration: float = 1.0
 var _break_elapsed:  float = 0.0
 var _break_progress: float = 0.0
+var _break_tool_id:  String = ""
+var _break_tool_known: bool = false
 var _mouse_held:     bool  = false
 var _last_hit_ms:    int   = -1
 
@@ -77,7 +78,11 @@ func _process(delta: float) -> void:
 		return
 	_update_hover()
 	_tick_progress_expiry()
+	_sync_break_tool()
+	_tick_wobble()
 	if not _mouse_held or not _hovered:
+		if _pnc_auto_chop:
+			return
 		_cancel_breaking()
 		return
 	_add_break_progress(delta)
@@ -86,7 +91,7 @@ func _update_hover() -> void:
 	if _sprite.texture == null:
 		_hovered = false
 		return
-	var mouse_local: Vector2 = to_local(get_global_mouse_position())
+	var mouse_local: Vector2 = to_local(Global.mouse_world(self))
 	# Hover box matches the sprite's actual frame bounds, centred on the
 	# sprite's VISUAL centre. The canopy is drawn upward via Sprite2D.offset
 	# (sprite.position stays at the trunk base so the y-sort anchors there),
@@ -105,12 +110,17 @@ func _update_hover() -> void:
 		   and not Global.block_mode
 
 func _draw() -> void:
-	if not _breaking:
-		return
-	Global.draw_break_bar(self, _break_progress, BREAK_BAR_Y_OFFSET)
+	# Ring is drawn by BreakProgressOverlay above the world.
+	pass
 
 # ── Input ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
+	# PNC owns this tree until its target is cancelled. A real mouse release
+	# from the original tap must not cancel the PNC chop or clear the ring.
+	if _pnc_auto_chop:
+		return
+	if Global.is_mouse_event_over_ui(event):
+		return
 	if not _player_nearby or Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if not _hovered:
@@ -138,6 +148,13 @@ func _try_start_breaking() -> void:
 	_break_duration = _get_break_duration(base_dur)
 	# Keep accumulated damage within the persist window — a spam clicker (or
 	# a player who walked away and came back) resumes where they left off.
+	var tool_id: String = Global.held_tool_id()
+	if _break_tool_known and tool_id != _break_tool_id:
+		_break_elapsed  = 0.0
+		_break_progress = 0.0
+		_last_hit_ms    = -1
+	_break_tool_id = tool_id
+	_break_tool_known = true
 	if _last_hit_ms < 0 \
 			or Time.get_ticks_msec() - _last_hit_ms >= int(PROGRESS_PERSIST_SECONDS * 1000.0):
 		_break_elapsed  = 0.0
@@ -148,15 +165,33 @@ func _try_start_breaking() -> void:
 	queue_redraw()
 
 func _add_break_progress(amount: float) -> void:
+	# Keep the held axe/pickaxe swinging throughout a held or PNC chop.
+	Global.swing_player_item()
 	_break_elapsed  = minf(_break_elapsed + amount, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
+	Global.report_break_progress(_break_progress, global_position, BREAK_RING_Y_OFFSET, self)
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_destroy()
 
-# Damage fades from memory PROGRESS_PERSIST_SECONDS after the last hit —
-# until then a returning player (or spam clicker) resumes where they left.
+# A hotbar/tool switch restarts the bar at 0 with the new axe/no-axe duration,
+# even if the previous tool had already chipped the tree partway down.
+func _sync_break_tool() -> void:
+	if not _breaking:
+		return
+	var tool_id: String = Global.held_tool_id()
+	if tool_id == _break_tool_id:
+		return
+	_break_elapsed  = 0.0
+	_break_progress = 0.0
+	_last_hit_ms    = -1
+	_break_tool_id  = tool_id
+	_break_duration = _get_break_duration(maxf(0.1, float(WOOD_DATA.block_level)))
+	Global.clear_break_progress(self)
+
+# Damage fades from memory PROGRESS_PERSIST_SECONDS after the last hit - until
+# then a returning player (or spam clicker) resumes where they left.
 func _tick_progress_expiry() -> void:
 	if _break_progress <= 0.0:
 		return
@@ -164,22 +199,43 @@ func _tick_progress_expiry() -> void:
 		return
 	_break_elapsed  = 0.0
 	_break_progress = 0.0
+	if _sprite != null:
+		_sprite.rotation = 0.0
+	Global.clear_break_progress(self)
 	queue_redraw()
 
 # ── Public: autonomous chopping (Lua NPC) ─────────────────────────
 # Advances the same timer the player's spam-click uses, in fixed
 # increments called on a delay loop rather than driven by mouse input.
+func set_pnc_auto_chop(on: bool) -> void:
+	_pnc_auto_chop = on
+
 func chop(amount: float) -> void:
 	if not _breaking:
 		var base_dur := maxf(0.1, float(WOOD_DATA.block_level))
 		_break_duration = _get_break_duration(base_dur)
 		_breaking       = true
+		_break_tool_id  = Global.held_tool_id()
+		_break_tool_known = true
+	else:
+		_sync_break_tool()
 	_add_break_progress(amount)
+
+# Same snappy left/right shake the placed blocks and cave walls use. The
+# sprite rotates around the tree's origin so the trunk and canopy sway together
+# while the chop is actively advancing (including PNC auto-chop).
+func _tick_wobble() -> void:
+	if not _breaking or _sprite == null:
+		return
+	_sprite.rotation = Global.block_wobble_rotation()
 
 func _cancel_breaking() -> void:
 	if not _breaking:
 		return
 	_breaking = false
+	Global.clear_break_progress(self)
+	if _sprite != null:
+		_sprite.rotation = 0.0
 	# Keep accumulated damage (spam-clicking resumes where it left off);
 	# it expires via _tick_progress_expiry.
 	queue_redraw()
@@ -212,6 +268,9 @@ func _set_canopy_fade(target: float, delta: float) -> void:
 
 # ── Destroy ───────────────────────────────────────────────────────
 func _destroy() -> void:
+	Global.clear_break_progress(self)
+	CrashLogger.event("WORLD", "tree felled type=%s at=(%.1f, %.1f)" % [
+		tree_type, global_position.x, global_position.y])
 	_breaking = false
 	# Use the global reference rather than get_parent() to avoid coupling to scene structure.
 	var world: Node = Global.world_node

@@ -3,20 +3,26 @@ import { withSupabase } from "@supabase/server";
 
 export default {
   fetch: withSupabase({ auth: ["publishable", "secret"] }, async (req, ctx) => {
-    const { username, password } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const username = typeof body.username === "string" ? body.username.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
 
-    const { data: profile } = await ctx.supabaseAdmin
-      .from("profiles")
-      .select("email")
-      .eq("username", username)
-      .maybeSingle();
+    if (!username || !password) {
+      return Response.json({ error: "invalid_credentials" }, { status: 400 });
+    }
 
-    if (!profile) {
+    // Case-insensitive lookup (usernames are unique on lower(username)).
+    // The SQL function is executable by the service role only, so client
+    // roles can never read profiles.email through it.
+    const { data: email, error: lookupError } = await ctx.supabaseAdmin
+      .rpc("username_email", { uname: username });
+
+    if (lookupError || !email) {
       return Response.json({ error: "invalid_credentials" }, { status: 400 });
     }
 
     const { data, error } = await ctx.supabaseAdmin.auth.signInWithPassword({
-      email: profile.email,
+      email,
       password,
     });
 

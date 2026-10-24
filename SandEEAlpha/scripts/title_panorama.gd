@@ -123,6 +123,9 @@ func _render_panorama() -> Texture2D:
 	world.set("width", PREVIEW_TILES)
 	world.set("height", PREVIEW_TILES)
 	world.set("random_seed", preview_seed())
+	# The preview supplies its own seed — don't let it consume the pending
+	# game-world seed (see world.gd:_ready).
+	world.set("use_pending_seed", false)
 
 	var cam := Camera2D.new()
 	cam.zoom = Vector2(0.5, 0.5)   # wide shot

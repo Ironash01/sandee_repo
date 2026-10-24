@@ -298,6 +298,7 @@ func _die() -> void:
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
+	Global.add_mission_progress("side_pixie_slayer", 1)
 	_spawn_death_burst()
 	queue_free()
 

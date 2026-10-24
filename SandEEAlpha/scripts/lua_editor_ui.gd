@@ -26,6 +26,11 @@ var _combat_btn: Button = null      # combat-mode toggle
 # the specific LUA from the active list.
 var _body:      Control   # code + output view
 var _encycl:    Control   # encyclopedia view
+var _panel_center: CenterContainer = null   # keyboard-aware centring area
+var _enc_func_box: VBoxContainer   # the four Programming Encyclopedia sections
+# Section id -> expanded, kept across refreshes so a knowledge update or a UI
+# scale change never collapses what the player opened.
+var _enc_open: Dictionary = {}
 var _knowledge_box: VBoxContainer   # unlocked dungeon-knowledge entries
 # entry id -> its keyword Label, so the "just learned" emphasis can target the
 # right label when the encyclopedia is (re)opened. Rebuilt by _refresh_knowledge_section.
@@ -34,6 +39,9 @@ var _knowledge_keyword_labels: Dictionary = {}
 var _knowledge_new_badges:     Dictionary = {}
 var _lua_state: Node
 var _running:   bool = false
+# True between RUN and the settle check: the chunk has finished but its queued
+# signals may not have started a job yet, so _process must not re-pause early.
+var _awaiting_settle: bool = false
 var _build_slots: Array = []   # the 3 lua_build_slot.gd Controls
 
 # ── Example snippets (shown in the SNIPPETS column) ───────────────
@@ -72,7 +80,7 @@ func _ready() -> void:
 	call_deferred("_find_lua_state")
 	call_deferred("_wire_build_palette")
 	Global.ui_scale_changed.connect(_on_ui_scale)
-	Global.knowledge_updated.connect(_refresh_knowledge_section)
+	Global.knowledge_updated.connect(_on_knowledge_updated)
 
 # Connects the robot's build-palette signal (so slots update when the robot
 # fills them itself) and paints the current contents. Deferred because the
@@ -98,7 +106,7 @@ func _on_ui_scale(_s: float) -> void:
 	await get_tree().process_frame
 	_build()
 	_code_edit.text = saved_code
-	_sync_running_from_npc()
+	_sync_run_state()
 	_wire_build_palette()
 	if was_encycl:
 		_toggle_encyclopedia()
@@ -120,23 +128,70 @@ func _on_rename_submitted(new_name: String) -> void:
 	if _name_edit != null:
 		_name_edit.release_focus()
 
-# Re-syncs the RUN/STOP buttons (and editor editability) with the robot's
-# ACTUAL running state. _running only remembers what THIS panel session did,
-# but closing the panel deliberately leaves the robot working — without this,
-# reopening showed STOP disabled and a running robot could not be stopped.
-func _sync_running_from_npc() -> void:
+# ── Run state ─────────────────────────────────────────────────────
+# Re-syncs RUN / STOP / editability AND the shared pause with the robot's REAL
+# activity. `has_active_work()` is true while a job is dispatched, a station job
+# is queued, or a move() velocity is still set — only then does STOP mean
+# anything, and only then may the world keep simulating behind the panel.
+# Anything else (a finished script, an idle robot) re-asserts the UI pause, so
+# the player can never regain control while the editor is in front.
+func _sync_run_state(manage_pause: bool = true) -> void:
 	var npc: Node = _find_npc()
-	_running = npc != null and npc.has_method("is_working") and bool(npc.call("is_working"))
-	_run_btn.disabled   = _running
-	_stop_btn.disabled  = not _running
-	_code_edit.editable = not _running
+	var active: bool = false
+	if npc != null:
+		if npc.has_method("has_active_work"):
+			active = bool(npc.call("has_active_work"))
+		elif npc.has_method("is_working"):
+			active = bool(npc.call("is_working"))
+	_running = active
+	if _run_btn != null:
+		_run_btn.disabled = active
+	if _stop_btn != null:
+		_stop_btn.disabled = not active
+		_stop_btn.tooltip_text = "Stop the robot's current work." if active \
+			else "Nothing is running — STOP is only available while the robot is working."
+	if _code_edit != null:
+		_code_edit.editable = not active
+	# Suspending the panel's pause is what lets the robot move; it is keyed by
+	# this node, so the shared refcount stays balanced and a second UI still
+	# pauses the game.
+	if not manage_pause:
+		return
+	if active:
+		Global.suspend_ui_pause(self)
+	else:
+		Global.resume_ui_pause(self)
+
+# Work can start or finish at any moment while the panel is open (a job ends,
+# STOP takes effect, a queued station job begins), so keep the buttons and the
+# pause in step every frame. PROCESS_MODE_ALWAYS (set in _ready) keeps this
+# running while the tree is paused.
+func _process(_delta: float) -> void:
+	if not visible:
+		return
+	_fit_keyboard()
+	if _awaiting_settle:
+		return
+	_sync_run_state()
+
+# Android: shrink the centring area by the software keyboard's height so the
+# focused code field and the RUN/STOP row stay above it. No-op on desktop
+# (mobile_keyboard_height() returns 0).
+func _fit_keyboard() -> void:
+	if _panel_center == null:
+		return
+	var inset: float = Global.mobile_keyboard_height()
+	if not is_equal_approx(_panel_center.offset_bottom, -inset):
+		_panel_center.offset_bottom = -inset
 
 # Called by the LuaNPC when the player clicks the station.
 func open_panel() -> void:
 	visible = true
-	_sync_running_from_npc()
+	_awaiting_settle = false
+	_sync_run_state()
 	_refresh_build_palette()
 	_load_saved_code()
+	Global.register_ui_back(self, Callable(self, "_back"))
 	if _name_edit != null:
 		var npc: Node = _find_npc()
 		if npc != null and npc.has_method("get_display_name"):
@@ -182,6 +237,7 @@ func _build() -> void:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
+	_panel_center = center
 
 	var panel := PanelContainer.new()
 	# A TABBED panel needs far less room than the old 4-column layout, so this is
@@ -210,7 +266,7 @@ func _build() -> void:
 	header.add_child(icon)
 
 	var title := Label.new()
-	title.text = "  LUA — Code Editor"
+	title.text = "  AUTOMATICA — Code Editor"
 	title.add_theme_font_size_override("font_size", i(16, s))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -355,7 +411,7 @@ func _build_body(s: float) -> Control:
 	# Combat mode (see lua_npc.gd combat section). Termination lives in the pause
 	# menu's LUA Management list.
 	_combat_btn = _make_btn("⚔ COMBAT", Color(1.0, 0.85, 0.6, 1.0), C_STOP, _toggle_combat, s)
-	_combat_btn.tooltip_text = "Send this LUA into combat mode: it abandons its station, follows you and fights. PERMANENT - a combat LUA can't run code, can't revert to a normal LUA, and can only be terminated from the pause menu's LUA Management list."
+	_combat_btn.tooltip_text = "Send this Automatica into combat mode: it abandons its station, follows you and fights. PERMANENT - a combat Automatica can't run code, can't revert to a normal Automatica, and can only be terminated from the pause menu's Automatica Management list."
 	btn_row.add_child(_combat_btn)
 
 	tabs.add_child(code_page)
@@ -707,19 +763,21 @@ func _update_combat_ui() -> void:
 		if _run_btn != null:
 			_run_btn.disabled = true
 	elif _code_edit != null and _run_btn != null:
-		_sync_running_from_npc()
+		_sync_run_state()
 
 # ── Encyclopedia ──────────────────────────────────────────────────
-# Two clearly separated groups (see APIReference):
-#   • CUSTOM FUNCTIONS — THIS GAME  (robot + station APIs), split by language
-#   • BUILT-IN FUNCTIONS — LANGUAGE (standard library), split by language
-# so the game's own API is never mixed in with the language's built-ins.
+# Four independently expandable sections, in this order:
+#   1. LUA Programming Language        3. Python Programming Language
+#   2. Automatica (LUA robot)          4. Algorithmica (Python automation)
+# Language sections reveal entries through dungeon discovery; the two function
+# sections list their complete API immediately (scripts/encyclopedia_data.gd).
+# The learned dungeon concepts are listed underneath, as before.
 func _build_encyclopedia(s: float) -> Control:
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", i(10, s))
 
 	var hdr := Label.new()
-	hdr.text = "FUNCTION REFERENCE"
+	hdr.text = "PROGRAMMING ENCYCLOPEDIA"
 	hdr.add_theme_font_size_override("font_size", i(14, s))
 	hdr.add_theme_color_override("font_color", C_TITLE)
 	root.add_child(hdr)
@@ -736,14 +794,13 @@ func _build_encyclopedia(s: float) -> Control:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(list)
 
-	for group in APIReference.groups():
-		_enc_group_header(list, str(group["title"]), str(group["note"]), s)
-		for lang in group["languages"]:
-			_enc_section(list, str(lang["name"]), s)
-			for e in lang["entries"]:
-				_enc_entry(list, str(e["sig"]), str(e["desc"]), s)
-		_divider(list)
+	_enc_func_box = VBoxContainer.new()
+	_enc_func_box.add_theme_constant_override("separation", i(14, s))
+	_enc_func_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_child(_enc_func_box)
+	_refresh_encyclopedia_sections()
 
+	_divider(list)
 	_enc_section(list, "DUNGEON KNOWLEDGE (unlocked)", s)
 	_knowledge_box = VBoxContainer.new()
 	_knowledge_box.add_theme_constant_override("separation", i(14, s))
@@ -752,21 +809,49 @@ func _build_encyclopedia(s: float) -> Control:
 
 	return root
 
-# Big group banner (CUSTOM vs BUILT-IN) — brighter than a language heading so
-# the two top-level categories read as distinct at a glance.
-func _enc_group_header(parent: Node, text: String, note: String, s: float) -> void:
-	var title := Label.new()
-	title.text = text
-	title.add_theme_font_size_override("font_size", i(13, s))
-	title.add_theme_color_override("font_color", C_TITLE)
-	parent.add_child(title)
-	if not note.is_empty():
-		var sub := Label.new()
-		sub.text = note
-		sub.add_theme_font_size_override("font_size", i(11, s))
-		sub.add_theme_color_override("font_color", C_MUTED)
-		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		parent.add_child(sub)
+# Rebuilds the four accordion sections. Language sections list only what the
+# player has discovered; Automatica / Algorithmica are always fully listed.
+# Called on open so a dungeon cleared since the last look shows up.
+func _refresh_encyclopedia_sections() -> void:
+	if _enc_func_box == null:
+		return
+	for child in _enc_func_box.get_children().duplicate():
+		if child is EncyclopediaSection:
+			_enc_open[(child as EncyclopediaSection).section_id] = (child as EncyclopediaSection).expanded
+		_enc_func_box.remove_child(child)
+		child.free()
+	var s: float = Global.ui_scale
+	for section in APIReference.encyclopedia_sections():
+		var sec: Dictionary = section as Dictionary
+		var always: bool = EncyclopediaData.section_is_always_available(sec)
+		var entries: Array = EncyclopediaData.entries_for_section(sec)
+		var acc := EncyclopediaSection.new()
+		acc.setup(sec, s)
+		acc.set_counts(entries.size(), EncyclopediaData.section_total(sec), always)
+		if entries.is_empty():
+			var none := Label.new()
+			none.text = "Nothing discovered yet — clear dungeons to reveal entries here."
+			none.add_theme_font_size_override("font_size", i(11, s))
+			none.add_theme_color_override("font_color", C_MUTED)
+			none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			acc.body().add_child(none)
+		else:
+			for e in entries:
+				acc.add_entry(e as Dictionary, s)
+		_enc_func_box.add_child(acc)
+		# Function sections open by default; language sections stay collapsed
+		# until something has been discovered.
+		acc.set_expanded(bool(_enc_open.get(acc.section_id, always)), false)
+		acc.expansion_changed.connect(_on_encyclopedia_section_expanded)
+
+func _on_encyclopedia_section_expanded(id: String, on: bool) -> void:
+	_enc_open[id] = on
+
+# Knowledge changed (a dungeon altar was used): refresh both the discovered
+# function sections and the learned-concept list.
+func _on_knowledge_updated() -> void:
+	_refresh_encyclopedia_sections()
+	_refresh_knowledge_section()
 
 func _refresh_knowledge_section() -> void:
 	if _knowledge_box == null:
@@ -851,31 +936,15 @@ func _enc_section(parent: Node, text: String, s: float) -> void:
 	lbl.add_theme_color_override("font_color", C_MUTED)
 	parent.add_child(lbl)
 
-func _enc_entry(parent: Node, sig: String, desc: String, s: float) -> void:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", i(4, s))
-	parent.add_child(box)
-
-	var sig_lbl := Label.new()
-	sig_lbl.text = sig
-	sig_lbl.add_theme_font_size_override("font_size", i(14, s))
-	sig_lbl.add_theme_color_override("font_color", Color(0.55, 0.90, 1.00, 1.0))
-	box.add_child(sig_lbl)
-
-	var desc_lbl := Label.new()
-	desc_lbl.text = desc
-	desc_lbl.add_theme_font_size_override("font_size", i(12, s))
-	desc_lbl.add_theme_color_override("font_color", C_MUTED)
-	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(desc_lbl)
-
 # ── Actions ───────────────────────────────────────────────────────
 func _toggle_encyclopedia() -> void:
 	_encycl.visible = not _encycl.visible
 	_body.visible   = not _encycl.visible
 	if _encycl.visible:
-		# Rebuild so any entry learned since the last look is present, then
-		# (after a frame, so labels are laid out) play the first-time emphasis.
+		# Rebuild so any entry learned/discovered since the last look is
+		# present, then (after a frame, so labels are laid out) play the
+		# first-time emphasis.
+		_refresh_encyclopedia_sections()
 		_refresh_knowledge_section()
 		_emphasize_unseen_knowledge.call_deferred()
 
@@ -912,7 +981,8 @@ func _api_function_names() -> PackedStringArray:
 	var out := PackedStringArray()
 	for group in APIReference.groups():
 		for lang in (group["languages"] as Array):
-			if not str(lang["name"]).begins_with("LUA"):
+			var group_name := str(lang["name"])
+			if not (group_name.begins_with("LUA") or group_name.begins_with("AUTOMATICA")):
 				continue
 			for e in (lang["entries"] as Array):
 				var name: String = str(e["sig"]).split("(")[0].split("/")[0].strip_edges()
@@ -953,7 +1023,7 @@ func _run_code() -> void:
 	# Combat LUAs cannot run code (see lua_npc.gd combat section).
 	var npc_c: Node = _find_npc()
 	if npc_c != null and npc_c.has_method("is_combat") and bool(npc_c.call("is_combat")):
-		_print_output("[color=#ff8888]This LUA is in combat mode — it cannot run code.[/color]")
+		_print_output("[color=#ff8888]This Automatica is in combat mode — it cannot run code.[/color]")
 		return
 	if _lua_state == null:
 		_print_output("[color=#ff8888]No LuaState connected.[/color]")
@@ -965,6 +1035,9 @@ func _run_code() -> void:
 	# Persist the program on the NPC so it survives a reload.
 	if npc_c != null:
 		npc_c.set("program_code", code)
+	CrashLogger.code("lua", "RUN", "%s | chars=%d\n%s" % [
+		npc_c.call("get_display_name") if npc_c != null and npc_c.has_method("get_display_name") else "editor",
+		code.length(), code])
 
 	var preamble: String = """
 -- Built-in helpers
@@ -1083,43 +1156,98 @@ function build_stairs(n)
     end
 end
 """
+	# Announce and arm the run BEFORE calling into Lua: run_code() executes the
+	# chunk synchronously, so code_executed / code_failed arrive inside the call.
+	_print_output("[color=#88ffaa]▶ Running...[/color]")
+	_running = true
+	_awaiting_settle = true
+	_run_btn.disabled   = true
+	_stop_btn.disabled  = false
+	_code_edit.editable = false
+	# Let the world simulate while the robot works. This SUSPENDS the panel's
+	# pause only — the shared refcount is untouched, so closing still releases
+	# exactly once and a second UI still keeps the game paused.
+	Global.suspend_ui_pause(self)
+
 	_lua_state.set("code", preamble + code)
 	_lua_state.call("run_code")
 
-	# Unpause so the robot can move, but keep the panel open
-	_running = true
-	get_tree().paused  = false
-	_run_btn.disabled  = true
-	_stop_btn.disabled = false
-	_code_edit.editable = false
-	_print_output("[color=#88ffaa]▶ Running...[/color]")
+	# The chunk has finished. Continuous jobs are dispatched from queued signals
+	# on the next physics frames, so decide what is still running after them.
+	_settle_after_chunk.call_deferred()
+
+# Waits for the queued Lua signals to be dispatched, then hands over to
+# _sync_run_state(): continuous work keeps the world running and STOP enabled;
+# a script that finished and left nothing running re-pauses the game and
+# disables STOP. _process stays out of the way until this settles, so the pause
+# cannot flip back on for the single frame before a job starts.
+func _settle_after_chunk() -> void:
+	if not is_inside_tree():
+		_awaiting_settle = false
+		return
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	await get_tree().process_frame
+	_awaiting_settle = false
+	if not visible:
+		return
+	_sync_run_state()
 
 func _stop_code() -> void:
+	# STOP is only meaningful while something is actually running (see
+	# _sync_run_state) — after a script finishes the button is disabled and this
+	# guard keeps a stray click from printing a misleading "Stopped".
+	if _stop_btn != null and _stop_btn.disabled:
+		return
 	var npc: Node = _find_npc()
 	if npc != null:
 		npc.call("stop_work")
 
-	_running = false
-	get_tree().paused   = true   # re-pause for editing
-	_run_btn.disabled   = false
-	_stop_btn.disabled  = true
-	_code_edit.editable = true
 	_print_output("[color=#ffaa44]■ Stopped.[/color]")
+	# stop_work() clears velocity immediately; a dispatched job notices on its
+	# next await. _process keeps polling, so the buttons settle by themselves.
+	_sync_run_state()
 
 func _clear_code() -> void:
 	_code_edit.text = ""
 
-func _close() -> void:
-	# Closing does NOT stop the robot — it keeps running — so re-sync rather
-	# than forcing STOP disabled; open_panel() re-syncs again on reopen.
+# Close the panel. The robot keeps working if it was working; the panel's pause
+# token and any pause suspension are released exactly once either way.
+func close_panel() -> void:
+	if not visible:
+		return
+	_awaiting_settle = false
+	# Persist the current editor draft before closing so Escape/Back can never
+	# silently discard code the player has not run yet.
+	if _code_edit != null:
+		var npc: Node = _find_npc()
+		if npc != null:
+			npc.set("program_code", _code_edit.text)
+	Global.unregister_ui_back(self)
+	Global.resume_ui_pause(self)
 	Global.close_ui()
 	visible = false
-	_sync_running_from_npc()
+	# manage_pause = false: the panel is closed, so it must not re-suspend the
+	# pause for a robot that keeps working without it.
+	_sync_run_state(false)
+
+func _close() -> void:
+	close_panel()
+
+# Escape/Android Back closes the API encyclopedia first, then the editor.
+func _back() -> void:
+	if _encycl != null and _encycl.visible:
+		_toggle_encyclopedia()
+		if visible:
+			Global.register_ui_back(self, Callable(self, "_back"))
+		return
+	close_panel()
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape") and visible:
 		get_viewport().set_input_as_handled()
-		_close()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			_back()
 
 # ── Lua signal handlers ───────────────────────────────────────────
 func _on_lua_print(text: String) -> void:
@@ -1129,22 +1257,31 @@ func _on_lua_move(vec: Vector2) -> void:
 	_print_output("[color=#88ffaa]move → (%.1f, %.1f)[/color]" % [vec.x, vec.y])
 
 func _on_code_executed() -> void:
-	_print_output("[color=#88ffaa]✓ Code executed[/color]")
+	CrashLogger.code("lua", "OK", "chunk finished")
+	# The Lua chunk itself is done. Anything it dispatched (walking, chopping,
+	# crafting) is still queued as signals, so this is the point where the
+	# output box reports the script finished — _settle_after_chunk() then
+	# decides whether continuous work keeps running.
+	_print_output("[color=#88ffaa]✓ Finished running.[/color]")
 	# Tutorial snippet ran cleanly → complete its mission (idempotent).
+	# Any clean run counts as "Run your first Lua program" (idempotent), not
+	# just the tutorial snippet.
+	Global.complete_mission("run_program")
+	Global.add_mission_progress("side_lua_automator", 1)
 	if not _pending_mission.is_empty():
 		Global.complete_mission(_pending_mission)
 		_print_output("[color=#ffd76a]★ Tutorial complete![/color]")
 		_pending_mission = ""
 
 func _on_code_failed(error: String) -> void:
+	CrashLogger.code("lua", "FAIL", error)
 	_print_output("[color=#ff8888]✗ %s[/color]" % error)
-	# Re-enable editing on error
-	if _running:
-		_running = false
-		get_tree().paused   = true
-		_run_btn.disabled   = false
-		_stop_btn.disabled  = true
-		_code_edit.editable = true
+	# Nothing was dispatched, so hand the pause straight back and re-enable
+	# editing; STOP must not stay clickable for code that never ran.
+	_awaiting_settle = false
+	_running = false
+	Global.resume_ui_pause(self)
+	_sync_run_state()
 
 func _print_output(line: String) -> void:
 	if _output == null: return

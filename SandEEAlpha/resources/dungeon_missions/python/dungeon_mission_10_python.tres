@@ -18,7 +18,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Define a function that greets a name and print the result."
 language = "python"
-starter_code = "def greet(name):\n    return \"Hello \" + name\nprint(greet(\"World\"))"
+starter_code = ""
 answer_output = "Hello World"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]

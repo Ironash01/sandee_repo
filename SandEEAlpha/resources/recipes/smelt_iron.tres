@@ -10,3 +10,4 @@ input_item = ExtResource("2_input")
 output_item = ExtResource("3_output")
 smelt_time = 5.0
 fuel_level_required = 1
+mission_id = "smelt_iron"

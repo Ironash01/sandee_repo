@@ -38,8 +38,10 @@ const BLADE_BASE:        float     = ITEM_GAP
 const BLADE_LEN:         float     = ITEM_TIP - ITEM_GAP
 const BLADE_W:           float     = ITEM_SCALE * 32.0
 # The blade sweeps at waist height while grass is anchored at the feet, so the
-# grass-cut test inflates the blade box by this much.
-const GRASS_CUT_PAD:     float     = 14.0
+# grass-cut test inflates the blade box by this much. Raised from 14 → 26: the
+# tight box made grass feel like it had to be hit pixel-perfectly, especially
+# with tap-to-cut. This only affects GRASS (the mob hitbox is unchanged).
+const GRASS_CUT_PAD:     float     = 26.0
 # The arc the item sweeps through — a Terraria-style crescent: it starts
 # raised behind and swings down/forward past the front. The art is authored
 # facing EAST (right); left is that same arc mirrored, and the vertical
@@ -248,19 +250,63 @@ func _try_parry(other: Node) -> void:
 # padded a little so grass at the player's feet is caught by a waist-high
 # sweep. Uses the hitbox's global transform so it tracks the sweep in any
 # direction.
+#
+# COST: this used to iterate get_tree().get_nodes_in_group("Grass") every frame
+# of the swing — an Array of EVERY tuft in the 1024x1024 world plus a transform
+# and two range checks per tuft. Measured 7.8 ms/frame at 20k tufts (~109 ms
+# per swing), which is the stutter. The world now answers with only the tufts
+# inside the blade's world AABB (a few tile-dictionary lookups), and the exact
+# blade-local test below is unchanged — same hits, same reach.
 func _cut_overlapping_grass() -> void:
 	# Grass is sword-only: a normal held item plays the swing but never cuts.
 	if not _is_sword:
 		return
+	if _hitbox_area == null or not is_instance_valid(_hitbox_area):
+		return
+	var world: Node = Global.world_node
 	var xf: Transform2D = _hitbox_area.global_transform
-	for node in get_tree().get_nodes_in_group("Grass"):
+	var inv: Transform2D = xf.affine_inverse()
+	# The padded blade box in pivot-local space, then its world-space AABB
+	# (four transformed corners, so a rotated/diagonal sweep is covered too).
+	var lrect := Rect2(
+		Vector2(BLADE_BASE - GRASS_CUT_PAD, -BLADE_W * 0.5 - GRASS_CUT_PAD),
+		Vector2(BLADE_LEN + GRASS_CUT_PAD * 2.0, BLADE_W + GRASS_CUT_PAD * 2.0))
+	var c0: Vector2 = xf * lrect.position
+	var c1: Vector2 = xf * Vector2(lrect.end.x, lrect.position.y)
+	var c2: Vector2 = xf * lrect.end
+	var c3: Vector2 = xf * Vector2(lrect.position.x, lrect.end.y)
+	var lo := Vector2(minf(minf(c0.x, c1.x), minf(c2.x, c3.x)),
+		minf(minf(c0.y, c1.y), minf(c2.y, c3.y)))
+	var hi := Vector2(maxf(maxf(c0.x, c1.x), maxf(c2.x, c3.x)),
+		maxf(maxf(c0.y, c1.y), maxf(c2.y, c3.y)))
+	var candidates: Array = []
+	if world != null and is_instance_valid(world) \
+			and world.has_method("grass_tufts_in_world_rect"):
+		candidates = world.call("grass_tufts_in_world_rect", Rect2(lo, hi - lo))
+	else:
+		# Cave/dungeon worlds have no grass index (and no world-gen grass):
+		# they only ever hold a handful of player-placed tufts, so the group
+		# walk is cheap there and keeps cave grass cutting working.
+		candidates = get_tree().get_nodes_in_group("Grass")
+	var blade_box := Rect2(lo, hi - lo)
+	for node in candidates:
+		if not is_instance_valid(node) or _cut_grass.has(node):
+			continue
 		var tuft := node as Node2D
-		if tuft == null or not is_instance_valid(tuft) or _cut_grass.has(tuft):
+		if tuft == null:
 			continue
-		var local: Vector2 = xf.affine_inverse() * tuft.global_position
-		if local.x < BLADE_BASE - GRASS_CUT_PAD or local.x > BLADE_BASE + BLADE_LEN + GRASS_CUT_PAD:
-			continue
-		if absf(local.y) > BLADE_W * 0.5 + GRASS_CUT_PAD:
+		# Whole-tile hit: the tuft's cuttable area (its tile + visible blades)
+		# counts as grass, so any part of it inside the padded blade box cuts.
+		var in_tile: bool = false
+		if tuft.has_method("grass_rect"):
+			in_tile = (tuft.call("grass_rect") as Rect2).intersects(blade_box)
+		if not in_tile:
+			# Fallback for tufts without a tile rect (legacy/placed variants).
+			var local: Vector2 = inv * tuft.global_position
+			in_tile = local.x >= BLADE_BASE - GRASS_CUT_PAD \
+				and local.x <= BLADE_BASE + BLADE_LEN + GRASS_CUT_PAD \
+				and absf(local.y) <= BLADE_W * 0.5 + GRASS_CUT_PAD
+		if not in_tile:
 			continue
 		_cut_grass.append(tuft)
 		if tuft.has_method("cut"):
@@ -303,6 +349,22 @@ func _build_anim_sprite(tex: Texture2D, frame: int, count: int, fps: float) -> A
 	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	sprite.position       = Vector2.ZERO
 
+	sprite.sprite_frames = _effect_frames(tex, frame, count, fps)
+	sprite.animation_finished.connect(sprite.stop)
+	sprite.play("effect")
+	return sprite
+
+# One-shot frame sets are identical for every instance, so they are built ONCE
+# per process and shared. Each swing used to build a fresh SpriteFrames plus one
+# AtlasTexture per frame (arc + three puffs ≈ 20 resources) and every grass cut
+# built another — pure per-attack allocation churn.
+static var _frames_cache: Dictionary = {}
+
+func _effect_frames(tex: Texture2D, frame: int, count: int, fps: float) -> SpriteFrames:
+	var key: String = "%s|%d|%d|%s" % [tex.resource_path, frame, count, fps]
+	var cached: Variant = _frames_cache.get(key)
+	if cached != null:
+		return cached as SpriteFrames
 	var anim := SpriteFrames.new()
 	anim.remove_animation("default")
 	anim.add_animation("effect")
@@ -313,10 +375,8 @@ func _build_anim_sprite(tex: Texture2D, frame: int, count: int, fps: float) -> A
 		at.atlas = tex
 		at.region = Rect2(i * frame, 0, frame, frame)
 		anim.add_frame("effect", at)
-	sprite.sprite_frames = anim
-	sprite.animation_finished.connect(sprite.stop)
-	sprite.play("effect")
-	return sprite
+	_frames_cache[key] = anim
+	return anim
 
 # The unit direction the swing points: the mouse aim when we have one, else the
 # spawner's 8-way facing name.

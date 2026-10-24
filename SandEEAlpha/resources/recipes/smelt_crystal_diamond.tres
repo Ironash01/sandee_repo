@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="SmeltingRecipe" format=3]
+
+[ext_resource type="Script" path="res://resources/recipes/smelting_recipe.gd" id="1_script"]
+[ext_resource type="Resource" path="res://resources/items/crystal_diamond_ore.tres" id="2_input"]
+[ext_resource type="Resource" path="res://resources/items/diamond.tres" id="3_output"]
+
+[resource]
+script = ExtResource("1_script")
+input_item = ExtResource("2_input")
+output_item = ExtResource("3_output")
+smelt_time = 5.0
+fuel_level_required = 1

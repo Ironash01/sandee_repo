@@ -52,6 +52,8 @@ const FLOOR_ITEM_PATHS: Array = [
 
 # Ranged dungeon enemy (see scripts/hitman.gd). Guards + spawner both use it.
 const HITMAN_SCENE: PackedScene = preload("res://scenes/mobs/Hitman.tscn")
+const RARE_CHEST_DATA: ItemData = preload("res://resources/items/rare_dungeon_chest.tres")
+const CHEST_BLOCK_SCENE: PackedScene = preload("res://scenes/objects/ChestBlock.tscn")
 
 # Safe-zone markers use the dev item resources/items/dungeon_safe_zone_marker.tres
 # (a 3x 32x32 sheet: idle / active / warning). The zones themselves are built in
@@ -74,8 +76,13 @@ class DungeonExit:
 	var _active:    bool = false
 	var _triggered: bool = false
 	var _area: Area2D = null
+	var _pulse: float = 0.0
 
 	func _init() -> void:
+		# Exit UI is drawn above the world and keeps animating even while the
+		# quiz panel transitions back to gameplay.
+		z_as_relative = false
+		process_mode = Node.PROCESS_MODE_ALWAYS
 		_area = Area2D.new()
 		var shape := CollisionShape2D.new()
 		var rect := RectangleShape2D.new()
@@ -94,19 +101,31 @@ class DungeonExit:
 		_active = active
 		visible = active
 		_area.monitoring = active
+		if active:
+			# Keep the exit unmistakably above walls/altars/traps. The old
+			# y-sorted z could put it behind room props and made it look absent.
+			z_index = 2000
+			show()
 		queue_redraw()
 
+	func _process(delta: float) -> void:
+		if _active:
+			_pulse += delta
+			queue_redraw()
+
 	func _draw() -> void:
-		# Recomputed here rather than _init — callers set global_position
-		# AFTER add_child(), so it's only valid once the node is placed.
-		z_index = int(global_position.y / 32)
 		if not _active:
 			return
-		var half: float = 16.0
-		draw_rect(Rect2(-half, -half, 32, 32), COLOR)
-		draw_rect(Rect2(-half, -half, 32, 32), Color(0, 0, 0, 0.6), false, 2.0)
+		var half: float = 20.0
+		var glow: float = 0.35 + 0.15 * sin(_pulse * 4.0)
+		# A tall beam plus the solid pad makes the exit readable across a room.
+		draw_rect(Rect2(-half - 4.0, -72.0, (half + 4.0) * 2.0, 62.0),
+			Color(COLOR.r, COLOR.g, COLOR.b, 0.10 + glow * 0.10), true)
+		draw_rect(Rect2(-half, -half, half * 2.0, half * 2.0), COLOR)
+		draw_rect(Rect2(-half, -half, half * 2.0, half * 2.0),
+			Color(0, 0, 0, 0.65), false, 2.0)
 		var font: Font = ThemeDB.fallback_font
-		var fsize: int = int(8 * Global.ui_scale)
+		var fsize: int = int(9 * Global.ui_scale)
 		var text_size := font.get_string_size("EXIT", HORIZONTAL_ALIGNMENT_CENTER, -1, fsize)
 		draw_string(font, Vector2(-text_size.x / 2.0, fsize / 2.0), "EXIT",
 			HORIZONTAL_ALIGNMENT_CENTER, -1, fsize, Color.WHITE)
@@ -143,19 +162,33 @@ var overworld_return_position: Vector2 = Vector2.ZERO
 var _overworld: Node2D = null
 
 var _dungeon_index: int = 0
+var _seed_value: int = 0
+var _rare_chests: Dictionary = {}  # cell -> ChestBlock
 var _mission: DungeonMissionData = null
 var _tilemap: TileMapLayer = null
 var _exit_marker: DungeonExit = null
 var _cleared: bool = false
+var _boss: Node2D = null
+var _boss_defeated: bool = false
 
 # ── Hitman spawner ─────────────────────────────────────────────────
 # Hitmen are NOT placed at generation time — a timer spawns one near a random
-# flare/trap every 5-10s so the dungeon keeps feeling dangerous, capped at
+# flare/trap so the dungeon keeps feeling dangerous, capped at
 # HITMAN_MAX_ALIVE, and held back for HITMAN_DEATH_COOLDOWN after one dies.
-const HITMAN_MAX_ALIVE:       int   = 15
-const HITMAN_SPAWN_MIN:       float = 5.0
-const HITMAN_SPAWN_MAX:       float = 10.0
-const HITMAN_DEATH_COOLDOWN:  float = 20.0
+# Dungeons 1-10 (the tutorial arc) use a noticeably gentler profile: fewer
+# alive at once and much longer gaps between spawns.
+const HITMAN_MAX_ALIVE:       int   = 6
+const HITMAN_SPAWN_MIN:       float = 18.0
+const HITMAN_SPAWN_MAX:       float = 30.0
+const HITMAN_DEATH_COOLDOWN:  float = 35.0
+
+const EARLY_DUNGEON_MAX_INDEX:       int   = 10
+const EARLY_HITMAN_MAX_ALIVE:        int   = 2
+const EARLY_HITMAN_SPAWN_MIN:        float = 30.0
+const EARLY_HITMAN_SPAWN_MAX:        float = 45.0
+const EARLY_HITMAN_DEATH_COOLDOWN:   float = 45.0
+const QUIZ_GUARD_MAX:                int   = 2
+
 # Never spawn right on top of the player.
 const HITMAN_MIN_PLAYER_DIST: float = 6.0 * TILE_SIZE
 
@@ -163,15 +196,31 @@ var _hitman_timer:    float = 0.0
 var _hitman_cooldown: float = 0.0
 var _safe_zones:      Array = []   # DungeonSafeZone per safe altar room
 
+func _is_early_dungeon() -> bool:
+	return _dungeon_index > 0 and _dungeon_index <= EARLY_DUNGEON_MAX_INDEX
+
+func _hitman_interval() -> Vector2:
+	return Vector2(EARLY_HITMAN_SPAWN_MIN, EARLY_HITMAN_SPAWN_MAX) if _is_early_dungeon() \
+		else Vector2(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
+
+func _hitman_max_alive() -> int:
+	return EARLY_HITMAN_MAX_ALIVE if _is_early_dungeon() else HITMAN_MAX_ALIVE
+
+func _hitman_death_cooldown_sec() -> float:
+	return EARLY_HITMAN_DEATH_COOLDOWN if _is_early_dungeon() else HITMAN_DEATH_COOLDOWN
+
 func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 		overworld: Node2D, return_position: Vector2) -> void:
 	_dungeon_index = dungeon_index
+	_seed_value     = seed_value
 	_mission       = mission
 	_overworld     = overworld
 	overworld_return_position = return_position
 
 	generator = DungeonGenerator.new()
-	if _mission != null:
+	if _mission != null and _mission.is_boss():
+		generator.generate_boss(seed_value)
+	elif _mission != null:
 		generator.generate(seed_value, _mission.size_modifier, _mission.altar_amount, _mission.chest_amount)
 	else:
 		generator.generate(seed_value)
@@ -186,13 +235,17 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 	add_child(_tilemap)
 
 	_paint_tiles()
-	_spawn_altars()
-	_spawn_flares()
-	_spawn_traps()
-	_spawn_safe_zones()
-	_spawn_quiz_guards()
-	_spawn_quiz_traps()
-	_init_hitman_spawner()
+	if _mission != null and _mission.is_boss():
+		_spawn_boss()
+	else:
+		_spawn_altars()
+		_spawn_flares()
+		_spawn_traps()
+		_spawn_safe_zones()
+		_spawn_quiz_guards()
+		_spawn_quiz_traps()
+		_spawn_rare_chests()
+		_init_hitman_spawner()
 	_spawn_exit_marker()
 	_setup_lighting()
 
@@ -221,6 +274,9 @@ func _spawn_traps() -> void:
 # quiz room is NOT safe — its hitman guards must be defeated.
 func _spawn_safe_zones() -> void:
 	_safe_zones.clear()
+	# Extra rooms and the boss arena are combat spaces, not knowledge rooms.
+	if _mission != null and (_mission.is_extra() or _mission.is_boss()):
+		return
 	var zone := DungeonSafeZone.new()
 	add_child(zone)
 	zone.setup(self, _room_rect_px(generator.knowledge_room))
@@ -254,10 +310,11 @@ func _room_rect_px(room: Dictionary) -> Rect2:
 	var br: Vector2 = grid_to_world(p + s - Vector2i(1, 1)) + half
 	return Rect2(tl, br - tl)
 
-# 4 hitman guards ringing the quiz altar (spawned at generation, inside the room).
+# 2 hitman guards maximum, spawned once at generation.
 func _spawn_quiz_guards() -> void:
-	for cell in generator.quiz_guard_positions:
-		_spawn_hitman_at(cell as Vector2i)
+	var count: int = mini(generator.quiz_guard_positions.size(), QUIZ_GUARD_MAX)
+	for i in range(count):
+		_spawn_hitman_at(generator.quiz_guard_positions[i] as Vector2i)
 
 # A ring of traps around the quiz altar with 2 walk-through gaps.
 func _spawn_quiz_traps() -> void:
@@ -266,20 +323,89 @@ func _spawn_quiz_traps() -> void:
 		add_child(trap)
 		trap.global_position = grid_to_world(cell as Vector2i)
 
+# Rare bonus-room chests. The generator has already selected at most one
+# eligible empty bonus-room cell (or none); contents are deterministic from the
+# dungeon seed, while mutable slots are restored from Global so re-entering
+# never refills a chest the player already looted.
+func _spawn_rare_chests() -> void:
+	_rare_chests.clear()
+	for cell_value in generator.rare_chest_positions:
+		var cell: Vector2i = cell_value as Vector2i
+		var saved: Dictionary = Global.get_dungeon_chest_state(_dungeon_index, cell)
+		if bool(saved.get("removed", false)):
+			continue
+		var chest: Node = CHEST_BLOCK_SCENE.instantiate()
+		if chest == null:
+			continue
+		add_child(chest)
+		chest.call("setup", RARE_CHEST_DATA)
+		chest.call("set_world_cell", cell, self)
+		chest.global_position = grid_to_world(cell)
+		chest.z_index = int(chest.global_position.y / TILE_SIZE)
+		if saved.has("slots") and saved["slots"] is Array:
+			_restore_chest_slots(chest, saved["slots"] as Array)
+		else:
+			RareChestLoot.fill(chest, _rare_chest_rng(cell))
+		chest.contents_changed.connect(_on_rare_chest_changed.bind(cell))
+		_rare_chests[cell] = chest
+
+func _rare_chest_rng(cell: Vector2i) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed_value + cell.x * 73856093 + cell.y * 19349663
+	return rng
+
+func _restore_chest_slots(chest: Node, saved_slots: Array) -> void:
+	var slots_ref: Variant = chest.get("slots")
+	if not (slots_ref is Array):
+		return
+	var slots: Array = slots_ref as Array
+	for i in range(slots.size()):
+		slots[i] = null
+	for i in range(mini(saved_slots.size(), slots.size())):
+		var slot: Variant = Global.deserialize_item(saved_slots[i])
+		if slot != null:
+			slots[i] = slot
+	if chest.has_method("_refresh_ui"):
+		chest.call("_refresh_ui")
+
+func _on_rare_chest_changed(cell: Vector2i) -> void:
+	var chest_ref: Variant = _rare_chests.get(cell)
+	if not is_instance_valid(chest_ref) or (chest_ref as Node).is_queued_for_deletion():
+		return
+	var slots_ref: Variant = (chest_ref as Node).get("slots")
+	if not (slots_ref is Array):
+		return
+	var saved_slots: Array = []
+	for slot in (slots_ref as Array):
+		saved_slots.append(Global.serialize_item(slot))
+	Global.set_dungeon_chest_state(_dungeon_index, cell,
+		{"slots": saved_slots})
+
+# ChestBlock calls this through its normal break path. Mark the chest removed
+# so a re-entered deterministic dungeon cannot respawn/reward it again.
+func unregister_block(cell: Vector2i) -> void:
+	if _rare_chests.has(cell):
+		_rare_chests.erase(cell)
+		Global.set_dungeon_chest_state(_dungeon_index, cell, {"removed": true})
+
 # ── Hitman spawner ─────────────────────────────────────────────────
 # Seeds the spawn timer. No Hitmen are placed at generation time — the first
 # one appears 5-10s after the player enters (see _tick_hitman_spawner).
 func _init_hitman_spawner() -> void:
-	_hitman_timer    = randf_range(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
+	var interval: Vector2 = _hitman_interval()
+	_hitman_timer    = randf_range(interval.x, interval.y)
 	_hitman_cooldown = 0.0
 
 func _process(delta: float) -> void:
+	if _mission != null and _mission.is_boss():
+		return   # the miniboss arena never spawns ordinary Hitmen
 	_tick_hitman_spawner(delta)
 
 # Leaving the dungeon must clear the flag — the zones set it while active, and
 # _process stops running once we're out of the tree.
 func _exit_tree() -> void:
 	Global.player_in_safe_room = false
+	Global.clear_safe_zones()
 
 func _tick_hitman_spawner(delta: float) -> void:
 	_hitman_cooldown = maxf(0.0, _hitman_cooldown - delta)
@@ -287,22 +413,26 @@ func _tick_hitman_spawner(delta: float) -> void:
 	if _hitman_timer > 0.0 or _hitman_cooldown > 0.0:
 		return
 	# Cap the population so the dungeon doesn't fill up with hitmen.
-	if get_tree().get_nodes_in_group("Hitman").size() >= HITMAN_MAX_ALIVE:
-		_hitman_timer = randf_range(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
+	if get_tree().get_nodes_in_group("Hitman").size() >= _hitman_max_alive():
+		_hitman_timer = randf_range(_hitman_interval().x, _hitman_interval().y)
 		return
 	_spawn_hitman_near_hazard()
-	_hitman_timer = randf_range(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
+	_hitman_timer = randf_range(_hitman_interval().x, _hitman_interval().y)
 
 # Spawn a Hitman on a walkable cell next to a random flare or trap.
 func _spawn_hitman_near_hazard() -> void:
 	var spots: Array = []
+	var quiz_rect: Rect2 = _room_rect_px(generator.quiz_room)
+	var safe_rect: Rect2 = _room_rect_px(generator.knowledge_room)
 	for gp in generator.flare_positions:
 		var s := _floor_near(gp as Vector2i)
-		if s.x >= 0:
+		if s.x >= 0 and not quiz_rect.grow(TILE_SIZE * 2.0).has_point(grid_to_world(s)) \
+				and not safe_rect.has_point(grid_to_world(s)):
 			spots.append(s)
 	for gp in generator.trap_positions:
 		var s := _floor_near(gp as Vector2i)
-		if s.x >= 0:
+		if s.x >= 0 and not quiz_rect.grow(TILE_SIZE * 2.0).has_point(grid_to_world(s)) \
+				and not safe_rect.has_point(grid_to_world(s)):
 			spots.append(s)
 	# Prefer spots away from the player so hitmen don't pop in on top of them.
 	var p: Node2D = Global.player_node as Node2D
@@ -318,11 +448,14 @@ func _spawn_hitman_near_hazard() -> void:
 	_spawn_hitman_at(spots[randi() % spots.size()])
 
 func _spawn_hitman_at(cell: Vector2i) -> void:
+	var spawn_world: Vector2 = grid_to_world(cell)
+	if Global.is_point_in_safe_zone(spawn_world):
+		return
 	var hitman: Node2D = HITMAN_SCENE.instantiate() as Node2D
 	if hitman == null:
 		return
 	add_child(hitman)
-	hitman.global_position = grid_to_world(cell)
+	hitman.global_position = spawn_world
 	hitman.died.connect(_on_hitman_died)
 
 # A walkable cell adjacent to `gp` (so a spawn never lands in a wall or on the
@@ -337,7 +470,7 @@ func _floor_near(gp: Vector2i) -> Vector2i:
 
 # A hitman died — hold the next spawn back so the dungeon has a lull.
 func _on_hitman_died() -> void:
-	_hitman_cooldown = HITMAN_DEATH_COOLDOWN
+	_hitman_cooldown = _hitman_death_cooldown_sec()
 
 # ── Paint the generated grid into the TileMapLayer ─────────────────────
 func _paint_tiles() -> void:
@@ -411,31 +544,114 @@ func _cell_is_wall(x: int, y: int) -> bool:
 
 # ── Objects ────────────────────────────────────────────────────────────
 func _spawn_altars() -> void:
+	if _mission == null:
+		return
+	if _mission.is_boss():
+		return
+	if _mission.is_extra():
+		# Extra dungeons deliberately have no Knowledge Altar. Put a functional
+		# Quiz Altar in both the former knowledge room and the final quiz room.
+		_spawn_quiz_altar_at(generator.knowledge_altar_pos)
+		if generator.quiz_altar_pos != generator.knowledge_altar_pos:
+			_spawn_quiz_altar_at(generator.quiz_altar_pos)
+		return
+
 	var knowledge := KnowledgeAltar.new()
 	knowledge.setup(_mission)
 	add_child(knowledge)
 	knowledge.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(generator.knowledge_altar_pos)))
 
+	_spawn_quiz_altar_at(generator.quiz_altar_pos)
+
+func _spawn_quiz_altar_at(grid_pos: Vector2i) -> void:
 	var quiz := QuizAltar.new()
 	quiz.setup(_mission)
 	quiz.cleared.connect(_on_dungeon_cleared)
 	add_child(quiz)
-	quiz.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(generator.quiz_altar_pos)))
+	quiz.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(grid_pos)))
 
 # The exit stays dormant until the quiz is cleared ("the exit opens"); it
 # then teleports the player back out of the dungeon.
+func _move_exit_near_player() -> void:
+	if _exit_marker == null:
+		return
+	var p := Global.player_node as Node2D
+	if p == null or not is_instance_valid(p):
+		return
+	var base: Vector2i = world_to_grid(p.global_position)
+	var blocked_cells: Dictionary = {}
+	for cell in generator.quiz_trap_positions:
+		blocked_cells[cell as Vector2i] = true
+	for offset in [Vector2i(0, 2), Vector2i(2, 0), Vector2i(-2, 0),
+			Vector2i(0, -2), Vector2i(1, 0), Vector2i(-1, 0),
+			Vector2i(0, 1), Vector2i(0, -1)]:
+		var cell: Vector2i = base + offset
+		if blocked_cells.has(cell) or not grid_cell_is_floor(cell):
+			continue
+		_exit_marker.global_position = grid_to_world(cell)
+		return
+
+
 func _spawn_exit_marker() -> void:
 	_exit_marker = DungeonExit.new()
 	add_child(_exit_marker)
+	var exit_grid := generator.quiz_altar_pos + Vector2i(0, 2)
+	if _mission != null and _mission.is_boss():
+		exit_grid = generator.boss_spawn_pos + Vector2i(0, 4)
 	_exit_marker.global_position = _tilemap.to_global(
-		_tilemap.map_to_local(_grid_to_cell(generator.quiz_altar_pos + Vector2i(0, 2))))
+		_tilemap.map_to_local(_grid_to_cell(exit_grid)))
 	_exit_marker.set_active(false)
+
+# ── Hitman Miniboss ─────────────────────────────────────────────────
+# One boss per boss dungeon. The ordinary hitman spawner is never initialised
+# for this mission, so no extra Hitmen/minibosses can appear.
+func _spawn_boss() -> void:
+	if _mission == null or not _mission.is_boss() or _boss != null:
+		return
+	var boss: Node2D = HITMAN_SCENE.instantiate() as Node2D
+	if boss == null:
+		return
+	boss.set("is_miniboss", true)
+	boss.set("miniboss_scale", 2.2)
+	boss.set("max_health_override", 800.0)
+	boss.set("projectile_damage_override", 18.0)
+	boss.set("ram_damage_override", 25.0)
+	boss.set("display_name_override", "Hitman Miniboss")
+	boss.set("fire_interval_override", 1.8)
+	boss.set("patrol_speed_override", 48.0)
+	add_child(boss)
+	boss.global_position = grid_to_world(generator.boss_spawn_pos)
+	boss.z_index = int(boss.global_position.y / TILE_SIZE)
+	boss.defeated.connect(_on_boss_defeated)
+	_boss = boss
+
+func _on_boss_defeated() -> void:
+	if _boss_defeated:
+		return
+	_boss_defeated = true
+	if _mission == null:
+		return
+	if Global.is_dungeon_cleared(_dungeon_index):
+		_on_dungeon_cleared(_dungeon_index)
+		return
+	if not Global.grant_item(_mission.reward_item_path, 1):
+		var p := Global.player_node as Node2D
+		if p != null and is_instance_valid(p):
+			Global.drop_item({"data": load(_mission.reward_item_path), "quantity": 1},
+				p.global_position)
+	Global.complete_mission("dungeon_%d" % _dungeon_index)
+	Global.record_dungeon_clear(_dungeon_index)
+	_on_dungeon_cleared(_dungeon_index)
 
 func _on_dungeon_cleared(_index: int) -> void:
 	if _cleared:
 		return
 	_cleared = true
 	if _exit_marker != null:
+		# Put the exit beside the player who just finished the quiz. In extra
+		# dungeons the completed altar can be the first (knowledge-room) one,
+		# while the old fixed exit position was in the distant final quiz room.
+		_move_exit_near_player()
 		_exit_marker.set_active(true)
 	# The dungeon is gone from the map: free the overworld's portal + forget
 	# its tile so it never reappears (persisted on the next overworld save).
@@ -453,17 +669,22 @@ func get_player_spawn_pos() -> Vector2:
 # the origin (matching the overworld/cave convention) means every grid->cell
 # conversion needs this same per-axis offset.
 # ── Camera bounds ───────────────────────────────────────────────────
-# The playable rect of THIS dungeon, in world coordinates — the generated grid
-# (rooms + corridors) is centred on the origin (see _grid_to_cell). The band of
-# dungeon wall painted around the grid (SURROUND_BAND_TILES) is deliberately
-# EXCLUDED so the camera stops at the real playable area instead of drifting out
-# into the surround.
+# The playable rect of THIS dungeon, in world coordinates, expanded by a wall
+# padding so the camera can still centre the player near the entrance/outer
+# rooms instead of locking at the generated-grid edge. The surround band is 128
+# tiles, so 20 tiles of padding never exposes the void.
+const CAMERA_WALL_PADDING_TILES: int = 20
+
 func camera_bounds() -> Rect2:
 	if generator == null:
 		return Rect2()
-	var half := Vector2i(generator.width / 2, generator.height / 2)
-	return Rect2(-Vector2(half) * float(TILE_SIZE),
-		Vector2(generator.width, generator.height) * float(TILE_SIZE))
+	return camera_rect_for(generator.width, generator.height, CAMERA_WALL_PADDING_TILES)
+
+static func camera_rect_for(width: int, height: int, padding_tiles: int = CAMERA_WALL_PADDING_TILES) -> Rect2:
+	var half := Vector2i(width / 2, height / 2)
+	var base := Rect2(-Vector2(half) * float(TILE_SIZE),
+		Vector2(width, height) * float(TILE_SIZE))
+	return base.grow(float(padding_tiles) * float(TILE_SIZE))
 
 func _grid_to_cell(tile: Vector2i) -> Vector2i:
 	return tile - Vector2i(generator.width / 2, generator.height / 2)

@@ -2,4 +2,10 @@
 target-dir = "../ext_bin/"
 
 [target.aarch64-linux-android]
-linker = "aarch64-linux-android36-clang"
+linker = "aarch64-linux-android24-clang"
+
+[target.i686-linux-android]
+linker = "i686-linux-android24-clang"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android24-clang"

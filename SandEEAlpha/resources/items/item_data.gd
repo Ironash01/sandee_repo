@@ -4,6 +4,10 @@ class_name ItemData
 # ── Identity ──────────────────────────────────────────────────────
 @export var item_name:    String     = ""
 @export var description:  String     = ""
+# Stable scripting/API id when the display name changes. Empty keeps the
+# historical behaviour of deriving the id from item_name. This lets a
+# player-facing rename preserve existing Algorithmica programs and IDs.
+@export var scripting_id: String     = ""
 
 # ── Type ──────────────────────────────────────────────────────────
 @export_enum("material", "block", "door", "weapon", "consumable") var item_type: String = "material"
@@ -18,6 +22,19 @@ class_name ItemData
 ## Health restored when this item is eaten (left-click while selected). 0 = not
 ## food. Consumption is handled by player.gd.
 @export var heal_amount: float = 0.0
+
+# ── Farming ───────────────────────────────────────────────────────
+## True for the farming hoe: left-clicking a grass tuft tills it into soil.
+@export var is_hoe: bool = false
+
+## True for seeds: left-clicking tilled soil plants the crop.
+@export var is_seed: bool = false
+
+## True for the empty Bucket: left-clicking water fills it.
+@export var is_bucket: bool = false
+
+## True for a filled Water Bucket: left-clicking ground pours a water source.
+@export var is_water_bucket: bool = false
 
 # ── Dev items ─────────────────────────────────────────────────────
 ## World-gen/game-placed only (e.g. cave ore placeholders) — never appears
@@ -38,6 +55,20 @@ class_name ItemData
 ## Sword attack damage: LV1 = 4, +1 per level, uncapped.
 func sword_damage() -> int:
 	return sword_level + 3
+
+## Damage the PLAYER's held-item swing actually uses. Sword damage comes from
+## the sword tier; every other held item uses player.gd's existing 1.0 token
+## swing. This is the one shared source for combat and the held-item tooltip.
+func held_damage() -> float:
+	return float(sword_damage()) if is_sword else 1.0
+
+## Positive fractional damage is rounded UP for display (0.4 -> 1), while a
+## genuine zero remains zero. The actual combat value is not changed here.
+func held_damage_display() -> int:
+	var dmg: float = held_damage()
+	if dmg <= 0.0:
+		return 0
+	return maxi(1, int(ceil(dmg)))
 
 ## Vertical grass-slash radius (tiles above AND below the tile in front of
 ## the player): LV1-3 = 0 (single tile), +1 every 3 levels, capped at 2 each.
@@ -102,6 +133,11 @@ func sword_slash_radius() -> int:
 ## for a block on the LEFT; it's flipped horizontally for a block on the right.
 ## Null = always use the centred place_animation_sheet.
 @export var torch_connected_sheet: Texture2D = null
+
+## Torch variants only: the item this torch should drop when mined. Connected
+## torch art variants keep their own ItemData for rendering, but all of them
+## must return the normal torch item. Null = drop this item itself.
+@export var torch_drop_item: ItemData = null
 
 # ── Furnace fuel ────────────────────────────────────────────────────
 ## Enable to allow this item to be loaded into a furnace's fuel slot.
@@ -187,3 +223,12 @@ func to_dict(quantity: int = 1) -> Dictionary:
 		"data":     self,
 		"quantity": quantity,
 	}
+
+# Stable scripting id: lowercase, spaces become underscores (e.g. "Iron Sword"
+# → "iron_sword"). Algorithmica programs address items by this id; the editor's
+# item popup lists it. `scripting_id` overrides the derived value for renamed
+# display names so existing programs and saves keep working.
+func item_id() -> String:
+	if not scripting_id.is_empty():
+		return scripting_id
+	return item_name.strip_edges().to_lower().replace(" ", "_")

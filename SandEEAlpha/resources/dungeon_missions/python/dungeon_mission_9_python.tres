@@ -18,7 +18,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Print the numbers 0, 1 and 2 using a while loop."
 language = "python"
-starter_code = "number = 0\nwhile number < 3:\n    print(number)\n    number += 1"
+starter_code = ""
 answer_output = "0\n1\n2"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]

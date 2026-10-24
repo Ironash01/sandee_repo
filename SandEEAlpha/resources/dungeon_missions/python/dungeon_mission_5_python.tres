@@ -17,7 +17,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Add num1, num2 and num3 together using the addition operator. Store the result in a variable called sum, then print it."
 language = "python"
-starter_code = "num1 = 10\nnum2 = 4\nnum3 = 14\nsum = num1 + num2 + num3\nprint(sum)"
+starter_code = ""
 answer_output = "28"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]

@@ -11,14 +11,18 @@ config_version=5
 [application]
 
 config/name="SandEE Alpha"
-config/version="0.9.2.23"
-run/main_scene="uid://dtoob047okjsh"
+config/version="0.9.3.3"
+run/main_scene="res://scenes/ui/startup_mode.tscn"
+config/quit_on_go_back=false
 config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon.svg"
 
 [autoload]
 
+CrashLogger="*res://scripts/crash_logger.gd"
 Global="*uid://cr2p53jv5gtkd"
+Supabase="*res://scripts/supabase_client.gd"
+CloudSync="*res://scripts/cloud_sync.gd"
 
 [display]
 
@@ -27,6 +31,9 @@ window/size/resizable=false
 window/size/sharp_corners=true
 window/size/minimize_disabled=true
 window/size/maximize_disabled=true
+window/handheld/orientation=4
+window/stretch/mode.mobile="canvas_items"
+window/stretch/aspect.mobile="expand"
 
 [global_group]
 
@@ -134,6 +141,8 @@ common/physics_ticks_per_second=120
 textures/canvas_textures/default_texture_filter=0
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
 limits/global_shader_variables/buffer_size=4096
 2d/snap/snap_2d_transforms_to_pixel=true
 2d/snap/snap_2d_vertices_to_pixel=true

@@ -35,12 +35,20 @@ const TILE_SIZE: int = 32
 # 1:1 grid stamp.
 const SIZE_TILES:  float = 2.7
 const FILL_SCALE:  float = (float(TILE_SIZE) * SIZE_TILES) / float(FRAME_SIZE)
+# Measured alpha bounds of one 96x96 grass frame (grass.png / snowy_grass.png):
+# visible art x[25..73], y[22..66]. The art's horizontal centre (~50) is NOT the
+# frame centre (47.5), so the sprite is nudged sideways to sit exactly on the
+# tile's centre line — otherwise each tuft looks shifted against the block grid.
+const ART_CENTER_X_PX: float = 50.0
 # Extra empirical nudge on top of the measured padding above, same idea as
 # world.gd's TREE_BASE_EXTRA_OFFSET_PX. world.gd's debug marker
 # (_draw_grass_tile_outline) also needs this exact value to compute the same
-# ground_anchor point independently — reference GrassTuft.BASE_EXTRA_OFFSET_PX
+# ground_anchor point independently - reference GrassTuft.BASE_EXTRA_OFFSET_PX
 # there rather than duplicating the number.
-const BASE_EXTRA_OFFSET_PX: float = 3.0
+# Now 0: the visible root tips sit exactly on the tile's bottom grid line, the
+# same line every block's bottom edge uses (the old +3 px pushed tufts into the
+# tile below, which read as misaligned with the block grid).
+const BASE_EXTRA_OFFSET_PX: float = 0.0
 
 # ── Y-sort reference point ───────────────────────────────────────────
 # The point used for z_index/Y-sort purposes is deliberately NOT the same
@@ -225,7 +233,13 @@ func _setup_world_tuft(ground_anchor: Vector2, tile: Vector2i) -> void:
 	# there. Shift is via _sprite.offset (rendered pixels only) so this
 	# root's own global_position can stay exactly equal to ground_anchor.
 	var shift_up: float = (FRAME_SIZE * 0.5 - BOTTOM_PADDING_PX) * FILL_SCALE
-	_sprite.offset = Vector2(0.0, -shift_up)
+	# Exact grid alignment: the visible art is ~2.5 px right of the frame centre,
+	# so nudge it back (mirrored for flipped frames) to sit on the tile's centre
+	# line like a block does.
+	var side_fix: float = (ART_CENTER_X_PX - FRAME_SIZE * 0.5) * FILL_SCALE
+	if _sprite.flip_h:
+		side_fix = -side_fix
+	_sprite.offset = Vector2(-side_fix, -shift_up)
 
 	global_position = ground_anchor
 	# Same quantized-bucket scheme player/trees/placed blocks all use
@@ -262,6 +276,11 @@ func _finish_placed_block() -> void:
 	var frames: Array = get_snowy_grass_frames() if snowy else get_grass_frames()
 	_sprite.texture = frames[absi(h) % frames.size()] as Texture2D
 	_sprite.flip_h  = absi(h >> 8) % 2 == 1
+	# Same horizontal grid fix as world-gen tufts (keep the placement anchor's y).
+	var side_fix: float = (ART_CENTER_X_PX - FRAME_SIZE * 0.5) * FILL_SCALE
+	if _sprite.flip_h:
+		side_fix = -side_fix
+	_sprite.offset.x = -side_fix
 	z_index = int(global_position.y / TILE_SIZE)
 	static_z = z_index
 
@@ -279,6 +298,55 @@ func _tile_biome() -> int:
 	return int(world.call("_cell_biome_type", tile))
 
 # ── Cutting surface (driven externally by world.gd) ───────────────────
+# The grid tile this tuft is registered under (world-gen tufts know it; placed
+# grass derives it from its tile-centered position). Used by tap-to-cut and the
+# swing's whole-tile grass test.
+func tile_index() -> Vector2i:
+	if _tile != Vector2i.ZERO:
+		return _tile
+	return Vector2i(floori(global_position.x / TILE_SIZE),
+		floori((global_position.y - TILE_SIZE * 0.5) / TILE_SIZE))
+
+# World-space rect of the tile this tuft occupies. World-gen tufts are anchored
+# on the tile's BOTTOM edge; player-placed ones sit at the tile center.
+func tile_rect() -> Rect2:
+	var center: Vector2 = global_position - Vector2(0.0, TILE_SIZE * 0.5) \
+		if item_data == null else global_position
+	return Rect2(center - Vector2(TILE_SIZE, TILE_SIZE) * 0.5,
+		Vector2(TILE_SIZE, TILE_SIZE))
+
+# World-space bounds of the VISIBLE art (the measured alpha bounds of the
+# frame), excluding the transparent padding. Used so the blades above/sideways
+# count as the tuft while the empty ground below it does not.
+func visible_rect() -> Rect2:
+	if _sprite == null or _sprite.texture == null:
+		return Rect2(global_position, Vector2.ZERO)
+	var tex_size: Vector2 = _sprite.texture.get_size()
+	var sc: Vector2 = _sprite.scale
+	# Measured alpha bounds inside one frame (grass.png / snowy_grass.png).
+	var art_min := Vector2(25.0, 22.0)
+	var art_max := Vector2(73.0, 66.0)
+	# Sprite2D draws the texture centred at global_position + offset; `offset`
+	# itself is NOT scaled by the sprite scale.
+	var center: Vector2 = global_position + _sprite.offset
+	var x0: float
+	var x1: float
+	if _sprite.flip_h:
+		x0 = center.x + (tex_size.x - art_max.x - tex_size.x * 0.5) * sc.x
+		x1 = center.x + (tex_size.x - art_min.x - tex_size.x * 0.5) * sc.x
+	else:
+		x0 = center.x + (art_min.x - tex_size.x * 0.5) * sc.x
+		x1 = center.x + (art_max.x - tex_size.x * 0.5) * sc.x
+	var y0: float = center.y + (art_min.y - tex_size.y * 0.5) * sc.y
+	var y1: float = center.y + (art_max.y - tex_size.y * 0.5) * sc.y
+	return Rect2(Vector2(minf(x0, x1), y0), Vector2(absf(x1 - x0), y1 - y0))
+
+# The cuttable area: the tuft's whole tile UNION the visible blades. This is
+# what tap-to-cut and the sword sweep test against, so clicking the ground
+# below the tuft no longer cuts it.
+func grass_rect() -> Rect2:
+	return tile_rect().merge(visible_rect())
+
 func cut() -> void:
 	# Green blade burst at the tuft (spawned as a sibling so it survives this
 	# tuft's free). Snowy tufts burst white-blue to match their snow cover.

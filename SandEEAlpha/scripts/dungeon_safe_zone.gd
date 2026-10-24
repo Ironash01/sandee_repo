@@ -92,7 +92,7 @@ func activate() -> void:
 	_state = State.ACTIVE
 	_timer = SAFE_SECONDS
 	_pulse = 0.0
-	Global.player_in_safe_room = true
+	Global.register_safe_zone(self, _room_rect_px)
 	_clear_enemies()
 	set_process(true)
 	_update_marker_frames()
@@ -111,6 +111,7 @@ func _process(delta: float) -> void:
 			if _timer <= 0.0:
 				_end(State.COOLDOWN)
 				return
+			Global.refresh_safe_zone_state()
 			_update_marker_frames()
 			_update_light()
 			queue_redraw()
@@ -122,7 +123,7 @@ func _process(delta: float) -> void:
 			set_process(false)
 
 func _end(next_state: int) -> void:
-	Global.player_in_safe_room = false
+	Global.unregister_safe_zone(self)
 	_state = next_state
 	if _light != null:
 		_light.energy = 0.0
@@ -142,21 +143,30 @@ func _heal(delta: float) -> void:
 	Global.health = minf(Global.max_health, Global.health + HEAL_PER_SEC * delta)
 	Global.health_changed.emit(Global.health, Global.max_health)
 
+# The altar/world can be freed while a zone is active (death, dungeon exit).
+# Unregistering here lets the union recompute from any remaining zones.
+func _exit_tree() -> void:
+	Global.unregister_safe_zone(self)
+
 # Enemies inside the room are removed for good (the user's "enemies go away").
+# Only HOSTILE mobs; passive animals are left alone.
 func _clear_enemies() -> void:
 	for m in get_tree().get_nodes_in_group("Mob"):
 		var node_ref: Variant = m
 		if not (node_ref is Node2D) or not is_instance_valid(node_ref):
 			continue
 		var node := node_ref as Node2D
+		if not Global.is_hostile_mob(node):
+			continue
 		if _room_rect_px.has_point(node.global_position):
-			node.queue_free()
+			Global.disintegrate_hostile(node)
 
 func _player_inside() -> bool:
 	var p: Node2D = Global.player_node as Node2D
 	if p == null or not is_instance_valid(p):
 		return false
-	return _room_rect_px.has_point(p.global_position)
+	return Global._rect_contains_inclusive(
+		_room_rect_px, p.global_position + Vector2(0.0, Global.SAFE_ZONE_FEET_OFFSET))
 
 func _update_light() -> void:
 	if _light == null:

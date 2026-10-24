@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/items/apple.png" id="2_tex"]
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Apple"
+description = "A crisp red apple. Eat it to restore 15 health."
+item_type = "consumable"
+icon = ExtResource("2_tex")
+heal_amount = 15.0

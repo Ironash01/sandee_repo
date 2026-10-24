@@ -2,11 +2,11 @@ extends Node2D
 class_name CaveWorld
 
 # A single cave interior — swapped in for the overworld "World" node by
-# game_instance.gd's enter_cave()/exit_cave() (see there for why: caves are
-# a fresh procedural map each entrance, not one of a handful of fixed
-# hand-built scenes, so there's nothing to gain from a dedicated .tscn per
-# cave — this whole thing, tilemap included, is built from CaveGenerator's
-# output at setup() time).
+# game_instance.gd's enter_cave()/exit_cave(). This whole thing, tilemap
+# included, is built from CaveGenerator's seeded output at setup() time (no
+# .tscn). game_instance keeps visited instances alive off-tree, and the
+# snapshot_state()/apply_state() pair persists mined tiles and placed blocks
+# across save/load without rebuilding unrelated player or overworld state.
 #
 # Rendering: one TileMapLayer, real ItemData sprites (stone/ore/cave-floor
 # resources authored in resources/items/) instead of the original flat-color
@@ -91,9 +91,22 @@ const SHADOW_TEXTURE_PATH: String = "res://sprites/shadow/shadow_base.png"
 # automatically (queue_free() on cave exit) — nothing to clean up in
 # game_instance.gd's enter_cave()/exit_cave().
 const CAVE_AMBIENT_COLOR: Color = Color(0.33, 0.33, 0.40, 1.0)  # dim but visible; ~13% darker than before to push torch use
+# Rare single chest in a large cave's open floor pocket. Low chance per cave;
+# the cell/content RNG is seeded from the cave seed, so first visits and
+# save-game restores agree without storing a second layout.
+const RARE_CHEST_CHANCE: float = 0.15
+const RARE_CHEST_DATA: ItemData = preload("res://resources/items/rare_dungeon_chest.tres")
+const RARE_CHEST_SCENE: PackedScene = preload("res://scenes/objects/ChestBlock.tscn")
 
 var generator: CaveGenerator = null
 var overworld_return_position: Vector2 = Vector2.ZERO
+# Deterministic layout identity + pristine generated grid used to store only
+# the player's changes (mined tiles / placed blocks) in the world save.
+var _seed: int = 0
+var _base_grid: Array = []
+var _rare_chest_cell: Vector2i = Vector2i(-2147483648, -2147483648)
+var _rare_chest_spawned: bool = false
+var _rare_chest_removed: bool = false
 
 var _tilemap: TileMapLayer = null
 var _chunk_border_overlay: Node2D = null
@@ -105,8 +118,10 @@ var _shaq_dark:      bool   = false
 
 func setup(seed_value: int, return_position: Vector2) -> void:
 	overworld_return_position = return_position
+	_seed = seed_value
 	generator = CaveGenerator.new()
 	generator.generate(seed_value)
+	_base_grid = generator.grid.duplicate(true)
 
 	_tilemap = TileMapLayer.new()
 	_tilemap.name     = "CaveTiles"
@@ -122,6 +137,7 @@ func setup(seed_value: int, return_position: Vector2) -> void:
 	add_child(_tilemap)
 
 	_paint_tiles()
+	_spawn_rare_chest()
 	_spawn_exit_marker()
 	_setup_chunk_border_overlay()
 	_setup_hitbox_overlay()
@@ -142,6 +158,8 @@ func _process(delta: float) -> void:
 		_grid_overlay.queue_redraw()
 
 func _input(event: InputEvent) -> void:
+	if Global.is_mouse_event_over_ui(event):
+		return
 	if Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if Global.block_mode:
@@ -153,7 +171,8 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_try_start_mining()
-		else:
+		elif not Global.pnc_hold_active:
+			# Keep the synthetic tap-to-control hold alive after finger-up.
 			_cancel_mining()
 
 # ── Mining (stone/ore walls) ────────────────────────────────────────────
@@ -175,6 +194,10 @@ const CLICK_BREAK_SECONDS: float = 0.5
 # tile and shakes this overlay — giving cave mining the same wobble the
 # overworld has, from the shared Global.block_wobble_rotation().
 var _mine_overlay: Sprite2D = null
+# Temporary solid body that preserves the mined tile's collision while the
+# real TileMap cell is hidden under the wobble overlay. Without it the player
+# could walk through an intact wall mid-mine.
+var _mine_blocker: StaticBody2D = null
 
 func _try_start_mining() -> void:
 	var mouse_cell: Vector2i = _mouse_cell()
@@ -220,6 +243,7 @@ func _cancel_mining() -> void:
 	if not _mining:
 		return
 	_mining = false
+	Global.clear_break_progress(self)
 	# Progress is deliberately KEPT so the next tap on this tile continues —
 	# it is reset only when the target tile changes (see _try_start_mining).
 	# The real tile comes back (the wobble overlay goes away).
@@ -229,6 +253,7 @@ func _cancel_mining() -> void:
 # Mine complete: drop the overlay WITHOUT restoring the tile (it becomes floor).
 func _finish_break() -> void:
 	_mining = false
+	Global.clear_break_progress(self)
 	_destroy_mine_overlay(false)
 	_break_tile(_mine_tile)
 	_mine_elapsed = 0.0
@@ -248,12 +273,37 @@ func _spawn_mine_overlay(item: ItemData, cell: Vector2i) -> void:
 	add_child(spr)
 	spr.global_position = _tilemap.to_global(_tilemap.map_to_local(cell))
 	_mine_overlay = spr
-	# Hide the real tile so the rotated overlay can't double-image against it.
+	# Hide the real tile so the rotated overlay can't double-image against it,
+	# but keep the tile solid with a temporary blocker until the break succeeds
+	# (or the mine is cancelled and the tile is restored).
+	_make_mine_blocker(cell)
 	_tilemap.set_cell(cell, -1)
+
+
+func _make_mine_blocker(cell: Vector2i) -> void:
+	_destroy_mine_blocker()
+	var body := StaticBody2D.new()
+	body.collision_layer = 1
+	body.collision_mask  = 0
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(TILE_SIZE, TILE_SIZE)
+	shape.shape = rect
+	body.add_child(shape)
+	add_child(body)
+	body.global_position = _tilemap.to_global(_tilemap.map_to_local(cell))
+	_mine_blocker = body
+
+
+func _destroy_mine_blocker() -> void:
+	if is_instance_valid(_mine_blocker):
+		_mine_blocker.queue_free()
+	_mine_blocker = null
 
 # restore=true repaints the real wall tile (cancel); false leaves it hidden
 # (the caller is about to paint FLOOR over it).
 func _destroy_mine_overlay(restore: bool) -> void:
+	_destroy_mine_blocker()
 	if restore:
 		var gp: Vector2i = _cell_to_grid(_mine_tile)
 		if _grid_in_bounds(gp):
@@ -266,12 +316,18 @@ func _update_mining(delta: float) -> void:
 	if not _mining:
 		return
 	var still_valid: bool = _mouse_cell() == _mine_tile \
-		and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) \
+		and Global.is_left_action_held() \
 		and not Global.any_ui_open() and not Global.pause_menu_open
 	if not still_valid:
 		_cancel_mining()
 		return
+	# Continuous manual/PNC mining keeps swinging the held pickaxe; the player
+	# ignores this while the previous swing is still playing.
+	Global.swing_player_item()
 	_mine_elapsed = minf(_mine_elapsed + delta, _mine_duration)
+	var progress: float = _mine_elapsed / _mine_duration if _mine_duration > 0.0 else 1.0
+	var tile_world: Vector2 = _tilemap.to_global(_tilemap.map_to_local(_mine_tile))
+	Global.report_break_progress(progress, tile_world, -26.0, self)
 	# Same shake the overworld's placed blocks use.
 	if is_instance_valid(_mine_overlay):
 		_mine_overlay.rotation = Global.block_wobble_rotation()
@@ -284,24 +340,12 @@ func _update_mining(delta: float) -> void:
 # mouse down for block_level - pickaxe_level seconds (4s+ for stone with a
 # wooden pickaxe), and with zero on-screen indication a normal click (or
 # even a few seconds of holding without realizing more is needed) looks
-# indistinguishable from mining being completely broken. Mirrors
-# Global.draw_break_bar's look, but that helper assumes it's called from a
-# small per-object node whose local origin IS the object's position (trees,
-# placed blocks) — CaveWorld spans the whole map, so this draws at the
-# mined tile's position explicitly instead.
+# indistinguishable from mining being completely broken. CaveWorld spans the
+# whole map, so its progress is reported with the mined tile position
+# to the shared BreakProgressOverlay.
 func _draw() -> void:
-	if not _mining:
-		return
-	var tile_world: Vector2 = _tilemap.to_global(_tilemap.map_to_local(_mine_tile))
-	var pos: Vector2         = to_local(tile_world)
-	var progress: float      = _mine_elapsed / _mine_duration if _mine_duration > 0.0 else 1.0
-	var s: float             = Global.ui_scale
-	var bar_w: float         = Global.BREAK_BAR_WIDTH * s
-	var bar_h: float         = Global.BREAK_BAR_HEIGHT * s
-	var half_w: float        = bar_w * 0.5
-	var y_offset: float      = -20.0 * s
-	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, bar_w, bar_h), Global.BREAK_BAR_BG)
-	draw_rect(Rect2(pos.x - half_w, pos.y + y_offset, bar_w * clampf(progress, 0.0, 1.0), bar_h), Global.BREAK_BAR_FILL)
+	# Ring is drawn by BreakProgressOverlay above the world.
+	pass
 
 func _break_tile(cell: Vector2i) -> void:
 	var grid_pos: Vector2i = _cell_to_grid(cell)
@@ -311,9 +355,13 @@ func _break_tile(cell: Vector2i) -> void:
 	var item: ItemData = _wall_items.get(tile_type)
 	generator.grid[grid_pos.x][grid_pos.y] = CaveGenerator.Tile.FLOOR
 	_paint_cell(cell, CaveGenerator.Tile.FLOOR, grid_pos)
+	# A wall that supported an adjacent torch is gone: re-evaluate its mount.
+	_refresh_neighbor_u_collision(cell)
 	if item == null:
 		return
 	Global.track_mining(item)
+	CrashLogger.event("WORLD", "mine cave %s cell=(%d, %d)" % [
+		item.item_name, cell.x, cell.y])
 	var drop: Node = ITEM_DROP_SCENE.instantiate()
 	drop.call("set_item_data", item)
 	add_child(drop)
@@ -326,7 +374,7 @@ func _get_held_pickaxe_level() -> int:
 	return Global.held_pickaxe_level()
 
 func _mouse_cell() -> Vector2i:
-	return _tilemap.local_to_map(_tilemap.to_local(get_global_mouse_position()))
+	return _tilemap.local_to_map(_tilemap.to_local(Global.mouse_world(self)))
 
 func _grid_in_bounds(grid_pos: Vector2i) -> bool:
 	return grid_pos.x >= 0 and grid_pos.y >= 0 and grid_pos.x < generator.size and grid_pos.y < generator.size
@@ -443,8 +491,12 @@ func place_block() -> void:
 		if ap != null:
 			ap.play(item_data.place_animation_name)
 	Global.remove_item(item_data)
+	Global.record_block_placed(item_data)
 
 func unregister_block(cell: Vector2i) -> void:
+	if cell == _rare_chest_cell:
+		_rare_chest_removed = true
+		_rare_chest_spawned = false
 	_placed_blocks.erase(cell)
 	_refresh_neighbor_u_collision(cell)
 
@@ -459,6 +511,8 @@ func has_placed_block(cell: Vector2i) -> bool:
 # where world-gen stone/charcoal live in _placed_blocks). A placed FLOOR is
 # walkable decor, not a wall, so it never counts as support.
 func torch_support(cell: Vector2i) -> bool:
+	if not _grid_in_bounds(_cell_to_grid(cell)):
+		return false   # off-map is not a visible wall to mount a torch on
 	if _cell_is_wall(cell):
 		return true
 	var e: Variant = _placed_blocks.get(cell)
@@ -468,7 +522,7 @@ func torch_support(cell: Vector2i) -> bool:
 	if not is_instance_valid(n):
 		return false
 	var d = n.get("item_data")
-	return d != null and not d.is_floor
+	return d != null and not d.is_floor and not d.is_torch
 
 # Not the overworld — a Bonfire here must not set the respawn point.
 func is_overworld() -> bool:
@@ -590,7 +644,7 @@ func _update_hover() -> void:
 	if Global.block_mode:
 		Global.set_hover("")
 		return
-	var mouse_pos: Vector2 = get_global_mouse_position()
+	var mouse_pos: Vector2 = Global.mouse_world(self)
 	var best_name: String  = ""
 	var best_name_dist: float = INTERACT_RADIUS_PX
 	for entry in _placed_blocks.values():
@@ -698,6 +752,161 @@ func _on_hitbox_draw() -> void:
 func get_player_spawn_position() -> Vector2:
 	var tile: Vector2i = generator.entrance_tile - Vector2i(0, 2)
 	return _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(tile)))
+
+# ── Persistent cave state ─────────────────────────────────────────
+# Only the DIFF from the generated base grid is stored, plus placed blocks.
+# Damage/levels/unrelated player state are not touched.
+func snapshot_state() -> Dictionary:
+	var tiles: Array = []
+	if _base_grid.size() == generator.size:
+		for x in range(generator.size):
+			for y in range(generator.size):
+				if generator.grid[x][y] != _base_grid[x][y]:
+					tiles.append([x, y, int(generator.grid[x][y])])
+	var blocks: Array = []
+	for cell in _placed_blocks:
+		var entry: Dictionary = _placed_blocks[cell] as Dictionary
+		var path := ""
+		var color := ""
+		var node_ref: Variant = entry.get("node")
+		if node_ref != null and not is_instance_valid(node_ref):
+			continue   # a broken/despawned block must not be resurrected
+		var block: Dictionary = {
+			"x": int((cell as Vector2i).x),
+			"y": int((cell as Vector2i).y),
+			"name": str(entry.get("name", "")),
+			"path": path,
+			"color": color,
+		}
+		if is_instance_valid(node_ref):
+			var node := node_ref as Node
+			var idata: Variant = node.get("item_data")
+			if idata is ItemData:
+				if (idata as ItemData).is_color_block:
+					color = ColorBlock.key_of((idata as ItemData).block_color)
+				else:
+					path = (idata as ItemData).resource_path
+				block["path"] = path
+				block["color"] = color
+			if node.has_method("get_items"):
+				var slot_save: Array = []
+				var items = node.call("get_items")
+				if items is Array:
+					for slot in (items as Array):
+						slot_save.append(Global.serialize_item(slot))
+				block["chest_slots"] = slot_save
+			var dungeon_index = node.get("dungeon_index")
+			if dungeon_index != null:
+				block["dungeon_index"] = int(dungeon_index)
+			if node.has_method("get_station_save_data"):
+				block["station"] = node.call("get_station_save_data")
+			if node.has_method("get_furnace_save_data"):
+				block["furnace"] = node.call("get_furnace_save_data")
+			if node.has_method("get_lua_save_data"):
+				block["lua"] = node.call("get_lua_save_data")
+			if idata is ItemData and (idata as ItemData).is_door \
+					and node.has_method("get_door_save_data"):
+				block["door"] = node.call("get_door_save_data")
+		blocks.append(block)
+	return {
+		"version": 1,
+		"seed": _seed,
+		"tiles": tiles,
+		"blocks": blocks,
+		"rare_chest": _rare_chest_state(),
+	}
+
+func apply_state(state: Dictionary) -> void:
+	if state.is_empty():
+		return
+	# Never apply a snapshot to a different generated layout.
+	if state.has("seed") and int(state.get("seed", _seed)) != _seed:
+		return
+	for t in state.get("tiles", []):
+		if not (t is Array) or (t as Array).size() < 3:
+			continue
+		var grid_pos := Vector2i(int(t[0]), int(t[1]))
+		if not _grid_in_bounds(grid_pos):
+			continue
+		var tile := int(t[2])
+		generator.grid[grid_pos.x][grid_pos.y] = tile
+		_paint_cell(_grid_to_cell(grid_pos), tile, grid_pos)
+	for b in state.get("blocks", []):
+		if b is Dictionary:
+			_restore_placed_block(
+				Vector2i(int((b as Dictionary).get("x", 0)), int((b as Dictionary).get("y", 0))),
+				b as Dictionary)
+	if state.has("rare_chest") and state["rare_chest"] is Dictionary:
+		_apply_rare_chest_state(state["rare_chest"] as Dictionary)
+
+func _restore_placed_block(cell: Vector2i, block: Dictionary) -> void:
+	var name := str(block.get("name", ""))
+	var path := str(block.get("path", ""))
+	var color := str(block.get("color", ""))
+	if _placed_blocks.has(cell) or (name.is_empty() and path.is_empty() and color.is_empty()):
+		return
+	var data: ItemData = null
+	if not color.is_empty():
+		data = ColorBlock.from_key(color)
+	elif not path.is_empty() and ResourceLoader.exists(path):
+		data = load(path) as ItemData
+	if data == null:
+		data = Global.find_item_by_name(name)
+	if data == null or data.place_scene_path.is_empty():
+		return
+	if not ResourceLoader.exists(data.place_scene_path):
+		return
+	var obj_scene: PackedScene = load(data.place_scene_path) as PackedScene
+	if obj_scene == null:
+		return
+	var obj: Node = obj_scene.instantiate()
+	if obj == null:
+		return
+	# ChestBlock caches its @onready sprite, so its item texture must be applied
+	# after add_child(). Other placeables keep the existing setup-before-add
+	# order.
+	var chest_like := data.place_scene_path.ends_with("ChestBlock.tscn")
+	if not chest_like and obj.has_method("setup"):
+		obj.call("setup", data)
+	_placed_blocks[cell] = {"node": obj, "name": data.item_name}
+	if obj.has_method("set_world_cell"):
+		obj.call("set_world_cell", cell, self)
+	add_child(obj)
+	if chest_like and obj.has_method("setup"):
+		obj.call("setup", data)
+	var world_pos: Vector2 = _tilemap.map_to_local(cell)
+	obj.position = world_pos
+	obj.z_index = int(world_pos.y / TILE_SIZE)
+	_fix_sprite_offset(obj)
+	_refresh_neighbor_u_collision(cell)
+	_restore_block_contents(obj, data, block)
+
+func _restore_block_contents(obj: Node, data: ItemData, block: Dictionary) -> void:
+	var slots = block.get("chest_slots", null)
+	if slots is Array:
+		var slots_ref = obj.get("slots")
+		if slots_ref is Array:
+			for i in range(mini((slots as Array).size(), (slots_ref as Array).size())):
+				var slot: Variant = Global.deserialize_item((slots as Array)[i])
+				if slot != null:
+					(slots_ref as Array)[i] = slot
+		if obj.has_method("_refresh_ui"):
+			obj.call("_refresh_ui")
+	var dungeon_index = block.get("dungeon_index", null)
+	if dungeon_index != null:
+		obj.set("dungeon_index", int(dungeon_index))
+	var station_data = block.get("station", null)
+	if station_data is Dictionary and obj.has_method("set_station_save_data"):
+		obj.call("set_station_save_data", station_data)
+	var furnace_data = block.get("furnace", null)
+	if furnace_data is Dictionary and obj.has_method("set_furnace_save_data"):
+		obj.call("set_furnace_save_data", furnace_data)
+	var lua_data = block.get("lua", null)
+	if lua_data is Dictionary and obj.has_method("set_lua_save_data"):
+		obj.call("set_lua_save_data", lua_data)
+	var door_data = block.get("door", null)
+	if data.is_door and door_data is Dictionary and obj.has_method("set_door_save_data"):
+		obj.call("set_door_save_data", door_data)
 
 # Generator grid indices run 0..size-1; centering the map on the origin
 # (matching how the overworld's own chunk coordinates are centered around
@@ -914,6 +1123,136 @@ func _paint_cell(cell_pos: Vector2i, tile_type: int, grid_pos: Vector2i) -> void
 func _floor_variant_index(grid_pos: Vector2i) -> int:
 	var h: int = (grid_pos.x * 92821) ^ (grid_pos.y * 68917)
 	return absi(h) % _floor_cells.size()
+
+# ── Rare cave chest ─────────────────────────────────────────────────
+# One low-probability chest in a clear 3x3 floor pocket, kept away from the
+# entrance/exit and player spawn. Large caves have no room list, so the pocket
+# itself is the room-equivalent eligibility check.
+func _spawn_rare_chest() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed + 0x51A7E
+	if rng.randf() >= RARE_CHEST_CHANCE:
+		return
+	var candidates: Array = []
+	for x in range(2, generator.size - 2):
+		for y in range(2, generator.size - 2):
+			var grid_pos := Vector2i(x, y)
+			if generator.grid[x][y] != CaveGenerator.Tile.FLOOR:
+				continue
+			if _dist_to_grid(generator.entrance_tile, grid_pos) < 10.0:
+				continue
+			if not _floor_patch_clear(grid_pos, 1):
+				continue
+			var cell := _grid_to_cell(grid_pos)
+			if _placed_blocks.has(cell):
+				continue
+			candidates.append(cell)
+	if candidates.is_empty():
+		return
+	var chosen: Vector2i = candidates[rng.randi_range(0, candidates.size() - 1)]
+	_spawn_rare_chest_at(chosen)
+
+func _floor_patch_clear(center: Vector2i, radius: int) -> bool:
+	for x in range(center.x - radius, center.x + radius + 1):
+		for y in range(center.y - radius, center.y + radius + 1):
+			if x < 1 or y < 1 or x >= generator.size - 1 or y >= generator.size - 1:
+				return false
+			if generator.grid[x][y] != CaveGenerator.Tile.FLOOR:
+				return false
+	return true
+
+func _dist_to_grid(a: Vector2i, b: Vector2i) -> float:
+	return Vector2(a).distance_to(Vector2(b))
+
+func _spawn_rare_chest_at(cell: Vector2i, saved_slots: Array = []) -> Node:
+	if _placed_blocks.has(cell) or _cell_is_wall(cell):
+		return null
+	var chest: Node = RARE_CHEST_SCENE.instantiate()
+	if chest == null:
+		return null
+	add_child(chest)
+	chest.call("setup", RARE_CHEST_DATA)
+	chest.call("set_world_cell", cell, self)
+	var world_pos: Vector2 = _tilemap.map_to_local(cell)
+	chest.position = world_pos
+	chest.z_index = int(world_pos.y / TILE_SIZE)
+	if not saved_slots.is_empty():
+		_restore_chest_slots(chest, saved_slots)
+	else:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = _seed + cell.x * 73856093 + cell.y * 19349663
+		RareChestLoot.fill(chest, rng)
+	_placed_blocks[cell] = {"node": chest, "name": RARE_CHEST_DATA.item_name}
+	_rare_chest_cell = cell
+	_rare_chest_spawned = true
+	_rare_chest_removed = false
+	_refresh_neighbor_u_collision(cell)
+	return chest
+
+func _restore_chest_slots(chest: Node, saved_slots: Array) -> void:
+	var slots_ref: Variant = chest.get("slots")
+	if not (slots_ref is Array):
+		return
+	var slots: Array = slots_ref as Array
+	for i in range(slots.size()):
+		slots[i] = null
+	for i in range(mini(saved_slots.size(), slots.size())):
+		var slot: Variant = Global.deserialize_item(saved_slots[i])
+		if slot != null:
+			slots[i] = slot
+	if chest.has_method("_refresh_ui"):
+		chest.call("_refresh_ui")
+
+func _rare_chest_state() -> Dictionary:
+	if _rare_chest_removed:
+		return {"removed": true,
+			"cell": [_rare_chest_cell.x, _rare_chest_cell.y]}
+	if not _rare_chest_spawned:
+		return {"none": true}
+	var entry: Variant = _placed_blocks.get(_rare_chest_cell)
+	if not (entry is Dictionary):
+		return {"none": true}
+	var node_ref: Variant = (entry as Dictionary).get("node")
+	if not is_instance_valid(node_ref):
+		return {"none": true}
+	var slots_ref: Variant = (node_ref as Node).get("slots")
+	var slots: Array = []
+	if slots_ref is Array:
+		for slot in (slots_ref as Array):
+			slots.append(Global.serialize_item(slot))
+	return {"cell": [_rare_chest_cell.x, _rare_chest_cell.y], "slots": slots}
+
+func _apply_rare_chest_state(state: Dictionary) -> void:
+	if bool(state.get("removed", false)) or bool(state.get("none", false)):
+		_remove_rare_chest()
+		_rare_chest_removed = bool(state.get("removed", false))
+		_rare_chest_spawned = false
+		return
+	var raw_cell: Variant = state.get("cell", null)
+	if not (raw_cell is Array) or (raw_cell as Array).size() < 2:
+		return
+	var saved_cell := Vector2i(int((raw_cell as Array)[0]), int((raw_cell as Array)[1]))
+	if saved_cell != _rare_chest_cell:
+		_remove_rare_chest()
+	var existing: Variant = _placed_blocks.get(saved_cell)
+	if existing is Dictionary:
+		var node_ref: Variant = (existing as Dictionary).get("node")
+		if is_instance_valid(node_ref) and node_ref.has_method("notify_contents_changed"):
+			_restore_chest_slots(node_ref, state.get("slots", []) as Array)
+			_rare_chest_cell = saved_cell
+			_rare_chest_spawned = true
+			_rare_chest_removed = false
+			return
+	_spawn_rare_chest_at(saved_cell, state.get("slots", []) as Array)
+
+func _remove_rare_chest() -> void:
+	var entry: Variant = _placed_blocks.get(_rare_chest_cell)
+	if entry is Dictionary:
+		var node_ref: Variant = (entry as Dictionary).get("node")
+		if is_instance_valid(node_ref):
+			(node_ref as Node).queue_free()
+		_placed_blocks.erase(_rare_chest_cell)
+
 
 func _spawn_exit_marker() -> void:
 	var exit_portal := CavePortal.new()

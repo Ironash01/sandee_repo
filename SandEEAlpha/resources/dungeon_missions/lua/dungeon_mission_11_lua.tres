@@ -8,7 +8,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Write a Lua program that prints the word hello"
 language = "lua"
-starter_code = "print(\"hello\")"
+starter_code = ""
 answer_output = "hello"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
@@ -16,7 +16,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Write a Lua program that prints the number 42"
 language = "lua"
-starter_code = "print(42)"
+starter_code = ""
 answer_output = "42"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
@@ -24,7 +24,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Write a Lua program that prints the two words hello and world separated by a space"
 language = "lua"
-starter_code = "print(\"hello world\")"
+starter_code = ""
 answer_output = "hello world"
 
 [resource]

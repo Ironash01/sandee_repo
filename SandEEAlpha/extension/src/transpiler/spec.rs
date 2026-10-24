@@ -276,6 +276,69 @@ impl SymbolsStack {
                 "pow".to_string(),
                 Arguments::new(false, false, 2, Vec::new()),
             ),
+            // Algorithmica: Crafting Station Python API.
+            Symbol::Function(
+                "craft".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "craft_color".to_string(),
+                Arguments::new(false, false, 4, Vec::new()),
+            ),
+            Symbol::Function(
+                "get_recipe".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "set_recipe".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "output_item".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "output_count".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            // Algorithmica: Furnace Python API.
+            Symbol::Function(
+                "feed".to_string(),
+                Arguments::new(false, false, 2, Vec::new()),
+            ),
+            Symbol::Function(
+                "fuel".to_string(),
+                Arguments::new(false, false, 2, Vec::new()),
+            ),
+            Symbol::Function(
+                "smelt".to_string(),
+                Arguments::new(false, false, 1, Vec::new()),
+            ),
+            Symbol::Function(
+                "input_name".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "input_count".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "fuel_name".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "fuel_count".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            Symbol::Function(
+                "output_name".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
+            // Shared by both station and furnace APIs.
+            Symbol::Function(
+                "take_output".to_string(),
+                Arguments::new(false, false, 0, Vec::new()),
+            ),
         ]]
     }
 }

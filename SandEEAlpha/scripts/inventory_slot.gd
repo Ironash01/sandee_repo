@@ -13,6 +13,15 @@ const C_DRAG_OVER  := Color(1.00, 0.85, 0.25, 1.00)
 var slot_index: int = -1
 var item: Variant = null
 
+# ── Chest binding (combined chest + inventory panel) ──────────────
+# The SAME slot scene is used for the chest's storage when a chest is open.
+# `is_chest_slot` makes this slot present `chest_link.slots[index]` instead of
+# Global.Inventory[index]; `chest_link` alone (player slots) is just the bridge
+# that lets a stack dragged out of the chest land in the player inventory.
+# The chest stays the only owner of that data — nothing is copied here.
+var chest_link:    Node = null
+var is_chest_slot: bool = false
+
 var _hovered:      bool = false
 var _drag_over:    bool = false
 var _is_drag_source: bool = false
@@ -132,23 +141,57 @@ func _mouse_exit() -> void:
 	queue_redraw()
 
 # ── Drag & Drop ───────────────────────────────────────────────────
+# The stack this slot is currently offering as a drag. If the slot still holds
+# it when the drag ends unsuccessfully, the drop was never handled and the stack
+# belongs in the world; if the slot now holds something ELSE (a swap happened)
+# the drop WAS handled and must not also spawn a world item (item duplication).
+var _drag_item: Variant = null
+
 func _get_drag_data(_at_position: Vector2) -> Variant:
-	if item == null:
+	var payload: Variant = null
+	if is_chest_slot:
+		if not _has_chest():
+			return null
+		payload = chest_link.call("make_drag_data", slot_index, true)
+	elif item != null:
+		payload = {"from_index": slot_index, "item": item, "source": "inventory"}
+	if not (payload is Dictionary):
 		return null
 	# Build a semi-transparent drag preview
-	var preview := TextureRect.new()
-	preview.texture             = (item["data"] as ItemData).icon
-	var prev_sz: float = Global.ITEM_SLOT_SIZE * Global.ui_scale * 0.75
-	preview.custom_minimum_size = Vector2(prev_sz, prev_sz)
-	preview.expand_mode         = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-	preview.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	preview.modulate            = Color(1, 1, 1, 0.72)
-	set_drag_preview(preview)
+	var item_v: Variant = (payload as Dictionary).get("item")
+	if item_v is Dictionary:
+		var data: ItemData = (item_v as Dictionary).get("data") as ItemData
+		if data != null and data.icon != null:
+			var preview := TextureRect.new()
+			preview.texture             = data.icon
+			var prev_sz: float = Global.ITEM_SLOT_SIZE * Global.ui_scale * 0.75
+			preview.custom_minimum_size = Vector2(prev_sz, prev_sz)
+			preview.expand_mode         = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+			preview.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			preview.modulate            = Color(1, 1, 1, 0.72)
+			set_drag_preview(preview)
 	_is_drag_source = true
-	return {"from_index": slot_index, "item": item, "source": "inventory"}
+	_drag_item = item_v
+	return payload
+
+func _has_chest() -> bool:
+	return chest_link != null and is_instance_valid(chest_link)
 
 func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
 	if not (data is Dictionary and data.has("from_index")):
+		return false
+	var src: String = str((data as Dictionary).get("source", "inventory"))
+	# Chest storage slots apply the chest's own rules (stack limits, merge,
+	# swap); player slots need the same route when a chest stack is dragged in.
+	if is_chest_slot or src == "chest":
+		if not _has_chest():
+			return false
+		if not bool(chest_link.call("can_accept_drop", slot_index, is_chest_slot, data)):
+			return false
+		_drag_over = true
+		queue_redraw()
+		return true
+	if src != "inventory" and src != "hotbar":
 		return false
 	_drag_over = true
 	queue_redraw()
@@ -160,6 +203,13 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	var from_idx: int  = data["from_index"]
 	var source: String = data.get("source", "inventory")
 	var to_idx: int    = slot_index
+
+	# Anything involving the chest is applied by the chest itself, which owns
+	# the storage array and the validation/merge rules.
+	if is_chest_slot or source == "chest":
+		if _has_chest():
+			chest_link.call("accept_drop", to_idx, is_chest_slot, data)
+		return
 
 	if source == "hotbar":
 		var tmp: Variant          = Global.Inventory[to_idx]
@@ -178,6 +228,8 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		Global.Inventory_updated.emit()
 
 func _update_visual() -> void:
+	if is_chest_slot:
+		return   # chest views are redrawn from chest.slots by the panel
 	var current = Global.Inventory[slot_index]
 	if current != null:
 		set_item(current as Dictionary)
@@ -195,12 +247,21 @@ func _notification(what: int) -> void:
 			_is_drag_source = false
 			if not get_viewport().gui_is_drag_successful():
 				_drop_to_world()
+			_drag_item = null
 
 func _drop_to_world() -> void:
+	# A chest stack dragged out of the panel is simply cancelled — the chest
+	# keeps owning it (the old chest panel behaved the same way).
+	if is_chest_slot:
+		return
 	if slot_index < 0 or slot_index >= Global.Inventory.size():
 		return
 	var slot: Variant = Global.Inventory[slot_index]
 	if slot == null:
+		return
+	# A swap already put a DIFFERENT stack here — the drag was handled, so
+	# dropping this one into the world too would duplicate/lose an item.
+	if _drag_item != null and not is_same(slot, _drag_item):
 		return
 	if not Global.player_node:
 		return

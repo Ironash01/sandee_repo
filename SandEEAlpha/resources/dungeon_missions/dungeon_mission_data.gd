@@ -30,6 +30,10 @@ class_name DungeonMissionData
 @export_enum("64x64", "128x128", "256x256") var size_modifier: int = 1
 @export_range(1, 8, 1) var altar_amount: int = 1
 @export_range(0, 16, 1) var chest_amount: int = 2
+## Progression category. Main missions form the normal language tracks; the
+## boss is the single finale; extra dungeons unlock after the boss and replace
+## the Knowledge Altar with extra Quiz Altars.
+@export_enum("main", "extra", "boss") var dungeon_category: String = "main"
 
 # Base file name used as the stable id.
 func id() -> String:
@@ -38,3 +42,12 @@ func id() -> String:
 # Resolved against the loaded registries in Global (see load_knowledge_data).
 func entry() -> KnowledgeEntry:
 	return Global.get_knowledge_entry_file(entry_resource_file) if not entry_resource_file.is_empty() else null
+
+func is_main() -> bool:
+	return dungeon_category == "main"
+
+func is_extra() -> bool:
+	return dungeon_category == "extra"
+
+func is_boss() -> bool:
+	return dungeon_category == "boss"

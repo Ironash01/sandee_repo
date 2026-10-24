@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="DungeonMissionData" format=3]
+
+[ext_resource type="Script" path="res://resources/dungeon_missions/dungeon_mission_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+mission_name = "Defeat the Hitman Miniboss"
+mission_description = "The final main dungeon: enter the two-room arena and defeat the Hitman Miniboss. Extra dungeons unlock after this victory."
+dungeon_index = 40
+dungeon_category = "boss"
+reward_item_path = "res://resources/items/lua_core.tres"
+size_modifier = 0
+altar_amount = 1
+chest_amount = 0

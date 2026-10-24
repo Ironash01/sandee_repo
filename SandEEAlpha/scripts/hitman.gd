@@ -3,6 +3,9 @@ extends CharacterBody2D
 # Emitted whenever this hitman is removed (sword kill OR stuck self-destruct).
 # DungeonWorld's spawner uses it to start its respawn cooldown.
 signal died
+# Emitted only on a real combat death, never on the stuck-watchdog explosion.
+# The boss dungeon uses this to complete the finale mission.
+signal defeated
 
 # ── Hitman ───────────────────────────────────────────────────────────
 # A dungeon enemy that PATROLS the corridors and has two attacks:
@@ -36,14 +39,24 @@ const FRONT_H:  int = 64
 const SIDE_FRAMES:  int = 4
 const FRONT_FRAMES: int = 4
 const ANIM_FPS: float = 6.0
-# Visual/collision shrink so the hitman fits the tight 2-wide dungeon corridors
-# (mirrors the scene's AnimatedSprite2D scale + collider size).
+# Visual/collision scale for ordinary Hitmen. The boss dungeon overrides this
+# per instance; the sprite, shadow, collider and ranges all scale together.
 const SIZE_SCALE: float = 0.7
+
+# Miniboss configuration. Ordinary spawner instances keep the defaults.
+@export var is_miniboss: bool = false
+@export var miniboss_scale: float = 2.2
+@export var max_health_override: float = 0.0
+@export var projectile_damage_override: float = 0.0
+@export var ram_damage_override: float = 0.0
+@export var display_name_override: String = ""
+@export var fire_interval_override: float = 0.0
+@export var patrol_speed_override: float = 0.0
 
 const PROJECTILE_SCRIPT: GDScript = preload("res://scripts/dungeon_projectile.gd")
 const EXPLOSION_SCRIPT:  GDScript = preload("res://scripts/dungeon_explosion.gd")
 # The Hitman's flare deals exactly this much (reduced from the obstacle's 40).
-const PROJECTILE_DAMAGE: float = 20.0
+const PROJECTILE_DAMAGE: float = 10.0
 
 # ── States ─────────────────────────────────────────────────────────
 # No RECOVER state: after a ram the hitman immediately resumes patrolling and
@@ -75,14 +88,14 @@ const CHARGE_MAX_DIST:  float = 340.0
 const WINDUP_SEC:       float = 0.55   # animation-freeze before the ram
 const CHARGE_SPEED:     float = 260.0
 const CHARGE_COOLDOWN:  float = 4.0
-const RAM_DAMAGE:       float = 25.0
+const RAM_DAMAGE:       float = 12.5
 const RAM_HIT_DIST:     float = 22.0
 
 # ── Stuck / self-destruct ──────────────────────────────────────────
 # If we're meant to be moving but aren't, we're stuck: blow up.
 const STUCK_TIME:      float = 0.18
 const STUCK_MIN_SPEED: float = 8.0
-const EXPLOSION_FRACTION: float = 0.5   # 50% of each target's max HP
+const EXPLOSION_FRACTION: float = 0.25   # 25% of each target's max HP (halved)
 const EXPLOSION_RADIUS:   float = 64.0
 
 const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_base.png")
@@ -106,6 +119,12 @@ static var _shared_frames: SpriteFrames = null
 
 var _state:       int = State.PATROL
 var _mob_health:  float = 0.0
+var _max_health:  float = 0.0
+var _spatial_scale: float = 1.0
+var _projectile_damage: float = PROJECTILE_DAMAGE
+var _ram_damage: float = RAM_DAMAGE
+var _patrol_speed: float = PATROL_SPEED
+var _fire_interval: float = 0.0
 var _fire_timer:  float = 0.0
 var _charge_cd:   float = 0.0
 var _state_timer: float = 0.0
@@ -125,16 +144,31 @@ var _prev_pos: Vector2 = Vector2.ZERO
 func _ready() -> void:
 	add_to_group("Hitman")
 	add_to_group("Mob")
-	_mob_health = COMBAT_DATA.health
+	_spatial_scale = miniboss_scale if is_miniboss else 1.0
+	_max_health = max_health_override if max_health_override > 0.0 else COMBAT_DATA.health
+	_mob_health = _max_health
+	_projectile_damage = projectile_damage_override if projectile_damage_override > 0.0 else PROJECTILE_DAMAGE
+	_ram_damage = ram_damage_override if ram_damage_override > 0.0 else RAM_DAMAGE
+	_patrol_speed = patrol_speed_override if patrol_speed_override > 0.0 else PATROL_SPEED
+	_fire_interval = fire_interval_override if fire_interval_override > 0.0 else fire_interval
+	# Scale the existing art/collider together so the boss keeps crisp pixels and
+	# has a collision body matching its visible size.
+	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_sprite.scale = Vector2.ONE * SIZE_SCALE * _spatial_scale
+	var col := $CollisionShape2D
+	if col != null:
+		col.scale = Vector2.ONE * _spatial_scale
+		col.position = Vector2(0.0, 3.0 * _spatial_scale)
 	if _shared_frames == null:
 		_shared_frames = _build_frames()
 	_sprite.sprite_frames = _shared_frames
 	_apply_facing("south")
-	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 6.0 * SIZE_SCALE),
-		Vector2(0.6, 0.3) * SIZE_SCALE, 0.35))
+	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE,
+		Vector2(0.0, 6.0 * SIZE_SCALE * _spatial_scale),
+		Vector2(0.6, 0.3) * SIZE_SCALE * _spatial_scale, 0.35))
 	_add_name_label()
 	# Stagger the first shot so a row of hitmen doesn't fire in unison.
-	_fire_timer = randf_range(first_shot_stagger, maxf(fire_interval, first_shot_stagger + 0.1))
+	_fire_timer = randf_range(first_shot_stagger, maxf(_fire_interval, first_shot_stagger + 0.1))
 	_charge_cd  = randf_range(1.0, CHARGE_COOLDOWN)
 	_prev_pos   = global_position
 	# Deferred: the world assigns global_position AFTER add_child, so the patrol
@@ -142,6 +176,16 @@ func _ready() -> void:
 	call_deferred("_init_grid_cell")
 
 func _physics_process(delta: float) -> void:
+	# Safe-zone protection: an enemy inside an active zone is disintegrated
+	# (no death signal / loot / mission credit). Recheck every frame so a
+	# high-speed entry cannot skip the boundary.
+	if Global.is_point_in_safe_zone(global_position + Vector2(0.0, YSORT_FEET_OFFSET)):
+		safe_zone_disintegrate()
+		return
+	# Never hold a charge or a windup against a protected player.
+	if Global.is_player_in_safe_zone() and _state != State.PATROL:
+		_end_charge()
+
 	z_index = int((global_position.y + YSORT_FEET_OFFSET + YSORT_TIEBREAK) / 32.0)
 	if _last_damage_ms > 0 and Time.get_ticks_msec() - _last_damage_ms < HP_BAR_SHOW_MS:
 		queue_redraw()
@@ -197,7 +241,7 @@ func _tick_patrol(delta: float) -> void:
 		velocity = Vector2.ZERO
 	else:
 		var dir: Vector2 = to.normalized()
-		velocity = dir * PATROL_SPEED
+		velocity = dir * _patrol_speed
 		_update_facing(dir)
 		move_and_slide()
 
@@ -232,13 +276,13 @@ func _try_fire(delta: float) -> void:
 	var p := Global.player_node as Node2D
 	if p == null or not is_instance_valid(p) or Global.player_is_dead:
 		return
-	if Global.player_in_safe_room:
+	if Global.is_player_in_safe_zone():
 		return
-	if global_position.distance_to(p.global_position) > fire_range:
+	if global_position.distance_to(p.global_position) > fire_range * _spatial_scale:
 		return
 	_fire_timer -= delta
 	if _fire_timer <= 0.0:
-		_fire_timer = fire_interval
+		_fire_timer = _fire_interval
 		_fire_at(p.global_position)
 
 func _fire_at(target: Vector2) -> void:
@@ -246,10 +290,10 @@ func _fire_at(target: Vector2) -> void:
 	proj.set("direction", (target - global_position).normalized())
 	# Per-instance damage + wall collision (the obstacle flare keeps its 40 and
 	# passes through walls; the Hitman's is 20 and stops at walls).
-	proj.set("damage", PROJECTILE_DAMAGE)
+	proj.set("damage", _projectile_damage)
 	proj.set("collide_walls", true)
 	get_parent().add_child(proj)
-	proj.global_position = global_position
+	proj.global_position = global_position + Vector2(0.0, 4.0 * _spatial_scale)
 
 # ── Ram: eligibility ───────────────────────────────────────────────
 func _can_charge_at_player(w: Node) -> bool:
@@ -257,11 +301,11 @@ func _can_charge_at_player(w: Node) -> bool:
 	if p == null or not is_instance_valid(p) or Global.player_is_dead:
 		return false
 	# Never attack a player who is safe inside an altar room.
-	if Global.player_in_safe_room:
+	if Global.is_player_in_safe_zone():
 		return false
 	var to: Vector2 = p.global_position - global_position
 	var dist: float = to.length()
-	if dist < CHARGE_MIN_DIST or dist > SIGHT_RANGE:
+	if dist < CHARGE_MIN_DIST * _spatial_scale or dist > SIGHT_RANGE * _spatial_scale:
 		return false
 	var axis_x: bool = absf(to.x) >= absf(to.y)
 	# Must be roughly on the charge axis so the ram goes straight, not diagonally
@@ -336,12 +380,13 @@ func _tick_charge(delta: float) -> void:
 	# Ram the player on contact (once per charge) — but keep going THROUGH them:
 	# the hitman barrels past instead of stopping on top of the player.
 	var p := Global.player_node as Node2D
-	if not _ram_hit and p != null and is_instance_valid(p) and not Global.player_is_dead:
-		if global_position.distance_to(p.global_position) <= RAM_HIT_DIST:
+	if not _ram_hit and p != null and is_instance_valid(p) and not Global.player_is_dead \
+			and not Global.is_player_in_safe_zone():
+		if global_position.distance_to(p.global_position) <= RAM_HIT_DIST * _spatial_scale:
 			_ram_hit = true
-			Global.damage_player(RAM_DAMAGE, global_position, _charge_dir)
+			Global.damage_player(_ram_damage, global_position, _charge_dir)
 
-	if global_position.distance_to(_charge_start) >= CHARGE_MAX_DIST:
+	if global_position.distance_to(_charge_start) >= CHARGE_MAX_DIST * _spatial_scale:
 		_end_charge()
 
 # No post-ram pause — go straight back to patrolling, which immediately re-locks
@@ -351,6 +396,10 @@ func _end_charge() -> void:
 	_charge_cd = 0.0
 	velocity = Vector2.ZERO
 	_ram_hit = false
+	# _begin_windup froze the animation; restore it if the attack was cancelled
+	# because the player became protected.
+	if _sprite != null:
+		_sprite.speed_scale = 1.0
 	var w := _world()
 	if w != null:
 		_grid_cell = w.call("world_to_grid", global_position)
@@ -358,6 +407,10 @@ func _end_charge() -> void:
 
 # ── Stuck → self-destruct ──────────────────────────────────────────
 func _tick_stuck(delta: float) -> void:
+	# The finale boss must never self-destruct out of a mission completion.
+	if is_miniboss:
+		_stuck_timer = 0.0
+		return
 	if _world() == null or (_state != State.PATROL and _state != State.CHARGE):
 		_stuck_timer = 0.0
 		return
@@ -368,7 +421,7 @@ func _tick_stuck(delta: float) -> void:
 	else:
 		_stuck_timer = 0.0
 
-# Blow up where we stand: an explosion effect that deals 50% of the max HP of
+# Blow up where we stand: an explosion effect that deals 25% of the max HP of
 # everything in range (the player + other mobs), then free the hitman.
 func _self_destruct() -> void:
 	died.emit()
@@ -378,6 +431,17 @@ func _self_destruct() -> void:
 		ex.set("damage_mobs", true)
 		get_parent().add_child(ex)
 		ex.global_position = global_position
+	_spawn_death_burst()
+	queue_free()
+
+# Safe-zone removal: visual disintegrate only. Deliberately does NOT emit
+# `died` or call notify_mob_killed, so there is no loot, quest credit or
+# mission star for a protected-zone cleanup.
+var _safe_zone_gone: bool = false
+func safe_zone_disintegrate() -> void:
+	if _safe_zone_gone:
+		return
+	_safe_zone_gone = true
 	_spawn_death_burst()
 	queue_free()
 
@@ -461,12 +525,14 @@ func _add_name_label() -> void:
 	_name_label = MOB_NAME_LABEL_SCRIPT.new() as Node2D
 	if _name_label == null:
 		return
-	_name_label.set("mob_name", COMBAT_DATA.mob_name)
+	_name_label.set("mob_name",
+		display_name_override if not display_name_override.is_empty() else COMBAT_DATA.mob_name)
 	add_child(_name_label)
 
 # Killed by the sword — a normal death (no self-destruct blast).
 func _die() -> void:
 	died.emit()
+	defeated.emit()
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
@@ -485,8 +551,11 @@ func _draw() -> void:
 		return
 	if Time.get_ticks_msec() - _last_damage_ms > HP_BAR_SHOW_MS:
 		return
-	if _mob_health >= COMBAT_DATA.health:
+	if _mob_health >= _max_health:
 		return
-	var frac: float = clampf(_mob_health / COMBAT_DATA.health, 0.0, 1.0)
-	draw_rect(Rect2(-HP_BAR_W * 0.5, HP_BAR_Y, HP_BAR_W, HP_BAR_H), Color(0.05, 0.05, 0.08, 0.85))
-	draw_rect(Rect2(-HP_BAR_W * 0.5, HP_BAR_Y, HP_BAR_W * frac, HP_BAR_H), Color(0.85, 0.25, 0.25, 1.0))
+	var frac: float = clampf(_mob_health / _max_health, 0.0, 1.0)
+	var bar_w: float = HP_BAR_W * _spatial_scale
+	var bar_h: float = HP_BAR_H * _spatial_scale
+	var bar_y: float = HP_BAR_Y * _spatial_scale
+	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.05, 0.05, 0.08, 0.85))
+	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * frac, bar_h), Color(0.85, 0.25, 0.25, 1.0))

@@ -94,7 +94,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("escape"):
 		get_viewport().set_input_as_handled()
-		hide_menu()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			dismiss_back()
 	elif event.is_action_pressed("inventory") and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		hide_menu()
@@ -106,11 +107,24 @@ func open_as_station() -> void:
 func show_menu() -> void:
 	visible = true
 	Global.open_ui()
+	Global.register_ui_back(self, Callable(self, "dismiss_back"))
+
+# Escape/Back leaves Algorithmica first, then closes the furnace itself.
+func dismiss_back() -> void:
+	if _panel != null and _panel.visible:
+		_panel.call("close")
+	else:
+		hide_menu()
 
 func hide_menu() -> void:
 	if not visible:
 		return
+	# A hidden parent must not leave the programming overlay's pause/back entry
+	# behind (it is a child panel with its own open_ui()).
+	if _panel != null and _panel.visible:
+		_panel.call("close")
 	visible = false
+	Global.unregister_ui_back(self)
 	Global.close_ui()
 
 # ── Recipe loading ─────────────────────────────────────────────────
@@ -176,8 +190,8 @@ func _build_ui() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	var prog_btn := Button.new()
-	prog_btn.text = "🐍 PROGRAM"
-	prog_btn.tooltip_text = "Write a Python program to automate this furnace."
+	prog_btn.text = "🐍 ALGORITHMICA"
+	prog_btn.tooltip_text = "Algorithmica — write Python that automates this furnace and imbues regular items with automation."
 	prog_btn.add_theme_font_size_override("font_size", int(12 * s))
 	prog_btn.add_theme_color_override("font_color", C_TITLE)
 	var pbs := StyleBoxFlat.new(); pbs.bg_color = C_SMELT; pbs.border_color = C_BORDER

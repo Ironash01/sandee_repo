@@ -11,6 +11,12 @@ const SHADOW_TEXTURE:     Texture2D   = preload("res://sprites/shadow/shadow_blo
 # they take a 75% speed penalty, i.e. the block is 4x harder to a pickaxe.
 const PICKAXE_WOOD_PENALTY: float = 0.75
 
+# Bare-handed mining. A block is ALWAYS breakable — with no pickaxe (or an
+# unrelated item) it just takes this much longer and yields NO item (see
+# _break). The tier gate on ItemData.min_pickaxe_level decides whether the
+# player EARNS the block, not whether they can chip it away.
+const BAREHAND_TIME_MULT: float = 2.5
+
 var _player_nearby: bool     = false
 var _hovered:       bool     = false
 var _world_cell:    Vector2i = Vector2i(-99999, -99999)
@@ -43,9 +49,15 @@ func _door_rotation_for(dir: String) -> float:
 # only plays while actively breaking — it stops the instant the player
 # lets go of the mouse.
 var _breaking:       bool  = false
+# True when the current break was started WITHOUT a valid tool (bare hands or an
+# unrelated item). Such a break still destroys the block — slower — but grants
+# no item and no mining-mission progress (see _break).
+var _barehanded:     bool  = false
 var _break_duration: float = 1.0
 var _break_elapsed:  float = 0.0
 var _break_progress: float = 0.0
+var _break_tool_id:  String = ""
+var _break_tool_known: bool = false
 var _mouse_held:     bool  = false
 var _last_hit_ms:    int   = -1   # wall-clock of the last damage added
 
@@ -331,14 +343,30 @@ func _process(delta: float) -> void:
 	# Same lost-release guard as player.gd _tick_attack_hold: opening a UI pauses
 	# the tree, so the release during that pause never reaches _input and
 	# _mouse_held would stay latched — resuming the break once the UI closes.
-	if _mouse_held and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+	if _mouse_held and not Global.is_left_action_held():
 		_mouse_held = false
-	_update_hover()
+	# Once PNC locks a block, its cursor can move away without cancelling the
+	# mining order or hiding the ring. Manual mining still requires hover.
+	if not Global.pnc_hold_active:
+		_update_hover()
 	_tick_progress_expiry()
 	_tick_wobble()
-	if not _mouse_held or not _hovered or not _player_within_radius():
+	if not _mouse_held or (not _hovered and not Global.pnc_hold_active) \
+			or not _player_within_radius():
 		_cancel_breaking()
 		return
+	# A hotbar/tool switch restarts the break immediately with the new tool's
+	# duration, rather than keeping progress earned by the old tool.
+	if _mouse_held and (_hovered or Global.pnc_hold_active):
+		var tool_id: String = Global.held_tool_id()
+		if _breaking and tool_id != _break_tool_id:
+			_cancel_breaking()
+			_break_elapsed  = 0.0
+			_break_progress = 0.0
+			_last_hit_ms    = -1
+			_try_start_breaking()
+		elif not _breaking:
+			_try_start_breaking()
 	# `_breaking` is the TOOL GATE — it is only ever set by a successful
 	# _try_start_breaking(). WITHOUT this check a rejected click (bare hands, or
 	# a non-pickaxe item) still latched _mouse_held, and _process kept feeding
@@ -356,9 +384,13 @@ func _add_break_progress(seconds: float) -> void:
 	# matter which caller got here (this is what let bare hands break blocks).
 	if not _breaking:
 		return
+	# Hold-to-mine and PNC both advance this every frame, so the player keeps
+	# swinging the selected item/pickaxe until the block breaks.
+	Global.swing_player_item()
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
+	Global.report_break_progress(_break_progress, global_position, -26.0, self)
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_break()
@@ -374,6 +406,7 @@ func _tick_progress_expiry() -> void:
 	_break_progress = 0.0
 	_last_hit_ms    = -1
 	_sprite.rotation = 0.0
+	Global.clear_break_progress(self)
 	queue_redraw()
 
 # Snappy left↔right shake, played ONLY while actively breaking (mouse
@@ -392,7 +425,7 @@ func _update_hover() -> void:
 	if _sprite.texture == null:
 		_hovered = false
 		return
-	var mouse_local: Vector2 = to_local(get_global_mouse_position())
+	var mouse_local: Vector2 = to_local(Global.mouse_world(self))
 	var half_w: float = (_sprite.texture.get_width()  / float(maxi(_sprite.hframes, 1))) * 0.5
 	var half_h: float = (_sprite.texture.get_height() / float(maxi(_sprite.vframes, 1))) * 0.5
 	_hovered = abs(mouse_local.x - _sprite.position.x) <= half_w \
@@ -400,13 +433,20 @@ func _update_hover() -> void:
 		   and not Global.block_mode
 
 func _draw() -> void:
-	if _break_progress <= 0.0:
-		return
-	Global.draw_break_bar(self, _break_progress)
+	# The progress ring is drawn by BreakProgressOverlay, above every world
+	# sprite, so this node does not draw it behind its own Sprite2D.
+	pass
 
 # ── Input ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
-	if not _player_nearby or Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
+	if Global.is_mouse_event_over_ui(event):
+		return
+	if not _player_nearby or Global.any_ui_open() or Global.pause_menu_open:
+		return
+	# In build mode a plain click PLACES a block (world._input). SHIFT+click
+	# still mines the block under the cursor — the world skips placement when
+	# shift is held, so construction and demolition share one mode.
+	if Global.block_mode and not Global.is_shift_held():
 		return
 	if not _hovered or not _player_within_radius():
 		if _breaking:
@@ -445,6 +485,10 @@ func _input(event: InputEvent) -> void:
 				# work, so spam clicking chips away just like holding does.
 				_add_break_progress(CLICK_BREAK_SECONDS)
 		else:
+			# Tap-to-control keeps its synthetic hold through the finger-up
+			# event so continuous mining is not cancelled immediately.
+			if Global.pnc_hold_active:
+				return
 			_mouse_held = false
 			if _breaking:
 				_cancel_breaking()
@@ -457,21 +501,25 @@ func _player_within_radius() -> bool:
 func _try_start_breaking() -> void:
 	if _breaking:
 		return
-	var slot = Global.get_hotbar_item()
-	if slot == null:
-		return
-	var held_data: ItemData = slot["data"] as ItemData
-	if held_data == null:
-		return
-	var is_axe: bool      = held_data.axe_level > 0
-	var is_pickaxe: bool  = held_data.is_pickaxe
+	var slot: Variant = Global.get_hotbar_item()
+	# An empty hand is fine now: bare-handed mining is allowed (slow, no drop).
+	var held_data: ItemData = null
+	if slot != null and (slot as Dictionary).has("data"):
+		held_data = (slot as Dictionary)["data"] as ItemData
+	var is_axe: bool      = held_data != null and held_data.axe_level > 0
+	var is_pickaxe: bool  = held_data != null and held_data.is_pickaxe
 	var is_wood_block: bool = item_data != null and item_data.wooden_block
+	# Torches are wooden auxiliary decor but historically were not tagged
+	# wooden_block; allow an axe to chop them without imposing the pickaxe
+	# wood penalty on an otherwise ordinary cheap torch.
+	var axe_can_chop: bool = is_wood_block or (item_data != null and item_data.is_torch)
 	var block_lvl: int = item_data.block_level if item_data != null else 0
 
-	if is_axe and is_wood_block:
-		# Axes chop wooden blocks — no pickaxe tier needed. Speed comes from the
-		# axe's hidden wooden-block bonus (LV1 +0.3x, LV2 +0.6x, LV3 +1.0x).
-		# Spam clicking works normally.
+	_barehanded = false
+	if is_axe and axe_can_chop:
+		# Axes chop wooden blocks and torches — no pickaxe tier needed. Speed
+		# comes from the axe's hidden wooden-block bonus (LV1 +0.3x, LV2 +0.6x,
+		# LV3 +1.0x). Spam clicking works normally.
 		_break_duration = maxf(0.1, float(block_lvl)) / (1.0 + held_data.axe_wood_block_bonus())
 	elif is_pickaxe:
 		var min_lvl: int = item_data.min_pickaxe_level if item_data != null else 0
@@ -490,13 +538,25 @@ func _try_start_breaking() -> void:
 			hardness /= (1.0 - PICKAXE_WOOD_PENALTY)
 		_break_duration = maxf(0.1, hardness - float(Global.held_mining_level()))
 	else:
-		return  # no tool that can break this block
+		# BARE HANDS (or an unrelated item). The block can still be broken, but
+		# it takes BAREHAND_TIME_MULT as long and yields nothing — the pickaxe
+		# tier is what EARNS the block, not what allows chipping it.
+		_barehanded     = true
+		_break_duration = maxf(0.1, float(block_lvl) * BAREHAND_TIME_MULT)
 	# The swing animation plays for ANY item used to break — route through the
 	# player so it fires even though this block consumed the click input.
 	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
 		Global.player_node.call("swing_held_item")
-	# Keep damage accumulated within the persist window — a spam clicker (or
-	# a player who walked away and came back) resumes where they left off.
+	# Keep damage accumulated within the persist window ? a spam clicker (or
+	# a player who walked away and came back) resumes where they left ? but a
+	# changed hotbar tool always restarts the bar.
+	var tool_id: String = Global.held_tool_id()
+	if _break_tool_known and tool_id != _break_tool_id:
+		_break_elapsed  = 0.0
+		_break_progress = 0.0
+		_last_hit_ms    = -1
+	_break_tool_id = tool_id
+	_break_tool_known = true
 	if _last_hit_ms < 0 \
 			or Time.get_ticks_msec() - _last_hit_ms >= int(PROGRESS_PERSIST_SECONDS * 1000.0):
 		_break_elapsed  = 0.0
@@ -511,10 +571,12 @@ func _cancel_breaking() -> void:
 	if not _breaking:
 		return
 	_breaking        = false
+	Global.clear_break_progress(self)
 	_sprite.rotation = 0.0
 
 func _break() -> void:
 	_breaking = false
+	Global.clear_break_progress(self)
 	var world: Node = _world()
 	if world != null and world.has_method("unregister_block"):
 		world.call("unregister_block", _world_cell)
@@ -528,11 +590,22 @@ func _break() -> void:
 			burst.set("tint", OBJECT_BURST_SCRIPT.average_color(tex))
 			world.add_child(burst)
 			burst.global_position = global_position + Vector2(0.0, -10.0)
-	if item_data != null:
+	# Bare-handed breaks still destroy the block (see _try_start_breaking) but
+	# yield NO item and don't advance mining missions — the tool tier is what
+	# EARNS the block, not what allows chipping it away.
+	CrashLogger.event("WORLD", "break %s cell=(%d, %d) barehanded=%s" % [
+		item_data.item_name if item_data != null else "?",
+		_world_cell.x, _world_cell.y, _barehanded])
+	if item_data != null and not _barehanded:
+		# Connected-torch variants are visual ItemData resources; they must
+		# return the normal torch item, not their own dev/variant identity.
+		var drop_data: ItemData = item_data
+		if item_data.is_torch and item_data.torch_drop_item != null:
+			drop_data = item_data.torch_drop_item
 		# Mining-progress missions keyed off the block that was broken.
-		Global.track_mining(item_data)
+		Global.track_mining(drop_data)
 		var drop: Node = ITEM_SCENE.instantiate() as Node
-		drop.call("set_item_data", item_data)
+		drop.call("set_item_data", drop_data)
 		# World itself (via _world_ref, falling back to Global.world_node)
 		# rather than get_parent() — see chest_block.gd's _break() for why.
 		var drop_parent: Node = _world()

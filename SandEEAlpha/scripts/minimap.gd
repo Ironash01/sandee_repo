@@ -61,6 +61,8 @@ const C_PLAYER  := Color(1.00, 1.00, 1.00)
 const C_ENEMY   := Color(0.90, 0.20, 0.20)   # HOSTILE mobs
 const C_FRIEND  := Color(1.00, 0.95, 0.20)   # PASSIVE/friendly mobs (bright yellow)
 const C_BONFIRE := Color(1.00, 0.55, 0.12)   # bonfire respawn markers (orange)
+const C_LUA     := Color(0.72, 0.48, 1.00)   # Automatica/LUA stations (violet)
+const LUA_LEGEND: String = "LUA"
 const C_GREEN   := Color(0.25, 0.85, 0.35)   # flags
 
 # Dungeon content (see the merged-map note at the top): the grid is drawn from
@@ -94,6 +96,8 @@ var _view_center: Vector2i = Vector2i(1 << 20, 1 << 20)
 var _dragging: bool = false
 var _drag_mouse: Vector2 = Vector2.ZERO
 var _drag_pan:   Vector2i = Vector2i.ZERO
+var _drag_moved: bool = false
+var _drag_start: Vector2 = Vector2.ZERO
 
 # Zoom (expanded map only): 1 = fit, >1 = zoomed in. Wheel or -/+ changes it.
 var _zoom: float = 1.0
@@ -207,9 +211,16 @@ func _mark_explored() -> void:
 				continue
 			Global.explored_tiles[_player_tile + Vector2i(dx, dy)] = true
 	Global.set_mission_progress("explore_tiles", Global.explored_tiles.size())
+	Global.set_mission_progress("side_world_explorer", Global.explored_tiles.size())
 
 # ── Input ───────────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
+	# Escape/Back closes the expanded map like any other overlay.
+	if _expanded and event.is_action_pressed("escape"):
+		get_viewport().set_input_as_handled()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			_set_expanded(false)
+		return
 	# M toggles the exclusive map.
 	if event is InputEventKey and event.pressed and not event.echo \
 			and (event.physical_keycode == KEY_M or event.keycode == KEY_M):
@@ -245,16 +256,25 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var at := get_viewport().get_mouse_position()
 		if event.pressed:
-			_dragging   = true
-			_drag_mouse = get_viewport().get_mouse_position()
-			_drag_pan   = _pan
+			_dragging    = true
+			_drag_moved  = false
+			_drag_start  = at
+			_drag_mouse  = at
+			_drag_pan    = _pan
 		else:
 			_dragging = false
+			# A tap on the dark outskirts closes the expanded map.
+			if not _drag_moved and not _expanded_map_rect().has_point(at):
+				_set_expanded(false)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _dragging:
 		var cell_px: float = _expanded_map_rect().size.x / float(GRID)
-		var d: Vector2 = get_viewport().get_mouse_position() - _drag_mouse
+		var now := get_viewport().get_mouse_position()
+		if now.distance_to(_drag_start) > 6.0:
+			_drag_moved = true
+		var d: Vector2 = now - _drag_mouse
 		_pan = _drag_pan - Vector2i(roundi(d.x / cell_px), roundi(d.y / cell_px))
 		_force_sample = true
 		queue_redraw()
@@ -264,6 +284,9 @@ func _zoom_by(factor: float) -> void:
 	_zoom = clampf(_zoom * factor, ZOOM_MIN, ZOOM_MAX)
 	_force_sample = true   # re-sample immediately at the new zoom
 	queue_redraw()
+
+func _close_expanded() -> void:
+	_set_expanded(false)
 
 func _set_expanded(on: bool) -> void:
 	if on == _expanded:
@@ -278,7 +301,9 @@ func _set_expanded(on: bool) -> void:
 		if not Global.any_ui_open():
 			Global.open_ui()
 			_owns_ui = true
+			Global.register_ui_back(self, Callable(self, "_close_expanded"))
 	else:
+		Global.unregister_ui_back(self)
 		if _owns_ui:
 			Global.close_ui()
 			_owns_ui = false
@@ -400,14 +425,16 @@ func _collapsed_rect() -> Rect2:
 	var vp: Vector2 = _vp()
 	var base: float = minf(vp.x, vp.y)
 	var sz: float = minf(base * COLLAPSED_FRAC * s, base * COLLAPSED_CAP)
-	return Rect2(Vector2(MARGIN * s, vp.y - sz - MARGIN * s), Vector2(sz, sz))
+	# Upper-left corner (the debug/chat panel now lives middle-left).
+	return Rect2(Vector2(MARGIN * s, MARGIN * s), Vector2(sz, sz))
 
 func _expanded_map_rect() -> Rect2:
 	var s: float = Global.ui_scale
 	var vp: Vector2 = _vp()
 	var base: float = minf(vp.x, vp.y)
 	var map_px: float = minf(base * EXPANDED_FRAC * s, base * EXPANDED_CAP)
-	var total_h: float = 30.0 * s + map_px + 30.0 * s
+	# Leave room for two compact legend rows in the expanded overworld map.
+	var total_h: float = 30.0 * s + map_px + 48.0 * s
 	return Rect2(Vector2((vp.x - map_px) * 0.5, (vp.y - total_h) * 0.5), Vector2(map_px, map_px))
 
 # ── Drawing ─────────────────────────────────────────────────────────────
@@ -435,7 +462,7 @@ func _draw_expanded() -> void:
 	var panel: Rect2 = _expanded_map_rect()
 	var bg := panel.grow(14.0 * s)
 	bg.position.y -= 30.0 * s
-	bg.size.y     += 30.0 * s
+	bg.size.y     += 48.0 * s
 	draw_rect(bg, C_PANEL, true)
 	draw_rect(bg, C_BORDER, false, 2.0 * s)
 
@@ -467,10 +494,14 @@ func _draw_expanded() -> void:
 		lx = _legend_item(font, lx, ly, s, C_PLAYER, "You")
 		_legend_item(font, lx, ly, s, C_CAVE_EXIT, "Entrance / Exit")
 		return
+	# Two rows keep the legend readable on narrow Android screens.
 	lx = _legend_item(font, lx, ly, s, C_PLAYER, "You")
 	lx = _legend_item(font, lx, ly, s, C_ENEMY, "Enemies")
-	lx = _legend_item(font, lx, ly, s, C_FRIEND, "Friendly")
+	_legend_item(font, lx, ly, s, C_FRIEND, "Friendly")
+	ly += 18.0 * s
+	lx = panel.position.x
 	lx = _legend_item(font, lx, ly, s, C_BONFIRE, "Bonfires")
+	lx = _legend_item(font, lx, ly, s, C_LUA, LUA_LEGEND)
 	var isz: float = 16.0 * s
 	draw_texture_rect(PORTAL_TEX, Rect2(Vector2(lx, ly - isz * 0.7), Vector2(isz, isz)), false)
 	draw_string(font, Vector2(lx + isz + 4 * s, ly + 4 * s), "Dungeon",
@@ -509,6 +540,10 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 				_marker(map_rect, center, ppt, b, grp[1], 3.0 * s)
 		for d in get_tree().get_nodes_in_group("DungeonPortal"):
 			_portal_marker(map_rect, center, ppt, d, s)
+	# Automatica/LUA stations use the same entity-marker convention and the
+	# violet colour shared with the LUA legend.
+	for lua in get_tree().get_nodes_in_group("LuaNPC"):
+		_marker(map_rect, center, ppt, lua, C_LUA, 2.8 * s)
 	var ppos: Vector2 = center + (p.global_position / TILE - Vector2(_view_center)) * ppt
 	if not _expanded:
 		ppos = center
@@ -521,10 +556,20 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 func _draw_dungeon_entities(map_rect: Rect2, center: Vector2, ppt: float, s: float, dun: DungeonWorld) -> void:
 	var g: DungeonGenerator = dun.generator
 	var gh := Vector2i(g.width / 2, g.height / 2)
-	_grid_dot(map_rect, center, ppt, s, g.knowledge_altar_pos, gh, C_KNOWLEDGE)
-	_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos, gh, C_QUIZ)
+	var mission: DungeonMissionData = dun.get("_mission") as DungeonMissionData
+	if mission != null and mission.is_boss():
+		pass   # no altars in the two-room finale
+	elif mission != null and mission.is_extra():
+		# Extra dungeons contain two Quiz Altars and no Knowledge Altar.
+		_grid_dot(map_rect, center, ppt, s, g.knowledge_altar_pos, gh, C_QUIZ)
+		_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos, gh, C_QUIZ)
+	else:
+		_grid_dot(map_rect, center, ppt, s, g.knowledge_altar_pos, gh, C_KNOWLEDGE)
+		_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos, gh, C_QUIZ)
 	if dun._exit_marker != null and dun._exit_marker._active:
-		_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos + Vector2i(0, 2), gh, C_EXIT)
+		# The exit is repositioned beside whoever completed the quiz.
+		var exit_grid: Vector2i = dun.world_to_grid(dun._exit_marker.global_position)
+		_grid_dot(map_rect, center, ppt, s, exit_grid, gh, C_EXIT)
 
 # Cave marker: the single entrance/exit tile (caves have one tile that is both
 # where you entered and where you leave). Grid coords → world tiles via the
@@ -575,6 +620,11 @@ func _hovered_icon() -> Dictionary:
 		entries.append({"node": d, "text": _portal_name(d), "icon": true})
 	for m in get_tree().get_nodes_in_group("Mob"):
 		entries.append({"node": m, "text": _mob_name(m), "icon": false})
+	for lua in get_tree().get_nodes_in_group("LuaNPC"):
+		var lua_name := "LUA"
+		if lua.has_method("get_display_name"):
+			lua_name = str(lua.call("get_display_name"))
+		entries.append({"node": lua, "text": lua_name, "icon": false})
 	for grp in [["Bonfire", "Bonfire"], ["Flag", "Flag"]]:
 		for b in get_tree().get_nodes_in_group(grp[0]):
 			entries.append({"node": b, "text": grp[1], "icon": false})
@@ -615,7 +665,7 @@ func _portal_name(portal: Node) -> String:
 		return "Dungeon"
 	var dm = Global.get_dungeon_mission_for_index(int(idx))
 	if dm != null and not dm.mission_name.is_empty():
-		return dm.mission_name
+		return Global.dungeon_display_name(int(idx))
 	return "Dungeon"
 
 func _mob_name(mob: Node) -> String:

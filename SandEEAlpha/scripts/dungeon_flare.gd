@@ -15,6 +15,10 @@ const FIRE_INTERVAL: float = 2.5
 const FIRE_RANGE:    float = 320.0   # only fires when the player is this close
 const MAX_HP:        float = 30.0
 const GLOW_COLOR:    Color = Color(1.0, 0.55, 0.25)
+# The flare's bolts hurt more than a Hitman's (40 vs 20) but must not fling the
+# player across the room: knockback is cut to 30% of the normal damage-based
+# value (see DungeonProjectile.knockback_scale).
+const KNOCKBACK_SCALE: float = 0.3
 
 var _hp:         float = MAX_HP
 var _fire_timer: float = FIRE_INTERVAL
@@ -68,6 +72,10 @@ func _physics_process(delta: float) -> void:
 	var p := Global.player_node as Node2D
 	if p == null or not is_instance_valid(p):
 		return
+	# Safe zones: never fire at a protected player, and never fire if this vent
+	# itself is inside a protected room.
+	if Global.is_player_in_safe_zone() or Global.is_point_in_safe_zone(global_position):
+		return
 	if global_position.distance_to(p.global_position) > FIRE_RANGE:
 		return
 	_fire_timer -= delta
@@ -78,6 +86,7 @@ func _physics_process(delta: float) -> void:
 func _fire_at(target: Vector2) -> void:
 	var proj := DungeonProjectile.new()
 	proj.direction = (target - global_position).normalized()
+	proj.knockback_scale = KNOCKBACK_SCALE
 	get_parent().add_child(proj)
 	proj.global_position = global_position
 

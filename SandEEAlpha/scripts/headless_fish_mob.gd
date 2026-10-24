@@ -7,6 +7,16 @@ class_name HeadlessFishMob
 # Global.damage_player.
 
 const COMBAT_DATA: MobCombatData = preload("res://resources/mobs/headless_fish.tres")
+# Headless Fish drop one raw fish from the existing fishing pool. Reusing the
+# four canonical fish resources keeps loot IDs, icons, stacking and cooking
+# recipes identical to a fish caught with the rod.
+const FISH_ITEMS: Array = [
+	preload("res://resources/items/charlie.tres"),
+	preload("res://resources/items/glep_glorp.tres"),
+	preload("res://resources/items/allan.tres"),
+	preload("res://resources/items/pimpim.tres"),
+]
+const DROP_ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 
 const AI_SCRIPTS: Dictionary = {
 	"HEADLESS_FISH": preload("res://scripts/AI/HEADLESS_FISH.gd"),
@@ -31,6 +41,7 @@ const SPRITE_SCALE: float = 0.6
 
 # ── Combat ─────────────────────────────────────────────────────────
 var _mob_health:   float  = 0.0
+var _death_processed: bool = false
 var _knockback:    Vector2 = Vector2.ZERO
 const KNOCKBACK_DECAY: float = 900.0
 var _attack_cooldown: float = 0.0
@@ -291,12 +302,34 @@ func _draw() -> void:
 # ── Death ─────────────────────────────────────────────────────────
 
 func _die() -> void:
+	if _death_processed:
+		return
+	_death_processed = true
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
 	HeadlessFishAI._force_release_claim()
+	Global.add_mission_progress("side_headless_angler", 1)
+	_drop_fish()
 	_spawn_death_burst()
 	queue_free()
+
+# One raw fish per successful defeat, chosen from the existing fishing pool.
+# Despawn/day cleanup paths call queue_free() directly, so they never reach
+# this function (and never award loot).
+func _drop_fish() -> void:
+	var parent: Node = get_parent()
+	if parent == null or not is_instance_valid(parent):
+		return
+	var fish: ItemData = FISH_ITEMS[randi() % FISH_ITEMS.size()] as ItemData
+	var drop: Node = DROP_ITEM_SCENE.instantiate()
+	if drop == null or fish == null:
+		return
+	drop.set("item_data", fish)
+	drop.set("quantity", 1)
+	parent.add_child(drop)
+	if drop is Node2D:
+		(drop as Node2D).global_position = global_position + Vector2(0.0, -6.0)
 
 func _spawn_death_burst() -> void:
 	var b: Node2D = MELLOW_BURST_SCRIPT.new() as Node2D

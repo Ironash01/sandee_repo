@@ -9,7 +9,8 @@ region = Rect2(96, 0, 32, 32)
 
 [resource]
 script = ExtResource("1_item")
-item_name = "Cooked Glep Glorp"
+item_name = "Cooked Glep"
+scripting_id = "cooked_glep_glorp"
 description = "A cooked green fish. It's still speaking gibberish. Eat it to restore 50 health."
 item_type = "consumable"
 icon = SubResource("AtlasTexture_fish")

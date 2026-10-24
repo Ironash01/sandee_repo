@@ -77,7 +77,7 @@ const TEX_SIDE:  Texture2D = preload("res://sprites/char/lua/side.png")
 const TEX_COMBAT_FRONT: Texture2D = preload("res://sprites/char/lua_combat/front.png")
 const TEX_COMBAT_BACK:  Texture2D = preload("res://sprites/char/lua_combat/back.png")
 const TEX_COMBAT_SIDE:  Texture2D = preload("res://sprites/char/lua_combat/side.png")
-const LUA_OUTLINE_SHADER: Shader = preload("res://shaders/lua_outline.gdshader")
+const LUA_EYES_SHADER: Shader = preload("res://shaders/lua_eyes.gdshader")
 const DIR_TEX: Dictionary = {
 	"north": TEX_BACK,  "north-east": TEX_BACK,  "north-west": TEX_BACK,
 	"south": TEX_FRONT, "south-east": TEX_FRONT, "south-west": TEX_FRONT,
@@ -297,11 +297,11 @@ func _ready() -> void:
 	if _shared_combat_frames == null:
 		_shared_combat_frames = _build_frames(true)
 	_robot_sprite.sprite_frames = _shared_frames
-	# Glowing outline (a floating entity reads better lit up). Uses the sprite's
-	# own texture, so it tracks whichever direction frame is showing.
-	var outline := ShaderMaterial.new()
-	outline.shader = LUA_OUTLINE_SHADER
-	_robot_sprite.material = outline
+	# Glow only the eye pixels already painted into each facing frame. This
+	# keeps the robot readable without outlining the whole silhouette.
+	var eyes := ShaderMaterial.new()
+	eyes.shader = LUA_EYES_SHADER
+	_robot_sprite.material = eyes
 	_play_idle(_last_dir)
 	# Attached to _robot (not the station) so it moves with the robot as it walks.
 	# Ground shadow at the robot's base (same soft blob the player/mobs use).
@@ -429,7 +429,11 @@ func _on_station_input_event(_viewport, event: InputEvent, _shape) -> void:
 		_show_radius = not _show_radius
 		queue_redraw()
 	elif event.button_index == MOUSE_BUTTON_LEFT and _player_nearby and not Global.block_mode:
-		if _lua_ui != null and is_instance_valid(_lua_ui) and not Global.pause_menu_open:
+		# A click that belongs to an open panel must not open the editor behind
+		# it (that would stack two UI pauses and leave the tree in a mixed state).
+		if Global.pause_menu_open or Global.any_ui_open():
+			return
+		if _lua_ui != null and is_instance_valid(_lua_ui):
 			_lua_ui.call("open_editor")
 
 # ── Player proximity ──────────────────────────────────────────────
@@ -556,7 +560,8 @@ func _return_and_idle() -> void:
 	if not _station_queue.is_empty():
 		_run_station_jobs.call_deferred()
 
-func _on_lua_print(_t: String) -> void: pass
+func _on_lua_print(t: String) -> void:
+	CrashLogger.code("lua", "OUT", t)
 
 # ── Building (place_item / place_at / select_block / withdraw) ─────
 # The robot places from its 3-slot build palette. Every placement reuses the
@@ -845,8 +850,8 @@ func get_display_name() -> String:
 	if not _custom_name.is_empty():
 		return _custom_name
 	if _name_index >= 0:
-		return "LUA %d" % _name_index
-	return "LUA"
+		return "Automatica %d" % _name_index
+	return "Automatica"
 
 func _update_name_label() -> void:
 	if _lua_ui == null or not is_instance_valid(_lua_ui):
@@ -927,7 +932,7 @@ func _enter_combat(silent: bool = false) -> void:
 	if not silent:
 		_spawn_mellow(_robot.global_position)
 		_spawn_mellow(global_position)
-		Global.log_chat("%s entered combat mode." % get_display_name())
+		Global.notify("%s entered combat mode." % get_display_name())
 
 func _apply_combat_frames(combat: bool) -> void:
 	if _robot_sprite == null:
@@ -1111,7 +1116,7 @@ func terminate() -> void:
 	if _terminated:
 		return
 	_terminated = true
-	Global.log_chat("%s has been terminated." % get_display_name())
+	Global.notify("%s has been terminated." % get_display_name())
 	# Mellow poof on the LUA and on its station before this node is freed
 	# (spawned under the world so the burst outlives it).
 	_spawn_mellow(_robot.global_position)
@@ -1888,6 +1893,13 @@ func _on_lua_drop_item(name: String, qty: int) -> void:
 func is_working() -> bool:
 	return _is_working
 
+# True while there is anything for STOP to stop: a dispatched job, a velocity
+# left behind by move(), or station work still queued behind a job. The editor
+# keeps STOP enabled only while this is true, so a script that has already
+# finished (and left nothing running) cannot offer a button that does nothing.
+func has_active_work() -> bool:
+	return _is_working or _robot_vel != Vector2.ZERO or not _station_queue.is_empty()
+
 func stop_work() -> void:
 	# NOTE: STOP no longer terminates a combat LUA. Termination is a MENU action
 	# now (pause menu -> LUA Management), so the player always has to pick the
@@ -2142,7 +2154,7 @@ func _collision_rids_of(node: Node) -> Array:
 # station. A chop job passes recall = false: it just skips the unreachable tree
 # and carries on from where it stands, instead of being yanked home.
 func _handle_stuck(recall: bool = true) -> void:
-	Global.lua_stuck_notice.emit("A LUA got stuck!")
+	Global.lua_stuck_notice.emit("An Automatica got stuck!")
 	_robot_vel      = Vector2.ZERO
 	if recall:
 		_robot.position = Vector2.ZERO

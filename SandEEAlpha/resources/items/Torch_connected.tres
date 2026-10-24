@@ -3,6 +3,8 @@
 [ext_resource type="Texture2D" uid="uid://0kt0fhs21yhk" path="res://sprites/items/SandEE_itemsprites.png" id="1_6bgea"]
 [ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="2_6bgea"]
 [ext_resource type="Texture2D" uid="uid://hh5xx0sf8oo6" path="res://sprites/items/torch_animation_sideconnected.png" id="2_avboc"]
+[ext_resource type="Texture2D" uid="uid://b0bokodhr6nrh" path="res://sprites/items/torch_animation.png" id="3_normal"]
+[ext_resource type="Resource" uid="uid://bkrjukhmv86em" path="res://resources/items/Torch.tres" id="4_torch"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_tk5nc"]
 atlas = ExtResource("1_6bgea")
@@ -17,9 +19,12 @@ is_dev_item = true
 icon = SubResource("AtlasTexture_tk5nc")
 is_placeable = true
 has_place_animation = true
-place_animation_sheet = ExtResource("2_avboc")
+place_animation_sheet = ExtResource("3_normal")
 place_animation_frame_count = 8
+place_animation_fps = 10
 is_torch = true
+torch_connected_sheet = ExtResource("2_avboc")
+torch_drop_item = ExtResource("4_torch")
 block_level = 1
 place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

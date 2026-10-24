@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/items/wheat_ungrown.png" id="2_tex"]
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Wheat (Ungrown)"
+description = "A young wheat sprout. Dev item — the crop-growth system is not implemented yet."
+item_type = "block"
+is_dev_item = true
+icon = ExtResource("2_tex")
+is_placeable = true
+placeable_sprite = ExtResource("2_tex")
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"

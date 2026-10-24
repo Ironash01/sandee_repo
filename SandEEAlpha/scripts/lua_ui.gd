@@ -89,14 +89,19 @@ func open_editor() -> bool:
 	return true
 
 # Hide the editor and release the pause it took. Safe to call when already
-# closed, so it doubles as the "close all UI" handler.
+# closed, so it doubles as the "close all UI" handler. Routed through the
+# editor's close_panel() so a suspended pause (robot still working) is released
+# with it — otherwise a stale suspension would stop later UIs from pausing.
 func close_editor() -> void:
 	if _editor == null or not is_instance_valid(_editor):
 		return
 	if not _editor.visible:
 		return
-	Global.close_ui()
-	_editor.visible = false
+	if _editor.has_method("close_panel"):
+		_editor.call("close_panel")
+	else:
+		Global.close_ui()
+		_editor.visible = false
 
 # A station freed (or its world swapped out) while its editor was open must not
 # leave the tree paused with no visible UI — which reads as the game freezing.

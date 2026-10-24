@@ -11,7 +11,7 @@ const EXPL_TEX:     Texture2D = preload("res://sprites/particles_effects/flame_a
 const FRAME_SIZE:   int   = 64
 const FRAME_COUNT:  int   = 6
 const FPS:          float = 14.0
-const DAMAGE:       float = 20.0
+const DAMAGE:       float = 10.0
 # 3x3 tiles centred on the blast = a half-extent of 1.5 tiles (48px).
 const AOE_HALF:     float = 48.0
 const GLOW_COLOR:   Color = Color(1.0, 0.6, 0.25)
@@ -74,8 +74,10 @@ func _add_glow() -> void:
 # 3x3-tile AoE: damages the player if their centre is within one-and-a-half
 # tiles of the blast on BOTH axes.
 func _apply_damage() -> void:
+	if Global.is_point_in_safe_zone(global_position):
+		return   # a blast inside a protected room harms nothing
 	var p := Global.player_node as Node2D
-	if p != null and is_instance_valid(p):
+	if p != null and is_instance_valid(p) and not Global.is_player_in_safe_zone():
 		var d: Vector2 = p.global_position - global_position
 		if absf(d.x) <= AOE_HALF and absf(d.y) <= AOE_HALF:
 			var amt: float = Global.max_health * damage_fraction if damage_fraction > 0.0 else damage

@@ -79,8 +79,12 @@ func hide_tip() -> void:
 
 func _effect_text(d: ItemData) -> String:
 	var parts: Array = []
-	if d.sword_level > 0:
-		parts.append("Damage %d" % d.sword_damage())
+	# Read the same authoritative held-item damage as player.gd. This also
+	# corrects non-swords: their old sword_level default displayed 4 even
+	# though the actual token swing is 1.
+	var shown_damage: int = d.held_damage_display()
+	if shown_damage > 0:
+		parts.append("Damage %d" % shown_damage)
 	if d.is_pickaxe:
 		parts.append("Pickaxe T%d" % d.pickaxe_level)
 	if d.axe_level > 0:

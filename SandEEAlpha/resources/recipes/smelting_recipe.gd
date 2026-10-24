@@ -13,3 +13,7 @@ class_name SmeltingRecipe
 @export var output_item: ItemData
 @export var smelt_time:  float = 5.0
 @export var fuel_level_required: int = 1
+## Optional mission id credited once per successfully smelted output item.
+## Kept on the recipe so production tracking is data-driven rather than
+## depending on display-name spelling (e.g. the "Ironbar" item name).
+@export var mission_id: String = ""

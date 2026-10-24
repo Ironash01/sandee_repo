@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/items/iron_hoe.png" id="2_tex"]
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Iron Hoe"
+description = "A farming hoe with an iron blade. Nothing can be tilled yet."
+item_type = "weapon"
+icon = ExtResource("2_tex")
+is_craftable = true
+is_hoe = true

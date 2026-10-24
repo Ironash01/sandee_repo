@@ -18,7 +18,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Print \"You are too young to vote\" when age is not greater than 18, otherwise print \"You can vote now\"."
 language = "python"
-starter_code = "age = 18\nif age > 18:\n    print(\"You can vote now\")\nelse:\n    print(\"You are too young to vote\")"
+starter_code = ""
 answer_output = "You are too young to vote"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]

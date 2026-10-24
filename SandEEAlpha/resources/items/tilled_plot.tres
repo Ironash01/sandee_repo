@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemData" format=3]
+
+[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" path="res://sprites/items/tilled_plot.png" id="2_tex"]
+
+[resource]
+script = ExtResource("1_item")
+item_name = "Tilled Ground"
+description = "Freshly tilled farmland, ready for seeds."
+item_type = "block"
+icon = ExtResource("2_tex")
+is_placeable = true
+placeable_sprite = ExtResource("2_tex")
+is_floor = true
+block_level = 2
+min_pickaxe_level = 0
+place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"

@@ -15,6 +15,16 @@ func _ready() -> void:
 	base_path = "res://resources/godot_furnace_base.gd"
 	super()
 
+# Only furnace functions may run here (see StationPythonHost.run_code).
+func run_code() -> void:
+	var foreign := AlgorithmicaAPI.foreign_calls(code, AlgorithmicaAPI.FURNACE)
+	if not foreign.is_empty():
+		var rejection := AlgorithmicaAPI.rejection_message(foreign, AlgorithmicaAPI.FURNACE)
+		CrashLogger.code("python", "FAIL", "furnace: " + rejection)
+		code_failed.emit(rejection)
+		return
+	super()
+
 func _valid() -> bool:
 	return furnace != null and is_instance_valid(furnace)
 

@@ -55,7 +55,7 @@ func physics_update(mob: CharacterBody2D, speed: float, water_layer: TileMapLaye
 	# just looked broken — so out of the biome the worm wanders for a random
 	# beat and an above-ground one burrows itself shortly after.
 	if not _is_in_desert(_target.global_position):
-		return _wander_step(mob, speed, delta)
+		return _water_safe(mob, water_layer, _wander_step(mob, speed, delta), delta)
 	# Player is back in the desert — drop the roam bookkeeping so the normal
 	# chase / emerge logic resumes cleanly.
 	_wandering = false
@@ -71,7 +71,8 @@ func physics_update(mob: CharacterBody2D, speed: float, water_layer: TileMapLaye
 			_burrowing = false
 			_cycle_timer = randf_range(CYCLE_MIN, CYCLE_MAX)
 			return Vector2.ZERO
-		return to_player.normalized() * speed
+		return _water_safe(mob, water_layer,
+			to_player.normalized() * speed, delta)
 
 	# ── Underground: wait out the emergence timer, then surface. ────
 	# Once the timer elapses the worm stays above ground (no toggle back).
@@ -84,7 +85,23 @@ func physics_update(mob: CharacterBody2D, speed: float, water_layer: TileMapLaye
 	# but stop chasing if they are too far away.
 	if dist > CHASE_RADIUS:
 		return Vector2.ZERO
-	return to_player.normalized() * speed
+	return _water_safe(mob, water_layer,
+		to_player.normalized() * speed, delta)
+
+# Water is never valid worm terrain, even when the target is on the adjacent
+# desert shore. Probe the next body-length of travel and stop at the shoreline;
+# a worm already in water may still move toward dry land.
+func _water_safe(mob: CharacterBody2D, water_layer: TileMapLayer,
+		desired: Vector2, delta: float) -> Vector2:
+	if water_layer == null or desired.length_squared() < 0.0001:
+		return desired
+	var probe: Vector2 = mob.global_position \
+		+ desired.normalized() * maxf(8.0, desired.length() * delta * 2.0)
+	var wtile: Vector2i = water_layer.local_to_map(water_layer.to_local(probe))
+	if water_layer.get_cell_source_id(wtile) != -1:
+		return Vector2.ZERO
+	return desired
+
 
 func _is_in_desert(world_pos: Vector2) -> bool:
 	if _world == null or not _world.has_method("_cell_biome_type"):

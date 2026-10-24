@@ -14,6 +14,12 @@ signal station_state_changed
 
 const STATION_PYTHON_HOST_SCRIPT: GDScript = preload("res://scripts/station_python_host.gd")
 const STATION_RECIPE_DIR: String = "res://resources/recipes/"
+# Algorithmica craft_color() cost/limits. This is the same 1-Cactus-per-block
+# economy as the manual Color Crafter, with the station's single output stack
+# (32) as the per-call ceiling.
+const CACTUS_DATA: ItemData = preload("res://resources/items/cactus.tres")
+const COLOR_CHANNEL_MAX: int = 255
+const COLOR_MAX_CRAFT: int = 32
 
 ## Recipe the player picked in the Automation tab (configuration only).
 var automation_recipe: CraftingRecipe = null
@@ -65,7 +71,16 @@ func setup(data: ItemData) -> void:
 	item_data = data
 	var sprite: Sprite2D = get_node_or_null("Sprite2D") as Sprite2D
 	if sprite != null:
-		sprite.texture = data.placeable_sprite if data.placeable_sprite != null else data.icon
+		# Placed world art: the ANIMATED sheet when the item ships one (sliced
+		# into place_animation_frame_count frames), otherwise a single static
+		# frame. placeable_sprite deliberately stays ONE 32x32 frame so the
+		# build ghost and the place burst keep showing a single tile.
+		if data.place_animation_sheet != null:
+			sprite.texture = data.place_animation_sheet
+			sprite.hframes = maxi(data.place_animation_frame_count, 1)
+		else:
+			sprite.texture = data.placeable_sprite if data.placeable_sprite != null else data.icon
+			sprite.hframes = 1
 
 func set_world_cell(cell: Vector2i, world: Node) -> void:
 	_world_cell = cell
@@ -76,6 +91,7 @@ func _ready() -> void:
 	# Lets nearby Lua robots find this station (see lua_npc.gd's
 	# nearest_crafting_station), so their craft()/set_recipe() calls land here.
 	add_to_group("CraftingStation")
+	add_to_group("TouchInteractable")
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
 	Global.request_close_all_ui.connect(_on_close_all_ui)
@@ -95,6 +111,20 @@ func _ready() -> void:
 	_ui.set("station", self)
 	canvas.add_child(_ui)
 	_ui.visible = false
+	_play_place_animation()
+
+# Play the placed-object animation authored for this item (idle_crafting).
+# Done here, not only in world.gd's placement path, so save restores and the
+# cave worlds — which insert the node directly — animate too. The
+# AnimationPlayer lives at the scene root so the world's
+# `obj.get_node_or_null("AnimationPlayer")` lookup finds it.
+func _play_place_animation() -> void:
+	if item_data == null or not item_data.has_place_animation \
+			or item_data.place_animation_name.is_empty():
+		return
+	var ap: AnimationPlayer = get_node_or_null("AnimationPlayer") as AnimationPlayer
+	if ap != null and ap.has_animation(item_data.place_animation_name):
+		ap.play(item_data.place_animation_name)
 
 func _on_close_all_ui() -> void:
 	if _ui != null and _ui.visible:
@@ -105,21 +135,21 @@ func _process(delta: float) -> void:
 	if not _breaking:
 		return
 	if not _player_nearby \
-			or not Input.is_key_pressed(KEY_SHIFT) \
-			or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			or not Global.is_shift_held() \
+			or not Global.is_left_action_held():
 		_cancel_breaking()
 		return
 	_break_elapsed  = minf(_break_elapsed + delta, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
+	Global.report_break_progress(_break_progress, global_position, -26.0, self)
 	_tick_wobble()
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_do_break()
 
 func _draw() -> void:
-	if _break_progress <= 0.0:
-		return
-	Global.draw_break_bar(self, _break_progress)
+	# Ring is drawn by BreakProgressOverlay above the world.
+	pass
 
 # Adds damage (in seconds of break work) from a held frame's delta or a
 # fresh shift-click's flat CLICK_BREAK_SECONDS, then breaks when full.
@@ -127,6 +157,7 @@ func _add_break_progress(seconds: float) -> void:
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
+	Global.report_break_progress(_break_progress, global_position, -26.0, self)
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_do_break()
@@ -142,6 +173,7 @@ func _tick_progress_expiry() -> void:
 	_break_progress = 0.0
 	_last_hit_ms    = -1
 	_sprite.rotation = 0.0
+	Global.clear_break_progress(self)
 	queue_redraw()
 
 # Snappy left↔right shake, played ONLY while actively breaking — releasing
@@ -167,10 +199,12 @@ func _cursor_over() -> bool:
 	var b: Vector2 = gt * (r.position + r.size)
 	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
 	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
-	var m: Vector2 = get_global_mouse_position()
+	var m: Vector2 = Global.mouse_world(self)
 	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
 
 func _input(event: InputEvent) -> void:
+	if Global.is_mouse_event_over_ui(event):
+		return
 	if not _player_nearby or _ui == null or _ui.visible:
 		return
 	if Global.block_mode:
@@ -183,7 +217,7 @@ func _input(event: InputEvent) -> void:
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		# Shift + left-click: start mining this station off the wall (respects
 		# pickaxe tier + break time). Without shift it opens the crafting UI.
-		if Input.is_key_pressed(KEY_SHIFT):
+		if Global.is_shift_held():
 			if event.pressed:
 				_try_start_breaking()
 				if _breaking:
@@ -200,14 +234,31 @@ func _input(event: InputEvent) -> void:
 func _try_start_breaking() -> void:
 	if _breaking:
 		return
-	var pick_lvl := _held_pickaxe_level()
-	if pick_lvl < 0:
-		return  # no pickaxe in hand
-	var min_lvl: int = item_data.min_pickaxe_level if item_data != null else 0
-	if pick_lvl < min_lvl:
-		return  # pickaxe tier too low
+	var held: Variant = Global.get_hotbar_item()
+	var held_data: ItemData = null
+	if held is Dictionary and (held as Dictionary).has("data"):
+		held_data = (held as Dictionary)["data"] as ItemData
 	var block_lvl: int = item_data.block_level if item_data != null else 0
-	_break_duration = maxf(0.1, float(block_lvl - pick_lvl))
+	var is_wooden: bool = item_data != null and item_data.wooden_block
+
+	if held_data != null and held_data.axe_level > 0 and is_wooden:
+		# The station is wooden (item_data.wooden_block): an AXE chops it, with
+		# the same hidden wooden-block bonus wooden blocks get. No pickaxe tier
+		# is needed for the right tool.
+		_break_duration = maxf(0.1, float(block_lvl)) / (1.0 + held_data.axe_wood_block_bonus())
+	else:
+		var pick_lvl := _held_pickaxe_level()
+		if pick_lvl < 0:
+			return  # no axe and no pickaxe in hand
+		var min_lvl: int = item_data.min_pickaxe_level if item_data != null else 0
+		if pick_lvl < min_lvl:
+			return  # pickaxe tier too low
+		# A pickaxe is the wrong tool for wood: the same 4x penalty wooden
+		# blocks take, applied to the hardness so high tiers can't dodge it.
+		var hardness: float = float(block_lvl)
+		if is_wooden:
+			hardness /= (1.0 - 0.75)
+		_break_duration = maxf(0.1, hardness - float(Global.held_mining_level()))
 	# The swing animation plays for any item used to break — route through the
 	# player so it fires even though this station consumed the click input.
 	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
@@ -224,6 +275,7 @@ func _cancel_breaking() -> void:
 	if not _breaking:
 		return
 	_breaking        = false
+	Global.clear_break_progress(self)
 	_sprite.rotation = 0.0
 
 # The held PICKAXE's mining tier, or -1 when none is in hand. Delegates to
@@ -245,6 +297,17 @@ func _do_break() -> void:
 			drop_parent.add_child(drop)
 			(drop as Node2D).global_position = global_position + Vector2(randf_range(-20, 20), randf_range(-20, 20))
 	queue_free()
+
+## Touch HUD entry point: opens this station without requiring a mouse cursor
+## or a click on the sprite. The player must still be inside the station's
+## InteractArea, so the button cannot reach remote stations.
+func open_from_touch() -> bool:
+	if not _player_nearby or _ui == null or _ui.visible:
+		return false
+	if Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
+		return false
+	_ui.open_as_station()
+	return true
 
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("Player"):
@@ -304,14 +367,19 @@ func set_automation_recipe(recipe: CraftingRecipe) -> bool:
 	_notify_state_changed()
 	return true
 
-# Select by result item name (case-insensitive) — used by the set_recipe() API.
+# Select by result item name OR scripting id (case-insensitive) — used by the
+# set_recipe() API. Accepts "Planks", "planks" and, for multi-word items,
+# "iron_sword" as well as "Iron Sword".
 func set_automation_recipe_by_name(name: String) -> bool:
 	var want: String = name.strip_edges().to_lower()
 	if want.is_empty():
 		return false
 	for r in get_station_recipes():
 		var recipe: CraftingRecipe = r as CraftingRecipe
-		if recipe.result_item != null and recipe.result_item.item_name.to_lower() == want:
+		if recipe.result_item == null:
+			continue
+		if recipe.result_item.item_name.to_lower() == want \
+				or recipe.result_item.item_id() == want:
 			automation_recipe = recipe
 			_notify_state_changed()
 			return true
@@ -410,6 +478,41 @@ func craft_request(amount: int) -> int:
 		_consume_ingredient(automation_recipe.ingredient_2, automation_recipe.ingredient_2_quantity * amount)
 	output_item     = result
 	output_quantity += produced
+	CrashLogger.event("CRAFT", "ok %s x%d" % [result.item_name, produced])
+	_notify_state_changed()
+	return amount
+
+# Algorithmica craft_color(r, g, b, amount).
+# 8-bit RGB, one Cactus per Color Block, output goes to the station's normal
+# output slot. All validation happens before anything is consumed, so a failed
+# request is atomic. Pure black/white are rejected by the existing ColorBlock
+# rules; channel values are rejected rather than silently clamped.
+func craft_color_request(r, g, b, amount) -> int:
+	if typeof(r) != TYPE_INT or typeof(g) != TYPE_INT or typeof(b) != TYPE_INT:
+		return _craft_color_fail("RGB channels must be integers 0-255")
+	if typeof(amount) != TYPE_INT:
+		return _craft_color_fail("Amount must be an integer")
+	if amount <= 0 or amount > COLOR_MAX_CRAFT:
+		return _craft_color_fail("Amount must be between 1 and %d" % COLOR_MAX_CRAFT)
+	if r < 0 or r > COLOR_CHANNEL_MAX or g < 0 or g > COLOR_CHANNEL_MAX \
+			or b < 0 or b > COLOR_CHANNEL_MAX:
+		return _craft_color_fail("RGB channels must be between 0 and 255")
+	if ColorBlock.is_forbidden(r, g, b):
+		return _craft_color_fail("Pure black and pure white are not allowed")
+	var block: ItemData = ColorBlock.get_block(r, g, b)
+	if block == null:
+		return _craft_color_fail("Could not create that color")
+	if output_item != null and output_item != block:
+		return _craft_color_fail("Output contains a different color")
+	var space: int = _stack_limit(block) - output_quantity
+	if amount > space:
+		return _craft_color_fail("Output slot full")
+	if _ingredient_available(CACTUS_DATA) < amount:
+		return _craft_color_fail("Insufficient Cactus")
+	# All-or-nothing: consume exactly once, after every validation passed.
+	_consume_ingredient(CACTUS_DATA, amount)
+	output_item = block
+	output_quantity += amount
 	_notify_state_changed()
 	return amount
 
@@ -488,6 +591,9 @@ func is_program_running() -> bool:
 # Runs the player's program. Stored on the station so it survives UI rebuilds.
 func run_program(source: String) -> void:
 	program_code = source
+	CrashLogger.code("python", "RUN", "station=%s chars=%d\n%s" % [
+		item_data.item_name if item_data != null else "Crafting Station",
+		source.length(), source])
 	var host: Node = get_program_host()
 	host.set("code", source)
 	host.call("run_code")
@@ -503,6 +609,9 @@ func get_lua_host() -> Node:
 		_lua_host.connect("signal_craft", _on_lua_craft)
 		_lua_host.connect("signal_set_recipe", _on_lua_set_recipe)
 		_lua_host.connect("signal_take_output", _on_lua_take_output)
+		_lua_host.connect("signal_print", _on_station_lua_print)
+		_lua_host.connect("code_executed", _on_station_lua_ok)
+		_lua_host.connect("code_failed", _on_station_lua_fail)
 	return _lua_host
 
 # Publishes the station's automation state as Lua globals and runs the program.
@@ -510,6 +619,9 @@ func get_lua_host() -> Node:
 # are routed through the same validated methods the Python API uses.
 func run_lua_program(source: String) -> void:
 	program_code = source
+	CrashLogger.code("lua", "RUN", "station=%s chars=%d\n%s" % [
+		item_data.item_name if item_data != null else "Crafting Station",
+		source.length(), source])
 	var host: Node = get_lua_host()
 	host.set("station_recipe", get_automation_recipe_name())
 	host.set("station_output_item", output_item.item_name if output_item != null else "")
@@ -525,6 +637,15 @@ func _on_lua_set_recipe(name: String) -> void:
 
 func _on_lua_take_output() -> void:
 	take_output()
+
+func _on_station_lua_print(text: String) -> void:
+	CrashLogger.code("lua", "OUT", "station: " + text)
+
+func _on_station_lua_ok() -> void:
+	CrashLogger.code("lua", "OK", "station code finished")
+
+func _on_station_lua_fail(error: String) -> void:
+	CrashLogger.code("lua", "FAIL", "station: " + error)
 
 # ── Persistence ───────────────────────────────────────────────────
 func get_station_save_data() -> Dictionary:
@@ -566,9 +687,38 @@ func _notify_state_changed() -> void:
 # Reports a rejected request both to the program console (when a host exists)
 # and the Godot log, so failures are never silent.
 func _craft_fail(reason: String) -> int:
+	CrashLogger.event("CRAFT", "fail: " + reason)
 	var msg: String = "[craft] " + reason
 	if _program_host != null and is_instance_valid(_program_host):
 		_program_host.emit_signal("signal_print", msg)
 	else:
 		print("[CraftingStation] ", msg)
 	return 0
+
+func _craft_color_fail(reason: String) -> int:
+	var msg: String = "[craft_color] " + reason
+	if _program_host != null and is_instance_valid(_program_host):
+		_program_host.emit_signal("signal_print", msg)
+	else:
+		print("[CraftingStation] ", msg)
+	return 0
+
+# UI-only recolor of an already-crafted color output block. Quantity, material
+# accounting and the Python API are untouched; the player can inspect the block
+# as RGB or HEX and edit that representation before taking it.
+func recolor_output(r, g, b) -> bool:
+	if output_item == null or not output_item.is_color_block or output_quantity <= 0:
+		return false
+	if typeof(r) != TYPE_INT or typeof(g) != TYPE_INT or typeof(b) != TYPE_INT:
+		return false
+	if r < 0 or r > COLOR_CHANNEL_MAX or g < 0 or g > COLOR_CHANNEL_MAX \
+			or b < 0 or b > COLOR_CHANNEL_MAX:
+		return false
+	if ColorBlock.is_forbidden(r, g, b):
+		return false
+	var block: ItemData = ColorBlock.get_block(r, g, b)
+	if block == null:
+		return false
+	output_item = block
+	_notify_state_changed()
+	return true

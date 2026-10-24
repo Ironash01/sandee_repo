@@ -9,7 +9,8 @@ region = Rect2(96, 32, 32, 32)
 
 [resource]
 script = ExtResource("1_item")
-item_name = "Cooked Pimpim"
+item_name = "Cooked Pim"
+scripting_id = "cooked_pimpim"
 description = "A cooked violet fish. Still smiling, somehow. Eat it to restore 50 health."
 item_type = "consumable"
 icon = SubResource("AtlasTexture_fish")

@@ -118,7 +118,7 @@ func _gui_input(event: InputEvent) -> void:
 		if data == null:
 			return
 		if not Global.has_space_for_item(data, qty):
-			Global.log_chat("[color=#ffaa66]Inventory full — the robot keeps the %s.[/color]" % data.item_name)
+			Global.notify("[color=#ffaa66]Inventory full — the robot keeps the %s.[/color]" % data.item_name)
 			return
 		Global.add_item({"data": data, "quantity": qty})
 		_npc.call("set_build_slot", slot_index, null, 0)
@@ -156,7 +156,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		var ex_qty: int = int((existing as Dictionary)["quantity"])
 		if ex_data != null and ex_qty > 0:
 			if not Global.has_space_for_item(ex_data, ex_qty):
-				Global.log_chat("[color=#ffaa66]Inventory full — can't swap the robot's slot.[/color]")
+				Global.notify("[color=#ffaa66]Inventory full — can't swap the robot's slot.[/color]")
 				return
 			Global.add_item({"data": ex_data, "quantity": ex_qty})
 	# Give the whole dragged stack to the robot, then clear the player's slot.

@@ -50,7 +50,7 @@ func _activate() -> void:
 			b.call("_set_active", false)
 	Global.set_spawn_point(global_position)
 	_set_active(true)
-	Global.log_chat("Respawn point set to this bonfire. Click it again to clear.")
+	Global.notify("Respawn point set to this bonfire. Click it again to clear.")
 
 func _deactivate() -> void:
 	var was_active: bool = Global.has_spawn_point \
@@ -59,7 +59,7 @@ func _deactivate() -> void:
 		Global.clear_spawn_point()
 	_set_active(false)
 	if was_active:
-		Global.log_chat("Respawn point cleared — you'll respawn at the world spawn.")
+		Global.notify("Respawn point cleared — you'll respawn at the world spawn.")
 
 func _set_active(active: bool) -> void:
 	_active = active
@@ -78,5 +78,5 @@ func _break() -> void:
 	# Breaking the ACTIVE bonfire resets the respawn to the world spawn.
 	if _active:
 		Global.clear_spawn_point()
-		Global.log_chat("Respawn point reset — your bonfire was destroyed.")
+		Global.notify("Respawn point reset — your bonfire was destroyed.")
 	super()

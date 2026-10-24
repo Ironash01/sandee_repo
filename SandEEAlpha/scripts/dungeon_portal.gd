@@ -99,6 +99,7 @@ func begin_dissolve(entrance_root: Node2D) -> void:
 	_interact.set_deferred("monitoring", false)
 	_interact.set_deferred("monitorable", false)
 	if _confirm_ui != null:
+		Global.unregister_ui_back(_confirm_ui)
 		_confirm_ui.visible = false
 		Global.close_ui()
 	set_process(true)   # _process drives the deferred start + glow fade
@@ -292,9 +293,15 @@ func _draw() -> void:
 
 # ── Input ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
-	if not _player_nearby or Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
+	if Global.is_mouse_event_over_ui(event):
 		return
-	if _confirm_ui != null and _confirm_ui.visible:
+	# Escape cancels the confirm dialog safely (never enters).
+	if _confirm_ui != null and _confirm_ui.visible and event.is_action_pressed("escape"):
+		get_viewport().set_input_as_handled()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			_cancel()
+		return
+	if not _player_nearby or Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if _click_is_on_door():
@@ -304,7 +311,7 @@ func _input(event: InputEvent) -> void:
 # sits on the structure's door tile, so the mouse just has to land inside
 # DOOR_HITBOX around it.
 func _click_is_on_door() -> bool:
-	return DOOR_HITBOX.has_point(to_local(get_global_mouse_position()))
+	return DOOR_HITBOX.has_point(to_local(Global.mouse_world(self)))
 
 # ── Proximity ─────────────────────────────────────────────────────
 # The area is the walkable centre tile — stepping onto it plays the beckoning
@@ -323,6 +330,7 @@ func _on_body_exited(body: Node) -> void:
 		_player_nearby = false
 		queue_redraw()
 		if _confirm_ui != null and _confirm_ui.visible:
+			Global.unregister_ui_back(_confirm_ui)
 			_confirm_ui.visible = false
 			Global.close_ui()
 
@@ -365,9 +373,10 @@ func _portal_title() -> String:
 	var dm := Global.get_dungeon_mission_for_index(dungeon_index)
 	var mission_name: String = dm.mission_name if dm != null else "Unknown Dungeon"
 	var lang: String = Global.dungeon_language(dungeon_index)
+	var difficulty := Global.dungeon_difficulty(dungeon_index)
 	if lang.is_empty():
-		return mission_name
-	return "%s Dungeon — %s" % [lang.capitalize(), mission_name]
+		return "%s — %s" % [mission_name, difficulty]
+	return "%s Dungeon — %s — %s" % [lang.capitalize(), mission_name, difficulty]
 
 func _build_confirm_ui() -> void:
 	var s: float = Global.ui_scale
@@ -469,14 +478,19 @@ func _show_confirm() -> void:
 	if _confirm_ui != null:
 		_confirm_ui.visible = true
 		Global.open_ui()
+		Global.register_ui_back(_confirm_ui, Callable(self, "_cancel"))
 
 func _cancel() -> void:
 	if _confirm_ui != null:
+		Global.unregister_ui_back(_confirm_ui)
+		Global.unregister_ui_back(_confirm_ui)
 		_confirm_ui.visible = false
 		Global.close_ui()
 
 func _enter_dungeon() -> void:
 	if _confirm_ui != null:
+		Global.unregister_ui_back(_confirm_ui)
+		Global.unregister_ui_back(_confirm_ui)
 		_confirm_ui.visible = false
 		Global.close_ui()
 	if is_instance_valid(Global.game_node) and Global.game_node.has_method("enter_dungeon"):

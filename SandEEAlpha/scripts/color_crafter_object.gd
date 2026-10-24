@@ -20,10 +20,12 @@ func _ready() -> void:
 	canvas.add_child(_menu)
 
 func _input(event: InputEvent) -> void:
+	if Global.is_mouse_event_over_ui(event):
+		return
 	# A plain left-click opens the colour UI; shift+click (and anything else)
 	# falls through to the inherited mining behaviour.
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-			and not Input.is_key_pressed(KEY_SHIFT):
+			and not Global.is_shift_held():
 		if _player_nearby and _hovered and not Global.block_mode \
 				and not Global.any_ui_open() and not Global.pause_menu_open:
 			if event.pressed and not get_viewport().is_input_handled():

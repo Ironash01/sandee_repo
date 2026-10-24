@@ -1,8 +1,10 @@
 extends Node2D
 # ── Chest Block ───────────────────────────────────────────────────
-# Placed in the world. Left-click (when build mode OFF + player nearby)
-# opens an 8-slot inventory UI. Items can be transferred to/from the
-# player's inventory by clicking slots.
+# Placed in the world. Left-click (when build mode OFF + player nearby) docks
+# this chest's storage into the player's EXISTING inventory panel, shown
+# directly beneath the player inventory — one combined screen, not a second
+# inventory implementation. Items move with the normal inventory drag/drop and
+# click conventions.
 # Shift + left-click mines the chest off the wall (hold-to-break, same
 # pickaxe-tier/block_level rules as placed blocks) instead of opening it.
 # NPC can call has_space() and deposit_item() autonomously.
@@ -10,24 +12,18 @@ extends Node2D
 const MAX_SLOTS: int = 8
 const SHADOW_TEXTURE: Texture2D = preload("res://sprites/shadow/shadow_blockbase.png")
 
-# ── Theme (matches LuaEditorUI) ───────────────────────────────────
-const C_PANEL   := Color(0.08, 0.10, 0.20, 0.97)
-const C_BORDER  := Color(0.22, 0.32, 0.58, 1.00)
-const C_TITLE   := Color(0.80, 0.90, 1.00, 1.00)
-const C_MUTED   := Color(0.55, 0.65, 0.85, 1.00)
-const C_DIVIDER := Color(0.20, 0.28, 0.50, 1.00)
-const C_SLOT    := Color(0.05, 0.07, 0.16, 1.00)
-const C_SLOT_H  := Color(0.12, 0.18, 0.36, 1.00)
-const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.50)
-
 # Each slot: null or {data: ItemData, quantity: int}
 var slots: Array = []
+# Emitted whenever the authoritative slot array changes. DungeonWorld uses it
+# to persist rare-chest contents immediately; ordinary chests ignore it.
+signal contents_changed
 
 var _player_nearby: bool    = false
 var _world_cell:    Vector2i = Vector2i(-99999, -99999)
 var _world_ref:     Node    = null
-var _ui:            Control = null
-var _slot_buttons:  Array   = []
+# The player's inventory panel while it hosts this chest (null when closed).
+var _open_ui:       Node    = null
+var _side_open_counted: bool = false
 var item_data:      ItemData = null
 
 @onready var _sprite:   Sprite2D = $Sprite2D
@@ -36,28 +32,11 @@ var item_data:      ItemData = null
 func _ready() -> void:
 	slots.resize(MAX_SLOTS)
 	add_to_group("Chest")
+	add_to_group("TouchInteractable")
 	add_child(Global.make_shadow_sprite(SHADOW_TEXTURE, Vector2(0.0, 10.0), Vector2(0.8, 0.4), 0.35))
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
-	_build_ui()
 	Global.request_close_all_ui.connect(_close_ui)
-	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
-		Global.ui_scale_changed.connect(_on_ui_scale)
-
-# Rebuild the chest panel at the new scale, preserving whether it was open and
-# its slot contents — so Small/Medium/Large applies live, not only on reopen.
-func _on_ui_scale(_s: float) -> void:
-	var was_visible: bool = _ui != null and _ui.visible
-	if _ui != null:
-		var canvas: Node = _ui.get_parent()
-		if canvas != null:
-			canvas.queue_free()
-	_ui = null
-	_slot_buttons.clear()
-	_build_ui()
-	if _ui != null:
-		_refresh_ui()
-		_ui.visible = was_visible
 
 func setup(data: ItemData) -> void:
 	item_data = data
@@ -92,12 +71,14 @@ func deposit_item(item: Dictionary) -> bool:
 			qty -= add
 			if qty <= 0:
 				_refresh_ui()
+				notify_contents_changed()
 				return true
 	# Empty slot
 	for i in range(MAX_SLOTS):
 		if slots[i] == null:
 			slots[i] = {"data": data, "quantity": qty}
 			_refresh_ui()
+			notify_contents_changed()
 			return true
 	return false  # full
 
@@ -124,17 +105,33 @@ func take_item(data: ItemData, quantity: int) -> int:
 			slots[i] = null
 	if remaining != quantity:
 		_refresh_ui()
+		notify_contents_changed()
 	return quantity - remaining
+
+func notify_contents_changed() -> void:
+	contents_changed.emit()
 
 # ── Input ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
+	if Global.is_mouse_event_over_ui(event):
+		return
 	if Global.block_mode: return
 	if not _player_nearby: return
 	if Global.pause_menu_open: return
+	# While this chest's storage is open, closing is the ✕ / Esc / inventory
+	# key — a world click must not toggle it from underneath.
+	if is_open(): return
+	# Another panel is open: don't react to a click that belongs to it.
+	if Global.any_ui_open(): return
+	# Only the object actually under the cursor may react. Without this every
+	# chest/station within the interact radius consumed the same click, so
+	# clicking a crafting station could open a chest instead — and two panels
+	# opening together left the tree paused with nothing on screen.
+	if not _cursor_over(): return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		# Shift + left-click: mine the chest off the wall (respects pickaxe
 		# tier + block_level break time) instead of toggling its UI.
-		if Input.is_key_pressed(KEY_SHIFT):
+		if Global.is_shift_held():
 			if event.pressed:
 				_try_start_breaking()
 				if _breaking:
@@ -144,175 +141,182 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if event.pressed:
-			if _ui != null:
-				_ui.visible = not _ui.visible
-				if _ui.visible:
-					Global.open_ui()
-				else:
-					Global.close_ui()
+			_open_chest_ui()
+			get_viewport().set_input_as_handled()
 
-# ── Build chest UI ────────────────────────────────────────────────
-func _build_ui() -> void:
-	var s: float = Global.ui_scale
-	var canvas := CanvasLayer.new()
-	# Layer 2: below the hotbar (10) so the hotbar stays bright/on top, and above
-	# the background HUD backdrop (1) so this panel's dim overlay covers it.
-	canvas.layer        = 2
-	canvas.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(canvas)
+# True when the cursor is over THIS chest's sprite (same guard the furnace and
+# crafting station use — see crafting_station_object.gd:_cursor_over).
+func _cursor_over() -> bool:
+	if _sprite == null or _sprite.texture == null:
+		return true
+	var r: Rect2 = _sprite.get_rect()
+	var gt: Transform2D = _sprite.global_transform
+	var a: Vector2 = gt * r.position
+	var b: Vector2 = gt * (r.position + r.size)
+	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
+	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
+	var m: Vector2 = Global.mouse_world(self)
+	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
 
-	_ui = Control.new()
-	_ui.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_ui.process_mode = Node.PROCESS_MODE_ALWAYS
-	_ui.visible      = false
-	canvas.add_child(_ui)
+# ── Docking into the player's inventory panel ─────────────────────
+# The chest deliberately builds NO UI of its own: it docks its storage under
+# the player's existing inventory, which already owns the slot scene, sizing,
+# tooltips and drag/drop. This keeps one inventory implementation in the game.
 
-	# Dim overlay
-	var overlay := ColorRect.new()
-	overlay.color        = C_OVERLAY
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_ui.add_child(overlay)
+# The player's inventory panel (single instance, owned by the player).
+func _inventory_ui() -> Node:
+	if Global.player_node == null:
+		return null
+	var layer: Node = Global.player_node.get_node_or_null("InventoryUI")
+	if layer == null:
+		return null
+	for c in layer.get_children():
+		if c.has_method("attach_chest"):
+			return c
+	return null
 
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_ui.add_child(center)
+# True while the combined panel is showing THIS chest's storage.
+func is_open() -> bool:
+	return _open_ui != null and is_instance_valid(_open_ui) \
+		and _open_ui.call("opened_chest") == self
 
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(int(420 * s), int(320 * s))
-	var ps := StyleBoxFlat.new()
-	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
-	ps.set_border_width_all(int(1 * s)); ps.set_corner_radius_all(int(6 * s))
-	ps.content_margin_left = int(18 * s); ps.content_margin_right  = int(18 * s)
-	ps.content_margin_top  = int(14 * s); ps.content_margin_bottom = int(18 * s)
-	panel.add_theme_stylebox_override("panel", ps)
-	center.add_child(panel)
+func open_from_touch() -> bool:
+	if not _player_nearby or is_open():
+		return false
+	if Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
+		return false
+	_open_chest_ui()
+	return true
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", int(12 * s))
-	panel.add_child(vbox)
+func _open_chest_ui() -> void:
+	if is_open():
+		return   # already showing this chest — never open/pause twice
+	if not _side_open_counted:
+		_side_open_counted = true
+		Global.add_mission_progress("side_chest_collector", 1)
+		if item_data != null and item_data.item_name.to_lower().contains("rare"):
+			Global.add_mission_progress("side_rare_chests", 1)
+	var ui: Node = _inventory_ui()
+	if ui == null:
+		return
+	# Repeated interaction reuses the same panel — attach_chest() rebuilds the
+	# storage views, it never creates a second UI.
+	_open_ui = ui
+	ui.call("attach_chest", self)
+	var layer: Node = ui.get_parent()
+	if layer != null:
+		layer.set("visible", true)
+	Global.open_ui()
+	Global.inventory_toggled.emit(true)
 
-	# Header
-	var header := HBoxContainer.new()
-	vbox.add_child(header)
+# The panel closed itself (✕ / Esc / inventory key / close-all). The chest keeps
+# its contents; only the view is gone.
+func on_inventory_ui_closed() -> void:
+	_open_ui = null
 
-	var icon_lbl := Label.new()
-	icon_lbl.text = "📦"
-	icon_lbl.add_theme_font_size_override("font_size", int(18 * s))
-	header.add_child(icon_lbl)
-
-	var title := Label.new()
-	title.text = "  Chest"
-	title.add_theme_font_size_override("font_size", int(15 * s))
-	title.add_theme_color_override("font_color", C_TITLE)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(title)
-
-	var close_btn := Button.new()
-	close_btn.text = "✕"; close_btn.flat = true
-	close_btn.add_theme_color_override("font_color", C_MUTED)
-	close_btn.pressed.connect(_close_ui)
-	header.add_child(close_btn)
-
-	var div := ColorRect.new()
-	div.color = C_DIVIDER; div.custom_minimum_size = Vector2(0, int(1 * s))
-	vbox.add_child(div)
-
-	# Slot grid (2 rows × 4 cols)
-	var grid := GridContainer.new()
-	grid.columns = 4
-	grid.add_theme_constant_override("h_separation", int(8 * s))
-	grid.add_theme_constant_override("v_separation", int(8 * s))
-	vbox.add_child(grid)
-
-	_slot_buttons.clear()
-	for i in range(MAX_SLOTS):
-		var slot_panel := PanelContainer.new()
-		slot_panel.custom_minimum_size = Vector2(int(80 * s), int(80 * s))
-		var ss := StyleBoxFlat.new()
-		ss.bg_color = C_SLOT; ss.border_color = C_BORDER
-		ss.set_border_width_all(int(1 * s)); ss.set_corner_radius_all(int(4 * s))
-		slot_panel.add_theme_stylebox_override("panel", ss)
-		grid.add_child(slot_panel)
-
-		var btn := Button.new()
-		btn.flat = true
-		btn.set_anchors_preset(Control.PRESET_FULL_RECT)
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-		btn.pressed.connect(_on_slot_pressed.bind(i))
-		slot_panel.add_child(btn)
-
-		var vb := VBoxContainer.new()
-		vb.set_anchors_preset(Control.PRESET_FULL_RECT)
-		vb.alignment = BoxContainer.ALIGNMENT_CENTER
-		vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		slot_panel.add_child(vb)
-
-		var tex_rect := TextureRect.new()
-		tex_rect.custom_minimum_size = Vector2(int(40 * s), int(40 * s))
-		tex_rect.expand_mode         = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-		tex_rect.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tex_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		tex_rect.mouse_filter        = Control.MOUSE_FILTER_IGNORE
-		vb.add_child(tex_rect)
-
-		var qty_lbl := Label.new()
-		qty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		qty_lbl.add_theme_font_size_override("font_size", int(11 * s))
-		qty_lbl.add_theme_color_override("font_color", C_TITLE)
-		qty_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vb.add_child(qty_lbl)
-
-		_slot_buttons.append({"panel": slot_panel, "tex": tex_rect, "qty": qty_lbl, "btn": btn})
-
-	var div2 := ColorRect.new()
-	div2.color = C_DIVIDER; div2.custom_minimum_size = Vector2(0, int(1 * s))
-	vbox.add_child(div2)
-
-	var hint := Label.new()
-	hint.text = "Left-click slot to transfer • Hotbar item transfers into empty slot"
-	hint.add_theme_font_size_override("font_size", int(10 * s))
-	hint.add_theme_color_override("font_color", C_MUTED)
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(hint)
-
-# ── Slot interaction ──────────────────────────────────────────────
-func _on_slot_pressed(index: int) -> void:
-	var slot = slots[index]
-	if slot != null:
-		# Transfer from chest to player inventory
-		var moved: bool = Global.add_item(slot as Dictionary)
-		if moved:
-			slots[index] = null
-	else:
-		# Transfer from player hotbar into chest
-		var held = Global.get_hotbar_item()
-		if held != null:
-			slots[index] = {"data": held["data"], "quantity": held["quantity"]}
-			Global.remove_item(held["data"] as ItemData)
-	_refresh_ui()
-
+# The combined panel redraws the chest from `slots`; this just prompts it.
 func _refresh_ui() -> void:
-	if _slot_buttons.is_empty(): return
-	for i in range(MAX_SLOTS):
-		var entry: Dictionary = _slot_buttons[i] as Dictionary
-		var tex_rect: TextureRect = entry["tex"] as TextureRect
-		var qty_lbl:  Label       = entry["qty"] as Label
-		var slot = slots[i]
-		if slot == null:
-			tex_rect.texture = null
-			qty_lbl.text     = ""
-		else:
-			var data: ItemData = (slot as Dictionary)["data"] as ItemData
-			tex_rect.texture   = data.icon
-			var qty: int       = (slot as Dictionary)["quantity"]
-			qty_lbl.text       = "" if qty <= 1 else str(qty)
+	if _open_ui != null and is_instance_valid(_open_ui) \
+			and _open_ui.has_method("refresh_chest_slots"):
+		_open_ui.call("refresh_chest_slots")
 
+# Close the combined panel through the inventory UI so the pause refcount and
+# the chest binding are released exactly once (idempotent).
 func _close_ui() -> void:
-	if _ui != null and _ui.visible:
-		_ui.visible = false
-		Global.close_ui()
+	var ui: Node = _open_ui
+	_open_ui = null
+	if ui != null and is_instance_valid(ui) and ui.has_method("close_chest"):
+		ui.call("close_chest", self)
+
+# ── Drag & drop (chest ↔ player inventory, plus slot reordering) ───
+# The shared slot component (inventory_slot.gd) makes every slot in the
+# combined panel a drag source AND a drop target, so a stack can be deposited,
+# taken out, or moved between slots. Payloads use the same
+# {"from_index", "item", "source"} shape the inventory/hotbar slots emit; the
+# chest's own grid adds "chest" as a source.
+func _arr_of(src: String) -> Array:
+	if src == "chest":
+		return slots
+	if src == "hotbar":
+		return Global.Hotbar
+	return Global.Inventory
+
+# Called by inventory_slot.gd when a drag starts. Returns null for an empty slot.
+func make_drag_data(index: int, from_chest: bool) -> Variant:
+	var arr: Array = slots if from_chest else Global.Inventory
+	if index < 0 or index >= arr.size() or arr[index] == null:
+		return null
+	return {"from_index": index, "item": arr[index],
+		"source": "chest" if from_chest else "inventory"}
+
+func can_accept_drop(index: int, to_chest: bool, data: Variant) -> bool:
+	# Out of range / already closed: the chest must not accept anything, even
+	# if a stale view managed to start a drag.
+	if not _player_nearby or not is_open():
+		return false
+	if not (data is Dictionary):
+		return false
+	var info: Dictionary = data as Dictionary
+	if not info.has("from_index") or not info.has("item"):
+		return false
+	var src: String = str(info.get("source", ""))
+	if src != "chest" and src != "inventory" and src != "hotbar":
+		return false
+	var item: Variant = info.get("item")
+	if not (item is Dictionary) or (item as Dictionary).get("data") == null:
+		return false
+	var from_arr: Array = _arr_of(src)
+	var from_idx: int = int(info.get("from_index", -1))
+	if from_idx < 0 or from_idx >= from_arr.size() or from_arr[from_idx] == null:
+		return false
+	var to_arr: Array = slots if to_chest else Global.Inventory
+	if index < 0 or index >= to_arr.size():
+		return false
+	# Dropping a stack back onto its own slot is a no-op, not an invalid drop.
+	if src == ("chest" if to_chest else "inventory") and from_idx == index:
+		return false
+	return true
+
+func accept_drop(index: int, to_chest: bool, data: Variant) -> void:
+	if not can_accept_drop(index, to_chest, data):
+		return
+	var info: Dictionary = data as Dictionary
+	var src: String = str(info.get("source", ""))
+	var from_idx: int = int(info.get("from_index", -1))
+	var from_arr: Array = _arr_of(src)
+	var to_arr: Array = slots if to_chest else Global.Inventory
+	var a: Variant = from_arr[from_idx]
+	var b: Variant = to_arr[index]
+
+	if a != null and b != null and (a as Dictionary)["data"] == (b as Dictionary)["data"]:
+		# Same item: merge up to the stack limit, leaving any remainder behind.
+		var data_i: ItemData = (b as Dictionary)["data"] as ItemData
+		var limit: int = data_i.max_stack_size \
+			if data_i != null and data_i.max_stack_size > 0 else Global.MAX_STACK
+		var have: int = int((b as Dictionary)["quantity"])
+		var space: int = maxi(limit - have, 0)
+		if space <= 0:
+			return
+		var add: int = mini(int((a as Dictionary)["quantity"]), space)
+		if add <= 0:
+			return
+		(b as Dictionary)["quantity"] = have + add
+		var left: int = int((a as Dictionary)["quantity"]) - add
+		if left <= 0:
+			from_arr[from_idx] = null
+		else:
+			(a as Dictionary)["quantity"] = left
+	else:
+		# Different items, or an empty target: swap — this is the reorder case,
+		# and it also covers taking an item out of / putting one into the chest.
+		to_arr[index] = a
+		from_arr[from_idx] = b
+
+	# Keep the hotbar/inventory UIs in step with the arrays they render.
+	Global.Hotbar_updated.emit()
+	Global.Inventory_updated.emit()
+	_refresh_ui()
+	notify_contents_changed()
 
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("Player"):
@@ -346,25 +350,29 @@ var _break_progress: float = 0.0
 var _last_hit_ms:    int   = -1
 
 func _process(delta: float) -> void:
+	# The panel may have been closed by its own controls (✕ / Esc / inventory
+	# key). Drop the binding so a later interaction opens it again cleanly.
+	if _open_ui != null and not is_open():
+		_open_ui = null
 	_tick_progress_expiry()
 	if not _breaking:
 		return
 	if not _player_nearby \
-			or not Input.is_key_pressed(KEY_SHIFT) \
-			or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			or not Global.is_shift_held() \
+			or not Global.is_left_action_held():
 		_cancel_breaking()
 		return
 	_break_elapsed  = minf(_break_elapsed + delta, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
+	Global.report_break_progress(_break_progress, global_position, -26.0, self)
 	_tick_wobble()
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_do_break()
 
 func _draw() -> void:
-	if _break_progress <= 0.0:
-		return
-	Global.draw_break_bar(self, _break_progress)
+	# Ring is drawn by BreakProgressOverlay above the world.
+	pass
 
 # Adds damage (in seconds of break work) from a held frame's delta or a
 # fresh shift-click's flat CLICK_BREAK_SECONDS, then breaks when full.
@@ -372,6 +380,7 @@ func _add_break_progress(seconds: float) -> void:
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
+	Global.report_break_progress(_break_progress, global_position, -26.0, self)
 	queue_redraw()
 	if _break_elapsed >= _break_duration:
 		_do_break()
@@ -387,6 +396,7 @@ func _tick_progress_expiry() -> void:
 	_break_progress = 0.0
 	_last_hit_ms    = -1
 	_sprite.rotation = 0.0
+	Global.clear_break_progress(self)
 	queue_redraw()
 
 # Snappy left↔right shake, played ONLY while actively breaking.
@@ -427,6 +437,7 @@ func _cancel_breaking() -> void:
 	if not _breaking:
 		return
 	_breaking        = false
+	Global.clear_break_progress(self)
 	_sprite.rotation = 0.0
 
 # The held PICKAXE's mining tier, or -1 when none is in hand. Delegates to
@@ -447,6 +458,7 @@ func _do_break() -> void:
 			if slot == null: continue
 			var drop: Node = ITEM_SCENE.instantiate()
 			drop.call("set_item_data", (slot as Dictionary)["data"] as ItemData)
+			drop.set("quantity", int((slot as Dictionary).get("quantity", 1)))
 			drop_parent.add_child(drop)
 			(drop as Node2D).global_position = global_position + Vector2(randf_range(-20, 20), randf_range(-20, 20))
 		if item_data != null:
@@ -454,4 +466,5 @@ func _do_break() -> void:
 			drop.call("set_item_data", item_data)
 			drop_parent.add_child(drop)
 			(drop as Node2D).global_position = global_position + Vector2(0, -16)
+	notify_contents_changed()
 	queue_free()

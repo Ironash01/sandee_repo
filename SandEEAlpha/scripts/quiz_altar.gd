@@ -69,6 +69,12 @@ var _lua_state:        Node = null
 var _python_state:     PythonState = null
 var _compiler_q:       DungeonQuestion = null
 var _captured_output:  String = ""
+# Async interpreter callbacks can arrive after the panel/altar was closed or
+# freed. Only results from the current run may touch the UI.
+var _accept_results:   bool = false
+var _running:          bool = false
+# Whether this altar currently holds a Global.open_ui() reference.
+var _ui_registered:    bool = false
 
 func _ready() -> void:
 	add_to_group("QuizAltar")
@@ -161,17 +167,23 @@ func _on_body_exited(body: Node) -> void:
 		_player_nearby = false
 		if _panel != null and _panel.visible:
 			_panel.visible = false
-			Global.close_ui()
+			_release_ui()
 
 func _input(event: InputEvent) -> void:
-	if _cleared or not _player_nearby or Global.block_mode or Global.any_ui_open():
-		return
 	if _panel != null and _panel.visible:
+		if event.is_action_pressed("escape"):
+			get_viewport().set_input_as_handled()
+			if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+				_escape_close()
+		return
+	if _cleared or not _player_nearby or Global.block_mode or Global.any_ui_open():
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_start_quiz()
 
 func _start_quiz() -> void:
+	if mission != null and Global.is_dungeon_cleared(mission.dungeon_index):
+		return
 	if _questions.is_empty():
 		if mission != null and mission.questions.is_empty():
 			# Mission with no questions is trivially clearable.
@@ -181,7 +193,17 @@ func _start_quiz() -> void:
 	if _panel == null:
 		_panel = _build_panel()
 	_panel.visible = true
+	# Clear any stale compiler-run suspension before registering this opening;
+	# otherwise a previous interrupted Run can leave the quiz visibly open while
+	# the world keeps simulating.
+	Global.resume_ui_pause(self)
 	Global.open_ui()
+	_ui_registered = true
+	Global.register_ui_back(_panel, Callable(self, "_escape_close"))
+	# open_ui() is the normal path; this explicit fallback guarantees the quiz
+	# always autopauses even if an older UI refcount edge case slipped through.
+	if not get_tree().paused:
+		get_tree().paused = true
 	_show_question()
 
 func _show_question() -> void:
@@ -319,14 +341,20 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	_controls.add_child(check_btn)
 
 func _run_compiler(q: DungeonQuestion, code: String) -> void:
+	if _running:
+		return
 	code = code.strip_edges()
 	if code.is_empty():
 		_set_status("✘ Write some code first.", C_ERROR)
 		return
+	CrashLogger.code(q.language, "QUIZ_RUN", "question=%s chars=%d\n%s" % [
+		(q.question.left(80) if q != null else "?"), code.length(), code])
 	_set_status("", C_MUTED)   # a fresh run clears the previous error line
 	# Python is transpiled to GDScript and executed by PythonState (its signals
 	# mirror LuaState's, so the same capture/grade flow below is reused).
 	if q.language == "python":
+		_running = true
+		_accept_results = true
 		_run_python(q, code)
 		return
 	# Unknown non-interpreted language: grade the typed code directly (the
@@ -334,6 +362,8 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	if q.language != "lua":
 		_grade_code_text(q, code)
 		return
+	_running = true
+	_accept_results = true
 	# LuaState is the game's Lua compiler (the GDExtension the Lua robot uses).
 	if _lua_state == null:
 		_lua_state = LuaState.new()
@@ -347,7 +377,7 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 		_compiler_output.text = ""
 	# The compiler queues print() calls and emits them from physics_process
 	# (one per frame), so the tree must be unpaused for the output to drain.
-	get_tree().paused = false
+	Global.suspend_ui_pause(self)
 	_lua_state.set("code", code)
 	_lua_state.call("run_code")
 
@@ -364,27 +394,51 @@ func _run_python(q: DungeonQuestion, code: String) -> void:
 	_captured_output = ""
 	if _compiler_output != null:
 		_compiler_output.text = ""
-	get_tree().paused = false
+	Global.suspend_ui_pause(self)
 	_python_state.set("code", code)
 	_python_state.call("run_code")
 
 func _on_quiz_print(text: String) -> void:
+	if not _accept_results:
+		return
+	if _compiler_q != null and _compiler_q.language == "lua":
+		CrashLogger.code("lua", "OUT", "quiz: " + text)
 	_captured_output += text + "\n"
 	if _compiler_output != null:
 		_compiler_output.append_text("[color=#aaddff]» %s[/color]\n" % text)
 
 func _on_quiz_executed() -> void:
+	if not _accept_results:
+		return
+	CrashLogger.code("lua" if _compiler_q != null and _compiler_q.language == "lua" else "python",
+		"QUIZ_OK", "question=%s" % ((_compiler_q.question.left(80) if _compiler_q != null else "?")))
 	# Code ran cleanly; wait briefly for the queued print signals to drain out
 	# of physics_process, then re-pause and grade the captured output.
 	await get_tree().create_timer(0.35).timeout
+	if not _accept_results or not is_inside_tree():
+		return
 	if _panel == null or not _panel.visible:
 		return  # quiz closed while the code was running
-	get_tree().paused = true
+	_accept_results = false
+	_running = false
+	Global.resume_ui_pause(self)
+	# A successful run from the dungeon quiz counts for "Run your first Lua
+	# program" just like a run from the Lua robot editor.
+	if _compiler_q != null and _compiler_q.language == "lua":
+		Global.complete_mission("run_program")
+		Global.add_mission_progress("side_lua_automator", 1)
 	_grade_compiler(_compiler_q)
 
 func _on_quiz_failed(error: String) -> void:
+	if not _accept_results:
+		return
+	CrashLogger.code("lua" if _compiler_q != null and _compiler_q.language == "lua" else "python",
+		"QUIZ_FAIL", "question=%s: %s" % [
+			(_compiler_q.question.left(80) if _compiler_q != null else "?"), error])
+	_accept_results = false
+	_running = false
 	if _panel != null and _panel.visible:
-		get_tree().paused = true
+		Global.resume_ui_pause(self)
 		_set_status("✘ " + error, C_ERROR)
 
 # Compiler-question status — errors AND the rubric result — goes to the line
@@ -404,6 +458,8 @@ func _grade_compiler(q: DungeonQuestion) -> void:
 		_set_status("✔ Correct!", C_OK)
 		_index += 1
 		await get_tree().create_timer(0.6).timeout
+		if not is_inside_tree():
+			return
 		if _panel != null and _panel.visible:
 			_show_question()
 	else:
@@ -416,6 +472,8 @@ func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 		_set_status("✔ Correct!", C_OK)
 		_index += 1
 		await get_tree().create_timer(0.6).timeout
+		if not is_inside_tree():
+			return
 		if _panel != null and _panel.visible:
 			_show_question()
 	else:
@@ -429,6 +487,8 @@ func _grade(q: DungeonQuestion, input_text: String) -> void:
 		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
 		_index += 1
 		await get_tree().create_timer(0.6).timeout
+		if not is_inside_tree():
+			return
 		if _panel != null and _panel.visible:
 			_show_question()
 	else:
@@ -444,12 +504,22 @@ func _normalize_text(text: String) -> String:
 	return _ws_re.sub(text.strip_edges(), " ", true).to_lower()
 
 func _complete_dungeon() -> void:
-	if mission == null:
+	if mission == null or _cleared:
+		return
+	# Extra dungeons can contain multiple Quiz Altars. The first completion
+	# clears the dungeon; later altars must not grant the reward again.
+	if Global.is_dungeon_cleared(mission.dungeon_index):
+		_cleared = true
+		if _panel != null:
+			_panel.visible = false
+		_release_ui()
 		return
 	_cleared = true
+	_accept_results = false
+	_running = false
 	if _panel != null:
 		_panel.visible = false
-	Global.close_ui()
+	_release_ui()
 
 	Global.grant_item(mission.reward_item_path, 1)
 	var mission_id: String = "dungeon_%d" % mission.dungeon_index
@@ -546,4 +616,39 @@ func _close_quiz() -> void:
 	# resets to question 1 so the player can pick up or restart at will.
 	if _panel != null:
 		_panel.visible = false
-	Global.close_ui()
+	_release_ui()
+
+## Esc is a back action, but typed code is unsaved. Refuse quietly and let the
+## player use the deliberate Close button if they mean to discard it.
+func _escape_close() -> void:
+	if _code_entry != null and is_instance_valid(_code_entry) \
+			and not _code_entry.text.strip_edges().is_empty():
+		_set_status("Use Close to discard the code you typed.", C_MUTED)
+		# request_ui_back() consumes the stack entry before invoking this action;
+		# keep the panel registered so Back/Escape can still protect it later.
+		if _panel != null and _panel.visible:
+			Global.register_ui_back(_panel, Callable(self, "_escape_close"))
+		return
+	_close_quiz()
+
+# Releases the pause suspension + the open_ui() reference exactly once. Called
+# on Close, on walking away, on completion and on tree exit (death/transition).
+func _release_ui() -> void:
+	_accept_results = false
+	_running = false
+	if _panel != null:
+		Global.unregister_ui_back(_panel)
+	Global.resume_ui_pause(self)
+	if _ui_registered:
+		_ui_registered = false
+		Global.close_ui()
+
+# The altar can be torn down with the dungeon while its panel is open. Without
+# this, Global's open_ui() refcount leaks and the overworld returns paused
+# (which also makes the build-mode toggle look broken).
+func _exit_tree() -> void:
+	_accept_results = false
+	_running = false
+	if _panel != null and is_instance_valid(_panel):
+		_panel.visible = false
+	_release_ui()

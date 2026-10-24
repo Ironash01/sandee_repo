@@ -8,7 +8,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Join the first and last name with a space and print the full name."
 language = "python"
-starter_code = "first = \"Juan\"\nlast = \"Dela Cruz\"\nprint(first + \" \" + last)"
+starter_code = ""
 answer_output = "Juan Dela Cruz"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
@@ -26,7 +26,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Convert the text \"21\" to an integer, double it, and print the result."
 language = "python"
-starter_code = "x = int(\"21\")\nprint(x * 2)"
+starter_code = ""
 answer_output = "42"
 
 [resource]

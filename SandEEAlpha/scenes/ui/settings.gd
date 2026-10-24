@@ -80,6 +80,17 @@ func _build_settings(panel: ColorRect) -> void:
 	)
 	vbox.add_child(fs_btn)
 
+	if Global.is_point_and_click_available():
+		# ── Point-and-Click Movement (optional, OFF by default) ──────
+		var pnc_btn := CheckButton.new()
+		pnc_btn.text = "Point-and-Click Movement"
+		pnc_btn.button_pressed = Global.point_and_click
+		pnc_btn.add_theme_font_size_override("font_size", int(BASE_LABEL_SIZE * s))
+		pnc_btn.add_theme_color_override("font_color", C_MUTED)
+		pnc_btn.tooltip_text = "Left-click / tap the world to walk there. Existing keyboard, mouse and joystick controls are unchanged."
+		pnc_btn.toggled.connect(func(on: bool) -> void: Global.set_point_and_click(on))
+		vbox.add_child(pnc_btn)
+
 	# ── UI Scale ─────────────────────────────────────────────────
 	_ui_scale_lbl = _lbl("UI Scale:  %.2f×" % Global.ui_scale, s)
 	vbox.add_child(_ui_scale_lbl)

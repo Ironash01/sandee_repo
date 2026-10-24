@@ -19,6 +19,7 @@ const CATEGORIES  := ["Materials", "Blocks", "Weapons & Tools", "Others"]
 # preload (not class_name) so the name-argument completion works even before the
 # editor has registered the helper's global class.
 const NameComplete: GDScript = preload("res://scripts/lua_name_complete.gd")
+const CACTUS_DATA: ItemData = preload("res://resources/items/cactus.tres")
 
 # ── Auto-discovered recipe directory (no hardcoded list needed) ────
 const RECIPE_DIR: String = "res://resources/recipes/"
@@ -39,7 +40,7 @@ var _selected_idx: int    = -1
 # `station` is set by CraftingStation before this menu enters the tree. The
 # menu only READS/WRITES station state through the station's Automation API —
 # it never crafts or validates anything itself.
-enum Mode { CRAFTING, AUTOMATION, PROGRAMMING }
+enum Mode { CRAFTING, PROGRAMMING }
 var _mode: int    = Mode.CRAFTING
 var station: Node = null
 
@@ -47,10 +48,8 @@ var _craft_body:     Control
 var _auto_body:      Control
 var _prog_body:      Control
 var _output_section: Control
-var _mode_btns:      Dictionary = {}
-# Full-screen programming overlay (AUTOMATION + PROGRAMMING + input/output),
-# opened by the header's 🐍 PROGRAM button — same pattern as the furnace UI.
 var _prog_overlay:   Control
+var _overlay_center: CenterContainer = null   # keyboard-aware centring area
 
 var _auto_grid:     GridContainer
 var _auto_selected: Label
@@ -58,12 +57,23 @@ var _auto_status:   Label
 
 var _code_edit: TextEdit
 var _prog_log:  RichTextLabel
+var _color_hint: Label
 var _name_popup: PopupPanel
 var _name_list:  ItemList
 
 var _output_slot:  Button
 var _output_count: Label
 var _output_hint:  Label
+
+# Color-output inspector beside the normal station output slot. This is UI only:
+# craft_color() still takes RGB and the Python API is unchanged.
+var _color_output_panel: Control
+var _color_preview:     ColorRect
+var _color_mode_option: OptionButton
+var _color_edit:        LineEdit
+var _color_note:        Label
+var _color_mode:        int = 0   # 0 = RGB, 1 = HEX
+var _color_edit_syncing: bool = false
 
 var _input_section: Control
 var _input_slot:    Control   # station_input_slot.gd
@@ -110,7 +120,6 @@ func _on_ui_scale(_s: float) -> void:
 	_recipe_list  = null
 	_detail_panel = null
 	_selected_idx = -1
-	_mode_btns.clear()
 	if not is_inside_tree():
 		return
 	await get_tree().process_frame
@@ -187,7 +196,7 @@ func _build() -> void:
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel_row.add_child(vbox)
 
-	# Header: title + 🐍 PROGRAM (opens the overlay) + close.
+	# Header: title + 🐍 ALGORITHMICA (opens the overlay) + close.
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", int(6 * s))
 	vbox.add_child(header)
@@ -195,8 +204,8 @@ func _build() -> void:
 	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title_label)
 	var prog_btn := Button.new()
-	prog_btn.text = "🐍 PROGRAM"
-	prog_btn.tooltip_text = "Write a Python/Lua program to automate this station."
+	prog_btn.text = "🐍 ALGORITHMICA"
+	prog_btn.tooltip_text = "Algorithmica — write Python that automates this station and imbues regular items with automation."
 	prog_btn.add_theme_font_size_override("font_size", int(12 * s))
 	prog_btn.add_theme_color_override("font_color", C_TITLE)
 	prog_btn.pressed.connect(func() -> void: _set_mode(Mode.PROGRAMMING))
@@ -220,9 +229,10 @@ func _build() -> void:
 
 	_set_mode(Mode.CRAFTING)
 
-# Programming overlay: the automation recipe selector, the input/output slots,
-# and the code editor — opened by the header's 🐍 PROGRAM button, exactly like
-# the furnace's PROGRAM panel.
+# Algorithmica overlay: recipe selector + Python editor, side by side, with the
+# input/output slots underneath. The old AUTOMATION tab is gone — selecting the
+# automation recipe is part of Algorithmica now, because a program needs a
+# recipe selected to craft anything.
 func _build_programming_overlay(s: float) -> void:
 	_prog_overlay = Control.new()
 	_prog_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -238,9 +248,10 @@ func _build_programming_overlay(s: float) -> void:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_prog_overlay.add_child(center)
+	_overlay_center = center
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(780 * s, 540 * s)
+	panel.custom_minimum_size = Vector2(900 * s, 560 * s)
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(18*s), int(18*s), int(14*s), int(18*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
@@ -250,89 +261,96 @@ func _build_programming_overlay(s: float) -> void:
 	panel.add_child(vbox)
 
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", int(6 * s))
+	header.add_theme_constant_override("separation", int(8 * s))
 	vbox.add_child(header)
-	var title := _lbl("STATION PROGRAMMING", int(15 * s), C_TITLE)
+	var title := _lbl("ALGORITHMICA — CRAFTING STATION", int(15 * s), C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
-	for entry in [
-		{"mode": Mode.AUTOMATION,  "text": "AUTOMATION"},
-		{"mode": Mode.PROGRAMMING, "text": "PROGRAMMING"},
-	]:
-		var btn := Button.new()
-		btn.text = entry["text"]
-		btn.add_theme_font_size_override("font_size", int(11 * s))
-		var m: int = entry["mode"]
-		btn.pressed.connect(func() -> void: _set_mode(m))
-		header.add_child(btn)
-		_mode_btns[m] = btn
+	header.add_child(_target_badge(AlgorithmicaAPI.STATION, s))
 	var close := Button.new()
 	close.text = "✕"; close.flat = true
 	close.add_theme_color_override("font_color", C_MUTED)
 	close.pressed.connect(_close_programming)
 	header.add_child(close)
 
+	# Left: the automation recipe selector (formerly its own AUTOMATION tab).
+	# Right: the Python editor. Both are always visible together.
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", int(12 * s))
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(body)
+
+	var left := VBoxContainer.new()
+	left.custom_minimum_size = Vector2(int(260 * s), 0)
+	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(left)
 	_auto_body = _build_automation_body(s)
-	vbox.add_child(_auto_body)
+	_auto_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left.add_child(_auto_body)
+
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(right)
 	_prog_body = _build_programming_body(s)
-	vbox.add_child(_prog_body)
-	# Input + Output slots — shared by Automation and Programming.
+	_prog_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_prog_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right.add_child(_prog_body)
+
+	# Input + Output slots — the machine state a program reads/writes.
 	_input_section = _build_input_section(s)
 	vbox.add_child(_input_section)
 	_output_section = _build_output_section(s)
 	vbox.add_child(_output_section)
 
+# Small target chip, matching the Programming Encyclopedia's Algorithmica
+# target badges so the machine is identifiable at a glance.
+func _target_badge(target: String, s: float) -> Control:
+	var col: Color = Color(0.45, 0.85, 1.00, 1.00) if target == AlgorithmicaAPI.STATION \
+		else Color(1.00, 0.66, 0.34, 1.00)
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color     = Color(col.r, col.g, col.b, 0.16)
+	sb.border_color = col
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(int(3 * s))
+	sb.content_margin_left   = int(7 * s)
+	sb.content_margin_right  = int(7 * s)
+	sb.content_margin_top    = int(2 * s)
+	sb.content_margin_bottom = int(2 * s)
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var lbl := _lbl(target.to_upper(), int(9 * s), col)
+	panel.add_child(lbl)
+	return panel
+
 func _close_programming() -> void:
 	_set_mode(Mode.CRAFTING)
 
+# Android: keep the Algorithmica panel above the software keyboard so the code
+# field and the RUN/CLEAR/RECIPES row stay visible while typing.
+func _process(_delta: float) -> void:
+	if not visible or _overlay_center == null:
+		return
+	var inset: float = Global.mobile_keyboard_height()
+	if not is_equal_approx(_overlay_center.offset_bottom, -inset):
+		_overlay_center.offset_bottom = -inset
+
 # ── Mode switch ───────────────────────────────────────────────────
-func _build_mode_row(parent: Node, s: float) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", int(6 * s))
-	parent.add_child(row)
-	for entry in [
-		{"mode": Mode.CRAFTING,    "text": "CRAFTING"},
-		{"mode": Mode.AUTOMATION,  "text": "AUTOMATION"},
-		{"mode": Mode.PROGRAMMING, "text": "PROGRAMMING"},
-	]:
-		var btn := Button.new()
-		btn.text                  = entry["text"]
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.custom_minimum_size   = Vector2(0, int(30 * s))
-		btn.add_theme_font_size_override("font_size", int(12 * s))
-		var m: int = entry["mode"]
-		btn.pressed.connect(func() -> void: _set_mode(m))
-		row.add_child(btn)
-		_mode_btns[m] = btn
-
-func _update_mode_btns() -> void:
-	for m in _mode_btns:
-		var btn: Button  = _mode_btns[m] as Button
-		var active: bool = m == _mode
-		var ps := _sb(C_SEL if active else C_PANEL,
-			C_TITLE if active else C_BORDER, 4, 8, 8, 6, 6)
-		btn.add_theme_stylebox_override("normal",  ps)
-		btn.add_theme_stylebox_override("hover",   ps)
-		btn.add_theme_stylebox_override("pressed", ps)
-		btn.add_theme_color_override("font_color", C_TITLE if active else C_MUTED)
-
+# Two modes only: manual CRAFTING, and the ALGORITHMICA overlay (recipe
+# selection + Python editor + machine slots). The old AUTOMATION tab was merged
+# into Algorithmica because a program needs a selected recipe to craft.
 func _set_mode(mode: int) -> void:
 	_mode = mode
-	# The overlay hosts automation + programming; the main panel always shows
-	# the manual crafting body.
 	if _prog_overlay != null:   _prog_overlay.visible   = mode != Mode.CRAFTING
 	if _craft_body != null:     _craft_body.visible     = mode == Mode.CRAFTING
-	if _auto_body != null:      _auto_body.visible      = mode == Mode.AUTOMATION
-	if _prog_body != null:      _prog_body.visible      = mode == Mode.PROGRAMMING
 	if _input_section != null:  _input_section.visible  = mode != Mode.CRAFTING
 	if _output_section != null: _output_section.visible = mode != Mode.CRAFTING
-	_update_mode_btns()
-	# Leaving the Programming tab keeps the editor text on the station.
+	# Leaving Algorithmica keeps the editor text on the station.
 	if mode != Mode.PROGRAMMING:
 		_store_program_code()
-	if mode == Mode.AUTOMATION:
-		_refresh_automation()
 	if mode == Mode.PROGRAMMING:
+		_refresh_automation()
 		_ensure_program_host()
 
 # ── Crafting body (the original manual crafting view) ─────────────
@@ -393,7 +411,7 @@ func _build_automation_body(s: float) -> Control:
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 	root.add_child(_lbl("SELECT AUTOMATION RECIPE", int(11 * s), C_MUTED))
-	var hint := _lbl("Selecting a recipe does not craft anything — run a program in the PROGRAMMING tab.",
+	var hint := _lbl("Selecting a recipe does not craft anything — run a program in the editor on the right.",
 		int(10 * s), C_MUTED)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
@@ -473,29 +491,36 @@ func _build_programming_body(s: float) -> Control:
 	root.add_theme_constant_override("separation", int(8 * s))
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	root.add_child(_lbl("PYTHON PROGRAM", int(11 * s), C_MUTED))
+	root.add_child(_lbl("PYTHON AUTOMATION — CRAFTING STATION ONLY", int(11 * s), C_MUTED))
 	# Custom (game) API only here — the language's own built-ins are listed in
-	# the Lua robot editor's Encyclopedia, and the two are deliberately kept
-	# apart. Source of truth: scripts/api_reference.gd.
+	# the Programming Encyclopedia, and the two are deliberately kept apart.
+	# Source of truth: scripts/api_reference.gd.
 	var custom: Array = APIReference.CUSTOM_PYTHON_STATION
 	var lines: PackedStringArray = []
 	for e in custom:
 		lines.append("%s — %s" % [str(e["sig"]), str(e["desc"])])
-	var hint := _lbl("Station API:\n" + "\n".join(lines),
+	var hint := _lbl("Station API — item arguments are ids (iron_sword, wood):\n" + "\n".join(lines),
 		int(10 * s), C_MUTED)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
+
+	# Live material readout for craft_color(). The function itself validates and
+	# consumes; this label only mirrors the station-panel API hint above.
+	_color_hint = _lbl("", int(10 * s), C_EFFECT)
+	_color_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(_color_hint)
+	_refresh_color_hint()
 
 	_code_edit = TextEdit.new()
 	_code_edit.custom_minimum_size   = Vector2(0, int(140 * s))
 	_code_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_code_edit.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	_code_edit.add_theme_font_size_override("font_size", int(13 * s))
-	_code_edit.placeholder_text      = "craft(1)"
+	_code_edit.placeholder_text      = "# pick a recipe on the left, then:\nset_recipe(\"planks\")\ncraft(1)\ntake_output()"
 	if station != null:
 		_code_edit.text = str(station.get("program_code"))
-	# Item-name popup: when the caret sits inside a name-argument function's
-	# parentheses, offer the list of valid items to pick from.
+	# Item-id popup: inside a name argument, list carried items first, then the
+	# whole catalogue — every entry is the scripting id.
 	_code_edit.text_changed.connect(_on_program_text_changed)
 	root.add_child(_code_edit)
 
@@ -515,6 +540,10 @@ func _build_programming_body(s: float) -> Control:
 		Color(0.80, 1.0, 0.80, 1.0), _on_run_program, s))
 	btn_row.add_child(_make_action_btn("CLEAR", Color(0.20, 0.22, 0.34, 1.0),
 		C_TITLE, _on_clear_program, s))
+	var recipes_btn := _make_action_btn("RECIPES", Color(0.20, 0.28, 0.45, 1.0),
+		C_TITLE, _on_show_recipes, s)
+	recipes_btn.tooltip_text = "List every crafting recipe (with item ids) in the output."
+	btn_row.add_child(recipes_btn)
 
 	_prog_log = RichTextLabel.new()
 	_prog_log.bbcode_enabled      = true
@@ -561,11 +590,49 @@ func _on_run_program() -> void:
 	var code: String = _code_edit.text.strip_edges()
 	if code.is_empty():
 		return
+	# A crafting-station program may only use station functions. The host
+	# enforces this too; checking here gives the error in the visible log before
+	# anything runs.
+	var foreign := AlgorithmicaAPI.foreign_calls(code, AlgorithmicaAPI.STATION)
+	if not foreign.is_empty():
+		if _prog_log != null:
+			_prog_log.clear()
+			_prog_log.append_text("[color=#ff8888]✗ %s[/color]\n"
+				% AlgorithmicaAPI.rejection_message(foreign, AlgorithmicaAPI.STATION))
+		return
 	_ensure_program_host()
 	if _prog_log != null:
 		_prog_log.clear()
 	station.call("run_program", code)
 	_refresh_output()
+
+# Lists every recipe this station can run, with scripting ids, into the output.
+# The editor cannot add new Python functions (the interpreter's API table is
+# compiled), so recipe discovery lives here instead of a get_recipe(arg) call.
+func _on_show_recipes() -> void:
+	if _prog_log == null or station == null:
+		return
+	var recipes: Array = []
+	if station.has_method("get_station_recipes"):
+		recipes = station.call("get_station_recipes")
+	_prog_log.clear()
+	_prog_log.append_text("[color=#88ffaa]Crafting recipes (item ids):[/color]\n")
+	var rows: Array = []
+	for r in recipes:
+		var rec: CraftingRecipe = r as CraftingRecipe
+		if rec == null or rec.result_item == null:
+			continue
+		var ing: String = ""
+		if rec.ingredient_1 != null:
+			ing = "%dx %s" % [rec.ingredient_1_quantity, rec.ingredient_1.item_id()]
+		if rec.ingredient_2 != null:
+			ing += " + %dx %s" % [rec.ingredient_2_quantity, rec.ingredient_2.item_id()]
+		rows.append("%-16s <- %s" % [rec.result_item.item_id(), ing])
+	rows.sort()
+	for row in rows:
+		_prog_log.append_text("  %s\n" % row)
+	if rows.is_empty():
+		_prog_log.append_text("  (this station has no recipes)\n")
 
 func _on_clear_program() -> void:
 	if _code_edit != null:
@@ -597,15 +664,28 @@ func _open_name_popup() -> void:
 	if _name_popup.visible:
 		return
 	_name_list.clear()
-	for n in NameComplete.item_names():
-		_name_list.add_item(str(n))
+	# Carried items first (inventory + hotbar), then the full catalogue. Every
+	# entry is the SCRIPTING ID (lowercase, spaces → underscores) so the program
+	# can paste it straight in; the display name is shown beside it.
+	var seen: Dictionary = {}
+	for data in Global.list_carried_items():
+		_name_list.add_item("%s   (%s)" % [data.item_id(), data.item_name])
+		_name_list.set_item_metadata(_name_list.item_count - 1, data.item_id())
+		seen[data.item_id()] = true
+	for id in Global.all_item_ids():
+		if seen.has(id):
+			continue
+		_name_list.add_item(id)
+		_name_list.set_item_metadata(_name_list.item_count - 1, id)
 	var local: Vector2 = _code_edit.get_caret_draw_pos()
 	_name_popup.position = Vector2i(_code_edit.get_screen_position() + local) + Vector2i(0, 22)
 	_name_popup.popup()
 
 func _on_name_item_selected(idx: int) -> void:
-	var name: String = _name_list.get_item_text(idx)
-	_code_edit.insert_text_at_caret("\"%s\"" % name)
+	var id: String = str(_name_list.get_item_metadata(idx))
+	if id.is_empty():
+		id = _name_list.get_item_text(idx).split("   (")[0]
+	_code_edit.insert_text_at_caret("\"%s\"" % id)
 	_name_popup.hide()
 	_code_edit.grab_focus()
 
@@ -619,7 +699,8 @@ func _on_program_error(error: String) -> void:
 
 func _on_program_done() -> void:
 	if _prog_log != null:
-		_prog_log.append_text("[color=#88ffaa]✓ Program finished[/color]\n")
+		_prog_log.append_text("[color=#88ffaa]✓ Finished running[/color]\n")
+	_refresh_color_hint()
 	_refresh_output()
 
 # ── Input slot (single) ───────────────────────────────────────────
@@ -665,8 +746,12 @@ func _refresh_input() -> void:
 
 # ── Output slot (single) ──────────────────────────────────────────
 func _build_output_section(s: float) -> Control:
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", int(6 * s))
+
 	var root := HBoxContainer.new()
 	root.add_theme_constant_override("separation", int(10 * s))
+	outer.add_child(root)
 	root.add_child(_lbl("OUTPUT", int(11 * s), C_MUTED))
 
 	var slot_wrap := Control.new()
@@ -697,8 +782,66 @@ func _build_output_section(s: float) -> Control:
 	_output_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(_output_hint)
 
+	_color_output_panel = _build_color_output_panel(s)
+	outer.add_child(_color_output_panel)
+
 	_refresh_output()
-	return root
+	return outer
+
+# Compact color-output inspector. It appears only when the normal station
+# output slot contains a ColorBlock, and never changes the Python signature.
+func _build_color_output_panel(s: float) -> Control:
+	var panel := PanelContainer.new()
+	panel.visible = false
+	panel.add_theme_stylebox_override("panel",
+		_sb(C_TIP_BG, C_BORDER, 4, int(8 * s), int(8 * s), int(6 * s), int(6 * s)))
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", int(3 * s))
+	panel.add_child(vbox)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(7 * s))
+	vbox.add_child(row)
+
+	row.add_child(_lbl("COLOR", int(9 * s), C_MUTED))
+	_color_preview = ColorRect.new()
+	_color_preview.custom_minimum_size = Vector2(int(24 * s), int(24 * s))
+	row.add_child(_color_preview)
+
+	_color_mode_option = OptionButton.new()
+	_color_mode_option.add_item("RGB", 0)
+	_color_mode_option.add_item("HEX", 1)
+	_color_mode_option.custom_minimum_size = Vector2(int(62 * s), 0)
+	_color_mode_option.add_theme_font_size_override("font_size", int(10 * s))
+	_color_mode_option.item_selected.connect(_on_color_mode_selected)
+	row.add_child(_color_mode_option)
+
+	_color_edit = LineEdit.new()
+	_color_edit.custom_minimum_size = Vector2(int(104 * s), 0)
+	_color_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_color_edit.add_theme_font_size_override("font_size", int(10 * s))
+	_color_edit.max_length = 20
+	_color_edit.placeholder_text = "255, 0, 0"
+	_color_edit.text_submitted.connect(_on_color_text_submitted)
+	_color_edit.focus_exited.connect(_on_color_focus_exited)
+	row.add_child(_color_edit)
+
+	var copy := Button.new()
+	copy.text = "Copy HEX"
+	copy.custom_minimum_size = Vector2(int(64 * s), 0)
+	copy.add_theme_font_size_override("font_size", int(9 * s))
+	copy.add_theme_stylebox_override("normal", _sb(C_TIP_BG, C_BORDER, 4, 4, 4, 3, 3))
+	copy.add_theme_stylebox_override("hover", _sb(C_SEL, C_BORDER, 4, 4, 4, 3, 3))
+	copy.add_theme_stylebox_override("pressed", _sb(C_SEL, C_BORDER, 4, 4, 4, 3, 3))
+	copy.pressed.connect(_copy_color_hex)
+	row.add_child(copy)
+
+	_color_note = _lbl("", int(9 * s), C_MUTED)
+	_color_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_color_note.visible = false
+	vbox.add_child(_color_note)
+	return panel
 
 func _refresh_output() -> void:
 	if _output_slot == null or station == null:
@@ -716,6 +859,7 @@ func _refresh_output() -> void:
 		_output_slot.disabled = false
 		if _output_count != null: _output_count.text = "×%d" % qty
 		if _output_hint  != null: _output_hint.text  = "%s ×%d — click to take" % [item.item_name, qty]
+	_refresh_color_output()
 	_refresh_automation_selection()
 
 func _on_take_output() -> void:
@@ -725,6 +869,131 @@ func _on_take_output() -> void:
 	if _prog_log != null and taken > 0:
 		_prog_log.append_text("[color=#88ffaa]Took %d item(s) into your inventory[/color]\n" % taken)
 	_refresh_output()
+
+func _current_color_rgb() -> Array:
+	if station == null or not station.has_method("get_output_item"):
+		return []
+	var data = station.call("get_output_item")
+	if not (data is ItemData) or not (data as ItemData).is_color_block:
+		return []
+	var c: Color = (data as ItemData).block_color
+	return [int(round(c.r * 255.0)), int(round(c.g * 255.0)), int(round(c.b * 255.0))]
+
+func _format_color_text(rgb: Array) -> String:
+	if rgb.size() < 3:
+		return ""
+	if _color_mode == 1:
+		return "#%02X%02X%02X" % [int(rgb[0]), int(rgb[1]), int(rgb[2])]
+	return "%d, %d, %d" % [int(rgb[0]), int(rgb[1]), int(rgb[2])]
+
+func _set_color_edit_text(force: bool = false) -> void:
+	if _color_edit == null or not is_instance_valid(_color_edit):
+		return
+	if not force and _color_edit.has_focus():
+		return
+	var rgb: Array = _current_color_rgb()
+	if rgb.size() < 3:
+		return
+	_color_edit_syncing = true
+	_color_edit.text = _format_color_text(rgb)
+	_color_edit.placeholder_text = "255, 0, 0" if _color_mode == 0 else "#FF0000"
+	_color_edit_syncing = false
+
+func _refresh_color_output() -> void:
+	if _color_output_panel == null or not is_instance_valid(_color_output_panel):
+		return
+	var data = station.call("get_output_item") if station != null \
+		and station.has_method("get_output_item") else null
+	var qty: int = int(station.call("get_output_quantity")) if station != null \
+		and station.has_method("get_output_quantity") else 0
+	if not (data is ItemData) or not (data as ItemData).is_color_block or qty <= 0:
+		_color_output_panel.visible = false
+		if _color_note != null:
+			_color_note.visible = false
+		return
+	_color_output_panel.visible = true
+	if _color_preview != null:
+		_color_preview.color = (data as ItemData).block_color
+	if _color_mode_option != null and is_instance_valid(_color_mode_option):
+		_color_edit_syncing = true
+		_color_mode_option.select(_color_mode)
+		_color_edit_syncing = false
+	_set_color_edit_text()
+
+func _set_color_note(text: String, warn: bool = false) -> void:
+	if _color_note == null or not is_instance_valid(_color_note):
+		return
+	_color_note.text = text
+	_color_note.visible = not text.is_empty()
+	_color_note.add_theme_color_override("font_color", C_RED if warn else C_EFFECT)
+
+func _on_color_mode_selected(index: int) -> void:
+	if _color_edit_syncing:
+		return
+	_color_mode = 1 if index == 1 else 0
+	_set_color_note("")
+	_set_color_edit_text(true)
+
+func _on_color_text_submitted(text: String) -> void:
+	_commit_color_text(text)
+	if _color_edit != null and is_instance_valid(_color_edit):
+		_color_edit.release_focus()
+
+func _on_color_focus_exited() -> void:
+	if _color_edit_syncing or _color_edit == null or not is_instance_valid(_color_edit):
+		return
+	_commit_color_text(_color_edit.text)
+
+func _parse_color_text(text: String) -> Variant:
+	var t: String = text.strip_edges()
+	if _color_mode == 0:
+		var parts: PackedStringArray = t.replace(",", " ").split(" ", false)
+		if parts.size() != 3:
+			return null
+		var rgb: Array = []
+		for p in parts:
+			if not p.is_valid_int():
+				return null
+			var v: int = int(p)
+			if v < 0 or v > 255:
+				return null
+			rgb.append(v)
+		return rgb
+	t = t.trim_prefix("#").to_upper()
+	if t.length() != 6:
+		return null
+	const HEX_CHARS := "0123456789ABCDEF"
+	for i in range(6):
+		if not HEX_CHARS.contains(t[i]):
+			return null
+	return [t.substr(0, 2).hex_to_int(), t.substr(2, 2).hex_to_int(),
+		t.substr(4, 2).hex_to_int()]
+
+func _commit_color_text(text: String) -> void:
+	if _color_edit_syncing:
+		return
+	var parsed = _parse_color_text(text)
+	if parsed == null:
+		_set_color_note("Enter RGB 0-255 or a six-digit #RRGGBB value.", true)
+		return
+	var rgb: Array = parsed
+	if ColorBlock.is_forbidden(int(rgb[0]), int(rgb[1]), int(rgb[2])):
+		_set_color_note("Pure black and pure white are not allowed.", true)
+		return
+	if station == null or not station.has_method("recolor_output") \
+			or not bool(station.call("recolor_output", int(rgb[0]), int(rgb[1]), int(rgb[2]))):
+		_set_color_note("The output color could not be updated.", true)
+		return
+	_set_color_note("Color updated.")
+	_refresh_output()
+
+func _copy_color_hex() -> void:
+	var rgb: Array = _current_color_rgb()
+	if rgb.size() < 3:
+		return
+	var hex := "#%02X%02X%02X" % [int(rgb[0]), int(rgb[1]), int(rgb[2])]
+	DisplayServer.clipboard_set(hex)
+	_set_color_note("Copied %s" % hex)
 
 func _build_detail(s: float) -> Control:
 	var root := PanelContainer.new()
@@ -880,7 +1149,19 @@ func _filter_and_refresh() -> void:
 
 	_refresh_highlights()
 
+func _refresh_color_hint() -> void:
+	if _color_hint == null or not is_instance_valid(_color_hint):
+		return
+	var available: int = Global.count_item(CACTUS_DATA)
+	if station != null and station.has_method("get_input_item") \
+			and station.call("get_input_item") == CACTUS_DATA:
+		available += int(station.call("get_input_quantity"))
+	_color_hint.text = ("craft_color: 1 Cactus per Color Block  ·  Cactus available: %d"
+		% available)
+
+
 func _refresh_highlights() -> void:
+	_refresh_color_hint()
 	for i in range(_row_btns.size()):
 		if i >= _filtered.size():
 			break
@@ -1001,6 +1282,23 @@ func _on_craft() -> void:
 func show_menu() -> void:
 	visible = true
 	Global.open_ui()
+	Global.register_ui_back(self, Callable(self, "dismiss_back"))
+
+# Escape/Back first leaves Algorithmica and only then closes the station menu.
+func dismiss_back() -> void:
+	if _name_popup != null and _name_popup.visible:
+		_name_popup.hide()
+		if visible:
+			Global.register_ui_back(self, Callable(self, "dismiss_back"))
+		return
+	if _mode != Mode.CRAFTING:
+		_close_programming()
+		# request_ui_back() pops the entry before calling this; the station
+		# itself is still open, so keep it back-dismissible one layer up.
+		if visible:
+			Global.register_ui_back(self, Callable(self, "dismiss_back"))
+	else:
+		hide_menu()
 
 func hide_menu() -> void:
 	if not visible:
@@ -1008,6 +1306,7 @@ func hide_menu() -> void:
 	# Keep the program text on the station so reopening restores it.
 	_store_program_code()
 	visible = false
+	Global.unregister_ui_back(self)
 	Global.close_ui()
 
 # E (the "inventory" action) also closes the station menu here — unlike the
@@ -1020,9 +1319,16 @@ func hide_menu() -> void:
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
+	# Dismiss the item-id suggestion popup before leaving Algorithmica.
+	if _name_popup != null and _name_popup.visible and event.is_action_pressed("escape"):
+		Global.consume_ui_back_event(event)
+		_name_popup.hide()
+		get_viewport().set_input_as_handled()
+		return
 	if event.is_action_pressed("escape"):
 		get_viewport().set_input_as_handled()
-		hide_menu()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			dismiss_back()
 	elif event.is_action_pressed("inventory") and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		hide_menu()

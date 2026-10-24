@@ -116,7 +116,7 @@ func _gui_input(event: InputEvent) -> void:
 		if data == null:
 			return
 		if not Global.has_space_for_item(data, qty):
-			Global.log_chat("[color=#ffaa66]Inventory full — the robot keeps the %s.[/color]" % data.item_name)
+			Global.notify("[color=#ffaa66]Inventory full — the robot keeps the %s.[/color]" % data.item_name)
 			return
 		Global.add_item({"data": data, "quantity": qty})
 		_npc.call("set_tool", null, 0)
@@ -151,7 +151,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		var ex_qty: int = int(existing["quantity"])
 		if ex_data != null and ex_qty > 0:
 			if not Global.has_space_for_item(ex_data, ex_qty):
-				Global.log_chat("[color=#ffaa66]Inventory full — can't swap the robot's tool.[/color]")
+				Global.notify("[color=#ffaa66]Inventory full — can't swap the robot's tool.[/color]")
 				return
 			Global.add_item({"data": ex_data, "quantity": ex_qty})
 	_npc.call("set_tool", data_obj, int(item["quantity"]))

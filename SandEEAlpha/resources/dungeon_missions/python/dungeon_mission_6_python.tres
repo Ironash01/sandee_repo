@@ -8,7 +8,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Print string concatenation."
 language = "python"
-starter_code = "name = \"Spidey\"\nprint(\"Hello \" + name)"
+starter_code = ""
 answer_output = "Hello Spidey"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
@@ -26,7 +26,7 @@ script = ExtResource("2_question")
 type = 1
 question = "Print the length of a string."
 language = "python"
-starter_code = "greeting = \"hello world\"\nprint(len(greeting))"
+starter_code = ""
 answer_output = "11"
 
 [resource]

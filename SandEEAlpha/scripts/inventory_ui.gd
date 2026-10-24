@@ -37,8 +37,15 @@ var _active_idx:    int     = -1
 # ── Tab panels ────────────────────────────────────────────────────
 var _inv_panel:    Control
 var _craft_panel:  Control
+var _enc_panel:    Control
 var _tab_inv_btn:  Button
 var _tab_craft_btn: Button
+var _tab_enc_btn:  Button
+# Rebuilt whenever knowledge is discovered (see _refresh_encyclopedia).
+var _enc_list:     VBoxContainer = null
+# Section id -> expanded, kept across refreshes/rebuilds so a knowledge update
+# or a UI-scale change never collapses what the player opened.
+var _enc_open:     Dictionary = {}
 
 # ── Crafting refs ─────────────────────────────────────────────────
 var _recipes:       Array = []   # only no-station recipes
@@ -63,6 +70,8 @@ func _ready() -> void:
 	Global.Inventory_updated.connect(_refresh_inv)
 	Global.Hotbar_updated.connect(_refresh_crafting)
 	Global.ui_scale_changed.connect(_on_ui_scale)
+	# Dungeon discoveries change which encyclopedia entries are visible.
+	Global.knowledge_updated.connect(_on_knowledge_updated)
 
 # Closing via the same "inventory" key is handled here rather than relying
 # on player.gd to see the press: once this panel's CanvasLayer is visible,
@@ -72,6 +81,11 @@ func _ready() -> void:
 # so this is a no-op — not a double-toggle — if something else already
 # closed it first.
 func _input(event: InputEvent) -> void:
+	if get_parent().visible and event.is_action_pressed("escape"):
+		get_viewport().set_input_as_handled()
+		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
+			dismiss_back()
+		return
 	if get_parent().visible and event.is_action_pressed("inventory") \
 			and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
@@ -102,6 +116,9 @@ func _rebuild() -> void:
 	_craft_cat_btns.clear(); _craft_row_btns.clear()
 	_tip_name = null; _tip_type = null; _tip_effect = null; _tip_qty = null; _tip_desc = null
 	_active_idx = -1; _selected_idx = -1
+	# The chest's data survives the rebuild; only its views are recreated below.
+	_chest_section = null; _chest_slots = []; _chest_title = null
+	_enc_list = null
 	for child in get_children():
 		child.queue_free()
 	if not is_inside_tree():
@@ -112,6 +129,9 @@ func _rebuild() -> void:
 	_build()
 	_refresh_inv()
 	_switch_tab("inventory")
+	# Re-dock the open chest after a scale rebuild (its data is untouched).
+	if _chest != null and is_instance_valid(_chest):
+		_rebuild_chest_slots()
 
 func _build() -> void:
 	var s: float = Global.ui_scale
@@ -122,9 +142,19 @@ func _build() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
 
+	# Scroll the whole panel when the screen is too short for it (e.g. a chest is
+	# docked under the inventory on a small display) instead of clipping the
+	# trash row or the bottom of the storage section off-screen.
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode   = ScrollContainer.SCROLL_MODE_AUTO
+	add_child(scroll)
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	scroll.add_child(center)
 
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 0)
@@ -137,8 +167,14 @@ func _build() -> void:
 
 	_tab_inv_btn   = _make_tab("INVENTORY", true,  s, func(): _switch_tab("inventory"))
 	_tab_craft_btn = _make_tab("✦ CRAFT",  false, s, func(): _switch_tab("craft"))
+	# The Programming Encyclopedia: always available (no section unlock), but
+	# each entry inside it is revealed only by its dungeon.
+	_tab_enc_btn   = _make_tab("📖 PROGRAMMING ENCYCLOPEDIA", false, s,
+		func(): _switch_tab("encyclopedia"))
+	_tab_enc_btn.custom_minimum_size = Vector2(i(250, s), i(28, s))
 	tab_row.add_child(_tab_inv_btn)
 	tab_row.add_child(_tab_craft_btn)
+	tab_row.add_child(_tab_enc_btn)
 
 	var ts := Control.new()
 	ts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -179,6 +215,12 @@ func _build() -> void:
 	_craft_panel = _build_craft_content(s)
 	_craft_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	stack.add_child(_craft_panel)
+
+	# ── Programming Encyclopedia tab content ──────────────────────
+	_enc_panel = _build_encyclopedia_content(s)
+	_enc_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	stack.add_child(_enc_panel)
+	_enc_panel.visible = false
 
 	# ── Trash slot (bottom of UI) — drag an item here to delete it ──
 	var trash_spacer := Control.new()
@@ -221,14 +263,21 @@ func _switch_tab(which: String) -> void:
 		return
 	var inv_active   := which == "inventory"
 	var craft_active := which == "craft"
+	var enc_active   := which == "encyclopedia"
 	_inv_panel.visible   = inv_active
 	_craft_panel.visible = craft_active
+	if _enc_panel != null:
+		_enc_panel.visible = enc_active
 	_style_tab_btn(_tab_inv_btn,   inv_active)
 	_style_tab_btn(_tab_craft_btn, craft_active)
+	_style_tab_btn(_tab_enc_btn,   enc_active)
 	if craft_active:
 		_active_cat   = "Materials"
 		_selected_idx = -1
 		_craft_filter_refresh()
+	if enc_active:
+		# Rebuild so anything discovered since the last look is present.
+		_refresh_encyclopedia()
 
 func _style_tab_btn(btn: Button, active: bool) -> void:
 	if btn == null: return
@@ -246,7 +295,229 @@ func _style_tab_btn(btn: Button, active: bool) -> void:
 	btn.add_theme_stylebox_override("pressed", ps)
 	btn.add_theme_color_override("font_color", C_TITLE if active else C_MUTED)
 
+# ── Programming Encyclopedia ──────────────────────────────────────
+# Four independently expandable sections, in this order:
+#   1. LUA Programming Language        3. Python Programming Language
+#   2. Automatica (LUA robot)          4. Algorithmica (Python automation)
+# Language sections reveal entries through dungeon discovery; the two function
+# sections list their complete API immediately (see scripts/encyclopedia_data.gd).
+# This is a read-only reference: it grants no execution rights and bypasses no
+# tool requirements.
+func _build_encyclopedia_content(s: float) -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", i(8, s))
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", i(8, s))
+	root.add_child(head)
+	var title := _lbl("PROGRAMMING ENCYCLOPEDIA", i(14, s), C_TITLE)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	head.add_child(_lbl("Language entries unlock in dungeons — functions are always available.",
+		i(10, s), C_MUTED))
+	_div(root)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(scroll)
+
+	_enc_list = VBoxContainer.new()
+	_enc_list.add_theme_constant_override("separation", i(10, s))
+	_enc_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_enc_list)
+	_refresh_encyclopedia()
+	return root
+
+# Rebuild the four accordion sections from the registries + discovery state.
+func _refresh_encyclopedia() -> void:
+	if _enc_list == null or not is_instance_valid(_enc_list):
+		return
+	for child in _enc_list.get_children():
+		if child is EncyclopediaSection:
+			_enc_open[(child as EncyclopediaSection).section_id] = (child as EncyclopediaSection).expanded
+		_enc_list.remove_child(child)
+		child.queue_free()
+	var s: float = Global.ui_scale
+	for section in APIReference.encyclopedia_sections():
+		var sec: Dictionary = section as Dictionary
+		var always: bool = EncyclopediaData.section_is_always_available(sec)
+		var entries: Array = EncyclopediaData.entries_for_section(sec)
+		var acc := EncyclopediaSection.new()
+		acc.setup(sec, s)
+		acc.set_counts(entries.size(), EncyclopediaData.section_total(sec), always)
+		if entries.is_empty():
+			acc.body().add_child(_encyclopedia_empty(s))
+		else:
+			for e in entries:
+				acc.add_entry(e as Dictionary, s)
+		_enc_list.add_child(acc)
+		# Function sections start open (their API is available from the start);
+		# language sections start collapsed until something has been discovered.
+		acc.set_expanded(bool(_enc_open.get(acc.section_id, always)), false)
+		acc.expansion_changed.connect(_on_encyclopedia_section_expanded)
+
+func _on_encyclopedia_section_expanded(id: String, on: bool) -> void:
+	_enc_open[id] = on
+
+func _encyclopedia_empty(s: float) -> Control:
+	var none := _lbl("Nothing discovered yet — clear dungeons to reveal entries here.",
+		i(11, s), C_MUTED)
+	none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return none
+
+# Knowledge is per-world and persisted by Global's save data; refresh the tab
+# so an entry learned while the panel is open appears immediately.
+func _on_knowledge_updated() -> void:
+	_refresh_encyclopedia()
+
 # ── Inventory content ─────────────────────────────────────────────
+# ── Chest section (docked beneath the player inventory) ────────────
+# While a chest is open this panel hosts that chest's own storage directly
+# under the player grid. Both halves use the SAME slot scene (InventorySlot),
+# so slot size, spacing, icons, stack counts, hover tooltips, selection
+# highlight and drag behaviour are identical by construction — nothing here
+# re-implements them. The chest remains the only owner of its data
+# (`chest.slots`): nothing is copied into a temporary inventory, and closing
+# never rewrites it.
+const CHEST_COLS: int = 4
+
+var _chest_section: VBoxContainer = null
+var _chest:         Node          = null
+var _chest_slots:   Array         = []
+var _chest_title:   Label         = null
+
+# Show `chest`'s storage in this panel. Safe to call repeatedly: a previous
+# chest's views are torn down first, so reopening never duplicates UI.
+func attach_chest(chest: Node) -> void:
+	if _chest != null and _chest != chest:
+		detach_chest()
+	_chest = chest
+	# Player slots must accept stacks dragged out of the chest.
+	for slot in _slots:
+		if is_instance_valid(slot):
+			slot.set("chest_link", chest)
+	_rebuild_chest_slots()
+	# Storage is only visible on the inventory tab.
+	_switch_tab("inventory")
+	Global.register_ui_back(self, Callable(self, "dismiss_back"))
+
+func detach_chest() -> void:
+	_chest = null
+	for slot in _slots:
+		if is_instance_valid(slot):
+			slot.set("chest_link", null)
+	_clear_chest_slots()
+
+func opened_chest() -> Node:
+	return _chest
+
+# Called by the chest when it wants the combined panel closed (player walked
+# out of range, chest broken, request_close_all_ui). Idempotent, and a no-op
+# when a different chest is the one currently attached.
+func close_chest(chest: Node) -> void:
+	if _chest != null and _chest != chest:
+		return
+	_close()
+
+func _clear_chest_slots() -> void:
+	_chest_slots.clear()
+	_chest_title = null
+	if _chest_section == null:
+		return
+	for c in _chest_section.get_children():
+		_chest_section.remove_child(c)
+		c.queue_free()
+	_chest_section.visible = false
+
+func _rebuild_chest_slots() -> void:
+	if _chest_section == null:
+		return
+	_clear_chest_slots()
+	if _chest == null or not is_instance_valid(_chest):
+		return
+	var slots: Array = _chest.get("slots") as Array
+	if slots.is_empty():
+		return
+	var s: float = Global.ui_scale
+	_chest_section.visible = true
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", i(8, s))
+	_chest_section.add_child(header)
+
+	_chest_title = _lbl("CHEST", i(11, s), C_MUTED)
+	header.add_child(_chest_title)
+
+	var hint := _lbl("click to take • drag to move", i(10, s), Color(C_MUTED, 0.7))
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hint.horizontal_alignment  = HORIZONTAL_ALIGNMENT_RIGHT
+	header.add_child(hint)
+
+	# Cap the storage area's height so a chest with a large configured capacity
+	# can never push the player inventory or the panel off-screen — it scrolls.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode   = ScrollContainer.SCROLL_MODE_AUTO
+	var rows: int  = int(ceil(float(slots.size()) / float(CHEST_COLS)))
+	var row_h: int = int(Global.ITEM_SLOT_SIZE * s) + i(10, s)
+	scroll.custom_minimum_size = Vector2(0, float(mini(row_h * rows, row_h * 3)))
+	_chest_section.add_child(scroll)
+
+	var grid := GridContainer.new()
+	grid.columns = CHEST_COLS
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", i(10, s))
+	grid.add_theme_constant_override("v_separation", i(10, s))
+	scroll.add_child(grid)
+
+	for idx in range(slots.size()):
+		var slot = SLOT_SCENE.instantiate()
+		slot.slot_index    = idx
+		slot.is_chest_slot = true
+		slot.chest_link    = _chest
+		slot.slot_clicked.connect(_on_chest_slot_clicked)
+		grid.add_child(slot)
+		_chest_slots.append(slot)
+
+	refresh_chest_slots()
+
+# Redraws the chest views from the chest's authoritative slot array.
+func refresh_chest_slots() -> void:
+	if _chest == null or not is_instance_valid(_chest):
+		return
+	var slots: Array = _chest.get("slots") as Array
+	for idx in range(_chest_slots.size()):
+		var slot = _chest_slots[idx]
+		if not is_instance_valid(slot):
+			continue
+		var item_v: Variant = slots[idx] if idx < slots.size() else null
+		if item_v == null:
+			slot.call("set_empty")
+		else:
+			slot.call("set_item", item_v)
+	if _chest_title != null:
+		var chest_name := "CHEST"
+		var chest_data: Variant = _chest.get("item_data")
+		if chest_data is ItemData and not (chest_data as ItemData).item_name.is_empty():
+			chest_name = (chest_data as ItemData).item_name.to_upper()
+		_chest_title.text = "%s  (%d)" % [chest_name, slots.size()]
+
+# Clicking a chest slot takes that whole stack into the player inventory —
+# the same click convention the rest of the inventory uses.
+func _on_chest_slot_clicked(idx: int) -> void:
+	if _chest == null or not is_instance_valid(_chest):
+		return
+	var slots: Array = _chest.get("slots") as Array
+	if idx < 0 or idx >= slots.size() or slots[idx] == null:
+		return
+	if Global.add_item(slots[idx] as Dictionary):
+		slots[idx] = null
+		Global.Hotbar_updated.emit()
+		Global.Inventory_updated.emit()
+		if _chest.has_method("notify_contents_changed"):
+			_chest.call("notify_contents_changed")
+
 func _build_inv_content(s: float) -> Control:
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", i(10, s))
@@ -276,6 +547,13 @@ func _build_inv_content(s: float) -> Control:
 
 	_tip_root = _build_tooltip(s)
 	body.add_child(_tip_root)
+
+	# Chest storage sits UNDER the player inventory. Hidden unless a chest is
+	# attached, so ordinary inventory opening is completely unchanged.
+	_chest_section = VBoxContainer.new()
+	_chest_section.visible = false
+	_chest_section.add_theme_constant_override("separation", i(6, s))
+	root.add_child(_chest_section)
 
 	return root
 
@@ -565,6 +843,9 @@ func _on_craft() -> void:
 
 # ── Inventory logic ───────────────────────────────────────────────
 func _refresh_inv() -> void:
+	# The chest section (when one is docked) renders from the chest's own array,
+	# but it must follow the same refresh signal as the player grid.
+	refresh_chest_slots()
 	if _slots.is_empty(): return
 	for idx in range(_slots.size()):
 		var item = Global.Inventory[idx] if idx < Global.Inventory.size() else null
@@ -597,7 +878,17 @@ func _on_slot_clicked(idx: int) -> void:
 	_tip_effect.text = ("+ " + data.effect) if data.effect != "" else ""
 	_tip_desc.text   = data.description
 
+func dismiss_back() -> void:
+	var was_open: bool = false
+	var layer: Node = get_parent()
+	if layer != null:
+		was_open = bool(layer.get("visible"))
+	_close()
+	if was_open:
+		Global.inventory_toggled.emit(false)
+
 func _close() -> void:
+	Global.unregister_ui_back(self)
 	# Idempotent: releasing the pause twice for one open would underflow the
 	# shared refcount and resume gameplay while another UI was still open.
 	#
@@ -605,6 +896,15 @@ func _close() -> void:
 	# a CanvasItem. Casting it to CanvasItem yields null, so the access must be
 	# duck-typed (this is what crashed every close with
 	# "Invalid access to property or key 'visible' on a base object of type 'Nil'").
+	#
+	# Any chest docked into this panel is released FIRST, even when something
+	# else already hid the layer (the player's close-all path): otherwise the
+	# chest would keep believing its UI is open and refuse to reopen. The chest
+	# keeps its contents — closing only tears down the views.
+	if _chest != null:
+		if is_instance_valid(_chest) and _chest.has_method("on_inventory_ui_closed"):
+			_chest.call("on_inventory_ui_closed")
+		detach_chest()
 	var layer: Node = get_parent()
 	if layer == null:
 		Global.close_ui()

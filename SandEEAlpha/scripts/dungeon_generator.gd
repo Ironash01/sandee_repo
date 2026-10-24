@@ -42,6 +42,17 @@ var height: int = 64
 
 const ROOM_MIN: int = 6
 const ROOM_MAX: int = 8
+# Rooms keep this many tiles of wall between them and the grid edge. The camera
+# also pads into that wall band (see DungeonWorld.CAMERA_WALL_PADDING_TILES),
+# so the player can be centred near the entrance instead of the camera locking.
+const ROOM_EDGE_MARGIN: int = 6
+# Traps stay this far (Chebyshev) outside every room, and this far from the
+# player spawn, so corridor thresholds and entrances cannot be blocked.
+const TRAP_ROOM_CLEARANCE: int = 2
+const TRAP_SPAWN_CLEARANCE: float = 4.0
+# Only place traps where the corridor is at least 2 tiles wide / a junction
+# (a 1-wide passage has just 2 floor neighbours and is excluded).
+const TRAP_MIN_FLOOR_NEIGHBOURS: int = 3
 
 # The quiz room must sit this far (center-to-center) from the knowledge room
 # so the dungeon isn't trivially short.
@@ -58,6 +69,10 @@ const CORRIDOR_MIN_RUN: int = 6
 var grid:                Array     = []  # grid[x][y] = Tile enum value
 var knowledge_room:      Dictionary = {} # {"pos": Vector2i, "size": Vector2i}
 var quiz_room:           Dictionary = {}
+## Two-room Hitman finale: entrance room + boss arena. Only populated by
+## generate_boss(); ordinary dungeons leave it empty.
+var boss_room:           Dictionary = {}
+var boss_spawn_pos:      Vector2i = Vector2i.ZERO
 # The player's spawn room, always against the grid edge nearest the knowledge
 # room (see _make_entrance_room). player_spawn_pos is its center.
 var entrance_room:       Dictionary = {}
@@ -86,11 +101,21 @@ var quiz_trap_positions:  Array     = []
 # room; chest_amount is pure extra loot rooms. The quiz room is always the
 # final room on top of those. bonus_count therefore = (altar_amount - 1) + chest_amount.
 var bonus_count: int = 0
+# Bonus rooms are deliberately empty loot rooms. A rare chest may occupy one
+# of them; at most one per dungeon, and only on a low deterministic roll.
+var bonus_rooms:    Array = []
+var rare_chest_positions: Array = []
+const RARE_CHEST_CHANCE: float = 0.18
+const RARE_CHEST_ROOM_CLEARANCE: int = 2
 
 # Neither the knowledge nor the quiz altar may sit within this many tiles of the
 # player's entrance spawn. generate() retries with a bumped seed until both clear.
 const ALTAR_SPAWN_MIN_DIST: float = 10.0
 const ALTAR_SPAWN_ATTEMPTS: int = 8
+# No corridor traps within this many tiles (Chebyshev, measured outside the room
+# rect) of the SAFE room — the knowledge altar room. Its entrances must stay a
+# genuine breather, so the safe-zone ring is trap-free.
+const SAFE_TRAP_CLEARANCE: int = 5
 
 func generate(seed_value: int, size_tier: int = -1, altar_amount: int = 1, chest_amount: int = 0) -> void:
 	# Retry with a bumped seed until BOTH altars are far enough from the spawn.
@@ -102,7 +127,49 @@ func generate(seed_value: int, size_tier: int = -1, altar_amount: int = 1, chest
 		if kd >= ALTAR_SPAWN_MIN_DIST and qd >= ALTAR_SPAWN_MIN_DIST:
 			return
 
+# Deterministic two-room finale: one safe entrance room and one large boss
+# arena joined by a clear 2-wide corridor. No bonus rooms, altars, traps,
+# flares, guards, or rare-chest rolls are generated.
+func generate_boss(seed_value: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	width = 64
+	height = 64
+	bonus_count = 0
+	bonus_rooms = []
+	rare_chest_positions = []
+	flare_positions = []
+	trap_positions = []
+	gap_positions = []
+	quiz_guard_positions = []
+	quiz_trap_positions = []
+
+	grid = []
+	grid.resize(width)
+	for x in range(width):
+		var col: Array = []
+		col.resize(height)
+		for y in range(height):
+			col[y] = Tile.WALL
+		grid[x] = col
+
+	entrance_room = {"pos": Vector2i(8, 27), "size": Vector2i(10, 10)}
+	boss_room = {"pos": Vector2i(38, 23), "size": Vector2i(18, 18)}
+	_carve_room(entrance_room)
+	_carve_room(boss_room)
+	_carve_thick_line(_room_center(entrance_room), _room_center(boss_room))
+	player_spawn_pos = _room_center(entrance_room)
+	boss_spawn_pos = _room_center(boss_room)
+	knowledge_room = {}
+	quiz_room = boss_room
+	knowledge_altar_pos = Vector2i.ZERO
+	quiz_altar_pos = boss_spawn_pos
+	_carve_mouth()
+
+
 func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_amount: int) -> void:
+	boss_room = {}
+	boss_spawn_pos = Vector2i.ZERO
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
@@ -162,6 +229,7 @@ func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_am
 		all_rooms.append(room)
 		bonus.append(room)
 		placed += 1
+	bonus_rooms = bonus.duplicate()
 	if placed < bonus_count:
 		push_warning("DungeonGenerator: placed %d/%d rooms (altar_amount=%d chest_amount=%d on %dx%d grid)" \
 			% [placed, bonus_count, altar_amount, chest_amount, width, height])
@@ -186,6 +254,9 @@ func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_am
 	_pick_gap_positions()
 	_pick_quiz_guards(rng)
 	_pick_quiz_traps()
+	# Runs last so the optional rare-chest roll cannot change the dungeon
+	# layout/room/corridor placement above.
+	_pick_rare_chest_position(rng)
 
 # Wall tiles that face a walkable FLOOR cell become flare host cells. They
 # stay WALL in the grid (collision + wall-variant art untouched); the world
@@ -210,7 +281,9 @@ func _pick_flare_positions(rng: RandomNumberGenerator) -> void:
 
 # Corridor FLOOR cells (walkable tiles NOT inside any room) chosen to host a
 # persistent DungeonTrap. Spaced apart so traps don't cluster into a wall of
-# explosions. `rooms` is every room rect (knowledge + quiz + bonus).
+# explosions, and kept clear of the safe (knowledge) room so the trap-free
+# breather around the safe zone is preserved. `rooms` is every room rect
+# (knowledge + quiz + bonus).
 func _pick_trap_positions(rng: RandomNumberGenerator, rooms: Array) -> void:
 	trap_positions = []
 	var wanted: int = clampi((width * height) / 1000, 6, 14)
@@ -221,7 +294,25 @@ func _pick_trap_positions(rng: RandomNumberGenerator, rooms: Array) -> void:
 				continue
 			if _cell_in_any_room(Vector2i(x, y), rooms):
 				continue
-			candidates.append(Vector2i(x, y))
+			# Safe-zone clearance: no traps around the knowledge altar room.
+			if _dist_to_room(Vector2i(x, y), knowledge_room) <= SAFE_TRAP_CLEARANCE:
+				continue
+			var cell := Vector2i(x, y)
+			# No traps near ANY room mouth/threshold.
+			var near_room := false
+			for room in rooms:
+				if _dist_to_room(cell, room) <= TRAP_ROOM_CLEARANCE:
+					near_room = true
+					break
+			if near_room:
+				continue
+			# Keep the entrance spawn corridor clear.
+			if Vector2(cell).distance_to(Vector2(player_spawn_pos)) < TRAP_SPAWN_CLEARANCE:
+				continue
+			# 1-wide passages are too easy to soft-lock with knockback.
+			if _floor_neighbours(cell) < TRAP_MIN_FLOOR_NEIGHBOURS:
+				continue
+			candidates.append(cell)
 	var min_sep: float = 4.0
 	for i in range(wanted):
 		if candidates.is_empty():
@@ -271,12 +362,12 @@ func _pick_gap_positions() -> void:
 				gap_positions.append(c)
 				break
 
-# 2-3 walkable cells ringing the quiz altar (inside the room) for hitman guards.
+# Exactly two walkable cells ringing the quiz altar for hitman guards.
 func _pick_quiz_guards(rng: RandomNumberGenerator) -> void:
 	quiz_guard_positions = []
 	var c := quiz_altar_pos
 	var r := 2
-	var count: int = rng.randi_range(2, 3)
+	var count: int = 2
 	for i in range(8):
 		if quiz_guard_positions.size() >= count:
 			break
@@ -290,6 +381,25 @@ func _pick_quiz_guards(rng: RandomNumberGenerator) -> void:
 
 # Up to 8 traps ringing the quiz altar, with 2 opposite gaps left open so the
 # player can walk through.
+func _floor_neighbours(cell: Vector2i) -> int:
+	var count := 0
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var n: Vector2i = cell + d
+		if _in_bounds(n) and grid[n.x][n.y] == Tile.FLOOR:
+			count += 1
+	return count
+
+# True when `cell` is a floor cell just inside `room` that touches a floor cell
+# outside the room (a corridor opening). Never place a quiz trap there.
+func _touches_room_opening(cell: Vector2i, room: Dictionary) -> bool:
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var n: Vector2i = cell + d
+		if _cell_in_room(n, room):
+			continue
+		if _in_bounds(n) and grid[n.x][n.y] == Tile.FLOOR:
+			return true
+	return false
+
 func _pick_quiz_traps() -> void:
 	quiz_trap_positions = []
 	var c := quiz_altar_pos
@@ -308,6 +418,8 @@ func _pick_quiz_traps() -> void:
 			continue
 		if i == gap_a or i == gap_b:
 			continue   # walk-through gap
+		if _touches_room_opening(cell, quiz_room):
+			continue   # corridor threshold: never trap it
 		quiz_trap_positions.append(cell)
 
 # Safe altar room: the KNOWLEDGE room only. The quiz room is NOT safe — its
@@ -323,6 +435,54 @@ func _cell_in_room(cell: Vector2i, room: Dictionary) -> bool:
 func _in_bounds(c: Vector2i) -> bool:
 	return c.x >= 0 and c.y >= 0 and c.x < width and c.y < height
 
+# Optional rare chest in one of the otherwise-empty bonus rooms. The roll is a
+# single low-probability check per dungeon; candidates need a clear 3x3 floor
+# patch two tiles inside the room and cannot share a tile with any generated
+# feature (altars, guards, traps, spawn, corridor gaps).
+func _pick_rare_chest_position(rng: RandomNumberGenerator) -> void:
+	rare_chest_positions = []
+	if bonus_rooms.is_empty() or rng.randf() >= RARE_CHEST_CHANCE:
+		return
+	var reserved: Dictionary = {}
+	for cell in [player_spawn_pos, knowledge_altar_pos, quiz_altar_pos]:
+		reserved[cell] = true
+	for arr in [gap_positions, quiz_guard_positions, quiz_trap_positions,
+			trap_positions, flare_positions]:
+		for cell in (arr as Array):
+			reserved[cell as Vector2i] = true
+	var rooms: Array = bonus_rooms.duplicate()
+	for i in range(rooms.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: Variant = rooms[i]
+		rooms[i] = rooms[j]
+		rooms[j] = tmp
+	for room_value in rooms:
+		var room: Dictionary = room_value as Dictionary
+		var p: Vector2i = room["pos"]
+		var sz: Vector2i = room["size"]
+		var candidates: Array = []
+		for x in range(p.x + RARE_CHEST_ROOM_CLEARANCE, p.x + sz.x - RARE_CHEST_ROOM_CLEARANCE):
+			for y in range(p.y + RARE_CHEST_ROOM_CLEARANCE, p.y + sz.y - RARE_CHEST_ROOM_CLEARANCE):
+				var cell := Vector2i(x, y)
+				if reserved.has(cell) or grid[x][y] != Tile.FLOOR:
+					continue
+				if not _floor_patch_clear(cell, 1):
+					continue
+				candidates.append(cell)
+		if candidates.is_empty():
+			continue
+		rare_chest_positions = [candidates[rng.randi_range(0, candidates.size() - 1)]]
+		return
+
+func _floor_patch_clear(center: Vector2i, radius: int) -> bool:
+	for x in range(center.x - radius, center.x + radius + 1):
+		for y in range(center.y - radius, center.y + radius + 1):
+			if x < 1 or y < 1 or x >= width - 1 or y >= height - 1:
+				return false
+			if grid[x][y] != Tile.FLOOR:
+				return false
+	return true
+
 func _cell_in_any_room(cell: Vector2i, rooms: Array) -> bool:
 	for room in rooms:
 		var p: Vector2i = room["pos"]
@@ -331,13 +491,25 @@ func _cell_in_any_room(cell: Vector2i, rooms: Array) -> bool:
 			return true
 	return false
 
+# Chebyshev distance in tiles from `cell` to the outside of `room`'s rect
+# (0 when the cell is inside the room). Used to keep hazards clear of the safe
+# (knowledge) room.
+func _dist_to_room(cell: Vector2i, room: Dictionary) -> int:
+	if room.is_empty():
+		return 9999
+	var p: Vector2i = room["pos"]
+	var s: Vector2i = room["size"]
+	var dx: int = maxi(maxi(p.x - cell.x, cell.x - (p.x + s.x - 1)), 0)
+	var dy: int = maxi(maxi(p.y - cell.y, cell.y - (p.y + s.y - 1)), 0)
+	return maxi(dx, dy)
+
 func _make_room(rng: RandomNumberGenerator) -> Dictionary:
 	var w := rng.randi_range(ROOM_MIN, ROOM_MAX)
 	var h := rng.randi_range(ROOM_MIN, ROOM_MAX)
 	# Margins keep rooms off the border walls (index 0 / width-1 / height-1)
 	# with room to spare for an entrance corridor.
-	var x := rng.randi_range(2, width - w - 3)
-	var y := rng.randi_range(2, height - h - 3)
+	var x := rng.randi_range(ROOM_EDGE_MARGIN, width - w - ROOM_EDGE_MARGIN)
+	var y := rng.randi_range(ROOM_EDGE_MARGIN, height - h - ROOM_EDGE_MARGIN)
 	return {"pos": Vector2i(x, y), "size": Vector2i(w, h)}
 
 # ── Entrance room (the player's spawn room) ────────────────────────
@@ -370,12 +542,12 @@ func _make_entrance_room(rng: RandomNumberGenerator) -> Dictionary:
 func _entrance_rect(edge: String, w: int, h: int, kc: Vector2i, offset: int) -> Dictionary:
 	var pos := Vector2i.ZERO
 	match edge:
-		"left":  pos = Vector2i(2, kc.y - h / 2 + offset)
-		"right": pos = Vector2i(width - w - 2, kc.y - h / 2 + offset)
-		"up":    pos = Vector2i(kc.x - w / 2 + offset, 2)
-		_:       pos = Vector2i(kc.x - w / 2 + offset, height - h - 2)
-	pos.x = clampi(pos.x, 2, width  - w - 2)
-	pos.y = clampi(pos.y, 2, height - h - 2)
+		"left":  pos = Vector2i(ROOM_EDGE_MARGIN, kc.y - h / 2 + offset)
+		"right": pos = Vector2i(width - w - ROOM_EDGE_MARGIN, kc.y - h / 2 + offset)
+		"up":    pos = Vector2i(kc.x - w / 2 + offset, ROOM_EDGE_MARGIN)
+		_:       pos = Vector2i(kc.x - w / 2 + offset, height - h - ROOM_EDGE_MARGIN)
+	pos.x = clampi(pos.x, ROOM_EDGE_MARGIN, width  - w - ROOM_EDGE_MARGIN)
+	pos.y = clampi(pos.y, ROOM_EDGE_MARGIN, height - h - ROOM_EDGE_MARGIN)
 	return {"pos": pos, "size": Vector2i(w, h)}
 
 # The grid edge closest to `center` — "left" / "right" / "up" / "down".

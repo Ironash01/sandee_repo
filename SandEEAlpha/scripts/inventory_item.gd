@@ -20,6 +20,7 @@ const DROP_SCALE:        float = 0.55  # dropped items are smaller than full siz
 var   _wobble_time:      float = 0.0
 
 # ── Despawn ───────────────────────────────────────────────────────
+const PICKUP_RADIUS_PX:  float = 40.0   # covers an adjacent mined tile (32px)
 const DESPAWN_TIME:       float = 300.0  # 5 minutes on the ground
 const DESPAWN_BLINK_TIME: float = 3.0    # flash before vanishing
 const DESPAWN_BLINK_FREQ: float = 8.0    # flashes per second
@@ -80,6 +81,19 @@ func _process(delta: float) -> void:
 		modulate.a = 1.0 if int(_despawn_elapsed * DESPAWN_BLINK_FREQ) % 2 == 0 else 0.15
 
 	_repel_from_blocks()
+
+	# Proximity fallback: body_entered does not fire when a drop is created
+	# already inside the player's pickup Area (common for mined/underfoot drops
+	# in caves), and a missed body_exited can leave a stale flag. The distance
+	# check uses the player's feet point and applies in every world.
+	var p := Global.player_node as Node2D
+	if p != null and is_instance_valid(p):
+		var feet: Vector2 = p.global_position + Vector2(0.0, 17.0)
+		var near: bool = global_position.distance_to(feet) <= PICKUP_RADIUS_PX
+		if near:
+			player_in_range = true
+		elif player_in_range and global_position.distance_to(p.global_position) > PICKUP_RADIUS_PX * 1.5:
+			player_in_range = false
 
 	if player_in_range:
 		pickup_item()

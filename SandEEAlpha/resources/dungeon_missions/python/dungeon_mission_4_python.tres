@@ -20,7 +20,7 @@ script = ExtResource("2_question")
 type = 1
 question = "In this exercise you should declare a variable is_student with the boolean value True, then print it."
 language = "python"
-starter_code = "is_student = True\nprint(is_student)"
+starter_code = ""
 answer_output = "True"
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]

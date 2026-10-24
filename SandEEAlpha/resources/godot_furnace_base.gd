@@ -51,7 +51,7 @@ func take_output() -> int:
 		return 0
 	return int(host.call("furnace_take_output"))
 
-# ── Read-only state ──
+# ── Read-only slot state ──
 func input_name() -> String:
 	var host := _furnace_host()
 	return "" if host == null else str(host.call("furnace_input_name"))
@@ -68,6 +68,7 @@ func fuel_count() -> int:
 	var host := _furnace_host()
 	return 0 if host == null else int(host.call("furnace_fuel_count"))
 
+# output_name() / output_count() — read the output slot ("" / 0 when empty).
 func output_name() -> String:
 	var host := _furnace_host()
 	return "" if host == null else str(host.call("furnace_output_name"))

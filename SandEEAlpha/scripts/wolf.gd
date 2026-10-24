@@ -12,6 +12,12 @@ const AI_SCRIPTS: Dictionary = {
 const ATTACK_RANGE:    float = 24.0
 const ATTACK_COOLDOWN: float = 1.0
 
+# ── Loot ───────────────────────────────────────────────────────────
+# Wolves are SandEE's canines, so they are the Dog Meat source: every kill
+# yields 1, with independent chance rolls for a 2nd and 3rd.
+const DOG_MEAT_ITEM: ItemData = preload("res://resources/items/dog_meat.tres")
+const DROP_ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
+
 # ── Separation ─────────────────────────────────────────────────────
 # Wolves don't physically collide with each other (different physics layers),
 # so chasing ones would stack on the same pixel. A soft separation force
@@ -193,7 +199,16 @@ func _try_attack_player(delta: float) -> void:
 # blade overlaps this mob. Reduces HP, knocks the wolf back from the hit
 # origin (unless it's a boss), shows the red hit flash + floating damage
 # number, and dies at 0 HP.
+#
+# Wolves are PROTECTED: every damage path in the game funnels through this
+# method (player sword swings, the LUA robot's attack, dungeon explosions,
+# mob self-destructs), so this single guard makes them impossible to hurt by
+# any source. Flip WOLF_PROTECTED to false to restore normal damage.
+const WOLF_PROTECTED: bool = true
+
 func take_hit(damage: float, source_pos: Vector2, apply_knockback: bool = true) -> void:
+	if WOLF_PROTECTED:
+		return
 	if damage <= 0.0:
 		return
 	damage = COMBAT_DATA.damage_taken(damage)
@@ -281,9 +296,33 @@ func _die() -> void:
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
-	Global.add_mission_progress("defeat_wolves")
+	# The old "Defeat 5 wolves" mission was retired; the late-game side
+	# mission is separate and tracks real defeats only.
+	Global.add_mission_progress("side_wolf_slayer", 1)
+	_drop_dog_meat()
 	_spawn_death_burst()
 	queue_free()
+
+# Spawns 1-3 Dog Meat at the corpse. Spawns the drop scene directly rather than
+# going through Global.drop_item(), which deliberately snaps drag-out drops to
+# the tile in front of the player — wrong for loot.
+func _drop_dog_meat() -> void:
+	var count: int = 1
+	if randf() < 0.65:
+		count += 1
+	if randf() < 0.30:
+		count += 1
+	var parent: Node = get_parent()
+	if parent == null or not is_instance_valid(parent):
+		return
+	var drop: Node = DROP_ITEM_SCENE.instantiate()
+	if drop == null:
+		return
+	drop.set("item_data", DOG_MEAT_ITEM)
+	drop.set("quantity", count)
+	parent.add_child(drop)
+	if drop is Node2D:
+		(drop as Node2D).global_position = global_position + Vector2(0.0, -6.0)
 
 # Minecraft-style death poof: a burst of mellow puffs at the body's location,
 # spawned as a sibling so it survives this mob's free.

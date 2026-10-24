@@ -99,6 +99,7 @@ func _update_day_state() -> void:
 	if now_day and not _was_daytime:
 		Global.day_started.emit()
 		Global.add_mission_progress("survive_days")
+		Global.add_mission_progress("side_survivor", 1)
 	elif not now_day and _was_daytime:
 		Global.night_started.emit()
 	_was_daytime = now_day

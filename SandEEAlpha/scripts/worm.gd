@@ -6,6 +6,10 @@ extends CharacterBody2D
 # at a fixed distance behind the previous segment.
 
 const COMBAT_DATA: MobCombatData = preload("res://resources/mobs/worm.tres")
+const CACTUS_ITEM: ItemData = preload("res://resources/items/cactus.tres")
+const DROP_ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
+const CACTUS_DROP_MIN: int = 5
+const CACTUS_DROP_MAX: int = 10
 
 const AI_SCRIPTS: Dictionary = {
 	"WORM": preload("res://scripts/AI/WORM.gd"),
@@ -28,6 +32,7 @@ var _segment_positions: Array = []
 
 # ── Combat ─────────────────────────────────────────────────────────
 var _mob_health: float  = 0.0
+var _death_processed: bool = false
 var _knockback:  Vector2 = Vector2.ZERO
 const KNOCKBACK_DECAY: float = 900.0
 
@@ -246,6 +251,8 @@ func _physics_process(delta: float) -> void:
 			velocity = _disperse_direction * DISPERSE_SPEED
 			velocity += _knockback
 			_knockback = _knockback.move_toward(Vector2.ZERO, KNOCKBACK_DECAY * delta)
+			if _water_blocks_movement(velocity, delta):
+				velocity = Vector2.ZERO
 			# Underground: move without collision
 			global_position += velocity * delta
 			_record_path()
@@ -310,6 +317,8 @@ func _physics_process(delta: float) -> void:
 			move_dir = _find_nearest_open_area()
 
 	velocity = move_dir * underground_vel.length() if not move_dir.is_zero_approx() else Vector2.ZERO
+	if _water_blocks_movement(velocity, delta):
+		velocity = Vector2.ZERO
 
 	# --- Oscillation timer ---
 	_dir_change_timer -= delta
@@ -446,6 +455,8 @@ func _process_state(delta: float) -> void:
 						# Path reopened — drop the committed evade.
 						_evade_dir = Vector2.ZERO
 
+			if _water_blocks_movement(velocity, delta):
+				velocity = Vector2.ZERO
 			move_and_slide()
 			_record_path()
 			# ── Contact damage ──────────────────────────────────────
@@ -484,7 +495,8 @@ func _process_state(delta: float) -> void:
 			else:
 				_stuck_timer += delta
 				if _stuck_timer >= STUCK_TIMEOUT:
-					_die()
+					# Watchdog cleanup is not a player defeat: no cactus loot.
+					_die(false)
 					return
 
 		State.BURROWING:
@@ -699,6 +711,19 @@ func _get_water_layer() -> TileMapLayer:
 		return parent.get_node_or_null("Water") as TileMapLayer
 	return null
 
+# Final velocity veto for knockback / evasion / dispersal: the AI guard stops
+# deliberate target-chasing, but every movement source must also stay dry.
+func _water_blocks_movement(vel: Vector2, delta: float) -> bool:
+	if vel.length_squared() < 0.0001:
+		return false
+	var water := _get_water_layer()
+	if water == null:
+		return false
+	var probe: Vector2 = global_position \
+		+ vel.normalized() * maxf(8.0, vel.length() * delta * 2.0)
+	var wtile: Vector2i = water.local_to_map(water.to_local(probe))
+	return water.get_cell_source_id(wtile) != -1
+
 func _is_tile_solid(world_pos: Vector2) -> bool:
 	var world: Node = Global.world_node
 	if world == null:
@@ -707,7 +732,16 @@ func _is_tile_solid(world_pos: Vector2) -> bool:
 	if tilemap == null:
 		return false
 	var tile: Vector2i = tilemap.local_to_map(tilemap.to_local(world_pos))
-	return tilemap.get_cell_tile_data(tile) != null
+	if tilemap.get_cell_tile_data(tile) != null:
+		return true
+	# Desert Worms treat water as impassable for path planning too. Without
+	# this, an underground chase could route straight across a shoreline.
+	var water := _get_water_layer()
+	if water != null:
+		var wtile: Vector2i = water.local_to_map(water.to_local(world_pos))
+		if water.get_cell_source_id(wtile) != -1:
+			return true
+	return false
 
 func _has_clearance(dir: Vector2, dist: float = 24.0) -> bool:
 	# Check if the path ahead has enough room for the worm's body.
@@ -880,15 +914,39 @@ func _show_name_label() -> void:
 	if _name_label != null:
 		_name_label.call("flash")
 
-func _die() -> void:
+# allow_loot is false for cleanup deaths (e.g. the stuck watchdog). A normal
+# combat defeat passes true. The guard makes repeated damage calls / callbacks
+# produce exactly one death and one loot bundle.
+func _die(allow_loot: bool = true) -> void:
+	if _death_processed:
+		return
+	_death_processed = true
 	if _sand_particles != null and _sand_particles.has_method("set_buried"):
 		_sand_particles.set_buried()
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
 	Global.add_mission_progress("defeat_worms")
+	if allow_loot:
+		Global.add_mission_progress("side_worm_slayer", 1)
+		_drop_cactus_loot()
 	_spawn_death_burst()
 	queue_free()
+
+# One cactus bundle per successful defeat, quantity 5-10 inclusive. Normal
+# InventoryItem pickup/overflow rules apply after it lands on the ground.
+func _drop_cactus_loot() -> void:
+	var parent: Node = get_parent()
+	if parent == null or not is_instance_valid(parent):
+		return
+	var drop: Node = DROP_ITEM_SCENE.instantiate()
+	if drop == null:
+		return
+	drop.set("item_data", CACTUS_ITEM)
+	drop.set("quantity", randi_range(CACTUS_DROP_MIN, CACTUS_DROP_MAX))
+	parent.add_child(drop)
+	if drop is Node2D:
+		(drop as Node2D).global_position = global_position + Vector2(0.0, -6.0)
 
 func _spawn_death_burst() -> void:
 	var b: Node2D = MELLOW_BURST_SCRIPT.new() as Node2D
