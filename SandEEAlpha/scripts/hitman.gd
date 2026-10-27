@@ -536,6 +536,8 @@ func _die() -> void:
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
+	if not COMBAT_DATA.bestiary_id.is_empty():
+		Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 	_spawn_death_burst()
 	queue_free()
 

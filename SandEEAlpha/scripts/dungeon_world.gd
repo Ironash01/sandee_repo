@@ -398,6 +398,7 @@ func _architecture_reserved_cells() -> Dictionary:
 	cells.append(generator.player_spawn_pos)
 	cells.append(generator.boss_spawn_pos)
 	cells.append(generator.quiz_altar_pos + Vector2i(0, 2))  # exit marker
+	cells.append_array(generator.extra_altar_positions)
 	cells.append_array(generator.flare_positions)
 	cells.append_array(generator.trap_positions)
 	cells.append_array(generator.quiz_guard_positions)
@@ -488,7 +489,11 @@ func _spawn_medallion(texture: Texture2D, center: Vector2) -> void:
 	var root := Node2D.new()
 	add_child(root)
 	root.global_position = center
-	root.z_index = -2
+	# Floor decal. Dungeon actors y-sort into quantized buckets that go NEGATIVE
+	# above world origin, so this must sit just above the tilemap (-300) and
+	# below every actor/safe-zone marker (-200) or a player standing on the
+	# medallion can be covered by it.
+	root.z_index = -250
 	var spr := AnimatedSprite2D.new()
 	spr.sprite_frames = WaypointAnim.build(texture, MEDALLION_FRAME_SIZE)
 	spr.animation = "idle"
@@ -1008,24 +1013,52 @@ func _cell_is_wall(x: int, y: int) -> bool:
 func _spawn_altars() -> void:
 	if _mission == null:
 		return
+	# Never duplicate altars if setup/room contents are regenerated on an
+	# existing dungeon instance. New dungeons always use a fresh node.
+	for child in get_children():
+		if child.is_in_group("KnowledgeAltar") or child.is_in_group("QuizAltar"):
+			return
 	if _mission.is_boss():
 		return
 	if _mission.is_extra():
 		# Extra dungeons deliberately have no Knowledge Altar. Put a functional
-		# Quiz Altar in both the former knowledge room and the final quiz room.
-		_spawn_quiz_altar_at(generator.knowledge_altar_pos)
-		if generator.quiz_altar_pos != generator.knowledge_altar_pos:
-			_spawn_quiz_altar_at(generator.quiz_altar_pos)
+		# Quiz Altar in both the former knowledge room and the final quiz room,
+		# plus one in every extra altar/checkpoint room.
+		var positions: Array = [generator.knowledge_altar_pos, generator.quiz_altar_pos]
+		positions.append_array(generator.extra_altar_positions)
+		var used: Dictionary = {}
+		for pos_value in positions:
+			var pos: Vector2i = pos_value as Vector2i
+			if used.has(pos):
+				continue
+			used[pos] = true
+			_spawn_quiz_altar_at(pos)
 		return
 
+	var knowledge_positions: Array = [generator.knowledge_altar_pos]
+	knowledge_positions.append_array(generator.extra_altar_positions)
+	var used_k: Dictionary = {}
+	for pos_value in knowledge_positions:
+		var pos: Vector2i = pos_value as Vector2i
+		if used_k.has(pos):
+			continue
+		used_k[pos] = true
+		_spawn_knowledge_altar_at(pos)
+	_spawn_quiz_altar_at(generator.quiz_altar_pos)
+
+func _spawn_knowledge_altar_at(grid_pos: Vector2i) -> void:
+	if not grid_cell_is_floor(grid_pos):
+		push_warning("DungeonWorld: knowledge altar cell %s is not walkable" % grid_pos)
+		return
 	var knowledge := KnowledgeAltar.new()
 	knowledge.setup(_mission)
 	add_child(knowledge)
-	knowledge.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(generator.knowledge_altar_pos)))
-
-	_spawn_quiz_altar_at(generator.quiz_altar_pos)
+	knowledge.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(grid_pos)))
 
 func _spawn_quiz_altar_at(grid_pos: Vector2i) -> void:
+	if not grid_cell_is_floor(grid_pos):
+		push_warning("DungeonWorld: quiz altar cell %s is not walkable" % grid_pos)
+		return
 	var quiz := QuizAltar.new()
 	quiz.setup(_mission)
 	quiz.cleared.connect(_on_dungeon_cleared)

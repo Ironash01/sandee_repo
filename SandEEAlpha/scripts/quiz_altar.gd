@@ -56,6 +56,7 @@ var _feedback:   Label = null
 var _controls:   Control = null
 var _close_btn:  Button = null
 var _hint_btn:   Button = null
+var _run_btn:    Button = null
 var _hints_used: int = 0
 var _hint_busy:  bool = false
 var _answered:   int = 0
@@ -76,6 +77,7 @@ const PYTHON_SPEC: LanguageSpecification = preload("uid://dwisajvglb4eu")
 
 var _code_entry:       TextEdit = null
 var _compiler_output:  RichTextLabel = null
+var _compiler_grid:    GridContainer = null
 var _error_label:      Label = null
 var _lua_state:        Node = null
 var _python_state:     PythonState = null
@@ -92,7 +94,8 @@ func _ready() -> void:
 	add_to_group("QuizAltar")
 	var tex := AtlasTexture.new()
 	tex.atlas = SPRITE_TEXTURE
-	tex.region = Rect2(352, 128, 32, 32)
+	# y=96 is the altar-art row in the dungeon atlas; y=128 is the floor row.
+	tex.region = Rect2(352, 96, 32, 32)
 	var sprite := Sprite2D.new()
 	sprite.texture = tex
 	add_child(sprite)
@@ -135,6 +138,7 @@ func _on_ui_scale(_s: float) -> void:
 	_content_scroll = null
 	_q_progress = null; _q_text = null; _feedback = null
 	_controls = null; _close_btn = null; _hint_btn = null
+	_run_btn = null; _compiler_grid = null
 	_reward_root = null
 	_code_entry = null; _compiler_output = null; _error_label = null
 	if was_visible:
@@ -155,9 +159,14 @@ func _on_ui_scale(_s: float) -> void:
 
 func _process(delta: float) -> void:
 	if _panel != null and _panel.visible and _panel_scroll != null:
-		var want: float = -(Global.ui_safe_insets.w + Global.mobile_keyboard_height())
+		var want: float = -(Global.ui_safe_insets.w + Global.keyboard_panel_inset())
 		if not is_equal_approx(_panel_scroll.offset_bottom, want):
 			_panel_scroll.offset_bottom = want
+			# The panel itself no longer floats for a floating keyboard, but a
+			# docked keyboard still shrinks the visible area: keep only the
+			# focused code field scrolled into view.
+			_ensure_editor_visible()
+	_update_compiler_columns()
 	if _glow != null:
 		_glow_time += delta
 		_glow.energy = GLOW_ENERGY_BASE + sin(_glow_time * GLOW_BLINK_SPEED) * GLOW_ENERGY_AMP
@@ -285,6 +294,8 @@ func _start_quiz() -> void:
 	if _hint_btn != null:
 		_hint_btn.visible = true
 		_hint_btn.disabled = false
+	if _run_btn != null:
+		_run_btn.visible = false
 	if _close_btn != null:
 		_close_btn.visible = true
 	# Clear any stale compiler-run suspension before registering this opening;
@@ -332,6 +343,10 @@ func _rebuild_controls() -> void:
 	_code_entry      = null
 	_compiler_output = null
 	_error_label     = null
+	_compiler_grid   = null
+	if _run_btn != null:
+		_run_btn.visible = false
+		_run_btn.disabled = false
 
 	if q.is_compiler():
 		_build_compiler_controls(q)
@@ -367,6 +382,16 @@ func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text
 func _scroll_content_top() -> void:
 	if _content_scroll != null and is_instance_valid(_content_scroll):
 		_content_scroll.scroll_vertical = 0
+
+# Brings only the focused code field into view inside the question scroll. The
+# panel itself stays put, which is what a floating Android keyboard needs.
+func _ensure_editor_visible() -> void:
+	if _code_entry == null or not is_instance_valid(_code_entry):
+		return
+	if not _code_entry.has_focus():
+		return
+	if _content_scroll != null and is_instance_valid(_content_scroll):
+		_content_scroll.call_deferred("ensure_control_visible", _code_entry)
 
 
 ## 3 stars with no hints, 2 with exactly one, 1 with two or more.
@@ -450,8 +475,8 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	# Do not auto-scroll to the editor on focus: opening a compiler question
 	# must leave the question text visible. The keyboard-offset path scrolls to
 	# the editor only after the player has actually focused it.
-	_controls.add_child(entry)
 	_code_entry = entry
+	entry.focus_entered.connect(_ensure_editor_visible)
 
 	# ERROR line: sits DIRECTLY under the code box (the panel-bottom _feedback
 	# label is reserved for MCQ answers / rubric results) so a failed compile
@@ -461,11 +486,47 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	err.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	err.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	err.add_theme_color_override("font_color", C_ERROR)
-	_controls.add_child(err)
 	_error_label = err
+
+	# Code and output share a responsive grid: side-by-side on wide/mobile
+	# landscape screens, stacked vertically when the viewport is narrow.
+	var grid := GridContainer.new()
+	grid.name = "CompilerColumns"
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", int(12 * s))
+	grid.add_theme_constant_override("v_separation", int(8 * s))
+	_controls.add_child(grid)
+	_compiler_grid = grid
+
+	var code_col := VBoxContainer.new()
+	code_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	code_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	code_col.add_theme_constant_override("separation", int(4 * s))
+	grid.add_child(code_col)
+	var code_lbl := Label.new()
+	code_lbl.text = "CODE"
+	code_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+	code_lbl.add_theme_color_override("font_color", C_MUTED)
+	code_col.add_child(code_lbl)
+	code_col.add_child(entry)
+	code_col.add_child(err)
+
+	var out_col := VBoxContainer.new()
+	out_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	out_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	out_col.add_theme_constant_override("separation", int(4 * s))
+	grid.add_child(out_col)
+	var out_lbl := Label.new()
+	out_lbl.text = "OUTPUT"
+	out_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+	out_lbl.add_theme_color_override("font_color", C_MUTED)
+	out_col.add_child(out_lbl)
 
 	var out_box := PanelContainer.new()
 	out_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	out_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	out_box.custom_minimum_size = Vector2(int(260 * s), int(150 * s))
 	var obs := StyleBoxFlat.new()
 	obs.bg_color = Color(0.05, 0.07, 0.14, 1.0)
 	obs.border_color = C_BORDER
@@ -478,14 +539,15 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	out_box.add_theme_stylebox_override("panel", obs)
 	var out := RichTextLabel.new()
 	out.bbcode_enabled = true
-	out.custom_minimum_size = Vector2(0, int(80 * s))
 	out.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	out.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	out.scroll_following = true
 	out.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	out.add_theme_color_override("default_color", C_MUTED)
 	out_box.add_child(out)
-	_controls.add_child(out_box)
+	out_col.add_child(out_box)
 	_compiler_output = out
+	_update_compiler_columns()
 
 	# Lua runs through LuaState; Python is transpiled to GDScript and run. Both
 	# have a real interpreter now, so both get a "Run" button.
@@ -499,21 +561,38 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 		note.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5, 1.0))
 		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_controls.add_child(note)
+	if _run_btn != null:
+		_run_btn.visible = true
+		_run_btn.disabled = false
+		_run_btn.text = "▶  %s" % ("RUN" if is_interp else "CHECK")
+		_run_btn.tooltip_text = "Run the current code and compare its output." \
+			if is_interp else "Check the typed code against the expected answer."
 
-	var check_btn := Button.new()
-	check_btn.text = "▶  %s" % ("Run" if is_interp else "Check")
-	check_btn.custom_minimum_size = Vector2(int(140 * s), int(38 * s))
-	check_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	check_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.14, 0.34, 0.20, 1.0); sb.border_color = C_BORDER
-	sb.set_border_width_all(int(1 * s)); sb.set_corner_radius_all(int(4 * s))
-	check_btn.add_theme_stylebox_override("normal",  sb)
-	check_btn.add_theme_stylebox_override("hover",   sb)
-	check_btn.add_theme_stylebox_override("pressed", sb)
-	check_btn.add_theme_color_override("font_color", Color(0.70, 1.0, 0.80, 1.0))
-	check_btn.pressed.connect(func() -> void: _run_compiler(q, entry.text))
-	_controls.add_child(check_btn)
+# The header Run/Check button is the only run trigger for compiler questions.
+func _on_run_pressed() -> void:
+	if _running or _index < 0 or _index >= _questions.size():
+		return
+	var q: DungeonQuestion = _questions[_index]
+	if q == null or not q.is_compiler():
+		return
+	if _code_entry == null or not is_instance_valid(_code_entry):
+		return
+	_run_compiler(q, _code_entry.text)
+
+# Keep code and output side by side whenever the usable width can show two
+# readable columns; narrow/portrait screens stack them instead. Re-evaluated
+# every frame so rotation, safe-area changes and keyboard insets reflow live.
+func _update_compiler_columns() -> void:
+	if _compiler_grid == null or not is_instance_valid(_compiler_grid):
+		return
+	var s: float = Global.ui_scale
+	var content_w: float = Global.ui_content_rect().size.x
+	if content_w <= 0.0:
+		var vp := get_viewport()
+		content_w = vp.get_visible_rect().size.x if vp != null else 0.0
+	var columns: int = 2 if content_w >= 700.0 * s else 1
+	if _compiler_grid.columns != columns:
+		_compiler_grid.columns = columns
 
 func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	if _running:
@@ -532,6 +611,7 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	if q.language == "python":
 		_running = true
 		_accept_results = true
+		_set_run_busy(true)
 		_run_python(q, code)
 		return
 	# Unknown non-interpreted language: grade the typed code directly (the
@@ -541,6 +621,7 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 		return
 	_running = true
 	_accept_results = true
+	_set_run_busy(true)
 	# LuaState is the game's Lua compiler (the GDExtension the Lua robot uses).
 	if _lua_state == null:
 		_lua_state = LuaState.new()
@@ -619,6 +700,7 @@ func _on_quiz_failed(error: String) -> void:
 		_hint_busy = false
 		if _hint_btn != null:
 			_hint_btn.disabled = false
+		_set_run_busy(false)
 		_set_status("✘ " + error, C_ERROR)
 
 # Compiler-question status — errors AND the rubric result — goes to the line
@@ -630,6 +712,10 @@ func _set_status(text: String, col: Color) -> void:
 		return
 	lbl.text = text
 	lbl.add_theme_color_override("font_color", col)
+
+func _set_run_busy(busy: bool) -> void:
+	if _run_btn != null and is_instance_valid(_run_btn):
+		_run_btn.disabled = busy
 
 func _grade_compiler(q: DungeonQuestion) -> void:
 	if q == null:
@@ -648,6 +734,7 @@ func _grade_compiler(q: DungeonQuestion) -> void:
 		_hint_busy = false
 		if _hint_btn != null:
 			_hint_btn.disabled = false
+		_set_run_busy(false)
 
 # Grades a non-interpreted language's typed code against the expected code in
 # answer_output (normalized comparison) — the old LONG behaviour under COMPILER.
@@ -666,6 +753,7 @@ func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 		_hint_busy = false
 		if _hint_btn != null:
 			_hint_btn.disabled = false
+		_set_run_busy(false)
 
 # MCQ grading: the button passes the option index (0..3); it's correct when it
 # matches the question's correct_index.
@@ -732,6 +820,8 @@ func _show_reward_screen(stars: int) -> void:
 	_panel_scroll.visible = false
 	if _hint_btn != null:
 		_hint_btn.visible = false
+	if _run_btn != null:
+		_run_btn.visible = false
 	if _close_btn != null:
 		_close_btn.visible = false
 
@@ -986,6 +1076,28 @@ func _build_panel() -> Control:
 	_hint_btn.add_theme_color_override("font_color", C_TITLE)
 	_hint_btn.pressed.connect(_use_hint)
 	hdr.add_child(_hint_btn)
+
+	# Run/Check lives beside Hint in the header so the code/output area gets the
+	# full width below it. It is visible only for COMPILER questions.
+	_run_btn = Button.new()
+	_run_btn.text = "▶  RUN"
+	_run_btn.tooltip_text = "Run the current code and compare its output."
+	_run_btn.custom_minimum_size = Vector2(int(96 * s), int(30 * s))
+	_run_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
+	var rb := StyleBoxFlat.new()
+	rb.bg_color = Color(0.14, 0.34, 0.20, 1.0)
+	rb.border_color = C_BORDER
+	rb.set_border_width_all(int(1 * s))
+	rb.set_corner_radius_all(int(4 * s))
+	rb.content_margin_left = int(8 * s)
+	rb.content_margin_right = int(8 * s)
+	_run_btn.add_theme_stylebox_override("normal", rb)
+	_run_btn.add_theme_stylebox_override("hover", rb)
+	_run_btn.add_theme_stylebox_override("pressed", rb)
+	_run_btn.add_theme_color_override("font_color", Color(0.80, 1.0, 0.80, 1.0))
+	_run_btn.visible = false
+	_run_btn.pressed.connect(_on_run_pressed)
+	hdr.add_child(_run_btn)
 
 	var div := ColorRect.new()
 	div.color = Color(0.45, 0.25, 0.55, 1.0); div.custom_minimum_size = Vector2(0, int(1 * s))

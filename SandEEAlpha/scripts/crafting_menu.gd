@@ -328,7 +328,7 @@ func _close_programming() -> void:
 func _process(_delta: float) -> void:
 	if not visible:
 		return
-	var inset: float = Global.mobile_keyboard_height()
+	var inset: float = Global.keyboard_panel_inset()
 	var want: float = -(Global.ui_safe_insets.w + inset)
 	if _main_scroll != null and is_instance_valid(_main_scroll) \
 			and not is_equal_approx(_main_scroll.offset_bottom, want):

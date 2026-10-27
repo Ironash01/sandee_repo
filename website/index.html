@@ -50,14 +50,16 @@
           </p>
 
           <div class="dl-row">
-            <a class="btn" href="#" data-soon="PC download &mdash; coming soon" aria-disabled="true">
+            <a class="btn" href="downloads/SandEE-0.9.4.3-win64.zip" download
+               aria-label="Download SandEE 0.9.4.3 for Windows">
               <img class="ic" src="assets/img/platform-pc.svg" alt=""> Download for PC
             </a>
-            <a class="btn btn--accent" href="#" data-soon="Android download &mdash; coming soon" aria-disabled="true">
+            <a class="btn btn--accent" href="downloads/SandEE-0.9.4.3.apk" download
+               aria-label="Download SandEE 0.9.4.3 APK for Android">
               <img class="ic" src="assets/img/platform-android.svg" alt=""> Download for Android
             </a>
           </div>
-          <p class="platforms">Alpha build in development &bull; Windows &bull; Android</p>
+          <p class="platforms">Windows and Android alpha v0.9.4.3 available now</p>
         </div>
 
         <div class="hero__art">
@@ -268,22 +270,24 @@
       <div class="wrap">
         <div class="section__head">
           <h2>Download SandEE</h2>
-          <p>Coming to PC and Android. The alpha build is still in development &mdash;
-             download links will appear here once it ships.</p>
+          <p>Windows and Android alpha <strong>v0.9.4.3</strong> are ready to download.</p>
         </div>
 
         <div class="dl-grid">
           <article class="panel dl-card">
             <img src="assets/img/platform-pc.svg" alt="">
             <h3>PC / Windows</h3>
-            <a class="btn btn--block" href="#" data-soon="PC download &mdash; coming soon" aria-disabled="true">Download for PC</a>
-            <small>Windows 10 / 11 (64-bit)</small>
+            <a class="btn btn--block" href="downloads/SandEE-0.9.4.3-win64.zip" download
+               aria-label="Download SandEE 0.9.4.3 for Windows">Download for PC</a>
+            <small>Windows 10 / 11 (64-bit) &bull; v0.9.4.3 &bull; 45.4 MB ZIP<br>
+              Extract, then run <code>sandee.exe</code></small>
           </article>
           <article class="panel dl-card">
             <img src="assets/img/platform-android.svg" alt="">
             <h3>Android</h3>
-            <a class="btn btn--block btn--accent" href="#" data-soon="Android download &mdash; coming soon" aria-disabled="true">Download for Android</a>
-            <small>Android 8.0 and newer</small>
+            <a class="btn btn--block btn--accent" href="downloads/SandEE-0.9.4.3.apk" download
+               aria-label="Download SandEE 0.9.4.3 APK for Android">Download for Android</a>
+            <small>Android 8.0 and newer &bull; v0.9.4.3 &bull; 38.6 MB APK</small>
           </article>
         </div>
 
@@ -298,6 +302,25 @@
             <tr><td>Input</td><td>Keyboard &amp; mouse (PC) &bull; touch (Android)</td></tr>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- =========================================================== qr/share -->
+    <section class="section section--tint" id="share">
+      <div class="wrap qr">
+        <div class="qr__copy">
+          <span class="kicker">Take SandEE with you</span>
+          <h2>Scan to open this site</h2>
+          <p>Point your phone camera at the QR code to open the SandEE homepage on your
+             device. It is the quickest way to share the project with classmates, teachers
+             or friends.</p>
+          <p class="qr__note">Android players can install the latest alpha from the
+             <a href="#downloads">Downloads</a> section.</p>
+        </div>
+        <figure class="qr__card panel">
+          <img src="website_qr.svg" alt="QR code that opens the SandEE website" width="240" height="240">
+          <figcaption>SCAN ME</figcaption>
+        </figure>
       </div>
     </section>
 
@@ -328,6 +351,7 @@
           <h4>Quick Links</h4>
           <ul>
             <li><a href="#downloads">Downloads</a></li>
+            <li><a href="#share">Scan &amp; Share</a></li>
             <li><a href="#screens">Screenshots</a></li>
             <li><a href="#top">Back to Top</a></li>
           </ul>
@@ -352,7 +376,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    // Non-functional download buttons: show a "coming soon" toast instead.
+    // Buttons marked data-soon show a toast instead of navigating.
     (function () {
       var toast = document.getElementById('toast');
       var timer;

@@ -78,6 +78,13 @@ var boss_spawn_pos:      Vector2i = Vector2i.ZERO
 var entrance_room:       Dictionary = {}
 var knowledge_altar_pos: Vector2i = Vector2i.ZERO
 var quiz_altar_pos:      Vector2i = Vector2i.ZERO
+## Additional Knowledge-altar/checkpoint cells for missions whose altar_amount
+## is greater than 1. The first bonus rooms are used; a bounded fallback picks
+## another clear cell in the entrance/knowledge room if a bonus room is missing.
+var extra_altar_positions: Array = []
+## Bonus rooms that host one of the extra altars. Rare chests are restricted to
+## the remaining (pure loot) bonus rooms.
+var altar_room_centers: Dictionary = {}
 var player_spawn_pos:    Vector2i = Vector2i.ZERO
 # Wall cells chosen to host a DungeonFlare obstacle (dungeon_world spawns
 # one node per entry). Kept as Tile.WALL in the grid so the wall art and
@@ -164,6 +171,8 @@ func generate_boss(seed_value: int) -> void:
 	quiz_room = boss_room
 	knowledge_altar_pos = Vector2i.ZERO
 	quiz_altar_pos = boss_spawn_pos
+	extra_altar_positions = []
+	altar_room_centers = {}
 	_carve_mouth()
 
 
@@ -206,6 +215,8 @@ func generate_tutorial(_seed_value: int) -> void:
 	player_spawn_pos = Vector2i(15, 16)
 	knowledge_altar_pos = Vector2i(11, 16)
 	quiz_altar_pos = _room_center(room_two)
+	extra_altar_positions = []
+	altar_room_centers = {}
 	_carve_mouth()
 
 
@@ -291,6 +302,9 @@ func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_am
 	# The player spawns in the MIDDLE of the entrance room — never in a corridor.
 	player_spawn_pos    = _room_center(entrance_room)
 	_carve_mouth()
+	# Validate the required pair and resolve every altar_amount room before
+	# guards/traps/rare chests are positioned around the final altar cells.
+	_ensure_altar_positions(altar_amount)
 	_pick_flare_positions(rng)
 	_pick_trap_positions(rng, all_rooms)
 	_pick_gap_positions()
@@ -486,13 +500,25 @@ func _pick_rare_chest_position(rng: RandomNumberGenerator) -> void:
 	if bonus_rooms.is_empty() or rng.randf() >= RARE_CHEST_CHANCE:
 		return
 	var reserved: Dictionary = {}
-	for cell in [player_spawn_pos, knowledge_altar_pos, quiz_altar_pos]:
-		reserved[cell] = true
+	_reserve_cell_radius(reserved, player_spawn_pos, 1)
+	_reserve_cell_radius(reserved, knowledge_altar_pos, 1)
+	_reserve_cell_radius(reserved, quiz_altar_pos, 1)
+	for cell in extra_altar_positions:
+		_reserve_cell_radius(reserved, cell as Vector2i, 1)
 	for arr in [gap_positions, quiz_guard_positions, quiz_trap_positions,
 			trap_positions, flare_positions]:
 		for cell in (arr as Array):
 			reserved[cell as Vector2i] = true
-	var rooms: Array = bonus_rooms.duplicate()
+	# Extra altars occupy the first bonus rooms; rare chests use only the pure
+	# loot rooms, so an altar and a chest never share a room.
+	var rooms: Array = []
+	for room_value in bonus_rooms:
+		var room: Dictionary = room_value as Dictionary
+		if altar_room_centers.has(_room_center(room)):
+			continue
+		rooms.append(room)
+	if rooms.is_empty():
+		return
 	for i in range(rooms.size() - 1, 0, -1):
 		var j: int = rng.randi_range(0, i)
 		var tmp: Variant = rooms[i]
@@ -515,6 +541,11 @@ func _pick_rare_chest_position(rng: RandomNumberGenerator) -> void:
 			continue
 		rare_chest_positions = [candidates[rng.randi_range(0, candidates.size() - 1)]]
 		return
+
+func _reserve_cell_radius(reserved: Dictionary, center: Vector2i, radius: int) -> void:
+	for dx in range(-radius, radius + 1):
+		for dy in range(-radius, radius + 1):
+			reserved[center + Vector2i(dx, dy)] = true
 
 func _floor_patch_clear(center: Vector2i, radius: int) -> bool:
 	for x in range(center.x - radius, center.x + radius + 1):
@@ -614,6 +645,73 @@ func _room_center(room: Dictionary) -> Vector2i:
 	var p: Vector2i = room["pos"]
 	var s: Vector2i = room["size"]
 	return p + Vector2i(s.x / 2, s.y / 2)
+
+# Validates the required knowledge/quiz altar cells and resolves the extra
+# altar/checkpoint cells promised by the mission's altar_amount. The first
+# extra_altar rooms are bonus rooms; if the room allocator could not place
+# enough of them, clear cells in the entrance/knowledge rooms are used instead
+# of silently dropping a required altar.
+func _ensure_altar_positions(altar_amount: int) -> void:
+	var used: Dictionary = {}
+	used[player_spawn_pos] = true
+	knowledge_altar_pos = _valid_or_fallback_altar(knowledge_room, knowledge_altar_pos, used)
+	used[knowledge_altar_pos] = true
+	quiz_altar_pos = _valid_or_fallback_altar(quiz_room, quiz_altar_pos, used)
+	used[quiz_altar_pos] = true
+
+	extra_altar_positions = []
+	altar_room_centers = {}
+	var extra_needed: int = maxi(0, altar_amount - 1)
+	var bonus_index: int = 0
+	while extra_altar_positions.size() < extra_needed and bonus_index < bonus_rooms.size():
+		var room: Dictionary = bonus_rooms[bonus_index] as Dictionary
+		bonus_index += 1
+		var cell := _room_altar_cell(room, used)
+		if cell == Vector2i(-1, -1):
+			continue
+		extra_altar_positions.append(cell)
+		altar_room_centers[_room_center(room)] = true
+		used[cell] = true
+
+	for room_value in [entrance_room, knowledge_room]:
+		var room: Dictionary = room_value as Dictionary
+		while extra_altar_positions.size() < extra_needed:
+			var cell := _room_altar_cell(room, used)
+			if cell == Vector2i(-1, -1):
+				break
+			extra_altar_positions.append(cell)
+			used[cell] = true
+
+	if extra_altar_positions.size() < extra_needed:
+		push_warning("DungeonGenerator: placed %d/%d extra altars (altar_amount=%d)" % [
+			extra_altar_positions.size(), extra_needed, altar_amount])
+
+func _valid_or_fallback_altar(room: Dictionary, preferred: Vector2i, used: Dictionary) -> Vector2i:
+	if _cell_in_room(preferred, room) and not used.has(preferred) \
+			and _floor_patch_clear(preferred, 1):
+		return preferred
+	var fallback := _room_altar_cell(room, used)
+	return fallback if fallback != Vector2i(-1, -1) else preferred
+
+# Picks a clear 3x3-floor cell inside `room`, preferring the center and then a
+# small bounded set of offsets. Returns (-1, -1) only when the room has no
+# usable cell (never happens for the 6..8-tile rooms this generator builds).
+func _room_altar_cell(room: Dictionary, used: Dictionary) -> Vector2i:
+	var center := _room_center(room)
+	var offsets: Array = [
+		Vector2i.ZERO,
+		Vector2i(2, 0), Vector2i(-2, 0), Vector2i(0, 2), Vector2i(0, -2),
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(2, 2), Vector2i(-2, 2), Vector2i(2, -2), Vector2i(-2, -2),
+	]
+	for offset in offsets:
+		var cell: Vector2i = center + (offset as Vector2i)
+		if not _cell_in_room(cell, room) or used.has(cell):
+			continue
+		if not _floor_patch_clear(cell, 1):
+			continue
+		return cell
+	return Vector2i(-1, -1)
 
 func _center_dist(a: Dictionary, b: Dictionary) -> float:
 	return Vector2(_room_center(a)).distance_to(Vector2(_room_center(b)))

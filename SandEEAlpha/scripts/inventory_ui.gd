@@ -155,12 +155,15 @@ func _build() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
 
-	# Scroll the whole panel when the screen is too short for it (e.g. a chest is
-	# docked under the inventory on a small display) instead of clipping the
-	# trash row or the bottom of the storage section off-screen.
+	# The hotbar is a persistent HUD component, not part of this panel. Reserve
+	# its full bottom band (plus a small gap) so the inventory sits above it on
+	# every platform instead of covering it. Other full-screen UIs are untouched.
+	var hotbar_reserve: float = Global.hotbar_hud_height() + i(12, s)
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	Global.apply_safe_area(scroll)
+	if hotbar_reserve > 0.0:
+		scroll.offset_bottom = -(Global.ui_safe_insets.w + hotbar_reserve)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode   = ScrollContainer.SCROLL_MODE_AUTO
 	add_child(scroll)
@@ -233,9 +236,12 @@ func _build() -> void:
 	# gameplay hotbar. The ScrollContainer still handles chest/encyclopedia
 	# content when a chest adds extra rows.
 	var content := Global.ui_content_rect().size
-	var available_h: float = content.y - i(120, s)
+	var available_h: float = content.y - i(120, s) - hotbar_reserve
 	var stack_h: float = minf(i(460, s), maxf(i(280, s), available_h))
-	var stack_w: float = minf(i(620, s), maxf(i(500, s), content.x - i(20, s)))
+	# Clamp to the live content width (minus panel/tab margins) instead of a
+	# fixed 500*s minimum, so narrow desktop windows get a compact panel rather
+	# than horizontal overflow while the vertical scroll handles short screens.
+	var stack_w: float = maxf(i(320, s), minf(i(620, s), content.x - i(50, s)))
 	stack.custom_minimum_size = Vector2(stack_w, stack_h)
 	panel_vbox.add_child(stack)
 
@@ -651,9 +657,9 @@ func _refresh_bestiary_detail() -> void:
 # under the player grid. Both halves use the SAME slot scene (InventorySlot),
 # so slot size, spacing, icons, stack counts, hover tooltips, selection
 # highlight and drag behaviour are identical by construction — nothing here
-# re-implements them. The chest remains the only owner of its data
-# (`chest.slots`): nothing is copied into a temporary inventory, and closing
-# never rewrites it.
+# re-implements them. Chest stacks move only on a deliberate drag/drop; a
+# plain click/tap never transfers a stack. The chest remains the only owner of
+# its data (`chest.slots`), and closing never rewrites it.
 const CHEST_COLS: int = COLS
 
 var _chest_section: VBoxContainer = null
@@ -812,7 +818,6 @@ func _rebuild_chest_slots() -> void:
 		slot.slot_index    = idx
 		slot.is_chest_slot = true
 		slot.chest_link    = _chest
-		slot.slot_clicked.connect(_on_chest_slot_clicked)
 		grid.add_child(slot)
 		_chest_slots.append(slot)
 
@@ -841,21 +846,6 @@ func refresh_chest_slots() -> void:
 			_chest_count.text = "%d slots" % slots.size()
 		if _chest_icon != null and chest_data is ItemData:
 			_chest_icon.texture = (chest_data as ItemData).icon
-
-# Clicking a chest slot takes that whole stack into the player inventory —
-# the same click convention the rest of the inventory uses.
-func _on_chest_slot_clicked(idx: int) -> void:
-	if _chest == null or not is_instance_valid(_chest):
-		return
-	var slots: Array = _chest.get("slots") as Array
-	if idx < 0 or idx >= slots.size() or slots[idx] == null:
-		return
-	if Global.add_item(slots[idx] as Dictionary):
-		slots[idx] = null
-		Global.Hotbar_updated.emit()
-		Global.Inventory_updated.emit()
-		if _chest.has_method("notify_contents_changed"):
-			_chest.call("notify_contents_changed")
 
 func _build_inv_content(s: float) -> Control:
 	var root := VBoxContainer.new()

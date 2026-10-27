@@ -2,7 +2,7 @@ extends PanelContainer
 
 ## Shared settings panel used by BOTH the pause menu and the main menu.
 ## Keeping one implementation means every option (audio, display, gameplay,
-## controls, key rebinds, FPS) appears in both places and stays in sync.
+## controls, key rebinds) appears in both places and stays in sync.
 
 signal close_requested
 signal credits_requested
@@ -190,31 +190,6 @@ func _build_settings_display() -> void:
 	fs_btn.toggled.connect(func(on: bool) -> void: Global.set_fullscreen(on))
 	fs_row.add_child(fs_btn)
 
-	var limit_row := HBoxContainer.new()
-	_settings_content.add_child(limit_row)
-	var limit_lbl := Label.new()
-	limit_lbl.text = "FPS Limit"
-	limit_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	limit_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
-	limit_lbl.tooltip_text = "Maximum frames per second. Lower values reduce heat and battery use; Unlimited removes the cap."
-	limit_row.custom_minimum_size.y = maxi(44, int(38 * s))
-	limit_row.add_child(limit_lbl)
-	var limit_opt := OptionButton.new()
-	limit_opt.custom_minimum_size = Vector2(int(132 * s), 0)
-	limit_opt.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_LABEL))
-	limit_opt.tooltip_text = limit_lbl.tooltip_text
-	for raw_limit in Global.FPS_LIMIT_OPTIONS:
-		var limit_value := int(raw_limit)
-		limit_opt.add_item("Unlimited" if limit_value == 0 else str(limit_value))
-		limit_opt.set_item_id(limit_opt.item_count - 1, limit_value)
-	for i in range(limit_opt.item_count):
-		if limit_opt.get_item_id(i) == Global.fps_limit:
-			limit_opt.select(i)
-			break
-	limit_opt.item_selected.connect(func(index: int) -> void:
-		Global.set_fps_limit(limit_opt.get_item_id(index)))
-	limit_row.add_child(limit_opt)
-
 	# VSync is desktop-only: Android's compositor owns presentation timing.
 	if not Global.is_mobile():
 		var vsync_row := HBoxContainer.new()
@@ -223,28 +198,13 @@ func _build_settings_display() -> void:
 		vsync_lbl.text = "VSync"
 		vsync_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		vsync_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
-		vsync_lbl.tooltip_text = "Sync presentation to the monitor refresh rate. Turn off for lower input latency; the FPS Limit still applies."
+		vsync_lbl.tooltip_text = "Sync presentation to the monitor refresh rate. The game is capped at 60 FPS; turning this off can reduce input latency."
 		vsync_row.add_child(vsync_lbl)
 		var vsync_btn := CheckButton.new()
 		vsync_btn.button_pressed = Global.vsync_enabled
 		vsync_btn.tooltip_text = vsync_lbl.tooltip_text
 		vsync_btn.toggled.connect(func(on: bool) -> void: Global.set_vsync(on))
 		vsync_row.add_child(vsync_btn)
-
-	var fps_row := HBoxContainer.new()
-	_settings_content.add_child(fps_row)
-	var fps_lbl := Label.new()
-	fps_lbl.text = "Show FPS"
-	fps_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	fps_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
-	fps_lbl.tooltip_text = "Show a small FPS counter in the top-right corner during gameplay. Saved for the next launch."
-	fps_row.custom_minimum_size.y = maxi(44, int(38 * s))
-	fps_row.add_child(fps_lbl)
-	var fps_btn := CheckButton.new()
-	fps_btn.button_pressed = Global.show_fps
-	fps_btn.tooltip_text = fps_lbl.tooltip_text
-	fps_btn.toggled.connect(func(on: bool) -> void: Global.set_show_fps(on))
-	fps_row.add_child(fps_btn)
 
 func _build_settings_gameplay() -> void:
 	var s: float = Global.ui_scale

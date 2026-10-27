@@ -5,8 +5,8 @@ extends CanvasLayer
 # any gameplay logic:
 #   • a floating touch joystick (lower-left) that feeds Global.mobile_move,
 #     which player.gd blends with the keyboard vector;
-#   • action buttons (lower-right): BUILD, SHIFT (hold), RIGHT-CLICK mode and
-#     MENU — each driving the existing Global state / existing systems;
+#   • action buttons (lower-right): BUILD, SPRINT (hold), INTERACT (context)
+#     and DONE (keyboard dismiss)
 #   • tap-anywhere world interaction: unhandled touches are converted to the
 #     same mouse events the desktop code already consumes (position mapped
 #     through the real canvas/camera transform), so mining, attacking,
@@ -116,9 +116,15 @@ func _build_controls() -> void:
 
 	var row2_y: float = controls_bottom - btn_size
 	var row1_y: float = row2_y - btn_size - gap
+	var row0_y: float = row1_y - btn_size - gap
 
+	# Bottom-right action cluster:
+	#   row1: BUILD
+	#   row2: INTERACT  SPRINT
+	# INTERACT sits directly below BUILD (beside SPRINT) so it is in easy thumb
+	# reach instead of floating two rows above the action cluster.
 	_btn_build = _mk_button("BUILD", btn_size, s)
-	_btn_build.position = Vector2(button_left, row2_y)
+	_btn_build.position = Vector2(button_left, row1_y)
 
 	_btn_build.pressed.connect(_on_build_pressed)
 	_root.add_child(_btn_build)
@@ -129,17 +135,15 @@ func _build_controls() -> void:
 	_btn_shift.button_up.connect(func() -> void: Global.mobile_shift = false)
 	_root.add_child(_btn_shift)
 
-
-
 	_btn_interact = _mk_button("INTERACT", btn_size, s)
-	_btn_interact.position = Vector2(vp.x - right_pad - btn_size,
-		row1_y - btn_size - gap)
+	_btn_interact.position = Vector2(button_left, row2_y)
+	_btn_interact.tooltip_text = "Interact with a nearby chest, crafting station or furnace."
 	_btn_interact.pressed.connect(_on_interact_pressed)
 	_root.add_child(_btn_interact)
 
 	# ── Keyboard dismiss (only while a text field is focused) ───
 	_btn_done = _mk_button("DONE", btn_size, s)
-	_btn_done.position = Vector2(vp.x - right_pad - btn_size, row1_y - btn_size - gap)
+	_btn_done.position = Vector2(vp.x - right_pad - btn_size, row0_y)
 	_btn_done.visible = _text_focus
 	_btn_done.pressed.connect(_dismiss_keyboard)
 	_root.add_child(_btn_done)
@@ -164,6 +168,10 @@ func _mk_button(text: String, size_px: float, s: float) -> Button:
 	b.custom_minimum_size = Vector2(size_px, size_px)
 	b.size = Vector2(size_px, size_px)
 	b.focus_mode = Control.FOCUS_NONE
+	# Keep the action cluster's fixed square footprint even when the long
+	# INTERACT label would otherwise force the button wider than its column.
+	b.clip_text = true
+	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	b.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color     = C_PANEL

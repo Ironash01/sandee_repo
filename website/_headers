@@ -1,0 +1,10 @@
+# Netlify serves the versioned builds as direct downloads.
+/downloads/*.apk
+  Content-Type: application/vnd.android.package-archive
+  Content-Disposition: attachment
+  Cache-Control: public, max-age=86400
+
+/downloads/*.zip
+  Content-Type: application/zip
+  Content-Disposition: attachment
+  Cache-Control: public, max-age=86400

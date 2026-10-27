@@ -296,6 +296,8 @@ func _die() -> void:
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
+	if not COMBAT_DATA.bestiary_id.is_empty():
+		Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 	# The old "Defeat 5 wolves" mission was retired; the late-game side
 	# mission is separate and tracks real defeats only.
 	Global.add_mission_progress("side_wolf_slayer", 1)

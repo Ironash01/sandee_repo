@@ -163,6 +163,7 @@ func _run() -> void:
 	await _test_tutorial_help_and_cursors()
 	_test_world_eligibility()
 	_test_dungeon_generation()
+	await _test_dungeon_altar_coverage()
 	await _test_first_dungeon_tutorial()
 	await _test_dungeon_progression_and_sides()
 	_test_damage_and_spawn_constants()
@@ -189,11 +190,13 @@ func _run() -> void:
 	await _test_escape()
 	await _test_ui_back_stack()
 	await _test_ui_back_actual()
+	await _test_inventory_hotbar()
 	await _test_chest_inventory_panel()
 	_test_cloud_save_identity()
 	await _test_sync_loading()
 	_test_android_config()
-	_test_display_frame_limits()
+	_test_display_frame_cap()
+	_test_removed_debug_surfaces()
 	_test_ui_scaling()
 	await _test_android_input_and_safe_area()
 	await _test_android_keyboard_layout()
@@ -201,6 +204,7 @@ func _run() -> void:
 	await _test_automatica_api()
 	await _test_automatica_build_queue()
 	await _test_quiz_reward_ui()
+	await _test_quiz_compiler_layout()
 	await _test_altar_mobile_layout()
 	await _test_title_panorama()
 	await _test_interpreters()
@@ -276,12 +280,14 @@ func _test_bestiary() -> void:
 	for value in entries:
 		var data: MobCombatData = value as MobCombatData
 		ids.append(data.bestiary_id)
-	check(entries.size() == 8 and ids.has("cinder_ooze")
+	check(entries.size() == 14 and ids.has("cinder_ooze")
 		and ids.has("gravebell_shambler") and ids.has("rune_sentinel")
 		and ids.has("vesper_acolyte") and ids.has("brass_prowler")
 		and ids.has("cipher_warden") and ids.has("mossback_nib")
-		and ids.has("emberfox_kit"),
-		"all eight Bestiary creatures are present in the data catalog")
+		and ids.has("emberfox_kit") and ids.has("wolf") and ids.has("sheep")
+		and ids.has("worm") and ids.has("pixie") and ids.has("headless_fish")
+		and ids.has("hitman"),
+		"all new and legacy Bestiary creatures are present in the data catalog")
 	var drop_paths_ok := true
 	var icons_ok := true
 	for value in entries:
@@ -375,6 +381,45 @@ func _test_bestiary() -> void:
 			child.queue_free()
 	check(Global.bestiary_is_killed("cinder_ooze") and dropped_item,
 		"a real kill unlocks the Bestiary entry and spawns its loot")
+
+	# Legacy mobs must participate in the same sighting/kill pipeline. The
+	# sheep is the reported case; the source check covers the other old death
+	# paths so they cannot silently regress to no Bestiary credit.
+	Global.reset_bestiary_state()
+	var legacy_ids: Array = ["wolf", "sheep", "worm", "pixie", "headless_fish", "hitman"]
+	var legacy_ids_ok := true
+	for legacy_id in legacy_ids:
+		if BestiaryCatalog.get_entry(legacy_id) == null:
+			legacy_ids_ok = false
+	check(legacy_ids_ok, "legacy mobs have Bestiary catalog entries")
+	var old_world: Node = Global.world_node
+	Global.world_node = null
+	var sheep_scene: PackedScene = load("res://scenes/mobs/Sheep.tscn") as PackedScene
+	var sheep_mob: Node2D = sheep_scene.instantiate() as Node2D
+	add_child(sheep_mob)
+	await get_tree().process_frame
+	check(str(Global.call("_bestiary_id_for_mob", sheep_mob)) == "sheep",
+		"the Bestiary sighting scan reads the sheep's id")
+	sheep_mob.call("_die")
+	await get_tree().process_frame
+	check(Global.bestiary_is_killed("sheep"),
+		"a real sheep death records Bestiary kill credit")
+	for child in get_children():
+		if child.get("item_data") is ItemData:
+			child.queue_free()
+	Global.world_node = old_world
+	var legacy_scripts: Array = [
+		"res://scripts/wolf.gd", "res://scripts/sheep.gd", "res://scripts/worm.gd",
+		"res://scripts/pixie_mob.gd", "res://scripts/headless_fish_mob.gd",
+		"res://scripts/hitman.gd",
+	]
+	var legacy_credit_ok := true
+	for script_path in legacy_scripts:
+		if not FileAccess.get_file_as_string(script_path).contains(
+				"bestiary_record_kill(COMBAT_DATA.bestiary_id)"):
+			legacy_credit_ok = false
+	check(legacy_credit_ok, "every legacy mob death path records Bestiary kills")
+	Global.reset_bestiary_state()
 
 	# Restore the deterministic UI fixture.
 	Global.reset_bestiary_state()
@@ -909,6 +954,89 @@ func _test_dungeon_generation() -> void:
 		"dungeon camera bounds include the wall padding")
 
 
+func _test_dungeon_altar_coverage() -> void:
+	# Base pair: every seed must produce distinct, walkable Knowledge/Quiz cells.
+	var pair_ok := true
+	var extra_ok := true
+	for seed_value in range(0, 40):
+		var pair_gen := DungeonGenerator.new()
+		pair_gen.generate(seed_value, 0, 1, 2)
+		var k: Vector2i = pair_gen.knowledge_altar_pos
+		var q: Vector2i = pair_gen.quiz_altar_pos
+		if k == q or pair_gen.grid[k.x][k.y] != DungeonGenerator.Tile.FLOOR \
+				or pair_gen.grid[q.x][q.y] != DungeonGenerator.Tile.FLOOR:
+			pair_ok = false
+
+		var extra_gen := DungeonGenerator.new()
+		extra_gen.generate(seed_value, 0, 2, 2)
+		if extra_gen.extra_altar_positions.size() != 1:
+			extra_ok = false
+		for pos_value in extra_gen.extra_altar_positions:
+			var pos: Vector2i = pos_value as Vector2i
+			if extra_gen.grid[pos.x][pos.y] != DungeonGenerator.Tile.FLOOR \
+					or pos == extra_gen.knowledge_altar_pos \
+					or pos == extra_gen.quiz_altar_pos:
+				extra_ok = false
+	check(pair_ok, "every dungeon seed reserves a distinct walkable Knowledge/Quiz altar pair")
+	check(extra_ok, "altar_amount=2 reserves a distinct walkable extra Knowledge altar cell")
+
+	# Real world: Python 5 declares altar_amount=2, so it must contain a second
+	# Knowledge Altar instead of an empty checkpoint room.
+	var idx: int = 5
+	var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(idx)
+	if mission == null:
+		check(false, "dungeon altar coverage mission available")
+		return
+	var dun := DungeonWorld.new()
+	add_child(dun)
+	dun.setup(idx, mission, 24680, null, Vector2.ZERO)
+	await get_tree().process_frame
+	var knowledge := 0
+	var quizzes := 0
+	var altar_positions: Array = []
+	for child in dun.get_children():
+		if child.is_in_group("KnowledgeAltar"):
+			knowledge += 1
+			altar_positions.append((child as Node2D).global_position)
+		elif child.is_in_group("QuizAltar"):
+			quizzes += 1
+			altar_positions.append((child as Node2D).global_position)
+	check(knowledge == 2 and quizzes == 1,
+		"a dungeon with altar_amount=2 spawns two Knowledge altars and one Quiz altar")
+	var unique_positions: Dictionary = {}
+	for pos_value in altar_positions:
+		unique_positions[(pos_value as Vector2).snapped(Vector2(1, 1))] = true
+	check(unique_positions.size() == altar_positions.size(),
+		"spawned dungeon altars occupy distinct interaction cells")
+	var knowledge_region := Rect2()
+	var quiz_region := Rect2()
+	for child in dun.get_children():
+		var is_knowledge: bool = child.is_in_group("KnowledgeAltar")
+		var is_quiz: bool = child.is_in_group("QuizAltar")
+		if not is_knowledge and not is_quiz:
+			continue
+		for sub in child.get_children():
+			if sub is Sprite2D and (sub as Sprite2D).texture is AtlasTexture:
+				var region: Rect2 = ((sub as Sprite2D).texture as AtlasTexture).region
+				if is_knowledge and knowledge_region == Rect2():
+					knowledge_region = region
+				elif is_quiz and quiz_region == Rect2():
+					quiz_region = region
+	check(knowledge_region == Rect2(288, 96, 32, 32)
+		and quiz_region == Rect2(352, 96, 32, 32),
+		"dungeon altar sprites use the visible altar art instead of floor-tile regions")
+	var altars_before := knowledge + quizzes
+	dun.call("_spawn_altars")
+	var altars_after := 0
+	for child in dun.get_children():
+		if child.is_in_group("KnowledgeAltar") or child.is_in_group("QuizAltar"):
+			altars_after += 1
+	check(altars_after == altars_before,
+		"re-running altar spawn does not duplicate dungeon altars")
+	dun.queue_free()
+	await get_tree().process_frame
+
+
 func _test_first_dungeon_tutorial() -> void:
 	var py_first: int = Global.first_main_dungeon_index("python")
 	var lua_first: int = Global.first_main_dungeon_index("lua")
@@ -982,6 +1110,28 @@ func _test_first_dungeon_tutorial() -> void:
 		check(sconce_anims >= 1 and medallion_anims >= 1
 			and (dun.get("_theme_lights") as Array).size() >= sconce_anims,
 			"%s dungeon spawns animated sconces, medallions and local lights" % lang)
+		# Medallions are floor decals. Actors y-sort into negative buckets above
+		# world origin, so a medallion left at z=-2 could draw over the player.
+		var medallion_layers := 0
+		var medallion_z_ok := true
+		for child in dun.get_children():
+			var root2d := child as Node2D
+			if root2d == null:
+				continue
+			for sub in child.get_children():
+				var anim := sub as AnimatedSprite2D
+				if anim == null or anim.sprite_frames == null \
+						or not anim.sprite_frames.has_animation("idle") \
+						or anim.sprite_frames.get_frame_count("idle") != 8:
+					continue
+				var frame := anim.sprite_frames.get_frame_texture("idle", 0) as AtlasTexture
+				if frame == null or frame.region.size != Vector2(64, 64):
+					continue
+				medallion_layers += 1
+				if root2d.z_index > -200 or root2d.z_index <= -300:
+					medallion_z_ok = false
+		check(medallion_layers >= 1 and medallion_z_ok,
+			"%s floor medallions sort above the tilemap but below actors" % lang)
 		check((dun.get("_architecture_blocked") as Dictionary).size() > 0,
 			"%s dungeon registers solid pillar bases for navigation" % lang)
 		var knowledge := 0
@@ -1107,6 +1257,11 @@ func _test_dungeon_progression_and_sides() -> void:
 			boss_count += 1
 	check(boss != null and boss_count == 1,
 		"the Hitman dungeon spawns exactly one miniboss")
+	var boss_altars := 0
+	for child in dun.get_children():
+		if child.is_in_group("KnowledgeAltar") or child.is_in_group("QuizAltar"):
+			boss_altars += 1
+	check(boss_altars == 0, "the boss arena intentionally spawns no altars")
 	if boss != null:
 		var sprite := boss.get_node("AnimatedSprite2D") as AnimatedSprite2D
 		check(sprite != null and sprite.scale.x > 0.7,
@@ -2608,6 +2763,50 @@ func _test_smelting_recipes() -> void:
 				% [str(pair[0]), str(pair[1])])
 		furnace.free()
 
+	# Sheep meat must be a real furnace input, not just an edible item. There
+	# must be exactly one recipe so two cooks can never race on the same input.
+	var sheep_meat: ItemData = load("res://resources/items/sheep_meat.tres")
+	var cooked_sheep: ItemData = load("res://resources/items/cooked_sheep_meat.tres")
+	var sheep_recipe: SmeltingRecipe = null
+	var sheep_recipe_count := 0
+	for fname in ResourceLoader.list_directory("res://resources/recipes/"):
+		if not fname.ends_with(".tres"):
+			continue
+		var resource: Resource = load("res://resources/recipes/" + fname)
+		if resource is SmeltingRecipe and (resource as SmeltingRecipe).input_item == sheep_meat:
+			sheep_recipe_count += 1
+			sheep_recipe = resource as SmeltingRecipe
+	check(sheep_recipe_count == 1 and sheep_recipe != null
+		and sheep_recipe.output_item == cooked_sheep,
+		"sheep meat has exactly one furnace recipe producing cooked sheep meat")
+	if sheep_recipe != null:
+		var sheep_furnace: Node = load("res://scripts/object_item.gd").new()
+		sheep_furnace.set("input_item", sheep_meat)
+		sheep_furnace.set("input_quantity", 2)
+		sheep_furnace.set("fuel_item", charcoal)
+		sheep_furnace.set("fuel_quantity", 2)
+		check(sheep_furnace.call("_can_cook") == sheep_recipe,
+			"sheep meat is selectable by the timed furnace cook")
+		check(int(sheep_furnace.call("smelt_request", 1)) == 1
+			and sheep_furnace.get("output_item") == cooked_sheep
+			and int(sheep_furnace.get("output_quantity")) == 1
+			and int(sheep_furnace.get("input_quantity")) == 1
+			and int(sheep_furnace.get("fuel_quantity")) == 1,
+			"raw sheep meat cooks into cooked sheep meat using one fuel")
+		var old_hotbar: Array = Global.Hotbar.duplicate(true)
+		var old_inventory: Array = Global.Inventory.duplicate(true)
+		Global.Hotbar.fill(null)
+		Global.Inventory.fill(null)
+		var collected: int = int(sheep_furnace.call("take_output"))
+		check(collected == 1 and Global.count_item(cooked_sheep) == 1
+			and int(sheep_furnace.get("output_quantity")) == 0,
+			"cooked sheep meat can be collected without duplicating the output")
+		Global.Hotbar = old_hotbar
+		Global.Inventory = old_inventory
+		Global.Hotbar_updated.emit()
+		Global.Inventory_updated.emit()
+		sheep_furnace.free()
+
 	# Guard rails: failed smelts must not consume input/fuel, and a full output
 	# slot must leave the batch untouched.
 	var copper_ore: ItemData = load("res://resources/items/copper_ore.tres")
@@ -3065,6 +3264,19 @@ func _test_ui_back_actual() -> void:
 	add_child(color)
 	await get_tree().process_frame
 	color.call("open")
+	var color_close: Button = color.get("_close_btn") as Button
+	var color_panel: PanelContainer = null
+	if color_close != null:
+		color_panel = color_close.get_parent().get_parent().get_parent() as PanelContainer
+	check(color_close != null and color_close.visible and color_panel != null
+		and color_panel.get_global_rect().encloses(color_close.get_global_rect())
+		and Global.any_ui_open(),
+		"color crafter shows an X button inside its paused panel")
+	if color_close != null:
+		color_close.emit_signal("pressed")
+	check(not color.visible and not Global.any_ui_open(),
+		"the Color Crafter X closes only that panel and releases the pause")
+	color.call("open")
 	check(color.visible and Global.request_ui_back() and not color.visible,
 		"back closes the real color crafter panel")
 	color.queue_free()
@@ -3144,19 +3356,19 @@ func _test_ui_back_actual() -> void:
 	Global.modal_hud_changed.disconnect(on_modal)
 	lua_editor.queue_free()
 
-	# The hotbar owns a nested CanvasLayer, so hiding the game's parent
-	# CanvasLayer does not hide it. Verify both inventory and station/editor
-	# modal signals drive the same visibility state.
+	# The inventory keeps the hotbar alive above its dim layer; true modals
+	# (station/editor/documentation/map) still hide the whole HUD.
 	var hotbar: Control = load("res://scenes/ui/Hotbar.tscn").instantiate() as Control
 	add_child(hotbar)
 	await get_tree().process_frame
 	var hotbar_canvas: CanvasLayer = hotbar.get_node("CanvasLayer") as CanvasLayer
 	Global.inventory_toggled.emit(true)
-	check(not hotbar_canvas.visible, "inventory hides the nested hotbar canvas")
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 13,
+		"inventory keeps the nested hotbar canvas visible above its dim overlay")
 	Global.modal_hud_changed.emit(true)
 	Global.inventory_toggled.emit(false)
 	check(not hotbar_canvas.visible,
-		"a station/editor modal keeps the hotbar hidden after inventory closes")
+		"a station/editor/documentation/map modal keeps the hotbar hidden after inventory closes")
 	Global.modal_hud_changed.emit(false)
 	check(hotbar_canvas.visible, "closing the last modal restores the hotbar")
 	hotbar.queue_free()
@@ -3216,6 +3428,153 @@ func _test_sync_loading() -> void:
 		"world loading has a progress bar and fades out into the world")
 
 
+func _test_inventory_hotbar() -> void:
+	var old_override: int = Global.mobile_platform_override
+	var old_scale: float = Global.ui_scale
+	var old_viewport: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_inventory: Array = Global.Inventory.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+
+	Global.mobile_platform_override = 0
+	Global.ui_scale = 1.0
+	Global.ui_viewport_size = Vector2(1280, 720)
+	Global.ui_safe_insets = Vector4.ZERO
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+	Global.Hotbar.resize(Global.HOTBAR_SIZE)
+	Global.Hotbar.fill(null)
+	Global.Inventory.resize(Global.INVENTORY_SIZE)
+	Global.Inventory.fill(null)
+
+	var wood := load("res://resources/items/wood.tres") as ItemData
+	var stone := load("res://resources/items/stone.tres") as ItemData
+	Global.Hotbar[0] = {"data": wood, "quantity": 3}
+	Global.set_hotbar_selection(2)
+
+	var hotbar: Control = load("res://scenes/ui/Hotbar.tscn").instantiate() as Control
+	add_child(hotbar)
+	await get_tree().process_frame
+	var hotbar_canvas: CanvasLayer = hotbar.get_node("CanvasLayer") as CanvasLayer
+	var hotbar_slots: Array = hotbar.get("slots")
+
+	Global.inventory_toggled.emit(true)
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 13,
+		"opening the inventory keeps the persistent hotbar visible above its dim layer")
+	check(Global.Hotbar[0] != null and int(Global.Hotbar[0]["quantity"]) == 3
+		and Global.hotbar_selected == 2,
+		"opening the inventory preserves hotbar contents and selected slot")
+	check(is_equal_approx(Global.hotbar_hud_height(), 76.0),
+		"the desktop hotbar reports its full bottom HUD band")
+
+	var target_slot: Control = null
+	if hotbar_slots.size() > 1:
+		target_slot = hotbar_slots[1] as Control
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	if target_slot != null:
+		target_slot.call("_gui_input", press)
+	check(Global.hotbar_selected == 1,
+		"hotbar slots stay interactive while the inventory is open")
+
+	Global.modal_hud_changed.emit(true)
+	check(not hotbar_canvas.visible and hotbar_canvas.layer == 10,
+		"a station/editor/documentation/map modal still hides the hotbar")
+	Global.modal_hud_changed.emit(false)
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 13,
+		"closing that modal restores the hotbar above the still-open inventory")
+	Global.inventory_toggled.emit(false)
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 10
+		and Global.hotbar_selected == 1 and int(Global.Hotbar[0]["quantity"]) == 3,
+		"closing the inventory returns the hotbar to normal with state intact")
+
+	# Desktop inventory: panel/scroll ends above the persistent hotbar band.
+	var inv_layer := CanvasLayer.new()
+	add_child(inv_layer)
+	var inventory: Control = load("res://scenes/ui/inventory_ui.tscn").instantiate() as Control
+	inv_layer.add_child(inventory)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var main_scroll: ScrollContainer = null
+	for child in inventory.get_children():
+		if child is ScrollContainer:
+			main_scroll = child as ScrollContainer
+			break
+	var expected_bottom: float = -(Global.ui_safe_insets.w + Global.hotbar_hud_height()
+		+ 12.0 * Global.ui_scale)
+	check(main_scroll != null and is_equal_approx(main_scroll.offset_bottom, expected_bottom),
+		"desktop inventory reserves the hotbar band above its content")
+
+	# Both drag directions use the existing slot rules, not a parallel copy.
+	var inv_slots: Array = inventory.get("_slots")
+	Global.Inventory[0] = {"data": wood, "quantity": 4}
+	Global.Hotbar[0] = null
+	if hotbar_slots.size() > 0:
+		(hotbar_slots[0] as Control).call("_drop_data", Vector2.ZERO,
+			{"from_index": 0, "item": Global.Inventory[0], "source": "inventory"})
+	check(Global.Hotbar[0] != null and int(Global.Hotbar[0]["quantity"]) == 4
+		and Global.Inventory[0] == null,
+		"dragging an inventory stack into a hotbar slot moves it exactly once")
+	var from_hotbar: Dictionary = {"from_index": 0, "item": Global.Hotbar[0], "source": "hotbar"}
+	if inv_slots.size() > 1:
+		(inv_slots[1] as Control).call("_drop_data", Vector2.ZERO, from_hotbar)
+	check(Global.Inventory[1] != null and int(Global.Inventory[1]["quantity"]) == 4
+		and Global.Hotbar[0] == null,
+		"dragging a hotbar stack into an inventory slot moves it exactly once")
+
+	# Cross-container swap preserves both stacks.
+	Global.Inventory[2] = {"data": stone, "quantity": 2}
+	Global.Hotbar[2] = {"data": wood, "quantity": 5}
+	if hotbar_slots.size() > 2:
+		(hotbar_slots[2] as Control).call("_drop_data", Vector2.ZERO,
+			{"from_index": 2, "item": Global.Inventory[2], "source": "inventory"})
+	check(Global.Hotbar[2] != null
+		and (Global.Hotbar[2]["data"] as ItemData) == stone
+		and Global.Inventory[2] != null
+		and (Global.Inventory[2]["data"] as ItemData) == wood,
+		"inventory/hotbar drops swap stacks without duplication or loss")
+
+	# Mobile inventory uses the same persistent-hotbar rule and reserve.
+	Global.mobile_platform_override = 1
+	Global.inventory_toggled.emit(true)
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 13
+		and is_equal_approx(Global.hotbar_hud_height(), 80.0),
+		"mobile inventory keeps the hotbar visible with its own touch-sized band")
+	Global.inventory_toggled.emit(false)
+
+	var mobile_layer := CanvasLayer.new()
+	add_child(mobile_layer)
+	var mobile_inv: Control = load("res://scenes/ui/inventory_ui.tscn").instantiate() as Control
+	mobile_layer.add_child(mobile_inv)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var mobile_scroll: ScrollContainer = null
+	for child in mobile_inv.get_children():
+		if child is ScrollContainer:
+			mobile_scroll = child as ScrollContainer
+			break
+	var mobile_expected: float = -(Global.ui_safe_insets.w + Global.hotbar_hud_height()
+		+ 12.0 * Global.ui_scale)
+	check(mobile_scroll != null and is_equal_approx(mobile_scroll.offset_bottom, mobile_expected),
+		"mobile inventory reserves the same persistent-hotbar band")
+
+	inv_layer.queue_free()
+	mobile_layer.queue_free()
+	hotbar.queue_free()
+	await get_tree().process_frame
+	Global.inventory_toggled.emit(false)
+	Global.modal_hud_changed.emit(false)
+	Global.mobile_platform_override = old_override
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_viewport
+	Global.ui_safe_insets = old_insets
+	Global.Hotbar = old_hotbar
+	Global.Inventory = old_inventory
+	Global.set_hotbar_selection(old_selected)
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+
 func _test_chest_inventory_panel() -> void:
 	var old_inventory: Array = Global.Inventory.duplicate(true)
 	var old_player: Node = Global.player_node
@@ -3264,6 +3623,45 @@ func _test_chest_inventory_panel() -> void:
 		and inv_body.size_flags_vertical == Control.SIZE_SHRINK_BEGIN,
 		"the player grid moves up when the chest drawer is open")
 
+	# A plain click/tap only selects/inspects; it must not take the stack.
+	var chest_slot_0: Control = (ui.get("_chest_slots") as Array)[0] as Control
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	chest_slot_0.call("_gui_input", press)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	chest_slot_0.call("_gui_input", release)
+	check(chest_slots[0] is Dictionary
+		and int((chest_slots[0] as Dictionary)["quantity"]) == 12
+		and Global.Inventory[1] == null,
+		"clicking a chest slot does not auto-transfer its stack")
+
+	var preview: Control = chest_slot_0.call("_make_drag_preview", chest_slots[0]) as Control
+	var preview_has_icon := false
+	var preview_qty := ""
+	if preview != null:
+		for child in preview.get_children():
+			if child is TextureRect and (child as TextureRect).texture != null:
+				preview_has_icon = true
+			elif child is Label:
+				preview_qty = (child as Label).text
+	check(preview != null and preview_has_icon and preview_qty == "12",
+		"chest drag preview shows the item icon and stack count")
+	if preview != null:
+		preview.queue_free()
+
+	var payload0: Variant = chest.call("make_drag_data", 0, true)
+	check(payload0 is Dictionary
+		and not bool(chest.call("can_accept_drop", 99, false, payload0))
+		and not bool(chest.call("can_accept_drop", 0, true, payload0)),
+		"chest drops reject out-of-range targets and the source slot")
+	chest.call("accept_drop", 99, false, payload0)
+	check(chest_slots[0] is Dictionary
+		and int((chest_slots[0] as Dictionary)["quantity"]) == 12,
+		"an invalid/cancelled chest drop leaves the source stack intact")
+
 	# Chest -> player drag.
 	var chest_payload: Variant = chest.call("make_drag_data", 0, true)
 	var player_slot: Control = (ui.get("_slots") as Array)[1] as Control
@@ -3280,6 +3678,43 @@ func _test_chest_inventory_panel() -> void:
 	check(chest_slots[4] is Dictionary and (chest_slots[4] as Dictionary)["data"] == wood
 		and Global.Inventory[1] == null,
 		"dragging a player stack into the chest stores it in the chest")
+
+	# Partial merge respects the stack limit; the remainder stays in the chest.
+	var merge_slot: Control = (ui.get("_slots") as Array)[3] as Control
+	Global.Inventory[3] = {"data": wood, "quantity": 30}
+	chest_slots[5] = {"data": wood, "quantity": 5}
+	var merge_payload: Variant = chest.call("make_drag_data", 5, true)
+	merge_slot.call("_drop_data", Vector2.ZERO, merge_payload)
+	check(Global.Inventory[3] is Dictionary
+		and int((Global.Inventory[3] as Dictionary)["quantity"]) == 32
+		and chest_slots[5] is Dictionary
+		and int((chest_slots[5] as Dictionary)["quantity"]) == 3,
+		"chest-to-inventory merge caps at the stack limit and leaves the remainder")
+
+	# A full matching stack rejects the move without deleting anything.
+	var full_slot: Control = (ui.get("_slots") as Array)[4] as Control
+	Global.Inventory[4] = {"data": wood, "quantity": 32}
+	chest_slots[6] = {"data": wood, "quantity": 4}
+	var full_payload: Variant = chest.call("make_drag_data", 6, true)
+	full_slot.call("_drop_data", Vector2.ZERO, full_payload)
+	check(Global.Inventory[4] is Dictionary
+		and int((Global.Inventory[4] as Dictionary)["quantity"]) == 32
+		and chest_slots[6] is Dictionary
+		and int((chest_slots[6] as Dictionary)["quantity"]) == 4,
+		"a full matching inventory stack leaves the chest stack untouched")
+
+	# Different items swap, matching the normal inventory occupied-slot rule.
+	var stone: ItemData = load("res://resources/items/stone.tres")
+	var swap_slot: Control = (ui.get("_slots") as Array)[5] as Control
+	Global.Inventory[5] = {"data": stone, "quantity": 2}
+	chest_slots[7] = {"data": wood, "quantity": 3}
+	var swap_payload: Variant = chest.call("make_drag_data", 7, true)
+	swap_slot.call("_drop_data", Vector2.ZERO, swap_payload)
+	check(Global.Inventory[5] is Dictionary
+		and (Global.Inventory[5] as Dictionary)["data"] == wood
+		and chest_slots[7] is Dictionary
+		and (chest_slots[7] as Dictionary)["data"] == stone,
+		"dropping a chest stack on an occupied slot swaps without losing items")
 
 	# Trash receives chest-origin drags too (not Global.Inventory[from_index]).
 	chest_slots[2] = {"data": wood, "quantity": 2}
@@ -3471,6 +3906,15 @@ func _test_android_input_and_safe_area() -> void:
 	var mobile: Node = load("res://scripts/mobile_ui.gd").new()
 	add_child(mobile)
 	await get_tree().process_frame
+	var build_btn: Button = mobile.get("_btn_build") as Button
+	var interact_btn: Button = mobile.get("_btn_interact") as Button
+	var sprint_btn: Button = mobile.get("_btn_shift") as Button
+	check(build_btn != null and interact_btn != null and sprint_btn != null
+		and is_equal_approx(interact_btn.position.x, build_btn.position.x)
+		and interact_btn.position.y > build_btn.position.y
+		and is_equal_approx(interact_btn.position.y, sprint_btn.position.y)
+		and interact_btn.position.x + interact_btn.size.x <= sprint_btn.position.x,
+		"Android INTERACT sits directly below BUILD on SPRINT's bottom row")
 	var mobile_root: Control = mobile.get("_root") as Control
 	if mobile_root != null:
 		mobile_root.visible = false
@@ -3964,38 +4408,112 @@ func _test_altar_mobile_layout() -> void:
 	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
 
 
-func _test_display_frame_limits() -> void:
-	var all_values_valid := true
-	for value in [30, 60, 90, 120, 144, 165, 240, 0]:
-		if Global._sanitize_fps_limit(int(value)) != int(value):
-			all_values_valid = false
-	check(all_values_valid,
-		"every FPS limit menu value (including Unlimited) is accepted unchanged")
-	check(Global.FPS_LIMIT_OPTIONS.has(Global.DEFAULT_FPS_LIMIT)
-		and Global.DEFAULT_FPS_LIMIT > 0,
-		"the default FPS limit is a real selectable cap")
-	check(Global._sanitize_fps_limit(-5) == 0
-		and Global._sanitize_fps_limit(59) == 60
-		and Global._sanitize_fps_limit(1000) == 240,
-		"invalid/out-of-range FPS limits map to the nearest safe option")
+func _test_quiz_compiler_layout() -> void:
+	var old_scale: float = Global.ui_scale
+	var old_viewport: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	Global.ui_scale = 1.0
+	Global.ui_viewport_size = Vector2(1280, 720)
+	Global.ui_safe_insets = Vector4.ZERO
 
-	var old_limit: int = Global.fps_limit
+	var altar := QuizAltar.new()
+	add_child(altar)
+	altar.call("_build_panel")
+	var q := DungeonQuestion.new()
+	q.type = DungeonQuestion.Type.COMPILER
+	q.language = "lua"
+	q.answer_output = "hello"
+	var compiler_questions: Array[DungeonQuestion] = [q]
+	altar.set("_questions", compiler_questions)
+	altar.set("_index", 0)
+	altar.call("_rebuild_controls")
+	await get_tree().process_frame
+
+	var run_btn := altar.get("_run_btn") as Button
+	var hint_btn := altar.get("_hint_btn") as Button
+	check(run_btn != null and hint_btn != null and run_btn.visible
+		and run_btn.get_parent() == hint_btn.get_parent()
+		and run_btn.get_index() == hint_btn.get_index() + 1,
+		"quiz Run button sits directly beside Hint in the header")
+
+	var grid := altar.get("_compiler_grid") as GridContainer
+	var code_entry := altar.get("_code_entry") as TextEdit
+	var out := altar.get("_compiler_output") as RichTextLabel
+	check(grid != null and grid.columns == 2 and code_entry != null and out != null
+		and grid.is_ancestor_of(code_entry) and grid.is_ancestor_of(out)
+		and code_entry.get_parent() != out.get_parent(),
+		"wide quiz screens place code and output side by side in two columns")
+
+	Global.ui_viewport_size = Vector2(620, 720)
+	altar.call("_update_compiler_columns")
+	check(grid != null and grid.columns == 1,
+		"narrow quiz screens stack code above output in one column")
+
+	var mcq := DungeonQuestion.new()
+	mcq.type = DungeonQuestion.Type.MCQ
+	mcq.question = "Pick one"
+	mcq.answer_a = "A"
+	mcq.answer_b = "B"
+	mcq.correct_index = 0
+	var mcq_questions: Array[DungeonQuestion] = [mcq]
+	altar.set("_questions", mcq_questions)
+	altar.set("_index", 0)
+	altar.call("_rebuild_controls")
+	await get_tree().process_frame
+	check(run_btn != null and is_instance_valid(run_btn) and not run_btn.visible,
+		"quiz header Run button is hidden for multiple-choice questions")
+
+	altar.queue_free()
+	await get_tree().process_frame
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_viewport
+	Global.ui_safe_insets = old_insets
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+
+func _test_display_frame_cap() -> void:
+	var panel_src := FileAccess.get_file_as_string("res://scripts/settings_panel.gd")
+	var global_src := FileAccess.get_file_as_string("res://scripts/global.gd")
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
 	var old_max: int = Engine.max_fps
-	Global.fps_limit = 60
 	Global.apply_frame_settings()
-	check(Engine.max_fps == 60, "the FPS cap applies through Engine.max_fps")
-	Global.fps_limit = 0
+	check(Global.FRAME_CAP == 60 and Engine.max_fps == 60,
+		"the game applies a fixed 60 FPS cap through Engine.max_fps")
+	check(not Global.has_method("set_fps_limit") and not Global.has_method("set_show_fps"),
+		"the obsolete FPS limit/display setters are removed")
+	check(not panel_src.contains("FPS Limit") and not panel_src.contains("Show FPS")
+		and panel_src.contains("VSync")
+		and panel_src.contains("if not Global.is_mobile():"),
+		"settings expose VSync only, with no FPS display/limit controls")
+	check(global_src.contains("DisplayServer.VSYNC_ENABLED")
+		and global_src.contains("DisplayServer.VSYNC_DISABLED")
+		and global_src.contains("Engine.max_fps = FRAME_CAP"),
+		"VSync remains available and cannot raise the fixed frame cap")
+	check(not game_src.contains("FPS_OVERLAY")
+		and not FileAccess.file_exists("res://scripts/fps_overlay.gd"),
+		"the user-facing FPS overlay is removed")
+	var old_vsync: bool = Global.vsync_enabled
+	Global.vsync_enabled = false
 	Global.apply_frame_settings()
-	check(Engine.max_fps == 0, "Unlimited maps to Godot's zero FPS cap")
-	Global.fps_limit = old_limit
+	check(Engine.max_fps == 60, "VSync off still caps the game at 60 FPS")
+	Global.vsync_enabled = old_vsync
 	Global.apply_frame_settings()
 	Engine.max_fps = old_max
 
-	var panel_src := FileAccess.get_file_as_string("res://scripts/settings_panel.gd")
-	check(panel_src.contains("FPS Limit")
-		and panel_src.contains("VSync")
-		and panel_src.contains("if not Global.is_mobile():"),
-		"settings expose the FPS limit everywhere and VSync only on desktop")
+func _test_removed_debug_surfaces() -> void:
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	var help_src := FileAccess.get_file_as_string("res://scripts/help_panel.gd")
+	check(not FileAccess.file_exists("res://scripts/chat_console.gd")
+		and not game_src.contains("CHAT_CONSOLE_SCRIPT")
+		and not help_src.contains("command console")
+		and not help_src.contains("/ or T"),
+		"the slash-command console and its help entry are removed")
+	var wire := load("res://resources/items/wire.tres") as ItemData
+	check(wire != null and wire.description.length() > 20
+		and wire.description.to_lower().contains("crafting station")
+		and wire.description.to_lower().contains("cpu")
+		and wire.description.to_lower().contains("fishing rod"),
+		"wire description matches its actual crafted-component use")
 
 func _test_ui_scaling() -> void:
 	var desktop := Global.compute_ui_scale(Vector2(1920, 1080), false)
@@ -4025,6 +4543,45 @@ func _test_ui_scaling() -> void:
 		"a bogus keyboard height is clamped inside the viewport")
 	check(is_zero_approx(Global.keyboard_height_in_viewport(0.0, 2.25, 648.0)),
 		"a hidden keyboard reports zero viewport height")
+
+	# Algorithmica/quiz editors use the stricter rule: only a DOCKED keyboard
+	# (activity resized via adjustResize) may move the panel. A floating keyboard
+	# stays at full viewport height and must not lift the whole editor; a hidden
+	# or stale height must bring it back down.
+	check(is_equal_approx(Global.editor_keyboard_inset(300.0, 348.0, 648.0, true), 300.0),
+		"a docked keyboard shrinks Algorithmica panels")
+	check(is_zero_approx(Global.editor_keyboard_inset(300.0, 648.0, 648.0, true)),
+		"a floating keyboard leaves the whole Algorithmica panel in place")
+	check(is_zero_approx(Global.editor_keyboard_inset(0.0, 648.0, 648.0, true)),
+		"a hidden keyboard clears the Algorithmica panel inset")
+	check(is_zero_approx(Global.editor_keyboard_inset(300.0, 348.0, 648.0, false)),
+		"Algorithmica panels stay put when no text field is focused")
+
+	var old_editor_max: float = float(Global.get("_editor_viewport_max_h"))
+	var kb_old_override: float = Global.keyboard_height_override
+	var kb_old_viewport: Vector2 = Global.ui_viewport_size
+	var focus_probe := LineEdit.new()
+	add_child(focus_probe)
+	focus_probe.grab_focus()
+	await get_tree().process_frame
+	Global.keyboard_height_override = 0.0
+	Global.ui_viewport_size = Vector2(1152, 648)
+	check(is_zero_approx(Global.keyboard_panel_inset()),
+		"hidden keyboard leaves the live Algorithmica panel at the bottom")
+	Global.keyboard_height_override = 300.0
+	check(is_zero_approx(Global.keyboard_panel_inset()),
+		"floating keyboard keeps the live Algorithmica panel full-screen")
+	Global.ui_viewport_size = Vector2(1152, 348)
+	check(is_equal_approx(Global.keyboard_panel_inset(), 300.0),
+		"docked keyboard lifts the live Algorithmica panel by its covered height")
+	Global.keyboard_height_override = 0.0
+	Global.ui_viewport_size = Vector2(1152, 648)
+	check(is_zero_approx(Global.keyboard_panel_inset()),
+		"dismissing the docked keyboard drops the Algorithmica panel back down")
+	Global.set("_editor_viewport_max_h", old_editor_max)
+	Global.keyboard_height_override = kb_old_override
+	Global.ui_viewport_size = kb_old_viewport
+	focus_probe.queue_free()
 
 	var old_size: Vector2 = Global.ui_viewport_size
 	var old_insets: Vector4 = Global.ui_safe_insets
@@ -4901,6 +5458,16 @@ func _test_tutorial_help_and_cursors() -> void:
 	var skip_btn: Button = dlg.get("_skip_button") as Button
 	var safe := Global.ui_content_rect()
 	var skip_rect := skip_btn.get_global_rect() if skip_btn != null else Rect2()
+	var skip_h := maxf(36.0 * 1.5, float(Global.ui_font_size(10)) + 18.0 * 1.5)
+	var mobile_dialogue := TutorialDialogue.panel_rect(safe, 1.5, true, skip_h)
+	var desktop_dialogue := TutorialDialogue.panel_rect(safe, 1.5, false, skip_h)
+	check(safe.encloses(mobile_dialogue)
+		and mobile_dialogue.position.y >= safe.position.y + skip_h
+		and not mobile_dialogue.intersects(skip_rect),
+		"Android tutorial dialogue sits at the top below the Skip control")
+	check(safe.encloses(desktop_dialogue)
+		and desktop_dialogue.end.y <= safe.end.y - 8.0,
+		"desktop tutorial dialogue keeps its bottom placement")
 	check(opened and skip_btn != null and skip_btn.visible,
 		"active dialogue exposes a real top-right skip button")
 	check(skip_btn != null and safe.encloses(skip_rect)

@@ -470,7 +470,7 @@ var pause_menu_open:    bool  = false
 # managing their own boolean flags and pause state.
 var _ui_open_count: int = 0
 var player_near_station: bool  = false
-var block_mode:          bool  = false   # Ctrl toggles (gameplay build mode) - shared across all scripts; /blockmode command also works
+var block_mode:          bool  = false   # Ctrl toggles (gameplay build mode) - shared across all scripts
 var is_in_dungeon:       bool  = false   # true while inside a dungeon - blocks build mode toggle
 # ── Responsive UI metrics ───────────────────────────────────────────
 # ui_scale is the ONE multiplier every interface uses. It is derived from the
@@ -496,7 +496,6 @@ var ui_scale:            float = 1.5
 var ui_viewport_size:    Vector2 = Vector2.ZERO
 # left, top, right, bottom in viewport/logical coordinates. Zero on desktop.
 var ui_safe_insets:      Vector4 = Vector4.ZERO
-var ui_pause_strip:      float = 0.0
 ## Bottom edge (viewport units) of the top-right pause button. The mission
 ## tracker uses this so it always starts BELOW the button instead of guessing a
 ## fixed offset that overlaps once the responsive UI scale grows the button.
@@ -525,7 +524,7 @@ var _touch_mouse_pos:    Vector2 = Vector2.ZERO
 func is_shift_held() -> bool:
 	return mobile_shift or Input.is_key_pressed(KEY_SHIFT)
 
-# Single build-mode toggle (Ctrl key, mobile BUILD button, /blockmode command).
+# Single build-mode toggle (Ctrl key, mobile BUILD button).
 func toggle_build_mode() -> void:
 	if is_in_dungeon:
 		notify("[color=#ff7777]Build mode is disabled inside dungeons.[/color]")
@@ -869,6 +868,40 @@ func mobile_keyboard_height() -> float:
 	# which has nothing to do with how much of the window the keyboard covers.
 	return keyboard_height_in_viewport(
 		pixels, vp.get_stretch_transform().get_scale().y, vp_height)
+
+## Pure inset rule for full-screen code editors. A docked Android keyboard
+## resizes the activity (adjustResize), so the viewport becomes shorter than its
+## no-keyboard maximum. A floating keyboard leaves the viewport full-size; in
+## that case the whole editor panel must not move. Returning 0 when the viewport
+## has grown back also clears a stale keyboard height after the keyboard hides.
+static func editor_keyboard_inset(raw: float, current_h: float, max_h: float,
+		focused: bool) -> float:
+	if raw <= 0.0 or not focused:
+		return 0.0
+	if current_h >= max_h - 8.0:
+		return 0.0
+	return raw
+
+var _editor_viewport_max_h: float = 0.0
+
+## Keyboard inset used by Algorithmica/quiz editor panels. Unlike the sign-in
+## forms, editor panels must not float above the screen for a floating keyboard,
+## and must come back down as soon as the docked keyboard disappears.
+func keyboard_panel_inset() -> float:
+	var current_h: float = ui_viewport_size.y
+	if current_h <= 0.0:
+		var vp := get_viewport()
+		current_h = vp.get_visible_rect().size.y if vp != null else 0.0
+	# No keyboard (or no editable field focused): this IS the unobscured
+	# viewport. Re-baseline so a rotation or a stale DisplayServer height can
+	# never leave an editor panel permanently pushed up.
+	var raw: float = mobile_keyboard_height()
+	if raw <= 0.0 or not is_text_input_focused():
+		_editor_viewport_max_h = current_h
+		return 0.0
+	if current_h > _editor_viewport_max_h:
+		_editor_viewport_max_h = current_h
+	return editor_keyboard_inset(raw, current_h, _editor_viewport_max_h, true)
 # The old per-save ui_scale preference is intentionally ignored. UI size is now
 # derived centrally in refresh_ui_scale() from the live usable viewport.
 
@@ -889,10 +922,6 @@ var explored_cave_tiles: Dictionary = {}
 # { "cave:<seed>:<x>:<y>": {"tiles": [...], "blocks": [...], "explored": [...]} }
 var cave_states: Dictionary = {}
 
-# True while the chat console's text input is focused — gates player movement
-# (and other input) so typing WASD into a command doesn't also walk the player.
-var chat_open: bool = false
-
 # True while ANY text field (TextEdit / CodeEdit / LineEdit) has keyboard focus.
 # Every hotkey handler MUST consult this: input handlers use _input(), which
 # runs BEFORE a focused Control's _gui_input() and therefore still receives the
@@ -900,17 +929,15 @@ var chat_open: bool = false
 # would otherwise close the panel / change the hotbar. Checked via the viewport
 # focus owner, so it needs no per-panel bookkeeping.
 func is_text_input_focused() -> bool:
-	if chat_open:
-		return true
 	var vp := get_viewport()
 	if vp == null:
 		return false
 	var owner := vp.gui_get_focus_owner()
 	return owner is TextEdit or owner is CodeEdit or owner is LineEdit
 
-# Reference to the overworld's DayNightCycle (set in its _ready) so the chat
-# console's /daynight command can toggle it from anywhere. Null while inside a
-# cave/dungeon (those have no sky tint).
+# Reference to the overworld's DayNightCycle (set in its _ready) so other
+# systems can toggle it from anywhere. Null while inside a cave/dungeon (those
+# have no sky tint).
 var day_night_cycle: Node = null
 
 # True while the player stands inside a VALID house (a sealed, doored room).
@@ -1028,12 +1055,11 @@ signal ui_scale_changed(scale: float)
 ## resumed game.
 signal gameplay_input_cancelled
 signal request_close_all_ui
-signal chat_logged(message: String)
 
 signal camera_zoom_changed(zoom: float)
 signal inventory_toggled(is_open: bool)
 # Emitted by full-screen station/editor screens that cover the playfield. The
-# game HUD is hidden while these are open so the hotbar/FPS/minimap can never
+# game HUD is hidden while these are open so the hotbar/minimap can never
 # overlap their panels.
 signal modal_hud_changed(open: bool)
 signal block_mode_changed(enabled: bool)
@@ -1849,7 +1875,7 @@ func grant_item(item_path: String, quantity: int = 1) -> bool:
 
 # Find any ItemData resource under resources/items/ by display name or file
 # base name (case-insensitive, contains match). Returns null when nothing
-# matches. Used by the /inv console command to hand out arbitrary items.
+# matches. Shared by cave generation and the furnace Python host.
 func find_item_by_name(query: String) -> ItemData:
 	var q: String = query.strip_edges().to_lower()
 	if q.is_empty():
@@ -1891,7 +1917,7 @@ func all_item_ids() -> PackedStringArray:
 	return out
 
 # Every ItemData resource under resources/items/, sorted by display name. Used
-# by the /items console command's picker UI.
+# by the Algorithmica item-id catalogue.
 func list_all_items() -> Array[ItemData]:
 	var out: Array[ItemData] = []
 	const ITEMS_DIR: String = "res://resources/items/"
@@ -1902,14 +1928,6 @@ func list_all_items() -> Array[ItemData]:
 				out.append(data)
 	out.sort_custom(func(a: ItemData, b: ItemData) -> bool: return a.item_name < b.item_name)
 	return out
-
-# Grant an item by NAME (see find_item_by_name). allow_dev defaults to true so
-# the /inv debug command can hand out dev-only blocks (grass, ores, etc.).
-func give_item_by_name(query: String, quantity: int = 1) -> bool:
-	var data := find_item_by_name(query)
-	if data == null:
-		return false
-	return add_item({"data": data, "quantity": maxi(quantity, 1)}, true)
 
 # ── Player / world refs ───────────────────────────────────────────
 var player_node: Node = null
@@ -1963,20 +1981,19 @@ const DISPLAY_SECTION: String = "display"
 # Default matches project.godot's window mode (2 = maximized), so a fresh install
 # behaves exactly as before until the player chooses otherwise.
 var fullscreen: bool = false
-# Frame pacing is a global display preference, not a per-save setting. 120 is
-# the game's target refresh; 0 means unlimited. The same FPS cap is applied on
-# desktop and mobile, while VSync remains a desktop-only control (Android's
-# display compositor owns its presentation timing).
-const FPS_LIMIT_OPTIONS: Array = [30, 60, 90, 120, 144, 165, 240, 0]
-const DEFAULT_FPS_LIMIT: int = 120
-var fps_limit: int = DEFAULT_FPS_LIMIT
+# Frame pacing is a global display preference, not a per-save setting. The game
+# presents at most 60 FPS on every platform. VSync remains a desktop-only
+# control (Android's display compositor owns its presentation timing); it can
+# only lower the rate, never raise it above FRAME_CAP.
+const FRAME_CAP: int = 60
 var vsync_enabled: bool = true
-# Small read-only FPS counter over gameplay. Off for every existing install whose
-# settings.cfg predates this key, and off for fresh installs.
-signal show_fps_changed(enabled: bool)
-var show_fps: bool = false
+## Test-only platform override: -1 = detect from OS, 0 = desktop, 1 = mobile.
+## Lets the headless QA suite exercise platform-specific layout/input rules.
+var mobile_platform_override: int = -1
 
 func is_mobile() -> bool:
+	if mobile_platform_override >= 0:
+		return mobile_platform_override == 1
 	return OS.has_feature("mobile")
 
 ## Point-and-click / tap-to-control is enabled again. The flag remains the one
@@ -1990,20 +2007,13 @@ func load_display_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(DISPLAY_PATH) != OK:
 		fullscreen = false
-		fps_limit = DEFAULT_FPS_LIMIT
 		vsync_enabled = true
 		point_and_click = false
 		point_and_click_auto_sprint = false
 		point_and_click_changed.emit(false)
-		show_fps = false
-		show_fps_changed.emit(false)
 		return
 	fullscreen = bool(cfg.get_value(DISPLAY_SECTION, "fullscreen", fullscreen))
-	fps_limit = _sanitize_fps_limit(int(cfg.get_value(
-		DISPLAY_SECTION, "fps_limit", DEFAULT_FPS_LIMIT)))
 	vsync_enabled = bool(cfg.get_value(DISPLAY_SECTION, "vsync_enabled", true))
-	show_fps = bool(cfg.get_value(DISPLAY_SECTION, "show_fps", false))
-	show_fps_changed.emit(show_fps)
 	point_and_click = bool(cfg.get_value("controls", "point_and_click", false))
 	point_and_click_auto_sprint = bool(cfg.get_value(
 		"controls", "point_and_click_auto_sprint", false))
@@ -2013,34 +2023,21 @@ func save_display_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(DISPLAY_PATH)          # keep any other keys already in the file
 	cfg.set_value(DISPLAY_SECTION, "fullscreen", fullscreen)
-	cfg.set_value(DISPLAY_SECTION, "fps_limit", fps_limit)
 	cfg.set_value(DISPLAY_SECTION, "vsync_enabled", vsync_enabled)
-	cfg.set_value(DISPLAY_SECTION, "show_fps", show_fps)
+	# Obsolete pre-0.9.4 controls are removed from the file instead of being
+	# silently carried forward. Older configs simply lose these two keys.
+	for obsolete in ["fps_limit", "show_fps"]:
+		if cfg.has_section_key(DISPLAY_SECTION, obsolete):
+			cfg.erase_section_key(DISPLAY_SECTION, obsolete)
 	cfg.set_value("controls", "point_and_click", point_and_click)
 	cfg.set_value("controls", "point_and_click_auto_sprint", point_and_click_auto_sprint)
 	cfg.save(DISPLAY_PATH)
 
-func _sanitize_fps_limit(limit: int) -> int:
-	if limit <= 0:
-		return 0
-	if FPS_LIMIT_OPTIONS.has(limit):
-		return limit
-	var best := 0
-	var best_diff := 1 << 30
-	for raw in FPS_LIMIT_OPTIONS:
-		var option := int(raw)
-		if option <= 0:
-			continue
-		var diff := absi(option - limit)
-		if diff < best_diff:
-			best_diff = diff
-			best = option
-	return best
-
-# Applies the frame cap on every platform and VSync only on desktop. Android's
-# compositor owns its presentation timing, so mobile never exposes/changes VSync.
+# Applies the fixed frame cap on every platform and VSync only on desktop.
+# Setting Engine.max_fps even with VSync enabled guarantees a 120/144 Hz display
+# can never push the game above 60 FPS. A slower display keeps its own cadence.
 func apply_frame_settings() -> void:
-	Engine.max_fps = fps_limit
+	Engine.max_fps = FRAME_CAP
 	if is_mobile() or DisplayServer.get_name() == "headless":
 		return
 	DisplayServer.window_set_vsync_mode(
@@ -2066,17 +2063,6 @@ func set_fullscreen(on: bool) -> void:
 	apply_display_mode()
 	save_display_settings()
 
-# Player-facing FPS cap setter. Works on both desktop and mobile.
-func set_fps_limit(limit: int) -> void:
-	var clean := _sanitize_fps_limit(limit)
-	var changed := clean != fps_limit
-	fps_limit = clean
-	apply_frame_settings()
-	if changed:
-		CrashLogger.event("SETTINGS", "fps_limit=%s" % (
-			"unlimited" if clean == 0 else str(clean)))
-		save_display_settings()
-
 # Desktop-only VSync setter. Mobile ignores it (and the setting UI is hidden).
 func set_vsync(on: bool) -> void:
 	if is_mobile() or vsync_enabled == on:
@@ -2084,16 +2070,6 @@ func set_vsync(on: bool) -> void:
 	vsync_enabled = on
 	apply_frame_settings()
 	CrashLogger.event("SETTINGS", "vsync=%s" % on)
-	save_display_settings()
-
-# Player-facing setter: the overlay listens for the signal and hides instantly;
-# the global settings.cfg keeps the choice across restarts.
-func set_show_fps(on: bool) -> void:
-	if show_fps == on:
-		return
-	show_fps = on
-	CrashLogger.event("SETTINGS", "show_fps=%s" % on)
-	show_fps_changed.emit(on)
 	save_display_settings()
 
 # ── Optional point-and-click movement ─────────────────────────────
@@ -2184,8 +2160,8 @@ func item_hold_end() -> void:
 	hide_item_tooltip()
 
 func _ready() -> void:
-	# Global input (Ctrl build toggle, pause/chat shortcuts) must work even when
-	# the SceneTree is paused — a leaked open_ui() leaves get_tree().paused true
+	# Global input (Ctrl build toggle, pause shortcut) must work even when the
+	# SceneTree is paused — a leaked open_ui() leaves get_tree().paused true
 	# while the player (PROCESS_MODE_ALWAYS) still moves, and a pausable Global
 	# would silently stop receiving _input. ALWAYS keeps this responsive.
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -2194,7 +2170,7 @@ func _ready() -> void:
 	# (the title screen) is already presented in the right mode.
 	load_display_settings()
 	apply_display_mode()
-	apply_frame_settings()   # mobile needs the FPS cap even though display mode is fixed
+	apply_frame_settings()   # fixed 60 FPS cap, before the first scene is shown
 	_setup_ui_scaling()
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
@@ -2302,10 +2278,7 @@ func reset_bestiary_state() -> void:
 # it works in every world (overworld/cave/pixie/dungeon); each world's own
 # per-frame ghost/grid code reacts to the flag + block_mode_changed signal.
 func _input(event: InputEvent) -> void:
-	if Global.chat_open or Global.pause_menu_open:
-		if event is InputEventKey and (event as InputEventKey).keycode == KEY_CTRL:
-			CrashLogger.report("build toggle blocked: chat_open=%s pause_menu_open=%s" % [
-				Global.chat_open, Global.pause_menu_open])
+	if Global.pause_menu_open:
 		return
 	# Ctrl is a text-editing modifier (Ctrl+A/C/V/…), so never toggle build mode
 	# while a text field is focused.
@@ -2319,36 +2292,21 @@ func _input(event: InputEvent) -> void:
 		return
 	var key_event := event as InputEventKey
 	if key_event.keycode == KEY_CTRL and not key_event.shift_pressed:
-		# One implementation for the Ctrl key, the mobile BUILD button and the
-		# /blockmode command. The old duplicated branch skipped the dungeon guard
+		# One implementation for the Ctrl key, the mobile BUILD button and any
+		# future UI toggle. The old duplicated branch skipped the dungeon guard
 		# notification and could drift from toggle_build_mode().
 		toggle_build_mode()
 
-# ── World-method dispatch (used by the chat console's debug commands) ──
-# Duck-typed like the rest of the codebase (has_method()/call()) — whichever
-# world is active (overworld/cave/pixie/dungeon) only needs to implement the
-# matching method name to support the /hitboxes, /chunkborders and
-# /nearestcave commands. World scripts own the toggle/draw logic; this only
-# routes the call.
-func dispatch_to_world(method_name: String) -> void:
-	if world_node != null and is_instance_valid(world_node) and world_node.has_method(method_name):
-		world_node.call(method_name)
 
 # Central fallback for UIs that do not consume Escape in their own _input().
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("escape") and request_ui_back(event):
 		get_viewport().set_input_as_handled()
 
-# Routes a line into the chat log (the ChatConsole listens for this). Any
-# system can print to the on-screen chat this way without knowing where the
-# console node is.
-func log_chat(message: String) -> void:
-	chat_logged.emit(message)
 
 # ── Top-of-screen gameplay notifications ─────────────────────────
 # Player-facing feedback (fishing, farming, deaths, build-mode warnings, item
-# messages) is shown by NotificationHUD as a top-centre toast instead of being
-# buried in the debug chat. Command/debug output keeps using log_chat().
+# messages) is shown by NotificationHUD as a top-centre toast.
 signal notification_posted(message: String)
 
 func notify(message: String) -> void:
@@ -3042,6 +3000,16 @@ func list_carried_items() -> Array[ItemData]:
 # land there — otherwise they would be unreachable behind the button.
 func hotbar_item_slots() -> int:
 	return HOTBAR_SIZE - 1 if is_mobile() else HOTBAR_SIZE
+
+## Height of the gameplay hotbar HUD band above the bottom safe area:
+## slot row + its bottom margin + the HP/SP band above it. Mirrors hotbar.gd's
+## live sizing. Used ONLY by the Inventory screen so it can stay above the
+## persistent hotbar; maps/documentation and other modals remain full-screen.
+func hotbar_hud_height() -> float:
+	var s: float = ui_scale
+	var base: float = 36.0 if is_mobile() else 40.0
+	var slot_px: float = round(maxf(base * s, 44.0 if is_mobile() else base * s))
+	return slot_px + 8.0 * s + 28.0 * s
 
 func set_hotbar_selection(index: int) -> void:
 	hotbar_selected = clamp(index, 0, hotbar_item_slots() - 1)

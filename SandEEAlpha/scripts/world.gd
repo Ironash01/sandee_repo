@@ -262,7 +262,7 @@ var _decor_rng: RandomNumberGenerator = null
 
 var _structure_claimed_chunks: Dictionary = {}   # chunk coord (Vector2i) -> true
 var _structure_anchor_tiles:   Array      = []   # top-left tiles, for the min-separation check
-var _located_structures:        Array      = []   # [{"name": String, "tile": Vector2i}, ...] — every placed structure/entrance, for /locate
+var _located_structures:        Array      = []   # [{"name": String, "tile": Vector2i}, ...] — every placed structure/entrance, for internal lookups
 var _structure_sources:        Dictionary = {}   # GeneratedStructure -> source id in the Structures TileSet
 
 # ── Dungeon entrances (one per language, always present) ──────────────
@@ -5529,8 +5529,8 @@ func waypoint_world_rect() -> Rect2:
 		Vector2(width, height) * TILE_SIZE)
 
 
-# Names of every structure resource in STRUCTURES_DIR (the /locate autocomplete
-# source) — ALL types, including cave/pixie/dungeon entrances.
+# Names of every structure resource in STRUCTURES_DIR (internal lookup source)
+# — ALL types, including cave/pixie/dungeon entrances.
 func get_available_structure_names() -> Array:
 	var names: Array = []
 	for res in _scan_structure_dir():
@@ -5542,7 +5542,7 @@ func get_available_structure_names() -> Array:
 
 # Nearest placed structure/entrance whose .name matches `structure_name`
 # (case-insensitive), measured from the player. Returns Vector2.INF when none
-# exists (or none of that name was placed). Used by the /locate chat command.
+# exists (or none of that name was placed). Internal debug helper.
 func locate_nearest_structure(structure_name: String) -> Vector2:
 	if _located_structures.is_empty():
 		return Vector2.INF
@@ -6380,7 +6380,7 @@ func remove_dungeon_entrance(dungeon_index: int) -> void:
 
 # World position of the live entrance for a language's current dungeon
 # ("lua"/"python"), or Vector2.INF when that track is finished or its
-# entrance hasn't been placed. Used by /locate dungeon entrance <lang>.
+# entrance hasn't been placed. Internal debug helper.
 func get_dungeon_entrance_target(lang: String) -> Vector2:
 	var idx: int = Global.current_dungeon_index(lang)
 	if idx <= 0 or not _dungeon_entrance_tiles.has(idx) or Global.is_dungeon_cleared(idx):

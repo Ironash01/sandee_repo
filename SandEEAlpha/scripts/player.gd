@@ -308,11 +308,6 @@ func cancel_pending_input() -> void:
 	_apply_movement_direction(Vector2.ZERO, false)
 
 func get_input(delta: float = 0.0) -> void:
-	# While the chat console's input is focused, don't let WASD walk the player.
-	if Global.chat_open:
-		_pnc_cancel()
-		_apply_movement_direction(Vector2.ZERO, false)
-		return
 	# Keyboard and touch joystick feed the SAME direction: the joystick's analog
 	# value is added to the keyboard vector and clamped to unit length, so speed,
 	# collision, sprint and terrain rules below stay identical on both platforms.
@@ -2039,7 +2034,7 @@ func _give_debug_items() -> void:
 			# handed out here for block-mode testing — see Global.add_item.
 			Global.add_item({"quantity": 10, "data": data}, true)
 
-# Debug (via the chat console's /dungeon command): teleport to the NEAREST
+# Debug helper: teleport to the NEAREST dungeon entrance from the current
 # dungeon entrance. Reuses the guide arrow's world lookup, so it's a no-op with
 # a warning when neither language has a live entrance. The 64px offset drops
 # the player just south of the portal so it doesn't overlap it.
@@ -2055,7 +2050,7 @@ func _debug_teleport_to_dungeon() -> void:
 	global_position = target + Vector2(0.0, 64.0)
 	print("DebugTeleport: jumped to dungeon entrance at %s" % str(target))
 
-# Debug (via the chat console's /missions command): reset the tutorial mission
+# Debug helper: reset the tutorial mission state.
 # state the same way the old Shift+R shortcut did.
 func reset_debug_missions() -> void:
 	Global.reset_missions()

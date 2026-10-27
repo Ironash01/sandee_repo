@@ -9,6 +9,12 @@ var _stat_bar_bgs: Array = []
 var _inventory_open: bool = false
 var _modal_hud_open: bool = false
 
+# The hotbar's own CanvasLayer sits above the world HUD. While the inventory is
+# open it is raised above the inventory's CanvasLayer (12) so its dim overlay
+# cannot swallow hotbar taps/drags. It remains a separate persistent HUD.
+const CANVAS_LAYER_NORMAL: int = 10
+const CANVAS_LAYER_OVER_INVENTORY: int = 13
+
 const C_SLOT_BG  := Color(0.11, 0.15, 0.26, 1.00)
 const C_SLOT_SEL := Color(0.25, 0.40, 0.75, 1.00)
 
@@ -285,9 +291,9 @@ func _apply_layout_scale() -> void:
 	_apply_label_scale()
 
 func _on_inventory_toggled(is_open: bool) -> void:
-	# Inventory is a modal screen and its selected-item panel + trash row use
-	# the bottom of the viewport. Hide the gameplay HUD so the hotbar, HP/SP
-	# bars and labels cannot overlap it; selection/state are preserved.
+	# The inventory is a panel above the bottom HUD, not a replacement for the
+	# hotbar. Keep the persistent hotbar visible/interactive and raise it over
+	# the inventory dim layer; selection and contents are never rebuilt here.
 	_inventory_open = is_open
 	_apply_hud_visibility()
 
@@ -300,8 +306,23 @@ func _on_modal_hud_changed(open: bool) -> void:
 
 func _apply_hud_visibility() -> void:
 	var canvas := get_node_or_null("CanvasLayer") as CanvasLayer
-	if canvas != null:
-		canvas.visible = not (_inventory_open or _modal_hud_open)
+	if canvas == null:
+		return
+	# Station/editor/documentation/map modals still hide the whole HUD. The
+	# inventory is the one screen that keeps the hotbar usable (Minecraft-style)
+	# so items can be dragged between the grid and quick slots.
+	canvas.visible = hotbar_canvas_should_show(_inventory_open, _modal_hud_open)
+	canvas.layer = hotbar_canvas_layer(_inventory_open, _modal_hud_open)
+
+# Pure visibility/layer rules so the inventory exception stays testable.
+# Station/editor/documentation/map modals always win over the inventory.
+static func hotbar_canvas_should_show(inventory_open: bool, modal_open: bool) -> bool:
+	return not modal_open
+
+static func hotbar_canvas_layer(inventory_open: bool, modal_open: bool) -> int:
+	if inventory_open and not modal_open:
+		return CANVAS_LAYER_OVER_INVENTORY
+	return CANVAS_LAYER_NORMAL
 
 # ── Mobile inventory button ───────────────────────────────────────
 # Android reserves the LAST visible hotbar slot (Minecraft-style). Any stack

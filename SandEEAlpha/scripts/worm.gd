@@ -928,6 +928,8 @@ func _die(allow_loot: bool = true) -> void:
 		world.call("notify_mob_killed", self)
 	Global.add_mission_progress("defeat_worms")
 	if allow_loot:
+		if not COMBAT_DATA.bestiary_id.is_empty():
+			Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 		Global.add_mission_progress("side_worm_slayer", 1)
 		_drop_cactus_loot()
 	_spawn_death_burst()

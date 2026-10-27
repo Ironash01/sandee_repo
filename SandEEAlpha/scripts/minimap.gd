@@ -89,7 +89,7 @@ const PORTAL_TEX: Texture2D = preload("res://sprites/map/dungeon_portal_icon.png
 
 var _expanded: bool = false
 var _owns_ui:  bool = false
-# Expanded map gets its own high CanvasLayer so no gameplay HUD (FPS, status,
+# Expanded map gets its own high CanvasLayer so no gameplay HUD (status,
 # hotbar, notifications, etc.) can draw over it. The minimap itself is moved
 # there while open and restored to the HUD layer on close.
 var _map_layer: CanvasLayer = null

@@ -11,3 +11,7 @@ health = 150.0
 speed = 0.0
 spawn_during_day = false
 spawn_during_night = false
+bestiary_id = "hitman"
+bestiary_category = "Boss"
+bestiary_description = "A heavily armed dungeon enforcer. It patrols corridors, fires flares and charges down straight lines."
+bestiary_icon_path = "res://sprites/mobs/bestiary/hitman_icon.png"

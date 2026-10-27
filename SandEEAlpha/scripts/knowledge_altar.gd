@@ -69,7 +69,8 @@ func _ready() -> void:
 	add_to_group("KnowledgeAltar")
 	var tex := AtlasTexture.new()
 	tex.atlas = SPRITE_TEXTURE
-	tex.region = Rect2(288, 128, 32, 32)
+	# y=96 is the altar-art row in the dungeon atlas; y=128 is the floor row.
+	tex.region = Rect2(288, 96, 32, 32)
 	var sprite := Sprite2D.new()
 	sprite.texture = tex
 	add_child(sprite)

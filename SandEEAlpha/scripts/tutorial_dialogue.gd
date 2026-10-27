@@ -179,20 +179,37 @@ func _portrait_style() -> StyleBoxFlat:
 	sb.content_margin_bottom = 8
 	return sb
 
+## Shared dialogue geometry. Android places the guide textbox at the top, below
+## the top-right Skip control, so it never covers that control, the notch or the
+## system bars. Desktop keeps the established bottom placement.
+static func panel_rect(content: Rect2, s: float, top_placement: bool, skip_h: float) -> Rect2:
+	var margin: float = maxf(8.0, 16.0 * s)
+	var panel_width: float = minf(content.size.x - margin * 2.0, 1040.0 * s)
+	panel_width = minf(maxf(320.0, panel_width), maxf(1.0, content.size.x))
+	var panel_height: float = clampf(content.size.y * 0.29, 136.0 * s, 280.0 * s)
+	var top: float
+	if top_placement:
+		var skip_margin: float = 12.0 * s
+		top = content.position.y + skip_margin + skip_h + margin
+		var available: float = maxf(1.0, content.end.y - top - margin)
+		panel_height = minf(panel_height, available)
+	else:
+		panel_height = minf(panel_height, maxf(1.0, content.size.y - margin * 2.0))
+		top = content.end.y - panel_height - margin
+	return Rect2(Vector2(content.position.x + (content.size.x - panel_width) * 0.5, top),
+		Vector2(panel_width, panel_height))
+
 func _layout() -> void:
 	if _dialog_panel == null or not is_inside_tree():
 		return
 	var s: float = Global.ui_scale
 	var content := Global.ui_content_rect()
-	var margin: float = maxf(8.0, 16.0 * s)
-	var panel_width: float = minf(content.size.x - margin * 2.0, 1040.0 * s)
-	panel_width = maxf(320.0, panel_width)
-	var panel_height: float = clampf(content.size.y * 0.29, 136.0 * s, 280.0 * s)
-	panel_height = minf(panel_height, content.size.y - margin * 2.0)
-	_dialog_panel.position = Vector2(
-		content.position.x + (content.size.x - panel_width) * 0.5,
-		content.end.y - panel_height - margin)
-	_dialog_panel.size = Vector2(panel_width, panel_height)
+	var skip_h: float = maxf(36.0 * s, float(Global.ui_font_size(10)) + 18.0 * s)
+	var box := panel_rect(content, s, Global.is_mobile(), skip_h)
+	var panel_width: float = box.size.x
+	var panel_height: float = box.size.y
+	_dialog_panel.position = box.position
+	_dialog_panel.size = box.size
 
 	# Keep the portrait a framed character card rather than letting it stretch
 	# to the full dialogue height. The cap also keeps Py-San's 64x64 sprite from
@@ -211,13 +228,13 @@ func _layout() -> void:
 		for child in footer.get_children():
 			if child is Label:
 				(child as Label).add_theme_font_size_override("font_size", Global.ui_font_size(9))
-	# A vertical scrollbar is fine while a long line is being typed; the dialogue
-	# itself stays fixed at the bottom of the safe content area.
+	# A vertical scrollbar is fine while a long line is being typed; the panel
+	# itself stays fixed inside the safe content area (bottom on desktop, top on
+	# Android below the Skip control).
 	var text_width: float = maxf(120.0, panel_width - portrait_size - 58.0 * s)
 	_text_label.custom_minimum_size.x = text_width
 	if _skip_button != null:
 		var skip_w: float = clampf(174.0 * s, 76.0 * s, content.size.x * 0.34)
-		var skip_h: float = maxf(36.0 * s, float(Global.ui_font_size(10)) + 18.0 * s)
 		var skip_margin: float = 12.0 * s
 		_skip_button.position = Vector2(content.end.x - skip_w - skip_margin,
 			content.position.y + skip_margin)

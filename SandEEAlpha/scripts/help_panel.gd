@@ -63,7 +63,6 @@ SandEE is a 2D sandbox about gathering, building, survival, automation and learn
 • [b]M[/b] — open/close the full map.
 • [b]Esc[/b] — pause, close the innermost panel, or cancel a tap-to-move order.
 • [b]Enter / Space[/b] — advance dialogue.
-• [b]/ or T[/b] — open the command console. Enter sends a command; Esc closes it.
 • [b]Shift + click[/b] — mine/destroy a placed block, chest, station or furnace instead of using it.
 
 [b]Point-and-click (optional)[/b]
@@ -282,7 +281,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 		"body": """[b][color=#8fd8ff]SETTINGS[/color][/b]
 The pause menu and main menu share the same settings panel:
 • [b]Audio[/b] — master, music and SFX volume.
-• [b]Display[/b] — camera zoom (0.5×–3.0×), fullscreen (desktop), FPS limit, VSync (desktop) and the FPS counter.
+• [b]Display[/b] — camera zoom (0.5×–3.0×), fullscreen (desktop) and VSync (desktop). Frame rate is fixed at 60 FPS.
 • [b]Gameplay[/b] — pause while the inventory is open and an opaque quest-tracker background.
 • [b]Controls[/b] — point-and-click movement, automatic sprint, and rebinding for movement, inventory and all nine hotbar slots. Click a binding, press a key, or press Esc to cancel.
 • UI scale and safe-area layout are automatic. The game adapts to window size, cutouts, notches, system bars, 180° rotation and Android soft-keyboard height.
@@ -301,8 +300,7 @@ The pause menu and main menu share the same settings panel:
 • [b]A robot is stuck[/b] — return_to_spawn(), or pick a nearer station/clear the area. The pause menu's Automatica Management lists active robots.
 • [b]A dungeon entrance disappeared[/b] — clearing a dungeon removes that entrance and spawns the next mission. The temporary return waypoint is also consumed.
 • [b]Cloud world is missing[/b] — sign in, open Cloud Saves and download the copy. A different world UID in the same slot is a protected conflict, not an automatic overwrite.
-• [b]I want a fresh tutorial[/b] — tutorial progress is per world. A new world starts onboarding again; an existing world keeps its completed lessons.
-• [b]Debugging[/b] — the `/` or T command console can print help and run commands. The Programming Encyclopedia and the machine output panels are the in-game references for code.""",
+• [b]I want a fresh tutorial[/b] — tutorial progress is per world. A new world starts onboarding again; an existing world keeps its completed lessons.""",
 	},
 ]
 

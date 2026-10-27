@@ -5,19 +5,13 @@ const C_BORDER := Color(0.22, 0.32, 0.58, 1.00)
 const C_TITLE  := Color(0.80, 0.90, 1.00, 1.00)
 const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 
-# preload (not class_name) so the debug chat console can be built even before
-# the editor has re-scanned/registered the new script's class.
-const CHAT_CONSOLE_SCRIPT: Script = preload("res://scripts/chat_console.gd")
 const MINIMAP_SCRIPT: Script = preload("res://scripts/minimap.gd")
 # Left-middle LUA status HUD (what each placed LUA is doing; click for all).
 const LUA_STATUS_SCRIPT: Script = preload("res://scripts/lua_status_ui.gd")
 # Touch tap-tooltip popup (built-in tooltips are hover-only).
 const TOOLTIP_TAP_SCRIPT: Script = preload("res://scripts/tooltip_tap.gd")
-# Top-centre gameplay notifications (fishing/farming/deaths/…). The debug chat
-# keeps command output only.
+# Top-centre gameplay notifications (fishing/farming/deaths/…).
 const NOTIFICATION_HUD_SCRIPT: Script = preload("res://scripts/notification_hud.gd")
-# Optional top-right FPS readout (Settings → Display → Show FPS).
-const FPS_OVERLAY_SCRIPT: Script = preload("res://scripts/fps_overlay.gd")
 # Desktop contextual cursor set (the approved 24x24 cursor draft).
 const CURSOR_MANAGER_SCRIPT: Script = preload("res://scripts/cursor_manager.gd")
 # High-layer world-space mining progress ring (always above world sprites).
@@ -113,17 +107,11 @@ func _ready() -> void:
 	_start_autosave()
 	_add_mission_ui()
 
-	# Debug chat console (upper-left log + command input). Built in code and
-	# added under the UI CanvasLayer, so it layers above the world like the
-	# pause button/hotbar and inherits the layer's PROCESS_MODE_ALWAYS.
-	$CanvasLayer.add_child(CHAT_CONSOLE_SCRIPT.new())
 	# Bottom-left minimap (click / M opens the full map). Background HUD layer,
 	# so panels dim it.
 	_hud_backdrop.add_child(MINIMAP_SCRIPT.new())
 	# Left-middle LUA status panel (3 most-current LUAs; click to expand to all).
 	_hud_backdrop.add_child(LUA_STATUS_SCRIPT.new())
-	# Optional top-right FPS counter; starts hidden for every existing install.
-	_hud_backdrop.add_child(FPS_OVERLAY_SCRIPT.new())
 	# Tap tooltips (touch screens have no hover) — owns its own high layer.
 	add_child(TOOLTIP_TAP_SCRIPT.new())
 	# Top-centre gameplay notifications (fishing, farming, deaths, warnings).
@@ -608,9 +596,6 @@ func _do_exit_dungeon() -> void:
 	_dungeon_world.queue_free()
 	_dungeon_world = null
 
-	# Restore the notification log to its default top-left position.
-	_reset_chat_position()
-
 	add_child(_world)
 	move_child(_world, 0)
 	Global.world_node       = _world
@@ -628,15 +613,6 @@ func _do_exit_dungeon() -> void:
 	# overworld is back in the tree now, so the save captures real world data.
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
-
-func _reset_chat_position() -> void:
-	for c in $CanvasLayer.get_children():
-		if c is ChatConsole:
-			if c.has_method("reset_interaction_state"):
-				c.call("reset_interaction_state")
-			if c.has_method("reset_position"):
-				c.call("reset_position")
-			break
 
 # Cleanly leave any active cave/pixie cave/dungeon before quitting to the main
 # menu. Tearing the complex cave node tree down through the normal exit path —
@@ -795,10 +771,10 @@ func _run_scene_transition(callback: Callable, label_text: String) -> void:
 
 # ── Pause button styling ──────────────────────────────────────────────
 func _on_inventory_visibility_changed(is_open: bool) -> void:
-	# Inventory is a full modal. Hide every gameplay HUD layer so its tabs,
-	# minimap, quest tracker, FPS/pause controls and hotbar cannot show through
-	# or overlap the inventory panel. The inventory itself lives on the player's
-	# InventoryUI CanvasLayer (layer 12).
+	# Inventory is a panel, not a full HUD takeover: hide the map/quest/pause
+	# layers so they cannot show through, but leave the hotbar alone. Its own
+	# nested CanvasLayer stays visible above the inventory and decides when a
+	# true modal (station/editor/documentation/map) must hide it.
 	_set_gameplay_hud_visible(not is_open)
 
 func _on_modal_hud_changed(open: bool) -> void:
@@ -840,8 +816,6 @@ func _style_pause_button() -> void:
 	pause_btn.offset_right = -safe_right - margin
 	pause_btn.offset_bottom = safe_top + margin + btn_h
 	pause_btn.custom_minimum_size = Vector2(btn_w, btn_h)
-	# The FPS overlay sits immediately left of this button.
-	Global.ui_pause_strip = safe_right + margin + btn_w + margin
 	Global.ui_pause_bottom = safe_top + margin + btn_h
 	var normal := StyleBoxFlat.new()
 	normal.bg_color     = C_PANEL

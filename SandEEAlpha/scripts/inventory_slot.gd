@@ -28,6 +28,10 @@ var is_chest_slot: bool = false
 var _hovered:      bool = false
 var _drag_over:    bool = false
 var _is_drag_source: bool = false
+# One highlighted drop target at a time. Godot does not promise a per-slot
+# mouse-exit callback during a drag, so a static weak reference lets the new
+# target clear the previous slot's highlight.
+static var _active_drag_slot: WeakRef = null
 
 # ── Child nodes (built in _ready) ────────────────────────────────
 var _bg:   ColorRect
@@ -42,6 +46,7 @@ func _ready() -> void:
 	# Floating item tooltip on hover (shared popup).
 	mouse_entered.connect(_on_hover_in)
 	mouse_exited.connect(_on_hover_out)
+	set_process(false)
 
 func _on_hover_in() -> void:
 	_hovered = true
@@ -123,8 +128,10 @@ func set_empty() -> void:
 
 # ── Draw border ───────────────────────────────────────────────────
 func _draw() -> void:
-	var col := C_HOVER if _hovered else C_BORDER
-	draw_rect(Rect2(Vector2.ZERO, size), col, false, 1.5)
+	var col := C_DRAG_OVER if _drag_over else (C_HOVER if _hovered else C_BORDER)
+	if _drag_over:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(C_DRAG_OVER, 0.12), true)
+	draw_rect(Rect2(Vector2.ZERO, size), col, false, 2.0 if _drag_over else 1.5)
 
 # ── Mouse events ──────────────────────────────────────────────────
 func _gui_input(event: InputEvent) -> void:
@@ -160,27 +167,79 @@ func _get_drag_data(_at_position: Vector2) -> Variant:
 		payload = {"from_index": slot_index, "item": item, "source": "inventory"}
 	if not (payload is Dictionary):
 		return null
-	# Build a semi-transparent drag preview
 	var item_v: Variant = (payload as Dictionary).get("item")
-	if item_v is Dictionary:
-		var data: ItemData = (item_v as Dictionary).get("data") as ItemData
-		if data != null and data.icon != null:
-			var preview := TextureRect.new()
-			preview.texture             = data.icon
-			var prev_sz: float = Global.ITEM_SLOT_SIZE * Global.ui_scale * 0.75
-			preview.custom_minimum_size = Vector2(prev_sz, prev_sz)
-			preview.expand_mode         = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-			preview.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			preview.modulate            = Color(1, 1, 1, 0.72)
-			set_drag_preview(preview)
+	set_drag_preview(_make_drag_preview(item_v))
 	_is_drag_source = true
 	_drag_item = item_v
 	return payload
 
+# Semi-transparent icon + stack-count preview carried under the cursor/finger.
+# Shared by both inventory and chest drags so the player sees exactly which
+# stack (and how many) is moving.
+func _make_drag_preview(item_v: Variant) -> Control:
+	var preview := Control.new()
+	var prev_sz: float = Global.ITEM_SLOT_SIZE * Global.ui_scale * 0.75
+	preview.custom_minimum_size = Vector2(prev_sz, prev_sz)
+	preview.size = Vector2(prev_sz, prev_sz)
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if item_v is Dictionary:
+		var data: ItemData = (item_v as Dictionary).get("data") as ItemData
+		if data != null and data.icon != null:
+			var icon := TextureRect.new()
+			icon.texture = data.icon
+			icon.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			preview.add_child(icon)
+		var quantity: int = int((item_v as Dictionary).get("quantity", 1))
+		if quantity > 1:
+			var qty := Label.new()
+			qty.text = str(quantity)
+			qty.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			qty.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+			qty.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+			qty.add_theme_color_override("font_color", Color(1, 1, 1, 0.98))
+			qty.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
+			qty.add_theme_constant_override("outline_size", 4)
+			qty.set_anchors_preset(Control.PRESET_FULL_RECT)
+			qty.offset_right = -2
+			qty.offset_bottom = -1
+			qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			preview.add_child(qty)
+	preview.modulate = Color(1, 1, 1, 0.85)
+	return preview
+
 func _has_chest() -> bool:
 	return chest_link != null and is_instance_valid(chest_link)
 
+func _process(_delta: float) -> void:
+	# A drag target does not receive a per-slot "drag left" callback, so the
+	# poll clears a stale highlight if the drag ended without a drop.
+	if _drag_over and not get_viewport().gui_is_dragging():
+		_set_drag_over(false)
+
+func _set_drag_over(on: bool) -> void:
+	if _drag_over == on:
+		return
+	_drag_over = on
+	if on:
+		if _active_drag_slot != null:
+			var previous: Variant = _active_drag_slot.get_ref()
+			if previous != null and previous != self:
+				previous.call("_set_drag_over", false)
+		_active_drag_slot = weakref(self)
+	elif _active_drag_slot != null and _active_drag_slot.get_ref() == self:
+		_active_drag_slot = null
+	set_process(on)
+	queue_redraw()
+
 func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
+	var ok := _can_accept_drag(data)
+	_set_drag_over(ok)
+	return ok
+
+func _can_accept_drag(data: Variant) -> bool:
 	if not (data is Dictionary and data.has("from_index")):
 		return false
 	var src: String = str((data as Dictionary).get("source", "inventory"))
@@ -189,20 +248,13 @@ func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
 	if is_chest_slot or src == "chest":
 		if not _has_chest():
 			return false
-		if not bool(chest_link.call("can_accept_drop", slot_index, is_chest_slot, data)):
-			return false
-		_drag_over = true
-		queue_redraw()
-		return true
+		return bool(chest_link.call("can_accept_drop", slot_index, is_chest_slot, data))
 	if src != "inventory" and src != "hotbar":
 		return false
-	_drag_over = true
-	queue_redraw()
 	return true
 
 func _drop_data(_at_position: Vector2, data: Variant) -> void:
-	_drag_over = false
-	queue_redraw()
+	_set_drag_over(false)
 	var from_idx: int  = data["from_index"]
 	var source: String = data.get("source", "inventory")
 	var to_idx: int    = slot_index
@@ -244,13 +296,14 @@ func _update_visual() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_DRAG_END:
 		Global.item_hold_end()
-		_drag_over = false
-		queue_redraw()
+		_set_drag_over(false)
 		if _is_drag_source:
 			_is_drag_source = false
 			if not get_viewport().gui_is_drag_successful():
 				_drop_to_world()
 			_drag_item = null
+	elif what == NOTIFICATION_MOUSE_EXIT:
+		_set_drag_over(false)
 
 func _drop_to_world() -> void:
 	# A chest stack dragged out of the panel is simply cancelled — the chest

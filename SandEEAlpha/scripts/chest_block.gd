@@ -3,8 +3,8 @@ extends Node2D
 # Placed in the world. Left-click (when build mode OFF + player nearby) docks
 # this chest's storage into the player's EXISTING inventory panel, shown
 # directly beneath the player inventory — one combined screen, not a second
-# inventory implementation. Items move with the normal inventory drag/drop and
-# click conventions.
+# inventory implementation. Items move only by dragging between the two grids;
+# a plain click/tap selects or inspects a stack and never transfers it.
 # Shift + left-click mines the chest off the wall (hold-to-break, same
 # pickaxe-tier/block_level rules as placed blocks) instead of opening it.
 # NPC can call has_space() and deposit_item() autonomously.

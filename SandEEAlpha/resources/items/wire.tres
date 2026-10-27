@@ -10,7 +10,7 @@ region = Rect2(32, 64, 32, 32)
 [resource]
 script = ExtResource("1_jpwun")
 item_name = "Wire"
-description = "Here in SandEE, we electrecute niggers."
+description = "A coil of conductive copper wire used at a crafting station. It is a component for CPUs and fishing rods, not a placeable cable."
 icon = SubResource("AtlasTexture_k7x83")
 is_craftable = true
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

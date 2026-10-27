@@ -311,7 +311,7 @@ func _process(_delta: float) -> void:
 func _fit_keyboard() -> void:
 	if _panel_center == null:
 		return
-	var inset: float = Global.mobile_keyboard_height()
+	var inset: float = Global.keyboard_panel_inset()
 	var want: float = -(Global.ui_safe_insets.w + inset)
 	if not is_equal_approx(_panel_center.offset_bottom, want):
 		_panel_center.offset_bottom = want

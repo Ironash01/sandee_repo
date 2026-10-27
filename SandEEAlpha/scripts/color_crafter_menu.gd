@@ -38,6 +38,7 @@ var _wheel: Control = null
 var _swatch: ColorRect = null
 var _hint: Label = null
 var _cactus_label: Label = null
+var _close_btn: Button = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -63,7 +64,7 @@ func _on_ui_scale(_s: float) -> void:
 func _process(_delta: float) -> void:
 	if not visible or _panel_scroll == null:
 		return
-	var want: float = -(Global.ui_safe_insets.w + Global.mobile_keyboard_height())
+	var want: float = -(Global.ui_safe_insets.w + Global.keyboard_panel_inset())
 	if not is_equal_approx(_panel_scroll.offset_bottom, want):
 		_panel_scroll.offset_bottom = want
 		var focused := get_viewport().gui_get_focus_owner()
@@ -106,6 +107,7 @@ func _rebuild() -> void:
 		_root = null
 	_sliders.clear(); _edits.clear()
 	_value_slider = null; _wheel = null; _swatch = null; _hint = null; _cactus_label = null
+	_close_btn = null
 	_build()
 
 func _build() -> void:
@@ -149,12 +151,30 @@ func _build() -> void:
 	vbox.add_theme_constant_override("separation", int(10 * s))
 	panel.add_child(vbox)
 
+	# Header: title + a visible close button. The spacer keeps the title centred
+	# while the X stays inside the panel bounds on desktop and Android.
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", int(6 * s))
+	vbox.add_child(header)
+	var header_spacer := Control.new()
+	header_spacer.custom_minimum_size = Vector2(int(28 * s), 0)
+	header.add_child(header_spacer)
 	var title := Label.new()
 	title.text = "COLOR CRAFTER"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	title.add_theme_color_override("font_color", C_TITLE)
-	vbox.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	_close_btn = Button.new()
+	_close_btn.text = "✕"
+	_close_btn.flat = true
+	_close_btn.tooltip_text = "Close the Color Crafter."
+	_close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	_close_btn.add_theme_color_override("font_color", C_MUTED)
+	_close_btn.custom_minimum_size = Vector2(int(28 * s), int(28 * s))
+	_close_btn.pressed.connect(hide_menu)
+	header.add_child(_close_btn)
 
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", int(14 * s))
