@@ -20,7 +20,7 @@ func _station_host() -> Node:
 	return null
 
 # craft(amount) -> int
-# Craft `amount` copies of the recipe selected in the Automation section.
+# Craft `amount` copies of the recipe selected by set_recipe().
 # Returns how many were crafted (0 on any error — the reason is printed).
 # Does NOT loop: one call is one request.
 func craft(amount) -> int:

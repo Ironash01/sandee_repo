@@ -18,6 +18,7 @@ const MAX_WIDTH: float     = 620.0
 const TOP_MARGIN: float    = 84.0
 
 var _stack: VBoxContainer = null
+var _center: CenterContainer = null
 var _toast_width: float   = 560.0
 
 func _ready() -> void:
@@ -25,6 +26,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build()
 	Global.notification_posted.connect(_on_notification)
+	Global.ui_scale_changed.connect(func(_s: float) -> void: _apply_scale())
 
 func _build() -> void:
 	var root := Control.new()
@@ -36,16 +38,30 @@ func _build() -> void:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.offset_top = int(TOP_MARGIN * Global.ui_scale)
 	root.add_child(center)
+	_center = center
 
 	_stack = VBoxContainer.new()
-	_stack.add_theme_constant_override("separation", int(6 * Global.ui_scale))
 	_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_stack.alignment = BoxContainer.ALIGNMENT_BEGIN
 	center.add_child(_stack)
-	_toast_width = minf(MAX_WIDTH * Global.ui_scale,
-		get_viewport().get_visible_rect().size.x * 0.8)
+	_apply_scale()
+
+func _apply_scale() -> void:
+	var s: float = Global.ui_scale
+	if _center != null:
+		_center.offset_top = int(Global.ui_safe_insets.y + TOP_MARGIN * s)
+	if _stack != null:
+		_stack.add_theme_constant_override("separation", int(6 * s))
+	var content := Global.ui_content_rect()
+	_toast_width = minf(MAX_WIDTH * s, content.size.x * 0.8)
+	for toast in _stack.get_children():
+		if toast is Control:
+			(toast as Control).custom_minimum_size.x = _toast_width
+			var lbl := (toast as Control).get_node_or_null("RichTextLabel") as RichTextLabel
+			if lbl != null:
+				lbl.add_theme_font_size_override("normal_font_size",
+					Global.ui_type_size(Global.UI_TYPE_LABEL))
 
 func _on_notification(message: String) -> void:
 	if _stack == null or message.strip_edges().is_empty():
@@ -75,13 +91,15 @@ func _on_notification(message: String) -> void:
 	panel.add_theme_stylebox_override("panel", sb)
 
 	var label := RichTextLabel.new()
+	label.name = "RichTextLabel"
 	label.bbcode_enabled = true
 	label.fit_content    = true
 	label.scroll_active  = false
 	label.mouse_filter   = Control.MOUSE_FILTER_IGNORE
 	label.autowrap_mode  = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size = Vector2(0, 0)
-	label.add_theme_font_size_override("normal_font_size", int(13 * s))
+	label.add_theme_font_size_override("normal_font_size",
+		Global.ui_type_size(Global.UI_TYPE_LABEL))
 	label.add_theme_color_override("default_color", Color(0.88, 0.94, 1.0, 1.0))
 	label.text = message
 	panel.add_child(label)

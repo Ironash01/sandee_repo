@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/bestiary_mob.gd" id="1_script"]
+[ext_resource type="Resource" path="res://resources/mobs/brass_prowler.tres" id="2_data"]
+
+[sub_resource type="RectangleShape2D" id="Shape"]
+size = Vector2(26, 14)
+
+[node name="BrassProwler" type="CharacterBody2D" groups=["Mob"]]
+collision_layer = 2
+script = ExtResource("1_script")
+COMBAT_DATA = ExtResource("2_data")
+sprite_sheet_path = "res://sprites/mobs/bestiary/brass_prowler_sheet.png"
+sprite_frame_size = Vector2i(64, 48)
+visual_scale = 1.0
+sprite_offset = Vector2(0, -10)
+collision_size = Vector2(26, 14)
+collision_offset = Vector2(0, 7)
+shadow_offset = Vector2(0, 10)
+shadow_scale = Vector2(0.75, 0.24)
+shadow_alpha = 0.35
+avoid_water = false
+is_floating = false
+separation_distance = 26.0
+separation_strength = 40.0
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, 7)
+shape = SubResource("Shape")

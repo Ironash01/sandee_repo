@@ -132,6 +132,14 @@ var overworld_return_position: Vector2 = Vector2.ZERO
 var _base_grid: Array = []
 var _tilemap: TileMapLayer = null
 
+func _enter_tree() -> void:
+	if not Global.gameplay_input_cancelled.is_connected(_cancel_mining):
+		Global.gameplay_input_cancelled.connect(_cancel_mining)
+
+func _exit_tree() -> void:
+	if Global.gameplay_input_cancelled.is_connected(_cancel_mining):
+		Global.gameplay_input_cancelled.disconnect(_cancel_mining)
+
 func setup(seed_value: int, return_position: Vector2) -> void:
 	overworld_return_position = return_position
 	_seed = seed_value
@@ -700,7 +708,7 @@ func _update_cursor_highlight() -> void:
 		if _cursor_highlight != null:
 			_cursor_highlight.visible = false
 		return
-	var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
+	var mouse_local: Vector2 = _tilemap.to_local(Global.mouse_world(self))
 	var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
 	_cursor_highlight.position = _tilemap.map_to_local(cell)
 	_cursor_highlight.queue_redraw()

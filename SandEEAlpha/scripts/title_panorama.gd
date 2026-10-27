@@ -1,161 +1,203 @@
 extends Node
 
-# ── Title-screen panorama ───────────────────────────────────────────
-# Renders a small, DETERMINISTIC preview of SandEE's own procedural world and
-# uses the capture as the title-screen background.
+# ── Title-screen dungeon panoramas ─────────────────────────────────────────
+# The main menu background is built from the game's own themed dungeon rooms:
+# one Lua Ancient Rune Sanctum capture and one Python Stonegate Foundry capture.
+# Both are re-rolled on every launch (random mission, layout seed, room, and
+# camera framing), then cycled with a fresh randomized interval.
 #
-# Reuses the REAL generator (scenes/world_gen.tscn) inside a private SubViewport
-# — no separate terrain generator. Isolation is explicit:
-#   • the preview world is never registered as Global.world_node (the reference
-#     is snapshotted and restored around the run),
-#   • it is never written to a save slot, so it can never be loaded or modified
-#     as a player world,
-#   • it lives in its own SubViewport that is freed when the capture is done.
-#
-# Storage (user:// — the project's existing convention for saves/config):
-#   user://title_world.json     { "seed": <int>, "panorama": "user://title_panorama.png" }
-#   user://title_panorama.png   the cached capture
-# The seed is rolled once and persisted, so the preview is reproducible; the
-# cached PNG is reused on every later launch and only regenerated when it is
-# missing or unreadable. Generation happens on a DEFERRED frame, so the main
-# menu is never blocked waiting for it.
+# The generated textures live in a process-wide static cache so the sign-in
+# screen and the title menu share the same panoramas for this launch. Nothing is
+# written into a save slot, and the preview dungeons are never registered as
+# Global.world_node.
 
 signal panorama_ready(texture: Texture2D)
 
-const STATE_PATH: String    = "user://title_world.json"
-const PANORAMA_PATH: String = "user://title_panorama.png"
-const WORLD_SCENE: String   = "res://scenes/world_gen.tscn"
-# A small preview is plenty for a background and keeps generation quick. The
-# capture is deliberately WIDE (a 10:3 strip) so the title screen can PAN across
-# the landscape — a square-ish image would have nothing to travel over.
-const PREVIEW_TILES: int = 160
 const CAPTURE_W: int = 1600
 const CAPTURE_H: int = 480
-# Give up waiting for generation after this long and fall back gracefully.
-const GENERATE_TIMEOUT_SEC: float = 30.0
+const TILE_SIZE: float = 32.0
+const CYCLE_MIN_SEC: float = 20.0
+const CYCLE_MAX_SEC: float = 40.0
+const PANORAMA_LANGUAGES: Array[String] = ["lua", "python"]
 
-var _busy: bool = false
+# Static process cache: a new game launch creates new random captures; menu
+# reopen / UI-scale rebuild within the same launch reuses them.
+static var _textures: Array = []
+static var _texture_index: int = 0
+static var _generation_started: bool = false
 
-# The cached panorama, or null when there is none usable (missing, unreadable or
-# invalid) — the caller then shows its plain fallback background.
+var _generating_self: bool = false
+var _cycle_timer: Timer = null
+var _announced: bool = false
+var _rng := RandomNumberGenerator.new()
+
+
+func _ready() -> void:
+	_rng.randomize()
+
+
+# The current captured texture, or null while the first random pair is still
+# generating (menus show their plain fallback colour in the meantime).
 func load_cached() -> Texture2D:
-	if not FileAccess.file_exists(PANORAMA_PATH):
+	if _textures.is_empty():
 		return null
-	var img: Image = Image.load_from_file(PANORAMA_PATH)
-	if img == null or img.get_width() <= 0 or img.get_height() <= 0:
-		return null
-	return ImageTexture.create_from_image(img)
+	return _textures[_texture_index] as Texture2D
 
-# The recorded preview seed, rolled and PERSISTED on first use so the same
-# preview world can always be recreated.
-func preview_seed() -> int:
-	var st: Dictionary = _read_state()
-	if st.has("seed"):
-		return int(st["seed"])
-	var seed_value: int = int(randi())
-	st["seed"] = seed_value
-	st["panorama"] = PANORAMA_PATH
-	_write_state(st)
-	return seed_value
 
-func panorama_path() -> String:
-	return PANORAMA_PATH
-
-func _read_state() -> Dictionary:
-	if not FileAccess.file_exists(STATE_PATH):
-		return {}
-	var f := FileAccess.open(STATE_PATH, FileAccess.READ)
-	if f == null:
-		return {}
-	var d = JSON.parse_string(f.get_as_text())
-	f.close()
-	return d if d is Dictionary else {}
-
-func _write_state(state: Dictionary) -> void:
-	var f := FileAccess.open(STATE_PATH, FileAccess.WRITE)
-	if f == null:
-		return
-	f.store_string(JSON.stringify(state))
-	f.close()
-
-# Renders the panorama on a later frame if there isn't a usable cached one.
-# Never blocks the menu, and never runs twice at once.
 func ensure_panorama() -> void:
-	if _busy:
-		return
-	if load_cached() != null:
-		return   # cached — nothing to do
 	if _is_headless():
-		return   # no renderer to capture with (headless / dummy renderer)
-	_busy = true
+		return
+	if not _textures.is_empty():
+		_begin_cycle()
+		if not _announced:
+			_announced = true
+			panorama_ready.emit(load_cached())
+		return
+	if _generation_started:
+		return
+	_generation_started = true
+	_generating_self = true
 	_run.call_deferred()
+
+
+func _exit_tree() -> void:
+	# If this menu closes before the deferred capture finishes, let the next
+	# menu start a fresh attempt instead of leaving the static guard stuck.
+	if _generating_self:
+		_generation_started = false
+		_generating_self = false
+	if _cycle_timer != null and is_instance_valid(_cycle_timer):
+		_cycle_timer.stop()
+
 
 func _is_headless() -> bool:
 	return DisplayServer.get_name() == "headless"
 
+
 func _run() -> void:
-	var tex: Texture2D = await _render_panorama()
-	_busy = false
-	if tex != null:
-		panorama_ready.emit(tex)
+	var generated: Array = await _generate_all()
+	_generation_started = false
+	_generating_self = false
+	if generated.is_empty():
+		return
+	_textures = generated
+	_texture_index = _rng.randi_range(0, _textures.size() - 1)
+	_begin_cycle()
+	_announced = true
+	panorama_ready.emit(load_cached())
 
-func _render_panorama() -> Texture2D:
-	var scene: PackedScene = load(WORLD_SCENE) as PackedScene
-	if scene == null:
-		return null
 
-	# Snapshot the live world reference: world_gen.tscn registers itself as
-	# Global.world_node in _ready, which must not leak into the real game.
+# ── Randomized cycling ─────────────────────────────────────────────────────
+func _begin_cycle() -> void:
+	if _textures.size() < 2:
+		return
+	if _cycle_timer == null or not is_instance_valid(_cycle_timer):
+		_cycle_timer = Timer.new()
+		_cycle_timer.one_shot = true
+		_cycle_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		_cycle_timer.timeout.connect(_on_cycle_timeout)
+		add_child(_cycle_timer)
+	if _cycle_timer.is_stopped():
+		_schedule_next_cycle()
+
+
+func _schedule_next_cycle() -> void:
+	if _cycle_timer == null:
+		return
+	_cycle_timer.wait_time = _rng.randf_range(CYCLE_MIN_SEC, CYCLE_MAX_SEC)
+	_cycle_timer.start()
+
+
+func _on_cycle_timeout() -> void:
+	if _textures.size() < 2:
+		return
+	_texture_index = (_texture_index + 1) % _textures.size()
+	panorama_ready.emit(load_cached())
+	_schedule_next_cycle()
+
+
+# ── Capture generation ─────────────────────────────────────────────────────
+func _generate_all() -> Array:
+	var out: Array = []
 	var saved_world: Node = Global.world_node
+	for lang in PANORAMA_LANGUAGES:
+		var tex: Texture2D = await _render_dungeon_panorama(lang)
+		if tex != null:
+			out.append(tex)
+		await get_tree().process_frame
+	Global.world_node = saved_world
+	return out
+
+
+func _missions_for_language(lang: String) -> Array:
+	var out: Array = []
+	for idx_value in Global.main_dungeon_indices():
+		var idx: int = int(idx_value)
+		if Global.dungeon_language(idx) != lang:
+			continue
+		if not Global.is_dungeon_mission_ready(idx):
+			continue
+		out.append(idx)
+	return out
+
+
+func _render_dungeon_panorama(lang: String) -> Texture2D:
+	var options: Array = _missions_for_language(lang)
+	if options.is_empty():
+		return null
+	var mission_index: int = int(options[_rng.randi_range(0, options.size() - 1)])
+	var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(mission_index)
+	if mission == null:
+		return null
 
 	var vp := SubViewport.new()
 	vp.size = Vector2i(CAPTURE_W, CAPTURE_H)
 	vp.transparent_bg = false
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	vp.disable_3d = true
-
-	var world: Node2D = scene.instantiate() as Node2D
-	if world == null:
-		vp.free()
-		Global.world_node = saved_world
-		return null
-	# Small preview grid + a recorded seed so the framing is reproducible.
-	world.set("width", PREVIEW_TILES)
-	world.set("height", PREVIEW_TILES)
-	world.set("random_seed", preview_seed())
-	# The preview supplies its own seed — don't let it consume the pending
-	# game-world seed (see world.gd:_ready).
-	world.set("use_pending_seed", false)
-
-	var cam := Camera2D.new()
-	cam.zoom = Vector2(0.5, 0.5)   # wide shot
-	vp.add_child(world)
-	vp.add_child(cam)
-	cam.make_current()
 	add_child(vp)
 
-	# Wait for world-gen (bounded), then let a frame render before capturing.
-	var done := [false]
-	if world.has_signal("generation_complete"):
-		world.connect("generation_complete", func() -> void: done[0] = true)
-	var waited := 0.0
-	while not done[0] and waited < GENERATE_TIMEOUT_SEC and is_inside_tree():
+	var dungeon := DungeonWorld.new()
+	vp.add_child(dungeon)
+	dungeon.setup(mission_index, mission, _rng.randi(), null, Vector2.ZERO)
+	# The panorama is an art shot, not a combat preview. Hide hazards and enemies
+	# so the themed masonry and architecture stay readable under the menu scrim.
+	for group_name in ["DungeonTrap", "DungeonFlare", "Hitman", "Mob"]:
+		for node in get_tree().get_nodes_in_group(group_name):
+			if node is CanvasItem and is_instance_valid(node) and dungeon.is_ancestor_of(node):
+				(node as CanvasItem).visible = false
+
+	# Pick a real room and frame the themed architecture. A modest random zoom
+	# gives each launch a different wide shot without cutting the room apart.
+	var rooms: Array = []
+	for room_value in [dungeon.generator.entrance_room,
+			dungeon.generator.knowledge_room, dungeon.generator.quiz_room]:
+		if not (room_value as Dictionary).is_empty():
+			rooms.append(room_value)
+	for room_value in dungeon.generator.bonus_rooms:
+		rooms.append(room_value)
+	var room: Dictionary = rooms[_rng.randi_range(0, rooms.size() - 1)] as Dictionary
+	var p: Vector2i = room.get("pos", Vector2i.ZERO)
+	var size: Vector2i = room.get("size", Vector2i(4, 4))
+	var focus: Vector2 = dungeon.grid_to_world(p + size / 2)
+	var cam := Camera2D.new()
+	cam.position = focus + Vector2(0.0, -TILE_SIZE * 0.35)
+	var zoom: float = _rng.randf_range(1.65, 1.95)
+	cam.zoom = Vector2(zoom, zoom)
+	vp.add_child(cam)
+	cam.make_current()
+
+	# Let the scene, lighting and animated architecture settle before capture.
+	for _frame in range(4):
 		await get_tree().process_frame
-		waited += 0.05
-	if is_inside_tree():
-		await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
 
 	var tex: Texture2D = null
-	var img: Image = null
 	if vp.get_texture() != null:
-		img = vp.get_texture().get_image()
-	if img != null and img.get_width() > 0 and img.get_height() > 0:
-		var err := img.save_png(PANORAMA_PATH)
-		if err == OK:
+		var img: Image = vp.get_texture().get_image()
+		if img != null and img.get_width() > 0 and img.get_height() > 0:
 			tex = ImageTexture.create_from_image(img)
 
-	# Tear the preview down and restore the real world reference.
 	remove_child(vp)
 	vp.queue_free()
-	Global.world_node = saved_world
 	return tex

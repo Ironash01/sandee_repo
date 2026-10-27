@@ -2,9 +2,9 @@ extends Control
 class_name Minimap
 
 # ── Minimap ─────────────────────────────────────────────────────────
-# Bottom-left minimap; press M (or click it) to open an exclusive full-screen
-# map. In the expanded map: DRAG to pan, M to close (a click no longer closes),
-# unexplored tiles are dimmed, and hovering an icon shows its tooltip.
+# Bottom-left minimap; press M (or click it) to open an exclusive fullscreen
+# safe-area map. In the expanded map: DRAG to pan, M/Esc or the top-right X to
+# close, unexplored tiles are dimmed, and hovering an icon shows its tooltip.
 #
 # Terrain colours are sampled straight from the tilesets the world actually
 # uses, drawn into a low-res image that is scaled up with NEAREST filtering —
@@ -16,6 +16,7 @@ class_name Minimap
 #   • yellow circle = friendly mobs  ("Mob" group, Behavior PASSIVE)
 #   • orange circle = bonfires       ("Bonfire" group; flags stay green)
 #   • portal icon   = dungeon portals ("DungeonPortal"; tooltip = dungeon name)
+#   - teal diamond  = permanent world waypoints ("WorldWaypoint")
 #
 # ── Merged dungeon map ───────────────────────────────────────────────
 # When Global.world_node is a DungeonWorld, this SAME control renders the
@@ -75,6 +76,8 @@ const C_DUN_FLOOR: Color = Color(0.13, 0.14, 0.18, 1.0)
 const C_KNOWLEDGE: Color = Color(0.30, 0.80, 0.95, 1.0)   # knowledge altar
 const C_QUIZ:      Color = Color(0.80, 0.45, 0.95, 1.0)   # quiz altar
 const C_EXIT:      Color = Color(0.90, 0.75, 0.25, 1.0)   # exit (once cleared)
+const C_WAYPOINT:  Color = Color(0.32, 0.95, 0.84, 1.0)   # world waypoint towers
+const C_WAYPOINT_SOURCE: Color = Color(0.55, 0.70, 0.72, 1.0)
 
 # Cave content: solid vs walkable from the cave generator grid, plus a single
 # entrance/exit marker (a cave has one tile that is both).
@@ -86,6 +89,14 @@ const PORTAL_TEX: Texture2D = preload("res://sprites/map/dungeon_portal_icon.png
 
 var _expanded: bool = false
 var _owns_ui:  bool = false
+# Expanded map gets its own high CanvasLayer so no gameplay HUD (FPS, status,
+# hotbar, notifications, etc.) can draw over it. The minimap itself is moved
+# there while open and restored to the HUD layer on close.
+var _map_layer: CanvasLayer = null
+var _home_parent: Node = null
+var _home_index: int = -1
+var _reparenting: bool = false
+var _hud_hidden_by_map: bool = false
 var _terrain:  Image = null
 var _tex:      ImageTexture = null
 var _since_sample: float = 999.0
@@ -115,11 +126,24 @@ const ZOOM_MIN:  float = 0.5
 const ZOOM_MAX:  float = 4.0
 const ZOOM_STEP: float = 1.25
 
+# Exclusive world-waypoint map mode. It reuses this expanded-map overlay and
+# UI stack, but draws a full-world schematic with selectable tower markers.
+var _waypoint_mode: bool = false
+var _waypoint_source_id: String = ""
+var _waypoint_hitboxes: Array = []
+var _waypoint_map_tex: ImageTexture = null
+var _waypoint_map_world_id: int = 0
+var _waypoint_press_pos: Vector2 = Vector2.ZERO
+var _waypoint_pressed: bool = false
+var _waypoint_ignore_until_ms: int = 0
+var _last_waypoint_touch_ms: int = -10000
+
 # Sampled tile colour, cached per (texture, atlas coord) so the per-tile
 # texture pixel read happens once, not every refresh.
 var _color_cache: Dictionary = {}
 
 func _ready() -> void:
+	add_to_group("Minimap")
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	mouse_filter  = Control.MOUSE_FILTER_IGNORE
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # blocky / cartoony
@@ -239,6 +263,21 @@ func _input(event: InputEvent) -> void:
 		if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
 			_set_expanded(false)
 		return
+	# Dedicated X close button (mouse and touch) on the fullscreen map.
+	if _expanded:
+		var close_at := Vector2.INF
+		if event is InputEventMouseButton:
+			var mb := event as InputEventMouseButton
+			if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+				close_at = mb.position
+		elif event is InputEventScreenTouch:
+			var st := event as InputEventScreenTouch
+			if st.pressed:
+				close_at = st.position
+		if close_at != Vector2.INF and _map_close_rect().has_point(close_at):
+			get_viewport().set_input_as_handled()
+			_set_expanded(false)
+			return
 	# M toggles the exclusive map.
 	if event is InputEventKey and event.pressed and not event.echo \
 			and (event.physical_keycode == KEY_M or event.keycode == KEY_M):
@@ -249,6 +288,17 @@ func _input(event: InputEvent) -> void:
 		_set_expanded(not _expanded)
 		get_viewport().set_input_as_handled()
 		return
+
+	if _expanded and _waypoint_mode:
+		# The waypoint map is a fixed full-world overview: no pan/zoom. Select
+		# a marker on release, and consume the event so gameplay cannot also
+		# receive the tap (click-to-move, block placement, attacks, etc.).
+		if _waypoint_handle_input(event):
+			get_viewport().set_input_as_handled()
+			return
+		if event is InputEventMouseButton or event is InputEventScreenTouch:
+			get_viewport().set_input_as_handled()
+			return
 
 	if not _expanded:
 		# Collapsed: a click ON the corner map opens it.
@@ -283,17 +333,18 @@ func _input(event: InputEvent) -> void:
 			_drag_pan    = _pan
 		else:
 			_dragging = false
-			# A tap on the dark outskirts closes the expanded map.
-			if not _drag_moved and not _expanded_map_rect().has_point(at):
+			# Only the margin outside the fullscreen panel closes on a tap. The
+			# panel itself contains the map, legend, and the explicit X button.
+			if not _drag_moved and not _expanded_panel_rect().has_point(at):
 				_set_expanded(false)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _dragging:
-		var cell_px: float = _expanded_map_rect().size.x / float(GRID)
+		var cell_px: Vector2 = _map_cell_px(_expanded_map_rect())
 		var now := get_viewport().get_mouse_position()
 		if now.distance_to(_drag_start) > 6.0:
 			_drag_moved = true
 		var d: Vector2 = now - _drag_mouse
-		_pan = _drag_pan - Vector2i(roundi(d.x / cell_px), roundi(d.y / cell_px))
+		_pan = _drag_pan - Vector2i(roundi(d.x / cell_px.x), roundi(d.y / cell_px.y))
 		_force_sample = true
 		queue_redraw()
 		get_viewport().set_input_as_handled()
@@ -306,8 +357,67 @@ func _zoom_by(factor: float) -> void:
 func _close_expanded() -> void:
 	_set_expanded(false)
 
+
+func _promote_map_layer() -> void:
+	if _map_layer != null and is_instance_valid(_map_layer):
+		return
+	_home_parent = get_parent()
+	_home_index = get_index()
+	var host: Node = get_tree().current_scene
+	if host == null:
+		host = get_tree().root
+	_map_layer = CanvasLayer.new()
+	_map_layer.name = "ExpandedMapLayer"
+	_map_layer.layer = 120  # above gameplay HUD, panels, chat and pause menu
+	_map_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	host.add_child(_map_layer)
+	_reparenting = true
+	reparent(_map_layer)
+	_reparenting = false
+	if not _hud_hidden_by_map:
+		_hud_hidden_by_map = true
+		Global.modal_hud_changed.emit(true)
+
+
+func _restore_map_layer() -> void:
+	if _home_parent != null and is_instance_valid(_home_parent):
+		_reparenting = true
+		reparent(_home_parent)
+		_reparenting = false
+		var count: int = _home_parent.get_child_count()
+		if _home_index >= 0 and _home_index < count:
+			_home_parent.move_child(self, _home_index)
+	if _hud_hidden_by_map:
+		_hud_hidden_by_map = false
+		Global.modal_hud_changed.emit(false)
+	_home_parent = null
+	_home_index = -1
+	if _map_layer != null and is_instance_valid(_map_layer):
+		_map_layer.queue_free()
+		_map_layer = null
+
+
+func _exit_tree() -> void:
+	# Reparenting emits an exit-tree notification; do not tear down the new
+	# high layer in the middle of that move.
+	if _reparenting:
+		return
+	if _map_layer != null and is_instance_valid(_map_layer):
+		_map_layer.queue_free()
+		_map_layer = null
+
+
+func _world_waypoint_teleport_busy() -> bool:
+	var world: Node = Global.world_node
+	return world != null and is_instance_valid(world) \
+		and world.has_method("is_waypoint_teleporting") \
+		and bool(world.call("is_waypoint_teleporting"))
+
+
 func _set_expanded(on: bool) -> void:
 	if on == _expanded:
+		return
+	if on and _world_waypoint_teleport_busy():
 		return
 	_expanded = on
 	_force_sample = true
@@ -315,7 +425,13 @@ func _set_expanded(on: bool) -> void:
 		_pan      = Vector2i.ZERO   # recentre on the player when closing
 		_zoom     = 1.0
 		_dragging = false
+		_waypoint_mode = false
+		_waypoint_source_id = ""
+		_waypoint_hitboxes.clear()
+		_waypoint_pressed = false
+		_waypoint_map_tex = null
 	if on:
+		_promote_map_layer()
 		if not Global.any_ui_open():
 			Global.open_ui()
 			_owns_ui = true
@@ -325,6 +441,7 @@ func _set_expanded(on: bool) -> void:
 		if _owns_ui:
 			Global.close_ui()
 			_owns_ui = false
+		_restore_map_layer()
 	queue_redraw()
 
 # ── Terrain sampling (real tileset colours) ─────────────────────────────
@@ -491,21 +608,333 @@ func _collapsed_rect() -> Rect2:
 	var vp: Vector2 = _vp()
 	var base: float = minf(vp.x, vp.y)
 	var sz: float = minf(base * COLLAPSED_FRAC * s, base * COLLAPSED_CAP)
-	# Upper-left corner (the debug/chat panel now lives middle-left).
-	return Rect2(Vector2(MARGIN * s, MARGIN * s), Vector2(sz, sz))
+	# Upper-left safe corner, clear of notches/system bars.
+	return Rect2(Vector2(
+		Global.ui_safe_insets.x + MARGIN * s,
+		Global.ui_safe_insets.y + MARGIN * s), Vector2(sz, sz))
 
+# The expanded map is a fullscreen safe-area panel, not a small square floating
+# in the middle of the screen. The map itself stays square (so terrain is not
+# distorted) and uses the largest square that fits between the header and legend.
+func _expanded_panel_rect() -> Rect2:
+	var s: float = Global.ui_scale
+	var content := Global.ui_content_rect()
+	var margin: float = MARGIN * s
+	return Rect2(
+		content.position + Vector2(margin, margin),
+		Vector2(maxf(1.0, content.size.x - margin * 2.0),
+			maxf(1.0, content.size.y - margin * 2.0)))
+
+
+func _expanded_has_legend() -> bool:
+	if _waypoint_mode:
+		return true
+	# Dungeon maps have no legend; cave and overworld maps do.
+	return _dungeon() == null
+
+
+func _expanded_legend_width(panel: Rect2) -> float:
+	var s: float = Global.ui_scale
+	return clampf(panel.size.x * 0.19, 230.0 * s, 360.0 * s)
+
+
+# The map is the large rectangle on the left; the legend is a vertical list in
+# the right sidebar. Dungeon maps use the full content rectangle (no legend).
 func _expanded_map_rect() -> Rect2:
 	var s: float = Global.ui_scale
-	var vp: Vector2 = _vp()
-	var base: float = minf(vp.x, vp.y)
-	var map_px: float = minf(base * EXPANDED_FRAC * s, base * EXPANDED_CAP)
-	# Leave room for two compact legend rows in the expanded overworld map.
-	var total_h: float = 30.0 * s + map_px + 48.0 * s
-	return Rect2(Vector2((vp.x - map_px) * 0.5, (vp.y - total_h) * 0.5), Vector2(map_px, map_px))
+	var panel := _expanded_panel_rect()
+	var pad: float = 18.0 * s
+	var header_h: float = 48.0 * s
+	var content := Rect2(
+		Vector2(panel.position.x + pad, panel.position.y + pad + header_h),
+		Vector2(maxf(1.0, panel.size.x - pad * 2.0),
+			maxf(1.0, panel.size.y - pad * 2.0 - header_h)))
+	if not _expanded_has_legend():
+		return content
+	var legend_w: float = _expanded_legend_width(panel)
+	var gap: float = 16.0 * s
+	return Rect2(content.position,
+		Vector2(maxf(1.0, content.size.x - legend_w - gap), content.size.y))
+
+
+func _expanded_legend_rect() -> Rect2:
+	if not _expanded_has_legend():
+		return Rect2()
+	var s: float = Global.ui_scale
+	var panel := _expanded_panel_rect()
+	var map_rect := _expanded_map_rect()
+	var legend_w := _expanded_legend_width(panel)
+	var gap: float = 16.0 * s
+	return Rect2(Vector2(map_rect.end.x + gap, map_rect.position.y),
+		Vector2(legend_w, map_rect.size.y))
+
+
+func _map_close_rect() -> Rect2:
+	var s: float = Global.ui_scale
+	var panel := _expanded_panel_rect()
+	var sz: float = minf(36.0 * s, minf(panel.size.x, panel.size.y) * 0.12)
+	return Rect2(
+		Vector2(panel.end.x - sz - 12.0 * s, panel.position.y + 10.0 * s),
+		Vector2(sz, sz))
+
+
+func _draw_map_close_button(s: float) -> void:
+	var r := _map_close_rect()
+	draw_rect(r, Color(0.04, 0.06, 0.12, 0.96), true)
+	draw_rect(r, C_BORDER, false, 1.5 * s)
+	var c := r.get_center()
+	var d: float = minf(7.0 * s, r.size.x * 0.22)
+	draw_line(c - Vector2(d, d), c + Vector2(d, d), C_TITLE, 2.0 * s)
+	draw_line(c + Vector2(d, -d), c + Vector2(-d, d), C_TITLE, 2.0 * s)
 
 # ── Drawing ─────────────────────────────────────────────────────────────
+# --- World waypoint map ------------------------------------------------
+# Opens the existing exclusive map overlay in a full-world waypoint-selection
+# mode. Tower positions are projected against the real world bounds; clicking a
+# teal diamond asks world.gd for a validated landing near that tower.
+func open_world_waypoint_map(source_id: String) -> bool:
+	if _expanded or _world_waypoint_teleport_busy():
+		return false
+	if _dungeon() != null or not _cave_info().is_empty():
+		return false
+	if Global.any_ui_open() or Global.pause_menu_open:
+		return false
+	if Global.world_node == null or not is_instance_valid(Global.world_node):
+		return false
+	_waypoint_mode = true
+	_waypoint_source_id = source_id
+	_waypoint_hitboxes.clear()
+	_waypoint_map_tex = null
+	_waypoint_map_world_id = 0
+	_waypoint_pressed = false
+	_waypoint_ignore_until_ms = Time.get_ticks_msec() + 300
+	_set_expanded(true)
+	return _expanded
+
+
+func _ensure_waypoint_map_texture() -> void:
+	var world: Node = Global.world_node
+	if world == null or not is_instance_valid(world):
+		_waypoint_map_tex = null
+		return
+	var wid := world.get_instance_id()
+	if _waypoint_map_tex != null and wid == _waypoint_map_world_id:
+		return
+	_waypoint_map_world_id = wid
+	_waypoint_map_tex = null
+	if world.has_method("build_waypoint_map_image"):
+		_waypoint_map_tex = world.call("build_waypoint_map_image", 256) as ImageTexture
+
+
+func _draw_waypoint_expanded() -> void:
+	var s: float = Global.ui_scale
+	var vp: Vector2 = _vp()
+	var font: Font = ThemeDB.fallback_font
+	draw_rect(Rect2(Vector2.ZERO, vp), C_OVERLAY, true)
+	var panel := _expanded_panel_rect()
+	var map_rect := _expanded_map_rect()
+	draw_rect(panel, C_PANEL, true)
+	draw_rect(panel, C_BORDER, false, 2.0 * s)
+
+	var pad: float = 18.0 * s
+	var title_y: float = panel.position.y + pad + Global.ui_font_size(16)
+	draw_string(font, Vector2(panel.position.x + pad, title_y),
+		"WORLD WAYPOINTS", HORIZONTAL_ALIGNMENT_LEFT, -1,
+		Global.ui_font_size(16), C_TITLE)
+	var hint := "tap a tower  -  M / X to close"
+	var hint_w: float = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		Global.ui_font_size(11)).x
+	var close_rect := _map_close_rect()
+	var hint_x: float = maxf(panel.position.x + pad, close_rect.position.x - 12.0 * s - hint_w)
+	draw_string(font, Vector2(hint_x, title_y), hint,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11), C_MUTED)
+	_draw_map_close_button(s)
+
+	_ensure_waypoint_map_texture()
+	if _waypoint_map_tex != null:
+		draw_texture_rect(_waypoint_map_tex, map_rect, false)
+	else:
+		draw_rect(map_rect, C_VOID, true)
+	draw_rect(map_rect, C_BORDER, false, 2.0 * s)
+	for i in range(1, 8):
+		var t := float(i) / 8.0
+		draw_line(Vector2(map_rect.position.x + map_rect.size.x * t, map_rect.position.y),
+			Vector2(map_rect.position.x + map_rect.size.x * t, map_rect.end.y),
+			Color(0.55, 0.72, 0.80, 0.16), 1.0)
+		draw_line(Vector2(map_rect.position.x, map_rect.position.y + map_rect.size.y * t),
+			Vector2(map_rect.end.x, map_rect.position.y + map_rect.size.y * t),
+			Color(0.55, 0.72, 0.80, 0.16), 1.0)
+
+	_draw_world_waypoint_markers(map_rect, s, font)
+
+	_draw_waypoint_legend_sidebar(font, s)
+
+
+func _draw_world_waypoint_markers(panel: Rect2, s: float, font: Font) -> void:
+	_waypoint_hitboxes.clear()
+	var world: Node = Global.world_node
+	if world == null or not is_instance_valid(world):
+		return
+	var world_rect: Rect2 = world.call("waypoint_world_rect") as Rect2
+	if world_rect.size.x <= 0.0 or world_rect.size.y <= 0.0:
+		return
+	var source_node: Node2D = null
+	var nodes: Array = []
+	for node in get_tree().get_nodes_in_group("WorldWaypoint"):
+		if not is_instance_valid(node) or not node is Node2D:
+			continue
+		var node_id := str(node.get("waypoint_id"))
+		if node_id == _waypoint_source_id:
+			source_node = node as Node2D
+			continue
+		nodes.append(node)
+	nodes.sort_custom(func(a: Node, b: Node) -> bool:
+		return str(a.get("display_name")) < str(b.get("display_name")))
+	var radius := 7.0 * s
+	for node in nodes:
+		var n2d := node as Node2D
+		var pos: Vector2 = panel.position + (
+			(n2d.global_position - world_rect.position) / world_rect.size) * panel.size
+		pos.x = clampf(pos.x, panel.position.x + radius, panel.end.x - radius)
+		pos.y = clampf(pos.y, panel.position.y + radius, panel.end.y - radius)
+		_draw_waypoint_diamond(pos, radius, C_WAYPOINT)
+		_waypoint_hitboxes.append({
+			"id": str(node.get("waypoint_id")),
+			"label": str(node.get("display_name")),
+			"pos": pos,
+		})
+	if source_node != null:
+		var spos: Vector2 = panel.position + (
+			(source_node.global_position - world_rect.position) / world_rect.size) * panel.size
+		spos.x = clampf(spos.x, panel.position.x + radius, panel.end.x - radius)
+		spos.y = clampf(spos.y, panel.position.y + radius, panel.end.y - radius)
+		_draw_waypoint_diamond(spos, radius, C_WAYPOINT_SOURCE, true)
+
+	var p: Node2D = Global.player_node as Node2D
+	if p != null:
+		var ppos: Vector2 = panel.position + (
+			(p.global_position - world_rect.position) / world_rect.size) * panel.size
+		ppos.x = clampf(ppos.x, panel.position.x + radius, panel.end.x - radius)
+		ppos.y = clampf(ppos.y, panel.position.y + radius, panel.end.y - radius)
+		draw_circle(ppos, 4.0 * s, C_PLAYER)
+		draw_arc(ppos, 4.0 * s, 0.0, TAU, 16, C_BORDER, 1.0 * s)
+
+	var hover: Dictionary = _waypoint_hovered()
+	if not hover.is_empty():
+		var text := str(hover["label"])
+		var fs := Global.ui_font_size(12)
+		var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var pad := 6.0 * s
+		var hpos: Vector2 = (hover["pos"] as Vector2) + Vector2(10 * s, -12 * s)
+		var box := Rect2(hpos, Vector2(tw + pad * 2, fs + pad * 1.4))
+		draw_rect(box, C_PANEL, true)
+		draw_rect(box, C_BORDER, false, 1.5 * s)
+		draw_string(font, Vector2(box.position.x + pad, box.position.y + fs + pad * 0.3),
+			text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, C_TITLE)
+
+
+func _draw_waypoint_diamond(pos: Vector2, r: float, col: Color, hollow: bool = false) -> void:
+	var pts := PackedVector2Array([
+		pos + Vector2(0, -r), pos + Vector2(r, 0),
+		pos + Vector2(0, r), pos + Vector2(-r, 0),
+	])
+	if hollow:
+		pts.append(pts[0])
+		draw_polyline(pts, col, 2.0 * Global.ui_scale)
+	else:
+		draw_colored_polygon(pts, col)
+		draw_circle(pos, maxf(1.0, r * 0.22), C_PANEL)
+		draw_arc(pos, r, 0, TAU, 12, Color(0.02, 0.08, 0.09, 0.9),
+			1.0 * Global.ui_scale)
+
+
+func _waypoint_hovered() -> Dictionary:
+	if not _waypoint_mode or not _expanded:
+		return {}
+	var mouse: Vector2 = get_viewport().get_mouse_position()
+	var best: Dictionary = {}
+	var best_d := 20.0 * Global.ui_scale
+	for hit_value in _waypoint_hitboxes:
+		var hit: Dictionary = hit_value as Dictionary
+		var p: Vector2 = hit["pos"] as Vector2
+		var d := mouse.distance_to(p)
+		if d < best_d:
+			best_d = d
+			best = hit
+	return best
+
+
+func _try_select_waypoint(at: Vector2) -> bool:
+	# Pick the NEAREST marker, not simply the first one in group/name order.
+	# On narrow Android maps two markers can be inside the same generous touch
+	# radius; nearest keeps the tap tied to the tower actually under the finger.
+	var best: Dictionary = {}
+	var best_d := INF
+	var radius := 20.0 * Global.ui_scale
+	for hit_value in _waypoint_hitboxes:
+		var hit: Dictionary = hit_value as Dictionary
+		var p: Vector2 = hit["pos"] as Vector2
+		var d := at.distance_to(p)
+		if d <= radius and d < best_d:
+			best_d = d
+			best = hit
+	if best.is_empty():
+		return false
+	var world: Node = Global.world_node
+	if world != null and world.has_method("teleport_to_world_waypoint"):
+		if bool(world.call("teleport_to_world_waypoint", str(best["id"]))):
+			_set_expanded(false)
+			return true
+	return false
+
+
+func _waypoint_handle_input(event: InputEvent) -> bool:
+	if not _waypoint_mode or not _expanded:
+		return false
+	var now := Time.get_ticks_msec()
+	if now < _waypoint_ignore_until_ms:
+		if event is InputEventMouseButton or event is InputEventScreenTouch:
+			return true
+		return false
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		_last_waypoint_touch_ms = now
+		if t.pressed:
+			_waypoint_pressed = true
+			_waypoint_press_pos = t.position
+		else:
+			var moved := t.position.distance_to(_waypoint_press_pos) > 24.0
+			_waypoint_pressed = false
+			if not moved:
+				_try_select_waypoint(t.position)
+			elif not _expanded_panel_rect().has_point(t.position):
+				_set_expanded(false)
+		return true
+	if event is InputEventMouseButton:
+		if now - _last_waypoint_touch_ms < 150:
+			return true
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				_waypoint_pressed = true
+				_waypoint_press_pos = mb.position
+			else:
+				var moved := mb.position.distance_to(_waypoint_press_pos) > 12.0
+				_waypoint_pressed = false
+				if not moved:
+					_try_select_waypoint(mb.position)
+				elif not _expanded_panel_rect().has_point(mb.position):
+					_set_expanded(false)
+			return true
+		if mb.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			return true
+	return false
+
+
 func _draw() -> void:
-	if _expanded:
+	if _expanded and _waypoint_mode:
+		_draw_waypoint_expanded()
+	elif _expanded:
 		_draw_expanded()
 	else:
 		_draw_collapsed()
@@ -525,71 +954,140 @@ func _draw_expanded() -> void:
 	var font: Font = ThemeDB.fallback_font
 	draw_rect(Rect2(Vector2.ZERO, vp), C_OVERLAY, true)
 
-	var panel: Rect2 = _expanded_map_rect()
-	var bg := panel.grow(14.0 * s)
-	bg.position.y -= 30.0 * s
-	bg.size.y     += 48.0 * s
-	draw_rect(bg, C_PANEL, true)
-	draw_rect(bg, C_BORDER, false, 2.0 * s)
+	var panel := _expanded_panel_rect()
+	var map_rect := _expanded_map_rect()
+	draw_rect(panel, C_PANEL, true)
+	draw_rect(panel, C_BORDER, false, 2.0 * s)
 
 	var title := "MAP"
 	if _dungeon() != null:
 		title = "DUNGEON MAP"
 	elif not _cave_info().is_empty():
 		title = "CAVE MAP"
-	draw_string(font, Vector2(panel.position.x, panel.position.y - 9 * s),
-		title, HORIZONTAL_ALIGNMENT_LEFT, -1, int(16 * s), C_TITLE)
-	var hint := "drag to pan  ·  M to close"
-	var hw: float = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * s)).x
-	draw_string(font, Vector2(panel.end.x - hw, panel.position.y - 9 * s),
-		hint, HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * s), C_MUTED)
+	var pad: float = 18.0 * s
+	var title_y: float = panel.position.y + pad + Global.ui_font_size(16)
+	draw_string(font, Vector2(panel.position.x + pad, title_y),
+		title, HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(16), C_TITLE)
+	var hint := "drag to pan  -  M / X to close"
+	var hint_w: float = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		Global.ui_font_size(11)).x
+	var close_rect := _map_close_rect()
+	var hint_x: float = maxf(panel.position.x + pad, close_rect.position.x - 12.0 * s - hint_w)
+	draw_string(font, Vector2(hint_x, title_y), hint,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11), C_MUTED)
+	_draw_map_close_button(s)
 
 	if _tex != null:
-		draw_texture_rect(_tex, panel, false)
-	_draw_entities(panel, s)
-	draw_rect(panel, C_BORDER, false, 2.0 * s)
+		draw_texture_rect(_tex, map_rect, false)
+	_draw_entities(map_rect, s)
+	draw_rect(map_rect, C_BORDER, false, 2.0 * s)
 
-	# Legend — the dungeon map deliberately has none; caves show You +
-	# Entrance/Exit; the overworld shows the full list.
-	if _dungeon() != null:
-		return
-
-	var ly: float = panel.end.y + 18 * s
-	var lx: float = panel.position.x
-	if not _cave_info().is_empty():
-		lx = _legend_item(font, lx, ly, s, C_PLAYER, "You")
-		_legend_item(font, lx, ly, s, C_CAVE_EXIT, "Entrance / Exit")
-		return
-	# Two rows keep the legend readable on narrow Android screens.
-	lx = _legend_item(font, lx, ly, s, C_PLAYER, "You")
-	lx = _legend_item(font, lx, ly, s, C_ENEMY, "Enemies")
-	_legend_item(font, lx, ly, s, C_FRIEND, "Friendly")
-	ly += 18.0 * s
-	lx = panel.position.x
-	lx = _legend_item(font, lx, ly, s, C_BONFIRE, "Bonfires")
-	lx = _legend_item(font, lx, ly, s, C_LUA, LUA_LEGEND)
-	var isz: float = 16.0 * s
-	draw_texture_rect(PORTAL_TEX, Rect2(Vector2(lx, ly - isz * 0.7), Vector2(isz, isz)), false)
-	draw_string(font, Vector2(lx + isz + 4 * s, ly + 4 * s), "Dungeon",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * s), C_TITLE)
-
+	if _dungeon() == null:
+		_draw_map_legend_sidebar(font, s)
 	_tooltip(font, s)
+
+
+func _legend_sidebar_frame(rect: Rect2, s: float) -> void:
+	draw_rect(rect, C_BG, true)
+	draw_rect(rect, C_BORDER, false, 1.5 * s)
+
+
+func _legend_portal_item(font: Font, x: float, y: float, s: float, label: String) -> void:
+	var isz: float = 16.0 * s
+	draw_texture_rect(PORTAL_TEX, Rect2(Vector2(x, y - isz * 0.7), Vector2(isz, isz)), false)
+	draw_string(font, Vector2(x + isz + 5 * s, y + 4 * s), label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11), C_TITLE)
+
+
+func _draw_map_legend_sidebar(font: Font, s: float) -> void:
+	var rect := _expanded_legend_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	_legend_sidebar_frame(rect, s)
+	var x: float = rect.position.x + 12.0 * s
+	var y: float = rect.position.y + 12.0 * s + Global.ui_font_size(12)
+	draw_string(font, Vector2(x, y), "LEGEND", HORIZONTAL_ALIGNMENT_LEFT, -1,
+		Global.ui_font_size(12), C_MUTED)
+	y += 22.0 * s
+	if not _cave_info().is_empty():
+		_legend_item(font, x, y, s, C_PLAYER, "You")
+		y += 24.0 * s
+		_legend_item(font, x, y, s, C_CAVE_EXIT, "Entrance / Exit")
+		return
+	_legend_item(font, x, y, s, C_PLAYER, "You")
+	y += 24.0 * s
+	_legend_item(font, x, y, s, C_ENEMY, "Enemies")
+	y += 24.0 * s
+	_legend_item(font, x, y, s, C_FRIEND, "Friendly")
+	y += 24.0 * s
+	_legend_item(font, x, y, s, C_BONFIRE, "Bonfires")
+	y += 24.0 * s
+	_legend_item(font, x, y, s, C_LUA, LUA_LEGEND)
+	y += 24.0 * s
+	_legend_portal_item(font, x, y, s, "Dungeon")
+	y += 24.0 * s
+	_legend_waypoint(font, x, y, s, "World Waypoint")
+
+
+func _draw_waypoint_legend_sidebar(font: Font, s: float) -> void:
+	var rect := _expanded_legend_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	_legend_sidebar_frame(rect, s)
+	var x: float = rect.position.x + 12.0 * s
+	var y: float = rect.position.y + 12.0 * s + Global.ui_font_size(12)
+	draw_string(font, Vector2(x, y), "LEGEND", HORIZONTAL_ALIGNMENT_LEFT, -1,
+		Global.ui_font_size(12), C_MUTED)
+	y += 22.0 * s
+	_legend_waypoint(font, x, y, s, "World Waypoint")
+	y += 24.0 * s
+	_legend_item(font, x, y, s, C_PLAYER, "You")
+	y += 24.0 * s
+	if not _waypoint_source_id.is_empty():
+		_legend_item(font, x, y, s, C_WAYPOINT_SOURCE, "Current")
+		y += 24.0 * s
+	y += 8.0 * s
+	draw_string(font, Vector2(x, y), "Tap a teal diamond", HORIZONTAL_ALIGNMENT_LEFT,
+		-1, Global.ui_font_size(10), C_MUTED)
+	y += 16.0 * s
+	draw_string(font, Vector2(x, y), "to travel.", HORIZONTAL_ALIGNMENT_LEFT,
+		-1, Global.ui_font_size(10), C_MUTED)
+	if _waypoint_hitboxes.is_empty():
+		y += 24.0 * s
+		draw_string(font, Vector2(x, y), "No other waypoints", HORIZONTAL_ALIGNMENT_LEFT,
+			-1, Global.ui_font_size(10), C_MUTED)
+		y += 14.0 * s
+		draw_string(font, Vector2(x, y), "discovered yet.", HORIZONTAL_ALIGNMENT_LEFT,
+			-1, Global.ui_font_size(10), C_MUTED)
+
 
 func _legend_item(font: Font, x: float, y: float, s: float, col: Color, label: String) -> float:
 	var r: float = 4.0 * s
 	draw_circle(Vector2(x + r, y), r, col)
 	draw_string(font, Vector2(x + r * 2 + 4 * s, y + 4 * s), label,
-		HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * s), C_TITLE)
-	return x + r * 2 + 12 * s + font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * s)).x
+		HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11), C_TITLE)
+	return x + r * 2 + 12 * s + font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11)).x
+
+
+func _legend_waypoint(font: Font, x: float, y: float, s: float, label: String) -> float:
+	var r: float = 4.0 * s
+	_draw_waypoint_diamond(Vector2(x + r, y), r, C_WAYPOINT)
+	draw_string(font, Vector2(x + r * 2 + 4 * s, y + 4 * s), label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11), C_TITLE)
+	return x + r * 2 + 12 * s + font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11)).x
 
 # ── Entities + hover tooltips ───────────────────────────────────────────
+func _map_cell_px(map_rect: Rect2) -> Vector2:
+	return Vector2(map_rect.size.x / float(GRID), map_rect.size.y / float(GRID))
+
+
 func _draw_entities(map_rect: Rect2, s: float) -> void:
 	var p: Node2D = Global.player_node as Node2D
 	if p == null:
 		return
-	var cell_px: float = map_rect.size.x / float(GRID)
+	var cell_px := _map_cell_px(map_rect)
 	var z: float = _zoom if _expanded else 1.0
-	var ppt: float = cell_px * z   # screen px per world tile
+	var ppt: Vector2 = cell_px * z   # screen px per world tile
 	var center: Vector2 = map_rect.position + map_rect.size * 0.5
 	var dun := _dungeon()
 	var cave := _cave_info()
@@ -606,6 +1104,13 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 				_marker(map_rect, center, ppt, b, grp[1], 3.0 * s)
 		for d in get_tree().get_nodes_in_group("DungeonPortal"):
 			_portal_marker(map_rect, center, ppt, d, s)
+		# Persistent world-waypoint towers keep the same teal diamond as the
+		# dedicated waypoint map, so the legend is directly recognisable.
+		for w in get_tree().get_nodes_in_group("WorldWaypoint"):
+			if w is Node2D and is_instance_valid(w):
+				var wpos: Vector2 = center + ((w as Node2D).global_position / TILE - Vector2(_view_center)) * ppt
+				if map_rect.has_point(wpos):
+					_draw_waypoint_diamond(wpos, 4.5 * s, C_WAYPOINT)
 	# Automatica/LUA stations use the same entity-marker convention and the
 	# violet colour shared with the LUA legend.
 	for lua in get_tree().get_nodes_in_group("LuaNPC"):
@@ -619,7 +1124,7 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 # Dungeon markers: knowledge altar (cyan), quiz altar (purple), exit (gold,
 # only once cleared) and the player (drawn by the caller). Positions are grid
 # coords → world tiles via the grid's half-size, then the usual map projection.
-func _draw_dungeon_entities(map_rect: Rect2, center: Vector2, ppt: float, s: float, dun: DungeonWorld) -> void:
+func _draw_dungeon_entities(map_rect: Rect2, center: Vector2, ppt: Vector2, s: float, dun: DungeonWorld) -> void:
 	var g: DungeonGenerator = dun.generator
 	var gh := Vector2i(g.width / 2, g.height / 2)
 	var mission: DungeonMissionData = dun.get("_mission") as DungeonMissionData
@@ -640,12 +1145,12 @@ func _draw_dungeon_entities(map_rect: Rect2, center: Vector2, ppt: float, s: flo
 # Cave marker: the single entrance/exit tile (caves have one tile that is both
 # where you entered and where you leave). Grid coords → world tiles via the
 # grid's half-size, then the usual map projection.
-func _draw_cave_entities(map_rect: Rect2, center: Vector2, ppt: float, s: float, info: Dictionary) -> void:
+func _draw_cave_entities(map_rect: Rect2, center: Vector2, ppt: Vector2, s: float, info: Dictionary) -> void:
 	var gen = info["gen"]
 	var gh := Vector2i(int(info["w"]) / 2, int(info["h"]) / 2)
 	_grid_dot(map_rect, center, ppt, s, gen.entrance_tile, gh, C_CAVE_EXIT)
 
-func _grid_dot(map_rect: Rect2, center: Vector2, ppt: float, s: float,
+func _grid_dot(map_rect: Rect2, center: Vector2, ppt: Vector2, s: float,
 		grid_pos: Vector2i, gh: Vector2i, col: Color) -> void:
 	var wt: Vector2 = Vector2(grid_pos) - Vector2(gh) + Vector2(0.5, 0.5)
 	var pos: Vector2 = center + (wt - Vector2(_view_center)) * ppt
@@ -653,7 +1158,7 @@ func _grid_dot(map_rect: Rect2, center: Vector2, ppt: float, s: float,
 		return
 	draw_circle(pos, 3.0 * s, col)
 
-func _marker(map_rect: Rect2, center: Vector2, cell_px: float, node: Node, col: Color, r: float) -> void:
+func _marker(map_rect: Rect2, center: Vector2, cell_px: Vector2, node: Node, col: Color, r: float) -> void:
 	if not (node is Node2D) or not is_instance_valid(node):
 		return
 	var pos: Vector2 = center + ((node as Node2D).global_position / TILE - Vector2(_view_center)) * cell_px
@@ -661,7 +1166,7 @@ func _marker(map_rect: Rect2, center: Vector2, cell_px: float, node: Node, col: 
 		return
 	draw_circle(pos, r, col)
 
-func _portal_marker(map_rect: Rect2, center: Vector2, cell_px: float, node: Node, s: float) -> void:
+func _portal_marker(map_rect: Rect2, center: Vector2, cell_px: Vector2, node: Node, s: float) -> void:
 	if not (node is Node2D) or not is_instance_valid(node):
 		return
 	var isz: float = 13.0 * s
@@ -675,8 +1180,8 @@ func _hovered_icon() -> Dictionary:
 	if not _expanded:
 		return {}
 	var map_rect: Rect2 = _expanded_map_rect()
-	var cell_px: float = map_rect.size.x / float(GRID)
-	var ppt: float = cell_px * _zoom
+	var cell_px := _map_cell_px(map_rect)
+	var ppt: Vector2 = cell_px * _zoom
 	var center: Vector2 = map_rect.position + map_rect.size * 0.5
 	var mouse: Vector2 = get_viewport().get_mouse_position()
 	var best_d: float = 14.0 * Global.ui_scale
@@ -691,6 +1196,8 @@ func _hovered_icon() -> Dictionary:
 		if lua.has_method("get_display_name"):
 			lua_name = str(lua.call("get_display_name"))
 		entries.append({"node": lua, "text": lua_name, "icon": false})
+	for wp in get_tree().get_nodes_in_group("WorldWaypoint"):
+		entries.append({"node": wp, "text": str(wp.get("display_name")), "icon": false})
 	for grp in [["Bonfire", "Bonfire"], ["Flag", "Flag"]]:
 		for b in get_tree().get_nodes_in_group(grp[0]):
 			entries.append({"node": b, "text": grp[1], "icon": false})
@@ -715,7 +1222,7 @@ func _tooltip(font: Font, s: float) -> void:
 	if h.is_empty():
 		return
 	var text: String = str(h["text"])
-	var fs: int = int(12 * s)
+	var fs: int = Global.ui_font_size(12)
 	var pad: float = 6.0 * s
 	var tw: float = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	var pos: Vector2 = h["pos"] + Vector2(10 * s, -10 * s)

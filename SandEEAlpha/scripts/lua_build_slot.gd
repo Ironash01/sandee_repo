@@ -46,7 +46,7 @@ func _build_visuals() -> void:
 	_icon.visible = false
 	add_child(_icon)
 	_qty = Label.new()
-	_qty.add_theme_font_size_override("font_size", int(11 * s))
+	_qty.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_qty.offset_left   = -int(24 * s)
 	_qty.offset_top    = -int(15 * s)

@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="MobCombatData" format=3]
+
+[ext_resource type="Script" path="res://resources/mobs/combat.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+mob_name = "Gravebell Shambler"
+behavior = 0
+ai_type = "PIXIE"
+damage = 15.0
+health = 120.0
+speed = 28.0
+spawn_during_day = true
+spawn_during_night = true
+spawn_plains = true
+spawn_weight = 1.0
+bestiary_id = "gravebell_shambler"
+bestiary_category = "Overworld"
+bestiary_description = "A gaunt undead bell-ringer in a ragged coat. The corroded handbell it carries still smells of old copper and grave-soil."
+bestiary_icon_path = "res://sprites/mobs/bestiary/gravebell_shambler_icon.png"
+drops = [{"chance": 1.0, "item_path": "res://resources/items/copper.tres", "max": 2, "min": 1}, {"chance": 0.6, "item_path": "res://resources/items/charcoal.tres", "max": 2, "min": 1}, {"chance": 0.2, "item_path": "res://resources/items/iron_ore.tres", "max": 1, "min": 1}]

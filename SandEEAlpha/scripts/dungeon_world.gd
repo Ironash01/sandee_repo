@@ -14,10 +14,11 @@ class_name DungeonWorld
 # world's grid content while Global.world_node is a DungeonWorld.
 #
 # Clearing flow: the QuizAltar emits cleared once every question is right,
-# which grants the reward + completes the mission + records the clear star
-# (all in quiz_altar.gd / Global). This world then (a) removes the overworld
-# entrance ("the dungeon is gone from the map") and (b) activates the EXIT
-# marker in the quiz room, which teleports the player out via exit_dungeon().
+# which grants the reward + completes the mission + records the 1-3 blue-star
+# award (all in quiz_altar.gd / Global). This world removes the overworld
+# entrance ("the dungeon is gone from the map") and posts the next one. The
+# altar's results screen Done button calls exit_dungeon(), so quiz dungeons no
+# longer use a physical EXIT tile. Only the boss finale keeps one.
 #
 # Scope note for the first pass: dungeons are puzzle spaces, not mining/caving
 # maps — deliberately NO block placement, mining, or debug overlays here
@@ -50,8 +51,61 @@ const FLOOR_ITEM_PATHS: Array = [
 	"res://resources/items/dungeon_floor3.tres",
 ]
 
-# Ranged dungeon enemy (see scripts/hitman.gd). Guards + spawner both use it.
+# Approved per-language dungeon art direction. These are new production sheets
+# copied from design_drafts/dungeon_tilesets_revision; the old shared item
+# resources above remain as a compatibility fallback for any unexpected theme.
+const THEME_WALL_ORDER: Array = [
+	"top_left", "top_mid", "top_right",
+	"mid_left", "mid_mid", "mid_right",
+	"bot_left", "bot_mid", "bot_right",
+	"alt_rune", "alt_weathered",
+]
+const THEME_FLOOR_COUNT: int = 5
+const THEME_WALL_SHEET_PATHS: Dictionary = {
+	"lua": "res://sprites/dungeon/lua/walls.png",
+	"python": "res://sprites/dungeon/python/walls.png",
+}
+const THEME_FLOOR_SHEET_PATHS: Dictionary = {
+	"lua": "res://sprites/dungeon/lua/floors.png",
+	"python": "res://sprites/dungeon/python/floors.png",
+}
+const THEME_ARCH_PATHS: Dictionary = {
+	"lua": {
+		"pillar": "res://sprites/dungeon/lua/pillar_32x96.png",
+		"pilaster": "res://sprites/dungeon/lua/pilaster_32x64.png",
+		"door_frame": "res://sprites/dungeon/lua/door_frame_96x96.png",
+		"blind_arch": "res://sprites/dungeon/lua/blind_arch_96x64.png",
+		"masonry_panel": "res://sprites/dungeon/lua/masonry_panel_64x32.png",
+		"sconce": "res://sprites/dungeon/lua/sconce_sheet.png",
+		"medallion": "res://sprites/dungeon/lua/medallion_sheet.png",
+	},
+	"python": {
+		"pillar": "res://sprites/dungeon/python/pillar_32x96.png",
+		"pilaster": "res://sprites/dungeon/python/pilaster_32x64.png",
+		"door_frame": "res://sprites/dungeon/python/door_frame_96x96.png",
+		"blind_arch": "res://sprites/dungeon/python/blind_arch_96x64.png",
+		"masonry_panel": "res://sprites/dungeon/python/masonry_panel_64x32.png",
+		"sconce": "res://sprites/dungeon/python/sconce_sheet.png",
+		"medallion": "res://sprites/dungeon/python/medallion_sheet.png",
+	},
+}
+const SCONCE_FRAME_SIZE: Vector2i = Vector2i(16, 32)
+const MEDALLION_FRAME_SIZE: Vector2i = Vector2i(64, 64)
+const THEME_ANIM_FPS: float = 10.0
+static var _theme_cache: Dictionary = {}
+static var _arch_texture_cache: Dictionary = {}
+
+# Ranged dungeon enemy (see scripts/hitman.gd). Quiz guards and the miniboss
+# keep using it; the regular ambient spawner below is theme-specific.
 const HITMAN_SCENE: PackedScene = preload("res://scenes/mobs/Hitman.tscn")
+const RUNE_SENTINEL_SCENE: PackedScene = preload("res://scenes/mobs/RuneSentinel.tscn")
+const VESPER_ACOLYTE_SCENE: PackedScene = preload("res://scenes/mobs/VesperAcolyte.tscn")
+const BRASS_PROWLER_SCENE: PackedScene = preload("res://scenes/mobs/BrassProwler.tscn")
+const CIPHER_WARDEN_SCENE: PackedScene = preload("res://scenes/mobs/CipherWarden.tscn")
+const THEME_DUNGEON_ENEMIES: Dictionary = {
+	"lua": [RUNE_SENTINEL_SCENE, VESPER_ACOLYTE_SCENE],
+	"python": [BRASS_PROWLER_SCENE, CIPHER_WARDEN_SCENE],
+}
 const RARE_CHEST_DATA: ItemData = preload("res://resources/items/rare_dungeon_chest.tres")
 const CHEST_BLOCK_SCENE: PackedScene = preload("res://scenes/objects/ChestBlock.tscn")
 
@@ -63,9 +117,20 @@ static var _shared_tile_set: TileSet = null
 static var _wall_cells: Dictionary = {}  # wall variant -> {"source": id, "coord": Vector2i}
 static var _floor_cells: Array = []      # [{"source": id, "coord": Vector2i}, ...]
 
+var _theme: String = "python"
+var _theme_wall_cells: Dictionary = {}
+var _theme_floor_cells: Array = []
+var _theme_tile_set: TileSet = null
+var _architecture_blocked: Dictionary = {}   # grid cell -> true (pillar bases)
+var _theme_lights: Array = []                # [{"light": PointLight2D, "base": float, "phase": float}]
+var _theme_anim_time: float = 0.0
+var _theme_arch_textures: Dictionary = {}
+
 # ── EXIT marker (inner class) ──────────────────────────────────────────
-# Dormant until the dungeon is cleared; walking into it teleports the player
-# out. Drawn like CavePortal's placeholder markers — no dedicated art yet.
+# Boss-finale fallback only: dormant until the boss is defeated, then walking
+# into it teleports the player out. Quiz dungeons leave through their results
+# screen's Done button and never spawn this marker. Drawn like CavePortal's
+# placeholder markers — no dedicated art yet.
 # Defined before the member that holds it (see _exit_marker's type).
 class DungeonExit:
 	extends Node2D
@@ -125,7 +190,7 @@ class DungeonExit:
 		draw_rect(Rect2(-half, -half, half * 2.0, half * 2.0),
 			Color(0, 0, 0, 0.65), false, 2.0)
 		var font: Font = ThemeDB.fallback_font
-		var fsize: int = int(9 * Global.ui_scale)
+		var fsize: int = Global.ui_font_size(9)
 		var text_size := font.get_string_size("EXIT", HORIZONTAL_ALIGNMENT_CENTER, -1, fsize)
 		draw_string(font, Vector2(-text_size.x / 2.0, fsize / 2.0), "EXIT",
 			HORIZONTAL_ALIGNMENT_CENTER, -1, fsize, Color.WHITE)
@@ -170,6 +235,7 @@ var _exit_marker: DungeonExit = null
 var _cleared: bool = false
 var _boss: Node2D = null
 var _boss_defeated: bool = false
+var _tutorial_layout: bool = false
 
 # ── Hitman spawner ─────────────────────────────────────────────────
 # Hitmen are NOT placed at generation time — a timer spawns one near a random
@@ -199,6 +265,12 @@ var _safe_zones:      Array = []   # DungeonSafeZone per safe altar room
 func _is_early_dungeon() -> bool:
 	return _dungeon_index > 0 and _dungeon_index <= EARLY_DUNGEON_MAX_INDEX
 
+
+# The first main dungeon of EACH language uses the two-room, enemy-free
+# tutorial layout. Later dungeons use their normal mission-driven generation.
+func _is_tutorial_dungeon() -> bool:
+	return _mission != null and Global.is_first_main_dungeon(_dungeon_index)
+
 func _hitman_interval() -> Vector2:
 	return Vector2(EARLY_HITMAN_SPAWN_MIN, EARLY_HITMAN_SPAWN_MAX) if _is_early_dungeon() \
 		else Vector2(HITMAN_SPAWN_MIN, HITMAN_SPAWN_MAX)
@@ -218,16 +290,28 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 	overworld_return_position = return_position
 
 	generator = DungeonGenerator.new()
-	if _mission != null and _mission.is_boss():
+	_tutorial_layout = _is_tutorial_dungeon()
+	if _tutorial_layout:
+		generator.generate_tutorial(seed_value)
+	elif _mission != null and _mission.is_boss():
 		generator.generate_boss(seed_value)
 	elif _mission != null:
 		generator.generate(seed_value, _mission.size_modifier, _mission.altar_amount, _mission.chest_amount)
 	else:
 		generator.generate(seed_value)
 
+	_theme = _resolve_theme()
+	var themed := _get_theme_tile_data(_theme)
+	_theme_tile_set = themed.get("tileset") as TileSet
+	_theme_wall_cells = themed.get("wall_cells", {}) as Dictionary
+	_theme_floor_cells = themed.get("floor_cells", []) as Array
+	_architecture_blocked.clear()
+	_theme_lights.clear()
+	_theme_anim_time = 0.0
+
 	_tilemap = TileMapLayer.new()
 	_tilemap.name     = "DungeonTiles"
-	_tilemap.tile_set = _get_shared_tile_set()
+	_tilemap.tile_set = _theme_tile_set if _theme_tile_set != null else _get_shared_tile_set()
 	# Same z_index convention cave_world.gd uses (see its comment): the
 	# player/altars Y-sort into small quantized buckets that go NEGATIVE
 	# north of the grid's center, so the tilemap must sit well below them.
@@ -239,15 +323,297 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 		_spawn_boss()
 	else:
 		_spawn_altars()
-		_spawn_flares()
-		_spawn_traps()
-		_spawn_safe_zones()
-		_spawn_quiz_guards()
-		_spawn_quiz_traps()
-		_spawn_rare_chests()
+		if not _tutorial_layout:
+			_spawn_flares()
+			_spawn_traps()
+			_spawn_safe_zones()
+			_spawn_quiz_guards()
+			_spawn_quiz_traps()
+			_spawn_rare_chests()
+	# Architecture is visual-only except pillar bases, which are registered as
+	# blocked grid cells so existing dungeon AI does not path through them.
+	_spawn_architecture()
+	if not _tutorial_layout and (_mission == null or not _mission.is_boss()):
 		_init_hitman_spawner()
-	_spawn_exit_marker()
+	# Quiz dungeons now leave through the reward screen's Done button. Only the
+	# boss finale keeps a physical exit marker (it has no quiz altar/reward UI).
+	if _mission != null and _mission.is_boss():
+		_spawn_exit_marker()
 	_setup_lighting()
+
+# ?? Themed interior architecture ??????????????????????????????????????
+static func _get_theme_arch_textures(theme: String) -> Dictionary:
+	if _arch_texture_cache.has(theme):
+		return _arch_texture_cache[theme] as Dictionary
+	var out: Dictionary = {}
+	var paths: Dictionary = THEME_ARCH_PATHS.get(theme, {}) as Dictionary
+	for key in paths:
+		var tex := load(str(paths[key])) as Texture2D
+		if tex != null:
+			out[key] = tex
+	_arch_texture_cache[theme] = out
+	return out
+
+
+func _spawn_architecture() -> void:
+	_theme_arch_textures = _get_theme_arch_textures(_theme)
+	if _theme_arch_textures.is_empty():
+		return
+	var rooms: Array = []
+	_add_arch_room(rooms, generator.entrance_room, false)
+	_add_arch_room(rooms, generator.knowledge_room, false)
+	_add_arch_room(rooms, generator.quiz_room, false)
+	for room in generator.bonus_rooms:
+		_add_arch_room(rooms, room as Dictionary, true)
+	if rooms.is_empty():
+		return
+	var reserved: Dictionary = _architecture_reserved_cells()
+	for room_value in rooms:
+		var info := room_value as Dictionary
+		var room := info.get("room", {}) as Dictionary
+		var is_bonus := bool(info.get("bonus", false))
+		_spawn_room_architecture(room, is_bonus, reserved)
+
+
+func _add_arch_room(out: Array, room: Dictionary, is_bonus: bool) -> void:
+	if room.is_empty():
+		return
+	var pos: Vector2i = room.get("pos", Vector2i.ZERO)
+	var size: Vector2i = room.get("size", Vector2i.ZERO)
+	if size.x < 4 or size.y < 4:
+		return
+	for existing in out:
+		var existing_room: Dictionary = (existing as Dictionary).get("room", {}) as Dictionary
+		if existing_room.get("pos", Vector2i(-999, -999)) == pos \
+				and existing_room.get("size", Vector2i.ZERO) == size:
+			return
+	out.append({"room": room, "bonus": is_bonus})
+
+
+func _architecture_reserved_cells() -> Dictionary:
+	var out: Dictionary = {}
+	var cells: Array = []
+	cells.append(generator.knowledge_altar_pos)
+	cells.append(generator.quiz_altar_pos)
+	cells.append(generator.player_spawn_pos)
+	cells.append(generator.boss_spawn_pos)
+	cells.append(generator.quiz_altar_pos + Vector2i(0, 2))  # exit marker
+	cells.append_array(generator.flare_positions)
+	cells.append_array(generator.trap_positions)
+	cells.append_array(generator.quiz_guard_positions)
+	cells.append_array(generator.quiz_trap_positions)
+	cells.append_array(generator.rare_chest_positions)
+	cells.append_array(generator.gap_positions)
+	for cell in cells:
+		_arch_reserve(out, cell as Vector2i, 1)
+	for cell in _architecture_blocked.keys():
+		out[cell as Vector2i] = true
+	return out
+
+
+func _arch_reserve(out: Dictionary, center: Vector2i, radius: int) -> void:
+	for dx in range(-radius, radius + 1):
+		for dy in range(-radius, radius + 1):
+			out[center + Vector2i(dx, dy)] = true
+
+
+func _room_top_boundary_y(room: Dictionary) -> float:
+	# Bottom of the mounted architecture: the centre of the first room row.
+	# This lets the lower third of an arch/sconce read inside the room instead
+	# of vanishing entirely behind the back wall.
+	var p: Vector2i = room.get("pos", Vector2i.ZERO)
+	return grid_to_world(p).y
+
+
+func _room_top_opening_x(room: Dictionary) -> int:
+	var p: Vector2i = room.get("pos", Vector2i.ZERO)
+	var s: Vector2i = room.get("size", Vector2i.ZERO)
+	if p.y <= 0:
+		return -1
+	var center := p.x + s.x / 2
+	var best := -1
+	var best_dist := 1 << 30
+	for x in range(p.x, p.x + s.x):
+		if generator.grid[x][p.y - 1] != DungeonGenerator.Tile.FLOOR:
+			continue
+		var d: int = absi(x - center)
+		if d < best_dist:
+			best_dist = d
+			best = x
+	return best
+
+
+func _add_arch_static(texture: Texture2D, bottom_center: Vector2,
+		z_index: int) -> Node2D:
+	var root := Node2D.new()
+	add_child(root)
+	root.global_position = bottom_center
+	root.z_index = z_index
+	var sp := Sprite2D.new()
+	sp.texture = texture
+	sp.centered = true
+	sp.position = Vector2(0.0, -texture.get_height() * 0.5)
+	sp.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sp.modulate = Color(1.30, 1.23, 1.36)
+	root.add_child(sp)
+	return root
+
+
+func _spawn_sconce(texture: Texture2D, bottom_center: Vector2, phase: float) -> void:
+	var root := Node2D.new()
+	add_child(root)
+	root.global_position = bottom_center
+	root.z_index = int((bottom_center.y - TILE_SIZE * 0.5) / TILE_SIZE)
+	var spr := AnimatedSprite2D.new()
+	spr.sprite_frames = WaypointAnim.build(texture, SCONCE_FRAME_SIZE)
+	spr.animation = "idle"
+	spr.centered = true
+	spr.position = Vector2(0.0, -SCONCE_FRAME_SIZE.y * 0.5)
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	spr.modulate = Color(1.10, 1.08, 1.18)
+	spr.play("idle")
+	root.add_child(spr)
+	var light := PointLight2D.new()
+	light.texture = Global.get_smooth_light_texture(64)
+	light.texture_scale = 0.45
+	light.color = _theme_magic_color()
+	light.energy = 0.62
+	light.blend_mode = Light2D.BLEND_MODE_ADD
+	light.position = Vector2(0.0, -14.0)
+	root.add_child(light)
+	_theme_lights.append({"light": light, "base": 0.62, "phase": phase})
+
+
+func _spawn_medallion(texture: Texture2D, center: Vector2) -> void:
+	var root := Node2D.new()
+	add_child(root)
+	root.global_position = center
+	root.z_index = -2
+	var spr := AnimatedSprite2D.new()
+	spr.sprite_frames = WaypointAnim.build(texture, MEDALLION_FRAME_SIZE)
+	spr.animation = "idle"
+	spr.centered = true
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	spr.modulate = Color(1.08, 1.06, 1.14)
+	spr.play("idle")
+	root.add_child(spr)
+	var light := PointLight2D.new()
+	light.texture = Global.get_smooth_light_texture(64)
+	light.texture_scale = 0.55
+	light.color = _theme_magic_color()
+	light.energy = 0.20
+	light.blend_mode = Light2D.BLEND_MODE_ADD
+	root.add_child(light)
+	_theme_lights.append({"light": light, "base": 0.20, "phase": 1.7})
+
+
+func _theme_magic_color() -> Color:
+	return Color(0.48, 0.36, 0.88) if _theme == "lua" else Color(0.18, 0.68, 0.62)
+
+
+func _spawn_room_architecture(room: Dictionary, is_bonus: bool,
+		reserved: Dictionary) -> void:
+	var p: Vector2i = room.get("pos", Vector2i.ZERO)
+	var s: Vector2i = room.get("size", Vector2i.ZERO)
+	if s.x < 4 or s.y < 4:
+		return
+	var center_x: int = p.x + s.x / 2
+	var top_y := _room_top_boundary_y(room)
+	var top_z := int((top_y - TILE_SIZE * 0.5) / TILE_SIZE)
+	var door_x := _room_top_opening_x(room)
+	var focal_tex: Texture2D = null
+	var focal_x := center_x
+	if door_x >= 0 and s.x >= 4:
+		focal_tex = _theme_arch_textures.get("door_frame") as Texture2D
+		focal_x = door_x
+	elif not is_bonus:
+		focal_tex = _theme_arch_textures.get("blind_arch") as Texture2D
+	else:
+		focal_tex = _theme_arch_textures.get("masonry_panel") as Texture2D
+	if focal_tex != null:
+		var fx := grid_to_world(Vector2i(focal_x, p.y)).x
+		_add_arch_static(focal_tex, Vector2(fx, top_y), top_z)
+
+	# Two animated crystal sconces, on solid top-wall sections when possible.
+	var sconce_tex := _theme_arch_textures.get("sconce") as Texture2D
+	if sconce_tex != null:
+		var left_x: int = p.x + 1
+		var right_x: int = p.x + s.x - 2
+		if left_x == right_x:
+			right_x = -1
+		for sx in [left_x, right_x]:
+			if sx < 0:
+				continue
+			if p.y > 0 and generator.grid[sx][p.y - 1] == DungeonGenerator.Tile.FLOOR:
+				continue
+			var wx := grid_to_world(Vector2i(sx, p.y)).x
+			_spawn_sconce(sconce_tex, Vector2(wx, top_y), float(sx) * 0.7)
+
+	# Wall pilasters flank a wide focal arch/panel.
+	var pilaster_tex := _theme_arch_textures.get("pilaster") as Texture2D
+	if pilaster_tex != null and s.x >= 8:
+		for px in [center_x - 2, center_x + 2]:
+			if px < p.x or px >= p.x + s.x:
+				continue
+			var wx := grid_to_world(Vector2i(px, p.y)).x
+			_add_arch_static(pilaster_tex, Vector2(wx, top_y), top_z)
+
+	# Two solid-based pillars frame larger rooms. Their bases are marked blocked
+	# so the existing grid-based Hitman navigation routes around them.
+	var pillar_tex := _theme_arch_textures.get("pillar") as Texture2D
+	if pillar_tex != null and s.x >= 8 and s.y >= 7:
+		var py: int = p.y + 2
+		for px in [p.x + 2, p.x + s.x - 3]:
+			var cell := Vector2i(px, py)
+			if reserved.has(cell) or _architecture_blocked.has(cell):
+				continue
+			var base := grid_to_world(cell)
+			_add_pillar(pillar_tex, base + Vector2(0.0, TILE_SIZE * 0.5))
+			_architecture_blocked[cell] = true
+			_arch_reserve(reserved, cell, 1)
+
+	# One animated floor medallion in rooms whose centre is not an altar/exit.
+	var medallion_tex := _theme_arch_textures.get("medallion") as Texture2D
+	if medallion_tex != null and (is_bonus or not reserved.has(Vector2i(center_x, p.y + s.y / 2))):
+		var center_cell := Vector2i(center_x, p.y + s.y / 2)
+		if not reserved.has(center_cell) and not _architecture_blocked.has(center_cell):
+			_spawn_medallion(medallion_tex, grid_to_world(center_cell))
+
+
+func _add_pillar(texture: Texture2D, bottom_center: Vector2) -> void:
+	var root := Node2D.new()
+	add_child(root)
+	root.global_position = bottom_center
+	root.z_index = int(bottom_center.y / TILE_SIZE)
+	var sp := Sprite2D.new()
+	sp.texture = texture
+	sp.centered = true
+	sp.position = Vector2(0.0, -texture.get_height() * 0.5)
+	sp.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sp.modulate = Color(1.30, 1.23, 1.36)
+	root.add_child(sp)
+	var body := StaticBody2D.new()
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(24.0, 20.0)
+	shape.shape = rect
+	shape.position = Vector2(0.0, -10.0)
+	body.add_child(shape)
+	root.add_child(body)
+
+
+func _update_theme_lights(delta: float) -> void:
+	_theme_anim_time += delta
+	for entry in _theme_lights:
+		var light: PointLight2D = (entry as Dictionary).get("light") as PointLight2D
+		if not is_instance_valid(light):
+			continue
+		var base: float = float((entry as Dictionary).get("base", 0.5))
+		var phase: float = float((entry as Dictionary).get("phase", 0.0))
+		light.energy = base * (0.86 + 0.14 * sin(_theme_anim_time * 4.2 + phase))
+
 
 # Wall tiles the generator marked as flare hosts get a DungeonFlare overlay
 # (a glowing obstacle that shoots projectiles). The wall itself stays solid.
@@ -397,8 +763,11 @@ func _init_hitman_spawner() -> void:
 	_hitman_cooldown = 0.0
 
 func _process(delta: float) -> void:
+	_update_theme_lights(delta)
 	if _mission != null and _mission.is_boss():
 		return   # the miniboss arena never spawns ordinary Hitmen
+	if _tutorial_layout:
+		return   # the first language dungeon is intentionally enemy-free
 	_tick_hitman_spawner(delta)
 
 # Leaving the dungeon must clear the flag — the zones set it while active, and
@@ -412,15 +781,21 @@ func _tick_hitman_spawner(delta: float) -> void:
 	_hitman_timer -= delta
 	if _hitman_timer > 0.0 or _hitman_cooldown > 0.0:
 		return
-	# Cap the population so the dungeon doesn't fill up with hitmen.
-	if get_tree().get_nodes_in_group("Hitman").size() >= _hitman_max_alive():
+	# Cap the population so the dungeon doesn't fill up with enemies. Count
+	# both the legacy Hitman guards and the new theme-specific actors; the
+	# shared group is also what safe-zone protection scans.
+	var alive: int = get_tree().get_nodes_in_group("Hitman").size() \
+		+ get_tree().get_nodes_in_group("DungeonHostile").size()
+	if alive >= _hitman_max_alive():
 		_hitman_timer = randf_range(_hitman_interval().x, _hitman_interval().y)
 		return
-	_spawn_hitman_near_hazard()
+	_spawn_theme_enemy_near_hazard()
 	_hitman_timer = randf_range(_hitman_interval().x, _hitman_interval().y)
 
-# Spawn a Hitman on a walkable cell next to a random flare or trap.
-func _spawn_hitman_near_hazard() -> void:
+# Spawn a theme-appropriate enemy on a walkable cell next to a random flare or
+# trap. Lua and Python dungeons get their own two-creature pools; Hitman remains
+# the quiz guard / boss so existing progression encounters are preserved.
+func _spawn_theme_enemy_near_hazard() -> void:
 	var spots: Array = []
 	var quiz_rect: Rect2 = _room_rect_px(generator.quiz_room)
 	var safe_rect: Rect2 = _room_rect_px(generator.knowledge_room)
@@ -445,7 +820,24 @@ func _spawn_hitman_near_hazard() -> void:
 			spots = far
 	if spots.is_empty():
 		return
-	_spawn_hitman_at(spots[randi() % spots.size()])
+	var pool: Array = THEME_DUNGEON_ENEMIES.get(_theme, []) as Array
+	if pool.is_empty():
+		return
+	var scene: PackedScene = pool[randi() % pool.size()] as PackedScene
+	_spawn_theme_enemy_at(spots[randi() % spots.size()], scene)
+
+func _spawn_theme_enemy_at(cell: Vector2i, scene: PackedScene) -> void:
+	var spawn_world: Vector2 = grid_to_world(cell)
+	if Global.is_point_in_safe_zone(spawn_world):
+		return
+	var enemy: Node2D = scene.instantiate() as Node2D
+	if enemy == null:
+		return
+	add_child(enemy)
+	enemy.global_position = spawn_world
+	enemy.z_index = int(enemy.global_position.y / TILE_SIZE)
+	if enemy.has_signal("died"):
+		enemy.died.connect(_on_hitman_died)
 
 func _spawn_hitman_at(cell: Vector2i) -> void:
 	var spawn_world: Vector2 = grid_to_world(cell)
@@ -473,17 +865,87 @@ func _on_hitman_died() -> void:
 	_hitman_cooldown = _hitman_death_cooldown_sec()
 
 # ── Paint the generated grid into the TileMapLayer ─────────────────────
+func _resolve_theme() -> String:
+	var lang: String = Global.dungeon_language(_dungeon_index) if _dungeon_index > 0 else ""
+	return "lua" if lang == "lua" else "python"
+
+
+func _get_theme_wall_cell(grid_pos: Vector2i, variant: String) -> Dictionary:
+	if variant != "mid_mid":
+		return _theme_wall_cells.get(variant, {}) as Dictionary
+	# Buried walls use the two approved carved/weathered alternates sparingly.
+	var h: int = (grid_pos.x * 73856093) ^ (grid_pos.y * 19349663)
+	var choices: Array = ["mid_mid", "alt_rune", "alt_weathered"]
+	var key: String = str(choices[absi(h) % choices.size()])
+	var cell: Dictionary = _theme_wall_cells.get(key, {}) as Dictionary
+	if cell.is_empty():
+		cell = _theme_wall_cells.get("mid_mid", {}) as Dictionary
+	return cell
+
+
+static func _get_theme_tile_data(theme: String) -> Dictionary:
+	if _theme_cache.has(theme):
+		return _theme_cache[theme] as Dictionary
+	var ts := TileSet.new()
+	ts.tile_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	ts.add_physics_layer()
+	ts.set_physics_layer_collision_layer(0, 1)
+	ts.set_physics_layer_collision_mask(0, 1)
+	var poly := PackedVector2Array([
+		Vector2(-TILE_SIZE / 2.0, -TILE_SIZE / 2.0),
+		Vector2(TILE_SIZE / 2.0, -TILE_SIZE / 2.0),
+		Vector2(TILE_SIZE / 2.0, TILE_SIZE / 2.0),
+		Vector2(-TILE_SIZE / 2.0, TILE_SIZE / 2.0),
+	])
+	var wall_cells: Dictionary = {}
+	var floor_cells: Array = []
+	var wall_sheet := load(str(THEME_WALL_SHEET_PATHS.get(theme, ""))) as Texture2D
+	if wall_sheet != null:
+		for i in range(THEME_WALL_ORDER.size()):
+			var at := AtlasTexture.new()
+			at.atlas = wall_sheet
+			at.region = Rect2(i * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE)
+			var cell: Dictionary = _add_icon_source(ts, at)
+			if cell.is_empty():
+				continue
+			var src: TileSetAtlasSource = ts.get_source(cell["source"]) as TileSetAtlasSource
+			var td: TileData = src.get_tile_data(cell["coord"], 0)
+			td.add_collision_polygon(0)
+			td.set_collision_polygon_points(0, 0, poly)
+			wall_cells[str(THEME_WALL_ORDER[i])] = cell
+	var floor_sheet := load(str(THEME_FLOOR_SHEET_PATHS.get(theme, ""))) as Texture2D
+	if floor_sheet != null:
+		for i in range(THEME_FLOOR_COUNT):
+			var at := AtlasTexture.new()
+			at.atlas = floor_sheet
+			at.region = Rect2(i * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE)
+			var cell: Dictionary = _add_icon_source(ts, at)
+			if not cell.is_empty():
+				floor_cells.append(cell)
+	if wall_cells.is_empty() or floor_cells.is_empty():
+		push_warning("DungeonWorld: themed tileset '%s' is incomplete; falling back to shared dungeon tiles." % theme)
+		var fallback := {"tileset": _get_shared_tile_set(),
+			"wall_cells": _wall_cells.duplicate(true),
+			"floor_cells": _floor_cells.duplicate(true)}
+		_theme_cache[theme] = fallback
+		return fallback
+	var data := {"tileset": ts, "wall_cells": wall_cells, "floor_cells": floor_cells}
+	_theme_cache[theme] = data
+	return data
+
+
 func _paint_tiles() -> void:
 	for x in range(generator.width):
 		for y in range(generator.height):
 			var grid_pos := Vector2i(x, y)
 			if generator.grid[x][y] == DungeonGenerator.Tile.FLOOR:
-				if _floor_cells.is_empty():
+				if _theme_floor_cells.is_empty():
 					continue
-				var cell: Dictionary = _floor_cells[_floor_variant_index(grid_pos)]
+				var cell: Dictionary = _theme_floor_cells[_floor_variant_index(grid_pos)]
 				_tilemap.set_cell(_grid_to_cell(grid_pos), cell["source"], cell["coord"])
 			else:
-				var cell: Dictionary = _wall_cells.get(_wall_variant(x, y), {})
+				var variant := _wall_variant(x, y)
+				var cell: Dictionary = _get_theme_wall_cell(grid_pos, variant)
 				if not cell.is_empty():
 					_tilemap.set_cell(_grid_to_cell(grid_pos), cell["source"], cell["coord"])
 	_paint_surrounding_walls()
@@ -494,7 +956,7 @@ func _paint_tiles() -> void:
 # SURROUND_BAND_TILES-thick wall band on all four sides closes that off,
 # mirroring cave_world.gd's stone-wall surround.
 func _paint_surrounding_walls() -> void:
-	var cell: Dictionary = _wall_cells.get("mid_mid", {})
+	var cell: Dictionary = _theme_wall_cells.get("mid_mid", {})
 	if cell.is_empty():
 		return
 	var half_w: int = generator.width / 2
@@ -513,7 +975,7 @@ func _paint_surrounding_walls() -> void:
 # dungeon's visuals stay identical across repeat visits, same as its layout.
 func _floor_variant_index(grid_pos: Vector2i) -> int:
 	var h: int = (grid_pos.x * 92821) ^ (grid_pos.y * 68917)
-	return absi(h) % _floor_cells.size()
+	return absi(h) % maxi(1, _theme_floor_cells.size())
 
 # Picks which of the eight wall sprites a wall cell shows from its orthogonal
 # neighbors. The tileset is a 3x3 face set (TOP row = top face, MID = middle
@@ -633,6 +1095,9 @@ func _on_boss_defeated() -> void:
 		return
 	if Global.is_dungeon_cleared(_dungeon_index):
 		_on_dungeon_cleared(_dungeon_index)
+		if _exit_marker != null:
+			_move_exit_near_player()
+			_exit_marker.set_active(true)
 		return
 	if not Global.grant_item(_mission.reward_item_path, 1):
 		var p := Global.player_node as Node2D
@@ -640,23 +1105,30 @@ func _on_boss_defeated() -> void:
 			Global.drop_item({"data": load(_mission.reward_item_path), "quantity": 1},
 				p.global_position)
 	Global.complete_mission("dungeon_%d" % _dungeon_index)
-	Global.record_dungeon_clear(_dungeon_index)
+	# The boss finale has no quiz/hint penalty and no reward screen.
+	Global.record_dungeon_clear(_dungeon_index, 3)
 	_on_dungeon_cleared(_dungeon_index)
+	if _exit_marker != null:
+		_move_exit_near_player()
+		_exit_marker.set_active(true)
 
 func _on_dungeon_cleared(_index: int) -> void:
 	if _cleared:
 		return
 	_cleared = true
-	if _exit_marker != null:
-		# Put the exit beside the player who just finished the quiz. In extra
-		# dungeons the completed altar can be the first (knowledge-room) one,
-		# while the old fixed exit position was in the distant final quiz room.
-		_move_exit_near_player()
-		_exit_marker.set_active(true)
+	# Quiz dungeons are left through the altar's reward-screen Done button, so
+	# no physical EXIT tile is activated here. The boss path activates its own
+	# exit marker after calling this.
 	# The dungeon is gone from the map: free the overworld's portal + forget
 	# its tile so it never reappears (persisted on the next overworld save).
 	if _overworld != null and _overworld.has_method("remove_dungeon_entrance"):
 		_overworld.call("remove_dungeon_entrance", _dungeon_index)
+	# The normal mission_updated path already refreshes current entrances, but
+	# make the next-dungeon handoff explicit here too: completing this dungeon
+	# must always leave the next Lua/Python entrance (and its one-way waypoint)
+	# ready without requiring a manual refresh or scene reload.
+	if _overworld != null and _overworld.has_method("ensure_current_dungeon_entrances"):
+		_overworld.call("ensure_current_dungeon_entrances")
 
 # Not the overworld — a Bonfire here must not set the respawn point.
 func is_overworld() -> bool:
@@ -704,6 +1176,8 @@ func world_to_grid(world_pos: Vector2) -> Vector2i:
 func grid_cell_is_floor(grid_pos: Vector2i) -> bool:
 	if grid_pos.x < 0 or grid_pos.y < 0 \
 			or grid_pos.x >= generator.width or grid_pos.y >= generator.height:
+		return false
+	if _architecture_blocked.has(grid_pos):
 		return false
 	return generator.grid[grid_pos.x][grid_pos.y] == DungeonGenerator.Tile.FLOOR
 
@@ -783,9 +1257,16 @@ static func _add_icon_source(ts: TileSet, icon: Texture2D) -> Dictionary:
 	return {"source": source_id, "coord": Vector2i.ZERO}
 
 # ── Dungeon lighting ────────────────────────────────────────────────────
+func _theme_ambient_color() -> Color:
+	# The approved tile palettes are darker than the old shared grey dungeon.
+	# Lift the uniform dungeon light so their brick/floor detail survives at the
+	# game's normal camera zoom instead of collapsing to black.
+	return Color(0.84, 0.78, 0.96) if _theme == "lua" else Color(0.76, 0.88, 0.91)
+
+
 func _setup_lighting() -> void:
 	var ambient := CanvasModulate.new()
-	ambient.color = DUNGEON_AMBIENT_COLOR
+	ambient.color = _theme_ambient_color()
 	add_child(ambient)
 
 	add_child(_build_glow_environment())

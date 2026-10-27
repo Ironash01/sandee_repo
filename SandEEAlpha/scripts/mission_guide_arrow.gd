@@ -86,7 +86,7 @@ func _set_active(active: bool) -> void:
 func _draw() -> void:
 	if not _active:
 		return
-	# Read the scale live at draw time so a Small/Medium/Large change applies
+	# Read the scale live at draw time so a responsive scale change applies
 	# immediately (this node redraws every process frame).
 	var s: float = Global.ui_scale
 	var tip := _dir * ARROW_LEN * s
@@ -96,7 +96,7 @@ func _draw() -> void:
 	draw_line(back, back - _dir * STALK_LEN * s, OUTLINE, 2.0 * s)
 	var d_text := "%d blocks" % int(round(_distance / 32.0))
 	var font: Font = ThemeDB.fallback_font
-	var fs: int = int(FONT_SIZE * s)
+	var fs: int = Global.ui_font_size(float(FONT_SIZE))
 	var tw := font.get_string_size(d_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	draw_string(font, Vector2(-tw * 0.5, STALK_LEN * s + 16.0 * s), d_text,
 		HORIZONTAL_ALIGNMENT_CENTER, -1, fs, TEXT_COL)

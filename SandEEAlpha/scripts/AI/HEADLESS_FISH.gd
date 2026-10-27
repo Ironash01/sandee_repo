@@ -438,8 +438,8 @@ func _path_is_clear(mob: CharacterBody2D, dir: Vector2) -> bool:
 	if dir.length_squared() < 0.001:
 		return true
 	var exclude: Array = [mob.get_rid()]
-	var player: Node2D = Global.player_node as Node2D
-	if player != null and is_instance_valid(player):
+	var player: Node2D = _valid_player_node()
+	if player != null:
 		exclude.append(player.get_rid())
 	# Also never treat the provoked LUA (the chase target) as an obstacle.
 	if mob.has_method("combat_target"):
@@ -484,7 +484,7 @@ func _has_los(mob: CharacterBody2D, target_pos: Vector2) -> bool:
 	var result := space_state.intersect_ray(query)
 	if result.is_empty():
 		return false
-	var expected: Node = Global.player_node
+	var expected: Node = _valid_player_node()
 	if mob.has_method("combat_target"):
 		expected = mob.call("combat_target") as Node
 	return (result as Dictionary).get("collider") == expected
@@ -494,4 +494,14 @@ func _has_los(mob: CharacterBody2D, target_pos: Vector2) -> bool:
 func _combat_target(mob: CharacterBody2D) -> Node2D:
 	if mob.has_method("combat_target"):
 		return mob.call("combat_target") as Node2D
-	return Global.player_node as Node2D
+	return _valid_player_node()
+
+func _valid_player_node() -> Node2D:
+	# Global.player_node can be a freed reference during scene teardown.
+	# Check the raw Variant before casting so a stale node never throws.
+	var raw: Variant = Global.player_node
+	if not is_instance_valid(raw):
+		return null
+	if raw is Node2D and (raw as Node2D).is_inside_tree():
+		return raw as Node2D
+	return null

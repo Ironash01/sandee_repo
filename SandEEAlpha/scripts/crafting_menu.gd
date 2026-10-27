@@ -36,7 +36,7 @@ var _filtered:     Array  = []
 var _active_cat:   String = "Materials"
 var _selected_idx: int    = -1
 
-# ── Station automation (Crafting / Automation / Programming) ──────
+# ── Station automation (Crafting / Algorithmica) ──────────────────
 # `station` is set by CraftingStation before this menu enters the tree. The
 # menu only READS/WRITES station state through the station's Automation API —
 # it never crafts or validates anything itself.
@@ -90,6 +90,8 @@ var _craft_btn:     Button
 var _cat_btns:      Dictionary = {}
 var _row_btns:      Array      = []
 var _title_label:   Label
+var _main_scroll:   ScrollContainer = null
+var _prog_scroll:   ScrollContainer = null
 
 # ── Lifecycle ─────────────────────────────────────────────────────
 func _ready() -> void:
@@ -150,9 +152,6 @@ func open_as_station() -> void:
 	if _detail_panel != null:
 		_detail_panel.visible = false
 	_filter_and_refresh()
-	_refresh_automation()
-	_refresh_input()
-	_refresh_output()
 	show_menu()
 
 # ── Build UI ──────────────────────────────────────────────────────
@@ -165,9 +164,18 @@ func _build() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
 
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	add_child(scroll)
+	_main_scroll = scroll
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
+	center.custom_minimum_size = Global.ui_content_rect().size
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(center)
 
 	var outer := HBoxContainer.new()
 	outer.add_theme_constant_override("separation", 0)
@@ -175,7 +183,7 @@ func _build() -> void:
 
 	# Single centred panel (no side tab strip) — same shape as the furnace UI.
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(1080 * s, 540 * s)
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(1080, 540))
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(16*s), int(16*s), int(14*s), int(16*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	outer.add_child(panel)
@@ -185,8 +193,8 @@ func _build() -> void:
 	panel_row.add_theme_constant_override("separation", int(14 * s))
 	panel.add_child(panel_row)
 
-	# Inventory only here — the player's on-screen hotbar stays reachable
-	# (this menu's canvas sits below it), so no HOTBAR strip.
+	# Inventory only here — the on-screen hotbar is hidden with the rest of the
+	# gameplay HUD while this full-screen modal is open, so no HOTBAR strip.
 	var items := PlayerItemsPanel.new()
 	items.show_hotbar = false
 	panel_row.add_child(items)
@@ -200,13 +208,13 @@ func _build() -> void:
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", int(6 * s))
 	vbox.add_child(header)
-	_title_label = _lbl("CRAFTING STATION", int(16 * s), C_TITLE)
+	_title_label = _lbl("CRAFTING STATION", Global.ui_font_size(16), C_TITLE)
 	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(_title_label)
 	var prog_btn := Button.new()
 	prog_btn.text = "🐍 ALGORITHMICA"
 	prog_btn.tooltip_text = "Algorithmica — write Python that automates this station and imbues regular items with automation."
-	prog_btn.add_theme_font_size_override("font_size", int(12 * s))
+	prog_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	prog_btn.add_theme_color_override("font_color", C_TITLE)
 	prog_btn.pressed.connect(func() -> void: _set_mode(Mode.PROGRAMMING))
 	header.add_child(prog_btn)
@@ -229,10 +237,10 @@ func _build() -> void:
 
 	_set_mode(Mode.CRAFTING)
 
-# Algorithmica overlay: recipe selector + Python editor, side by side, with the
-# input/output slots underneath. The old AUTOMATION tab is gone — selecting the
-# automation recipe is part of Algorithmica now, because a program needs a
-# recipe selected to craft anything.
+# Algorithmica overlay: the Python editor (plus its API hint, RUN/CLEAR/RECIPES
+# row and output log). Recipe selection and item input are code-driven:
+# set_recipe("Planks") + craft(n); take_output() collects the result. The
+# editor's autocomplete supplies the function and item-name lists.
 func _build_programming_overlay(s: float) -> void:
 	_prog_overlay = Control.new()
 	_prog_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -245,13 +253,22 @@ func _build_programming_overlay(s: float) -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_prog_overlay.add_child(dim)
 
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_prog_overlay.add_child(scroll)
+	_prog_scroll = scroll
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_prog_overlay.add_child(center)
+	center.custom_minimum_size = Global.ui_content_rect().size
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(center)
 	_overlay_center = center
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(900 * s, 560 * s)
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(900, 560))
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(18*s), int(18*s), int(14*s), int(18*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
@@ -263,7 +280,7 @@ func _build_programming_overlay(s: float) -> void:
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", int(8 * s))
 	vbox.add_child(header)
-	var title := _lbl("ALGORITHMICA — CRAFTING STATION", int(15 * s), C_TITLE)
+	var title := _lbl("ALGORITHMICA — CRAFTING STATION", Global.ui_font_size(15), C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	header.add_child(_target_badge(AlgorithmicaAPI.STATION, s))
@@ -273,35 +290,14 @@ func _build_programming_overlay(s: float) -> void:
 	close.pressed.connect(_close_programming)
 	header.add_child(close)
 
-	# Left: the automation recipe selector (formerly its own AUTOMATION tab).
-	# Right: the Python editor. Both are always visible together.
-	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", int(12 * s))
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(body)
-
-	var left := VBoxContainer.new()
-	left.custom_minimum_size = Vector2(int(260 * s), 0)
-	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(left)
-	_auto_body = _build_automation_body(s)
-	_auto_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	left.add_child(_auto_body)
-
-	var right := VBoxContainer.new()
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(right)
+	# Algorithmica is CODE ONLY. Recipe selection, crafting and collection are
+	# done by the program itself (set_recipe / craft / take_output), so the
+	# redundant picker and input/output widgets are not built. The editor's
+	# autocomplete/name popup already lists every callable and item id.
 	_prog_body = _build_programming_body(s)
 	_prog_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_prog_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right.add_child(_prog_body)
-
-	# Input + Output slots — the machine state a program reads/writes.
-	_input_section = _build_input_section(s)
-	vbox.add_child(_input_section)
-	_output_section = _build_output_section(s)
-	vbox.add_child(_output_section)
+	vbox.add_child(_prog_body)
 
 # Small target chip, matching the Programming Encyclopedia's Algorithmica
 # target badges so the machine is identifiable at a glance.
@@ -320,7 +316,7 @@ func _target_badge(target: String, s: float) -> Control:
 	sb.content_margin_bottom = int(2 * s)
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var lbl := _lbl(target.to_upper(), int(9 * s), col)
+	var lbl := _lbl(target.to_upper(), Global.ui_font_size(9), col)
 	panel.add_child(lbl)
 	return panel
 
@@ -330,27 +326,36 @@ func _close_programming() -> void:
 # Android: keep the Algorithmica panel above the software keyboard so the code
 # field and the RUN/CLEAR/RECIPES row stay visible while typing.
 func _process(_delta: float) -> void:
-	if not visible or _overlay_center == null:
+	if not visible:
 		return
 	var inset: float = Global.mobile_keyboard_height()
-	if not is_equal_approx(_overlay_center.offset_bottom, -inset):
-		_overlay_center.offset_bottom = -inset
+	var want: float = -(Global.ui_safe_insets.w + inset)
+	if _main_scroll != null and is_instance_valid(_main_scroll) \
+			and not is_equal_approx(_main_scroll.offset_bottom, want):
+		_main_scroll.offset_bottom = want
+	if _prog_scroll != null and is_instance_valid(_prog_scroll) \
+			and not is_equal_approx(_prog_scroll.offset_bottom, want):
+		_prog_scroll.offset_bottom = want
+		if _code_edit != null and is_instance_valid(_code_edit) and _code_edit.has_focus():
+			_ensure_prog_editor_visible()
+
+func _ensure_prog_editor_visible() -> void:
+	if _prog_scroll == null or not is_instance_valid(_prog_scroll) \
+			or _code_edit == null or not is_instance_valid(_code_edit):
+		return
+	_prog_scroll.call_deferred("ensure_control_visible", _code_edit)
 
 # ── Mode switch ───────────────────────────────────────────────────
-# Two modes only: manual CRAFTING, and the ALGORITHMICA overlay (recipe
-# selection + Python editor + machine slots). The old AUTOMATION tab was merged
-# into Algorithmica because a program needs a selected recipe to craft.
+# Two modes only: manual CRAFTING, and the code-only ALGORITHMICA overlay.
+# Recipes and inputs are selected by the Python program itself.
 func _set_mode(mode: int) -> void:
 	_mode = mode
 	if _prog_overlay != null:   _prog_overlay.visible   = mode != Mode.CRAFTING
 	if _craft_body != null:     _craft_body.visible     = mode == Mode.CRAFTING
-	if _input_section != null:  _input_section.visible  = mode != Mode.CRAFTING
-	if _output_section != null: _output_section.visible = mode != Mode.CRAFTING
 	# Leaving Algorithmica keeps the editor text on the station.
 	if mode != Mode.PROGRAMMING:
 		_store_program_code()
 	if mode == Mode.PROGRAMMING:
-		_refresh_automation()
 		_ensure_program_host()
 
 # ── Crafting body (the original manual crafting view) ─────────────
@@ -367,7 +372,7 @@ func _build_craft_body(s: float) -> Control:
 		btn.text                  = cat
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.custom_minimum_size   = Vector2(0, int(30 * s))
-		btn.add_theme_font_size_override("font_size", int(12 * s))
+		btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		btn.tooltip_text = "Show the %s recipes." % cat
 		var c: String = cat as String
 		btn.pressed.connect(func() -> void: _on_category(c))
@@ -410,9 +415,9 @@ func _build_automation_body(s: float) -> Control:
 	root.add_theme_constant_override("separation", int(8 * s))
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	root.add_child(_lbl("SELECT AUTOMATION RECIPE", int(11 * s), C_MUTED))
+	root.add_child(_lbl("SELECT AUTOMATION RECIPE", Global.ui_font_size(11), C_MUTED))
 	var hint := _lbl("Selecting a recipe does not craft anything — run a program in the editor on the right.",
-		int(10 * s), C_MUTED)
+		Global.ui_font_size(10), C_MUTED)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
 
@@ -432,12 +437,12 @@ func _build_automation_body(s: float) -> Control:
 	var sel_row := HBoxContainer.new()
 	sel_row.add_theme_constant_override("separation", int(8 * s))
 	root.add_child(sel_row)
-	sel_row.add_child(_lbl("Selected Recipe:", int(12 * s), C_MUTED))
-	_auto_selected = _lbl("(none)", int(12 * s), C_TITLE)
+	sel_row.add_child(_lbl("Selected Recipe:", Global.ui_font_size(12), C_MUTED))
+	_auto_selected = _lbl("(none)", Global.ui_font_size(12), C_TITLE)
 	_auto_selected.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sel_row.add_child(_auto_selected)
 
-	_auto_status = _lbl("Status: No recipe selected", int(11 * s), C_EFFECT)
+	_auto_status = _lbl("Status: No recipe selected", Global.ui_font_size(11), C_EFFECT)
 	root.add_child(_auto_status)
 	return root
 
@@ -491,7 +496,7 @@ func _build_programming_body(s: float) -> Control:
 	root.add_theme_constant_override("separation", int(8 * s))
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	root.add_child(_lbl("PYTHON AUTOMATION — CRAFTING STATION ONLY", int(11 * s), C_MUTED))
+	root.add_child(_lbl("PYTHON AUTOMATION — CRAFTING STATION ONLY", Global.ui_font_size(11), C_MUTED))
 	# Custom (game) API only here — the language's own built-ins are listed in
 	# the Programming Encyclopedia, and the two are deliberately kept apart.
 	# Source of truth: scripts/api_reference.gd.
@@ -500,13 +505,13 @@ func _build_programming_body(s: float) -> Control:
 	for e in custom:
 		lines.append("%s — %s" % [str(e["sig"]), str(e["desc"])])
 	var hint := _lbl("Station API — item arguments are ids (iron_sword, wood):\n" + "\n".join(lines),
-		int(10 * s), C_MUTED)
+		Global.ui_font_size(10), C_MUTED)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
 
 	# Live material readout for craft_color(). The function itself validates and
 	# consumes; this label only mirrors the station-panel API hint above.
-	_color_hint = _lbl("", int(10 * s), C_EFFECT)
+	_color_hint = _lbl("", Global.ui_font_size(10), C_EFFECT)
 	_color_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(_color_hint)
 	_refresh_color_hint()
@@ -515,19 +520,20 @@ func _build_programming_body(s: float) -> Control:
 	_code_edit.custom_minimum_size   = Vector2(0, int(140 * s))
 	_code_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_code_edit.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	_code_edit.add_theme_font_size_override("font_size", int(13 * s))
-	_code_edit.placeholder_text      = "# pick a recipe on the left, then:\nset_recipe(\"planks\")\ncraft(1)\ntake_output()"
+	_code_edit.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	_code_edit.placeholder_text      = "# recipe + inputs are code, e.g.:\nset_recipe(\"Planks\")\ncraft(1)\ntake_output()"
 	if station != null:
 		_code_edit.text = str(station.get("program_code"))
 	# Item-id popup: inside a name argument, list carried items first, then the
 	# whole catalogue — every entry is the scripting id.
 	_code_edit.text_changed.connect(_on_program_text_changed)
+	_code_edit.focus_entered.connect(_ensure_prog_editor_visible)
 	root.add_child(_code_edit)
 
 	_name_popup = PopupPanel.new()
 	var name_list := ItemList.new()
 	name_list.custom_minimum_size = Vector2(int(200 * s), int(180 * s))
-	name_list.add_theme_font_size_override("font_size", int(12 * s))
+	name_list.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	name_list.item_selected.connect(_on_name_item_selected)
 	_name_popup.add_child(name_list)
 	_name_list = name_list
@@ -550,7 +556,7 @@ func _build_programming_body(s: float) -> Control:
 	_prog_log.scroll_following    = true
 	_prog_log.custom_minimum_size = Vector2(0, int(90 * s))
 	_prog_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_prog_log.add_theme_font_size_override("font_size", int(12 * s))
+	_prog_log.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_prog_log.add_theme_color_override("default_color", C_MUTED)
 	root.add_child(_prog_log)
 	return root
@@ -560,7 +566,7 @@ func _make_action_btn(text: String, bg: Color, fg: Color, cb: Callable, s: float
 	btn.text = text
 	btn.custom_minimum_size   = Vector2(0, int(36 * s))
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	btn.add_theme_font_size_override("font_size", int(13 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var ps := _sb(bg, C_BORDER, 4, 8, 8, 6, 6)
 	btn.add_theme_stylebox_override("normal",  ps)
 	btn.add_theme_stylebox_override("hover",   ps)
@@ -709,7 +715,7 @@ func _on_program_done() -> void:
 func _build_input_section(s: float) -> Control:
 	var root := HBoxContainer.new()
 	root.add_theme_constant_override("separation", int(10 * s))
-	root.add_child(_lbl("INPUT", int(11 * s), C_MUTED))
+	root.add_child(_lbl("INPUT", Global.ui_font_size(11), C_MUTED))
 
 	var slot_script: GDScript = load("res://scripts/station_input_slot.gd")
 	_input_slot = slot_script.new()
@@ -717,7 +723,7 @@ func _build_input_section(s: float) -> Control:
 	_input_slot.connect("changed", _on_input_slot_changed)
 	root.add_child(_input_slot)
 
-	_input_hint = _lbl("", int(11 * s), C_MUTED)
+	_input_hint = _lbl("", Global.ui_font_size(11), C_MUTED)
 	_input_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_input_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(_input_hint)
@@ -752,7 +758,7 @@ func _build_output_section(s: float) -> Control:
 	var root := HBoxContainer.new()
 	root.add_theme_constant_override("separation", int(10 * s))
 	outer.add_child(root)
-	root.add_child(_lbl("OUTPUT", int(11 * s), C_MUTED))
+	root.add_child(_lbl("OUTPUT", Global.ui_font_size(11), C_MUTED))
 
 	var slot_wrap := Control.new()
 	slot_wrap.custom_minimum_size = Vector2(Global.ITEM_SLOT_SIZE * s, Global.ITEM_SLOT_SIZE * s)
@@ -772,13 +778,13 @@ func _build_output_section(s: float) -> Control:
 	slot_wrap.add_child(_output_slot)
 
 	_output_count = Label.new()
-	_output_count.add_theme_font_size_override("font_size", int(13 * s))
+	_output_count.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	_output_count.add_theme_color_override("font_color", C_EFFECT)
 	_output_count.position = Vector2(Global.ITEM_SLOT_SIZE * s - 30 * s,
 		Global.ITEM_SLOT_SIZE * s - 22 * s)
 	slot_wrap.add_child(_output_count)
 
-	_output_hint = _lbl("", int(11 * s), C_MUTED)
+	_output_hint = _lbl("", Global.ui_font_size(11), C_MUTED)
 	_output_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(_output_hint)
 
@@ -804,7 +810,7 @@ func _build_color_output_panel(s: float) -> Control:
 	row.add_theme_constant_override("separation", int(7 * s))
 	vbox.add_child(row)
 
-	row.add_child(_lbl("COLOR", int(9 * s), C_MUTED))
+	row.add_child(_lbl("COLOR", Global.ui_font_size(9), C_MUTED))
 	_color_preview = ColorRect.new()
 	_color_preview.custom_minimum_size = Vector2(int(24 * s), int(24 * s))
 	row.add_child(_color_preview)
@@ -813,14 +819,14 @@ func _build_color_output_panel(s: float) -> Control:
 	_color_mode_option.add_item("RGB", 0)
 	_color_mode_option.add_item("HEX", 1)
 	_color_mode_option.custom_minimum_size = Vector2(int(62 * s), 0)
-	_color_mode_option.add_theme_font_size_override("font_size", int(10 * s))
+	_color_mode_option.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	_color_mode_option.item_selected.connect(_on_color_mode_selected)
 	row.add_child(_color_mode_option)
 
 	_color_edit = LineEdit.new()
 	_color_edit.custom_minimum_size = Vector2(int(104 * s), 0)
 	_color_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_color_edit.add_theme_font_size_override("font_size", int(10 * s))
+	_color_edit.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	_color_edit.max_length = 20
 	_color_edit.placeholder_text = "255, 0, 0"
 	_color_edit.text_submitted.connect(_on_color_text_submitted)
@@ -830,14 +836,14 @@ func _build_color_output_panel(s: float) -> Control:
 	var copy := Button.new()
 	copy.text = "Copy HEX"
 	copy.custom_minimum_size = Vector2(int(64 * s), 0)
-	copy.add_theme_font_size_override("font_size", int(9 * s))
+	copy.add_theme_font_size_override("font_size", Global.ui_font_size(9))
 	copy.add_theme_stylebox_override("normal", _sb(C_TIP_BG, C_BORDER, 4, 4, 4, 3, 3))
 	copy.add_theme_stylebox_override("hover", _sb(C_SEL, C_BORDER, 4, 4, 4, 3, 3))
 	copy.add_theme_stylebox_override("pressed", _sb(C_SEL, C_BORDER, 4, 4, 4, 3, 3))
 	copy.pressed.connect(_copy_color_hex)
 	row.add_child(copy)
 
-	_color_note = _lbl("", int(9 * s), C_MUTED)
+	_color_note = _lbl("", Global.ui_font_size(9), C_MUTED)
 	_color_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_color_note.visible = false
 	vbox.add_child(_color_note)
@@ -1004,16 +1010,16 @@ func _build_detail(s: float) -> Control:
 	vbox.add_theme_constant_override("separation", int(8 * s))
 	root.add_child(vbox)
 
-	_detail_name = _lbl("", int(15 * s), C_TITLE)
+	_detail_name = _lbl("", Global.ui_font_size(15), C_TITLE)
 	vbox.add_child(_detail_name)
 	_div(vbox)
-	vbox.add_child(_lbl("INGREDIENTS", int(11 * s), C_MUTED))
+	vbox.add_child(_lbl("INGREDIENTS", Global.ui_font_size(11), C_MUTED))
 	_detail_ing1 = _build_icon_row(s)
 	vbox.add_child(_detail_ing1)
 	_detail_ing2 = _build_icon_row(s)
 	vbox.add_child(_detail_ing2)
 	_div(vbox)
-	vbox.add_child(_lbl("RESULT", int(11 * s), C_MUTED))
+	vbox.add_child(_lbl("RESULT", Global.ui_font_size(11), C_MUTED))
 	_detail_result = _build_icon_row(s)
 	vbox.add_child(_detail_result)
 
@@ -1024,7 +1030,7 @@ func _build_detail(s: float) -> Control:
 	_craft_btn = Button.new()
 	_craft_btn.text                = "CRAFT"
 	_craft_btn.custom_minimum_size = Vector2(0, int(40 * s))
-	_craft_btn.add_theme_font_size_override("font_size", int(13 * s))
+	_craft_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	_craft_btn.pressed.connect(_on_craft)
 	vbox.add_child(_craft_btn)
 
@@ -1046,7 +1052,7 @@ func _build_icon_row(s: float) -> HBoxContainer:
 	row.add_child(icon)
 
 	var qty := Label.new()
-	qty.add_theme_font_size_override("font_size", int(13 * s))
+	qty.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	row.add_child(qty)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -1126,7 +1132,7 @@ func _filter_and_refresh() -> void:
 		child.queue_free()
 
 	if _filtered.is_empty():
-		_recipe_list.add_child(_lbl("No recipes yet.", 12, C_MUTED))
+		_recipe_list.add_child(_lbl("No recipes yet.", Global.ui_font_size(12), C_MUTED))
 		return
 
 	var s: float = Global.ui_scale
@@ -1282,6 +1288,7 @@ func _on_craft() -> void:
 func show_menu() -> void:
 	visible = true
 	Global.open_ui()
+	Global.modal_hud_changed.emit(true)
 	Global.register_ui_back(self, Callable(self, "dismiss_back"))
 
 # Escape/Back first leaves Algorithmica and only then closes the station menu.
@@ -1308,6 +1315,7 @@ func hide_menu() -> void:
 	visible = false
 	Global.unregister_ui_back(self)
 	Global.close_ui()
+	Global.modal_hud_changed.emit(false)
 
 # E (the "inventory" action) also closes the station menu here — unlike the
 # inventory panel, this menu isn't a child of the player, so player.gd never

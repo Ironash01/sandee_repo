@@ -21,7 +21,7 @@ const CACTUS_DATA: ItemData = preload("res://resources/items/cactus.tres")
 const COLOR_CHANNEL_MAX: int = 255
 const COLOR_MAX_CRAFT: int = 32
 
-## Recipe the player picked in the Automation tab (configuration only).
+## Recipe selected by Algorithmica's set_recipe() (code-only now).
 var automation_recipe: CraftingRecipe = null
 ## Player's Python program, kept on the station so it survives UI rebuilds.
 var program_code: String = ""
@@ -87,6 +87,8 @@ func set_world_cell(cell: Vector2i, world: Node) -> void:
 	_world_ref  = world
 
 func _ready() -> void:
+	if not Global.gameplay_input_cancelled.is_connected(_on_gameplay_input_cancelled):
+		Global.gameplay_input_cancelled.connect(_on_gameplay_input_cancelled)
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Lets nearby Lua robots find this station (see lua_npc.gd's
 	# nearest_crafting_station), so their craft()/set_recipe() calls land here.
@@ -190,7 +192,7 @@ func _tick_wobble() -> void:
 # True when the cursor is over THIS station's sprite. Without it, every adjacent
 # station in range reacted to the same click and the first in tree order consumed
 # it — so clicking a specific station opened a different (previously placed) one.
-func _cursor_over() -> bool:
+func _cursor_over(at: Vector2 = Vector2.INF) -> bool:
 	if _sprite == null or _sprite.texture == null:
 		return true
 	var r: Rect2 = _sprite.get_rect()
@@ -199,7 +201,7 @@ func _cursor_over() -> bool:
 	var b: Vector2 = gt * (r.position + r.size)
 	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
 	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
-	var m: Vector2 = Global.mouse_world(self)
+	var m: Vector2 = Global.mouse_world(self) if at == Vector2.INF else at
 	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
 
 func _input(event: InputEvent) -> void:
@@ -211,7 +213,7 @@ func _input(event: InputEvent) -> void:
 		return
 	if Global.any_ui_open() or Global.pause_menu_open:
 		return
-	if not _cursor_over():
+	if not _cursor_over(Global.mouse_event_world(self, event)):
 		return
 	if event is InputEventMouseButton \
 			and event.button_index == MOUSE_BUTTON_LEFT:
@@ -722,3 +724,7 @@ func recolor_output(r, g, b) -> bool:
 	output_item = block
 	_notify_state_changed()
 	return true
+
+func _on_gameplay_input_cancelled() -> void:
+	if _breaking:
+		_cancel_breaking()

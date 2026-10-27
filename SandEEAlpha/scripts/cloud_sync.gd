@@ -19,10 +19,15 @@ extends Node
 
 
 signal sync_completed(summary: Dictionary)
+## Emitted while sync_all() works through every local/cloud slot. `info` has
+## stage, message, done, total and slot; startup/main-menu loading bars consume
+## it without polling the network.
+signal sync_progress_changed(info: Dictionary)
 
 var _syncing: Dictionary = {}   # slot -> true while a request is in flight
 var _dirty: Dictionary = {}     # slot -> true when a save arrived mid-sync
 var _batch_running := false
+var _last_progress: Dictionary = {}
 
 
 func _ready() -> void:
@@ -81,8 +86,13 @@ func sync_progress() -> void:
 		if id.is_empty():
 			continue
 		ids.append(("dungeon_mission:" + id) if m.has("dungeon_index") else ("mission:" + id))
-	for idx in Global.cleared_dungeons:
-		ids.append("dungeon_clear:%d" % int(idx))
+	for idx_value in Global.cleared_dungeons:
+		var idx: int = int(idx_value)
+		var stars: int = Global.dungeon_stars_for(idx)
+		if stars >= 2:
+			ids.append("dungeon_clear:%d" % idx)
+		if stars >= 3:
+			ids.append("dungeon_clear_bonus:%d" % idx)
 	if not ids.is_empty():
 		await claim_reward_ids(ids)
 
@@ -112,10 +122,24 @@ func sync_all_progress() -> void:
 				if id.is_empty():
 					continue
 				ids[("dungeon_mission:" + id) if id.begins_with("dungeon_") else ("mission:" + id)] = true
+		var saved_stars: Dictionary = {}
+		var star_rows: Variant = info.get("dungeon_stars", [])
+		if star_rows is Array:
+			for row_value in star_rows:
+				if row_value is Dictionary:
+					var row: Dictionary = row_value
+					saved_stars[int(row.get("index", 0))] = clampi(
+						int(row.get("stars", 3)), 1, 3)
 		var cleared: Variant = info.get("cleared_dungeons", [])
 		if cleared is Array:
-			for idx in cleared:
-				ids["dungeon_clear:%d" % int(idx)] = true
+			for idx_value in cleared:
+				var idx: int = int(idx_value)
+				# Legacy saves have no star rows; treat them as perfect clears.
+				var stars: int = int(saved_stars.get(idx, 3))
+				if stars >= 2:
+					ids["dungeon_clear:%d" % idx] = true
+				if stars >= 3:
+					ids["dungeon_clear_bonus:%d" % idx] = true
 	if ids.is_empty():
 		return
 	await claim_reward_ids(ids.keys())
@@ -148,27 +172,36 @@ func claim_reward_ids(ids: Array) -> void:
 ##     metadata without identity -> leave both intact and report Pending.
 ## Cloud-only downloads never overwrite an existing local world; conflicts are
 ## resolved from Cloud Saves.
-func sync_all() -> void:
-	if not is_enabled() or _batch_running:
-		return
+func sync_all() -> Dictionary:
+	var summary: Dictionary = _empty_sync_summary()
+	if not is_enabled():
+		_emit_sync_progress("offline", 0, 0, 0, "Cloud sync is offline.")
+		return summary
+	if _batch_running:
+		# Startup and in-menu sign-in can race with an automatic batch. Wait for
+		# the active batch instead of letting the caller open the menu early.
+		var running_summary: Variant = await sync_completed
+		if running_summary is Array and not (running_summary as Array).is_empty():
+			running_summary = (running_summary as Array)[0]
+		return running_summary if running_summary is Dictionary else _empty_sync_summary()
 	_batch_running = true
-	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Syncing worlds?")
-	var summary: Dictionary = {
-		"uploaded": 0, "downloaded": 0, "synced": 0, "pending": 0,
-		"failed": 0, "total": 0,
-	}
+	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Syncing worlds...")
+	_emit_sync_progress("listing", 0, 0, 0, "Contacting cloud saves...")
+
 	var cloud := await Supabase.list_saves()
 	if not is_enabled():
 		_batch_running = false
 		Global.set_cloud_status(Global.CloudStatus.OFFLINE)
+		_emit_sync_progress("offline", 0, 0, 0, "Cloud sync stopped (offline).")
 		sync_completed.emit(summary)
-		return
+		return summary
 	if not cloud.ok:
 		_batch_running = false
 		_apply_failure(cloud)
 		summary["failed"] = 1
+		_emit_sync_progress("error", 0, 0, 0, "Cloud saves could not be listed.")
 		sync_completed.emit(summary)
-		return
+		return summary
 
 	var cloud_by_slot: Dictionary = {}
 	if cloud.data is Array:
@@ -180,14 +213,30 @@ func sync_all() -> void:
 			if slot >= 1 and slot <= Global.MAX_WORLDS:
 				cloud_by_slot[slot] = row
 
+	# Total work is the union of cloud slots and local worlds: this is exactly
+	# "check every player world" and gives an honest determinate progress bar.
+	var work_slots: Dictionary = {}
+	for slot_value in cloud_by_slot.keys():
+		work_slots[int(slot_value)] = true
+	for slot_value in Global.list_worlds():
+		work_slots[int(slot_value)] = true
+	var total_work: int = work_slots.size()
+	var done_work: int = 0
+	_emit_sync_progress("syncing", done_work, total_work, 0,
+		"Syncing %d world%s..." % [total_work, "" if total_work == 1 else "s"])
+
 	var processed: Dictionary = {}
 	for slot_value in cloud_by_slot.keys():
 		if not is_enabled():
 			_batch_running = false
 			Global.set_cloud_status(Global.CloudStatus.OFFLINE)
+			_emit_sync_progress("offline", done_work, total_work, 0,
+				"Cloud sync stopped (offline).")
 			sync_completed.emit(summary)
-			return
+			return summary
 		var slot: int = int(slot_value)
+		_emit_sync_progress("syncing", done_work, total_work, slot,
+			"Checking world %d of %d..." % [done_work + 1, total_work])
 		var result: String
 		if not Global.has_save(slot):
 			result = await _install_cloud_save(slot, cloud_by_slot[slot])
@@ -195,20 +244,32 @@ func sync_all() -> void:
 			result = await _reconcile_slot(slot, cloud_by_slot[slot])
 		processed[slot] = true
 		_count_sync(summary, result)
+		done_work += 1
+		_emit_sync_progress("syncing", done_work, total_work, slot,
+			_sync_result_message(result, slot))
 
 	# Local worlds with no cloud row are uploaded automatically.
 	for slot_value in Global.list_worlds():
 		if not is_enabled():
 			_batch_running = false
 			Global.set_cloud_status(Global.CloudStatus.OFFLINE)
+			_emit_sync_progress("offline", done_work, total_work, 0,
+				"Cloud sync stopped (offline).")
 			sync_completed.emit(summary)
-			return
+			return summary
 		var slot: int = int(slot_value)
 		if processed.has(slot):
 			continue
+		_emit_sync_progress("syncing", done_work, total_work, slot,
+			"Uploading world %d of %d..." % [done_work + 1, total_work])
 		var result: String = await sync_slot(slot)
 		_count_sync(summary, result)
+		done_work += 1
+		_emit_sync_progress("syncing", done_work, total_work, slot,
+			_sync_result_message(result, slot))
 
+	_emit_sync_progress("progress", done_work, total_work, 0,
+		"Updating account progress...")
 	await sync_progress()
 	# Scan every saved world, so offline progress in another world is not
 	# stranded until that world is opened again.
@@ -216,11 +277,55 @@ func sync_all() -> void:
 	_batch_running = false
 	if not is_enabled():
 		Global.set_cloud_status(Global.CloudStatus.OFFLINE)
+		_emit_sync_progress("offline", done_work, total_work, 0,
+			"Cloud sync stopped (offline).")
 		sync_completed.emit(summary)
-		return
+		return summary
 	_finish_sync_status(summary)
+	_emit_sync_progress("done", done_work, total_work, 0, _sync_summary_message(summary))
 	CrashLogger.event("CLOUD", "startup sync complete %s" % str(summary))
 	sync_completed.emit(summary)
+	return summary
+
+
+func _empty_sync_summary() -> Dictionary:
+	return {
+		"uploaded": 0, "downloaded": 0, "synced": 0, "pending": 0,
+		"failed": 0, "total": 0,
+	}
+
+
+func _emit_sync_progress(stage: String, done: int, total: int, slot: int,
+		message: String) -> void:
+	_last_progress = {
+		"stage": stage,
+		"done": maxi(0, done),
+		"total": maxi(0, total),
+		"slot": slot,
+		"message": message,
+	}
+	sync_progress_changed.emit(_last_progress)
+
+
+func _sync_result_message(result: String, slot: int) -> String:
+	match result:
+		"uploaded":  return "Uploaded world %d." % slot
+		"downloaded": return "Downloaded world %d." % slot
+		"synced":    return "World %d is already in sync." % slot
+		"pending":   return "World %d needs attention in Cloud Saves." % slot
+		"error":     return "World %d could not be synced." % slot
+		"skipped":   return "World %d is already being synced." % slot
+	return "Checked world %d." % slot
+
+
+func _sync_summary_message(summary: Dictionary) -> String:
+	if int(summary.get("failed", 0)) > 0:
+		return "Sync finished with errors."
+	if int(summary.get("pending", 0)) > 0:
+		return "Sync finished; some worlds need attention."
+	if int(summary.get("uploaded", 0)) + int(summary.get("downloaded", 0)) > 0:
+		return "Cloud sync complete."
+	return "All worlds are up to date."
 
 
 func _count_sync(summary: Dictionary, result: String) -> void:

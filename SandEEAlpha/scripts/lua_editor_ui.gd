@@ -72,6 +72,137 @@ const INV_COLUMNS: int = 4
 var _inv_slots:    Array = []
 var _hotbar_slots: Array = []
 
+# The built-in Automatica helper library (prepended to every Lua run and
+# shared with the QA suite). Keep every helper listed in APIReference.
+const LUA_PREAMBLE: String = """
+-- Built-in helpers
+-- place_item() is the no-offset form of place_item(dx, dy).
+local __place_item = place_item
+function place_item(dx, dy)
+    __place_item(dx or 0, dy or 0)
+end
+
+function chop_trees(radius)
+    move(radius or 20, -1)
+    interact()
+end
+function auto_work()
+    move(0, -2)
+    interact()
+end
+function deposit_chest()
+    move(0, -4)
+    interact()
+end
+function return_to_spawn()
+    move(0, -3)
+    interact()
+end
+function chest_contents()
+    move(0, -5)
+    interact()
+end
+function craft_example()
+	-- Minimal station example. The station must already have the recipe's
+	-- ingredients (or a robot/player must have loaded its input slot).
+	-- Copy these three calls into your own program and change the recipe.
+	set_recipe("Planks")
+	craft(1)
+	take_output()
+end
+
+-- ── BUILD HELPERS ────────────────────────────────────────────────
+-- The robot places from its 3 build slots. select_block(i) picks the slot
+-- (0, 1 or 2); place_item(dx, dy) places one block at a tile offset from the
+-- robot; place_at(x, y) uses absolute tile coords. Fill the slots by dragging
+-- blocks in, by chopping (wood), or with withdraw("Wood", 10) from a chest.
+-- Each place_* call is one block, played out a frame at a time, so a loop of
+-- 40 calls visibly builds over ~40 frames.
+
+-- Gap-free straight line between two offsets (Bresenham). A plain y = m*x
+-- would skip tiles on diagonals; this steps one tile at a time.
+function build_line(x0, y0, x1, y1)
+	x0, y0, x1, y1 = x0 or 0, y0 or 0, x1 or 0, y1 or 0
+	local dx = math.abs(x1 - x0)
+	local dy = -math.abs(y1 - y0)
+	local sx = (x0 < x1) and 1 or -1
+	local sy = (y0 < y1) and 1 or -1
+	local err = dx + dy
+	while true do
+		place_item(x0, y0)
+		if x0 == x1 and y0 == y1 then break end
+		local e2 = 2 * err
+		if e2 >= dy then err = err + dy; x0 = x0 + sx end
+		if e2 <= dx then err = err + dx; y0 = y0 + sy end
+	end
+end
+
+-- Rectangle: w by h tiles, top-left at offset (x0, y0). filled = solid slab,
+-- otherwise just the border.
+function build_rect(x0, y0, w, h, filled)
+	x0, y0 = x0 or 0, y0 or 0
+	w, h = w or 1, h or 1
+	filled = filled or false
+	for x = 0, w - 1 do
+		for y = 0, h - 1 do
+			if filled or x == 0 or y == 0 or x == w - 1 or y == h - 1 then
+				place_item(x0 + x, y0 + y)
+			end
+		end
+	end
+end
+
+-- Circle centred on the robot: filled disc (filled = true) or outline.
+-- Uses the integer distance test x*x + y*y <= r*r, so no trig and no gaps.
+function build_circle(r, filled)
+	r = r or 0
+	filled = filled or false
+	if r <= 0 then return end
+	for x = -r, r do
+		for y = -r, r do
+			local d2 = x * x + y * y
+			if d2 <= r * r and (filled or d2 > (r - 1) * (r - 1)) then
+				place_item(x, y)
+			end
+		end
+	end
+end
+
+-- Hollow ring of radius r.
+function build_ring(r)
+	build_circle(r, false)
+end
+
+-- Archimedean spiral r = a + b*angle, out to radius r over `turns` turns.
+function build_spiral(r, turns)
+	r, turns = r or 1, turns or 1
+	if r <= 0 or turns <= 0 then return end
+	local total = turns * 2 * math.pi
+	local steps = math.max(1, math.floor(r * turns * 10))
+	for i = 0, steps do
+		local ang = total * (i / steps)
+		local rad = r * (ang / total)
+		place_item(math.floor(math.cos(ang) * rad + 0.5), math.floor(math.sin(ang) * rad + 0.5))
+	end
+end
+
+-- Sine-wave fence: `len` tiles long, `amp` tiles tall.
+function build_wave(len, amp)
+	len, amp = len or 1, amp or 1
+	for x = 0, len - 1 do
+		place_item(x, math.floor(amp * math.sin(x * 0.5) + 0.5))
+	end
+end
+
+-- Diagonal staircase of n steps.
+function build_stairs(n)
+	n = n or 1
+	for i = 0, n - 1 do
+		place_item(i, i)
+	end
+end
+"""
+
 # ── Lifecycle ─────────────────────────────────────────────────────
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -181,8 +312,9 @@ func _fit_keyboard() -> void:
 	if _panel_center == null:
 		return
 	var inset: float = Global.mobile_keyboard_height()
-	if not is_equal_approx(_panel_center.offset_bottom, -inset):
-		_panel_center.offset_bottom = -inset
+	var want: float = -(Global.ui_safe_insets.w + inset)
+	if not is_equal_approx(_panel_center.offset_bottom, want):
+		_panel_center.offset_bottom = want
 
 # Called by the LuaNPC when the player clicks the station.
 func open_panel() -> void:
@@ -236,13 +368,14 @@ func _build() -> void:
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	add_child(center)
 	_panel_center = center
 
 	var panel := PanelContainer.new()
 	# A TABBED panel needs far less room than the old 4-column layout, so this is
 	# much smaller than it was (1280x720 -> 680x420 before ui_scale).
-	panel.custom_minimum_size = Vector2(i(680, s), i(420, s))
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(680, 420))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
@@ -262,12 +395,12 @@ func _build() -> void:
 
 	var icon := Label.new()
 	icon.text = "🤖"
-	icon.add_theme_font_size_override("font_size", i(20, s))
+	icon.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	header.add_child(icon)
 
 	var title := Label.new()
 	title.text = "  AUTOMATICA — Code Editor"
-	title.add_theme_font_size_override("font_size", i(16, s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
@@ -276,7 +409,7 @@ func _build() -> void:
 	# HUD (lua_status_ui.gd reads get_display_name()).
 	_name_edit = LineEdit.new()
 	_name_edit.placeholder_text = "name"
-	_name_edit.add_theme_font_size_override("font_size", i(12, s))
+	_name_edit.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_name_edit.custom_minimum_size = Vector2(i(120, s), 0)
 	var npc_now: Node = _find_npc()
 	if npc_now != null and npc_now.has_method("get_display_name"):
@@ -286,7 +419,7 @@ func _build() -> void:
 
 	var rename_btn := Button.new()
 	rename_btn.text = "Rename"
-	rename_btn.add_theme_font_size_override("font_size", i(12, s))
+	rename_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	var rbs := StyleBoxFlat.new()
 	rbs.bg_color = Color(0.12, 0.18, 0.36, 1.0)
 	rbs.border_color = C_BORDER
@@ -302,7 +435,7 @@ func _build() -> void:
 
 	var enc_btn := Button.new()
 	enc_btn.text = "📖  Encyclopedia"
-	enc_btn.add_theme_font_size_override("font_size", i(12, s))
+	enc_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	var ebs := StyleBoxFlat.new()
 	ebs.bg_color = Color(0.12, 0.18, 0.36, 1.0)
 	ebs.border_color = C_BORDER
@@ -318,7 +451,7 @@ func _build() -> void:
 
 	var close_btn := Button.new()
 	close_btn.text = "✕"; close_btn.flat = true
-	close_btn.add_theme_font_size_override("font_size", i(13, s))
+	close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	close_btn.add_theme_color_override("font_color", C_MUTED)
 	close_btn.custom_minimum_size = Vector2(i(28, s), i(28, s))
 	close_btn.pressed.connect(_close)
@@ -351,7 +484,7 @@ func _build_body(s: float) -> Control:
 	var tabs := TabContainer.new()
 	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tabs.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	tabs.add_theme_font_size_override("font_size", i(13, s))
+	tabs.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	tabs.clip_tabs = false
 
 	# ── Code tab ──
@@ -369,7 +502,7 @@ func _build_body(s: float) -> Control:
 
 	var ed_lbl := Label.new()
 	ed_lbl.text = "CODE"
-	ed_lbl.add_theme_font_size_override("font_size", i(11, s))
+	ed_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	ed_lbl.add_theme_color_override("font_color", C_MUTED)
 	ed_wrap.add_child(ed_lbl)
 
@@ -385,7 +518,7 @@ func _build_body(s: float) -> Control:
 	_code_edit.add_theme_stylebox_override("normal", es)
 	_code_edit.add_theme_stylebox_override("focus",  es)
 	_code_edit.add_theme_color_override("font_color", C_TITLE)
-	_code_edit.add_theme_font_size_override("font_size", i(14, s))
+	_code_edit.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	ed_wrap.add_child(_code_edit)
 
 	# Buttons: RUN  STOP  CLEAR
@@ -431,7 +564,7 @@ func _build_body(s: float) -> Control:
 
 	var pal_lbl := Label.new()
 	pal_lbl.text = "TOOL + BUILD SLOTS"
-	pal_lbl.add_theme_font_size_override("font_size", i(11, s))
+	pal_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	pal_lbl.add_theme_color_override("font_color", C_MUTED)
 	pal_wrap.add_child(pal_lbl)
 
@@ -443,7 +576,7 @@ func _build_body(s: float) -> Control:
 	var hint := Label.new()
 	hint.text = "Drag a tool into the left slot and blocks into the build slots."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.add_theme_font_size_override("font_size", i(11, s))
+	hint.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	hint.add_theme_color_override("font_color", C_MUTED)
 	pal_wrap.add_child(hint)
 
@@ -473,7 +606,7 @@ func _build_body(s: float) -> Control:
 	_output.scroll_following      = true
 	_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_output.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	_output.add_theme_font_size_override("font_size", i(13, s))
+	_output.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	_output.add_theme_color_override("default_color", C_TITLE)
 	scroll.add_child(_output)
 
@@ -491,13 +624,13 @@ func _build_snippets(s: float) -> Control:
 
 	var lbl := Label.new()
 	lbl.text = "SNIPPETS"
-	lbl.add_theme_font_size_override("font_size", i(11, s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	lbl.add_theme_color_override("font_color", C_MUTED)
 	col.add_child(lbl)
 
 	var hint := Label.new()
 	hint.text = "Click to load an example into the editor."
-	hint.add_theme_font_size_override("font_size", i(9, s))
+	hint.add_theme_font_size_override("font_size", Global.ui_font_size(9))
 	hint.add_theme_color_override("font_color", C_MUTED)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(hint)
@@ -507,7 +640,7 @@ func _build_snippets(s: float) -> Control:
 		var btn := Button.new()
 		btn.text = str(snip["name"])
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		btn.add_theme_font_size_override("font_size", i(11, s))
+		btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 		btn.custom_minimum_size = Vector2(0, i(30, s))
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = Color(0.12, 0.16, 0.32, 1.0); sb.border_color = C_BORDER
@@ -550,13 +683,13 @@ func _build_player_items(s: float) -> Control:
 
 	var inv_lbl := Label.new()
 	inv_lbl.text = "INVENTORY"
-	inv_lbl.add_theme_font_size_override("font_size", i(11, s))
+	inv_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	inv_lbl.add_theme_color_override("font_color", C_MUTED)
 	col.add_child(inv_lbl)
 
 	var inv_hint := Label.new()
 	inv_hint.text = "Drag items into the BUILD SLOTS."
-	inv_hint.add_theme_font_size_override("font_size", i(9, s))
+	inv_hint.add_theme_font_size_override("font_size", Global.ui_font_size(9))
 	inv_hint.add_theme_color_override("font_color", C_MUTED)
 	inv_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(inv_hint)
@@ -575,7 +708,7 @@ func _build_player_items(s: float) -> Control:
 
 	var hb_lbl := Label.new()
 	hb_lbl.text = "HOTBAR"
-	hb_lbl.add_theme_font_size_override("font_size", i(11, s))
+	hb_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	hb_lbl.add_theme_color_override("font_color", C_MUTED)
 	col.add_child(hb_lbl)
 
@@ -611,7 +744,7 @@ func _build_player_items(s: float) -> Control:
 		tslot.add_child(icon)
 		var qty := Label.new()
 		qty.name = "Quantity"
-		qty.add_theme_font_size_override("font_size", i(10, s))
+		qty.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 		qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 		qty.offset_left = -i(16, s); qty.offset_top = -i(14, s)
 		qty.offset_right = -i(2, s); qty.offset_bottom = -i(2, s)
@@ -686,7 +819,7 @@ func _build_palette_row(s: float) -> Control:
 
 	var lbl := Label.new()
 	lbl.text = "BUILD SLOTS  (drag blocks in — the robot places from these)"
-	lbl.add_theme_font_size_override("font_size", i(10, s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	lbl.add_theme_color_override("font_color", C_MUTED)
 	row.add_child(lbl)
 
@@ -706,7 +839,7 @@ func _build_palette_row(s: float) -> Control:
 	# TOOL slot — the item the robot swings for its tasks (and its combat weapon).
 	var tool_lbl := Label.new()
 	tool_lbl.text = "TOOL  (the robot swings this)"
-	tool_lbl.add_theme_font_size_override("font_size", i(10, s))
+	tool_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	tool_lbl.add_theme_color_override("font_color", C_MUTED)
 	row.add_child(tool_lbl)
 	var tool_row := HBoxContainer.new()
@@ -778,7 +911,7 @@ func _build_encyclopedia(s: float) -> Control:
 
 	var hdr := Label.new()
 	hdr.text = "PROGRAMMING ENCYCLOPEDIA"
-	hdr.add_theme_font_size_override("font_size", i(14, s))
+	hdr.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	hdr.add_theme_color_override("font_color", C_TITLE)
 	root.add_child(hdr)
 
@@ -831,7 +964,7 @@ func _refresh_encyclopedia_sections() -> void:
 		if entries.is_empty():
 			var none := Label.new()
 			none.text = "Nothing discovered yet — clear dungeons to reveal entries here."
-			none.add_theme_font_size_override("font_size", i(11, s))
+			none.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 			none.add_theme_color_override("font_color", C_MUTED)
 			none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			acc.body().add_child(none)
@@ -864,7 +997,7 @@ func _refresh_knowledge_section() -> void:
 	if entries.is_empty():
 		var none := Label.new()
 		none.text = "None yet — find a dungeon knowledge altar to unlock concepts here."
-		none.add_theme_font_size_override("font_size", i(12, Global.ui_scale))
+		none.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		none.add_theme_color_override("font_color", C_MUTED)
 		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_knowledge_box.add_child(none)
@@ -888,7 +1021,7 @@ func _enc_knowledge_entry(parent: Node, e: KnowledgeEntry, s: float) -> void:
 
 	var name_lbl := Label.new()
 	name_lbl.text = e.entry_name
-	name_lbl.add_theme_font_size_override("font_size", i(14, s))
+	name_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	name_lbl.add_theme_color_override("font_color", Color(0.55, 0.90, 1.00, 1.0))
 	name_row.add_child(name_lbl)
 
@@ -896,14 +1029,14 @@ func _enc_knowledge_entry(parent: Node, e: KnowledgeEntry, s: float) -> void:
 	if unseen:
 		var badge := Label.new()
 		badge.text = "NEW"
-		badge.add_theme_font_size_override("font_size", i(9, s))
+		badge.add_theme_font_size_override("font_size", Global.ui_font_size(9))
 		badge.add_theme_color_override("font_color", Global.KEYWORD_FLASH)
 		name_row.add_child(badge)
 		_knowledge_new_badges[e.id()] = badge
 
 	var desc_lbl := Label.new()
 	desc_lbl.text = e.description
-	desc_lbl.add_theme_font_size_override("font_size", i(12, s))
+	desc_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	desc_lbl.add_theme_color_override("font_color", C_MUTED)
 	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(desc_lbl)
@@ -932,7 +1065,7 @@ func _emphasize_unseen_knowledge() -> void:
 func _enc_section(parent: Node, text: String, s: float) -> void:
 	var lbl := Label.new()
 	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", i(10, s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	lbl.add_theme_color_override("font_color", C_MUTED)
 	parent.add_child(lbl)
 
@@ -1039,123 +1172,7 @@ func _run_code() -> void:
 		npc_c.call("get_display_name") if npc_c != null and npc_c.has_method("get_display_name") else "editor",
 		code.length(), code])
 
-	var preamble: String = """
--- Built-in helpers
-function chop_trees(radius)
-    move(radius or 20, -1)
-    interact()
-end
-function auto_work()
-    move(0, -2)
-    interact()
-end
-function deposit_chest()
-    move(0, -4)
-    interact()
-end
-function return_to_spawn()
-    move(0, -3)
-    interact()
-end
-function chest_contents()
-    move(0, -5)
-    interact()
-end
-function craft_example()
-    -- Chops trees, delivers the wood, then turns it into 2 chests at the
-    -- nearest Crafting Station. 2 chests = 20 planks = 5 wood, so it only
-    -- ever requests 5 planks-crafts and 2 chest-crafts -- never more.
-    chop_trees()
-    deposit_chest()
-    return_to_spawn()
-	set_recipe("Planks")
-    craft(5)
-    take_output()
-	set_recipe("Chest")
-    craft(2)
-    take_output()
-end
-
--- ── BUILD HELPERS ────────────────────────────────────────────────
--- The robot places from its 3 build slots. select_block(i) picks the slot
--- (0, 1 or 2); place_item(dx, dy) places one block at a tile offset from the
--- robot; place_at(x, y) uses absolute tile coords. Fill the slots by dragging
--- blocks in, by chopping (wood), or with withdraw("Wood", 10) from a chest.
--- Each place_* call is one block, played out a frame at a time, so a loop of
--- 40 calls visibly builds over ~40 frames.
-
--- Gap-free straight line between two offsets (Bresenham). A plain y = m*x
--- would skip tiles on diagonals; this steps one tile at a time.
-function build_line(x0, y0, x1, y1)
-    local dx = math.abs(x1 - x0)
-    local dy = -math.abs(y1 - y0)
-    local sx = (x0 < x1) and 1 or -1
-    local sy = (y0 < y1) and 1 or -1
-    local err = dx + dy
-    while true do
-        place_item(x0, y0)
-        if x0 == x1 and y0 == y1 then break end
-        local e2 = 2 * err
-        if e2 >= dy then err = err + dy; x0 = x0 + sx end
-        if e2 <= dx then err = err + dx; y0 = y0 + sy end
-    end
-end
-
--- Rectangle: w by h tiles, top-left at offset (x0, y0). filled = solid slab,
--- otherwise just the border.
-function build_rect(x0, y0, w, h, filled)
-    for x = 0, w - 1 do
-        for y = 0, h - 1 do
-            if filled or x == 0 or y == 0 or x == w - 1 or y == h - 1 then
-                place_item(x0 + x, y0 + y)
-            end
-        end
-    end
-end
-
--- Circle centred on the robot: filled disc (filled = true) or outline.
--- Uses the integer distance test x*x + y*y <= r*r, so no trig and no gaps.
-function build_circle(r, filled)
-    for x = -r, r do
-        for y = -r, r do
-            local d2 = x * x + y * y
-            if d2 <= r * r and (filled or d2 > (r - 1) * (r - 1)) then
-                place_item(x, y)
-            end
-        end
-    end
-end
-
--- Hollow ring of radius r.
-function build_ring(r)
-    build_circle(r, false)
-end
-
--- Archimedean spiral r = a + b*angle, out to radius r over `turns` turns.
-function build_spiral(r, turns)
-    local total = turns * 2 * math.pi
-    local steps = math.floor(r * turns * 10)
-    for i = 0, steps do
-        local ang = total * (i / steps)
-        local rad = r * (ang / total)
-        place_item(math.floor(math.cos(ang) * rad + 0.5), math.floor(math.sin(ang) * rad + 0.5))
-    end
-end
-
--- Sine-wave fence: `len` tiles long, `amp` tiles tall.
-function build_wave(len, amp)
-    for x = 0, len - 1 do
-        place_item(x, math.floor(amp * math.sin(x * 0.5) + 0.5))
-    end
-end
-
--- Diagonal staircase of n steps.
-function build_stairs(n)
-    for i = 0, n - 1 do
-        place_item(i, i)
-    end
-end
-"""
+	var preamble: String = LUA_PREAMBLE
 	# Announce and arm the run BEFORE calling into Lua: run_code() executes the
 	# chunk synchronously, so code_executed / code_failed arrive inside the call.
 	_print_output("[color=#88ffaa]▶ Running...[/color]")
@@ -1169,6 +1186,22 @@ end
 	# exactly once and a second UI still keeps the game paused.
 	Global.suspend_ui_pause(self)
 
+	# Publish the nearest station's automation state before the Lua chunk runs.
+	# Rust exposes these as read-only globals; without this snapshot an
+	# Automatica always read station_recipe/station_output_* as empty.
+	var station: Node = null
+	if npc_c != null and npc_c.has_method("nearest_crafting_station"):
+		station = npc_c.call("nearest_crafting_station") as Node
+	if station != null and is_instance_valid(station):
+		_lua_state.set("station_recipe", str(station.call("get_automation_recipe_name")))
+		var out_data = station.call("get_output_item")
+		_lua_state.set("station_output_item",
+			(out_data as ItemData).item_name if out_data is ItemData else "")
+		_lua_state.set("station_output_count", int(station.call("get_output_quantity")))
+	else:
+		_lua_state.set("station_recipe", "")
+		_lua_state.set("station_output_item", "")
+		_lua_state.set("station_output_count", 0)
 	_lua_state.set("code", preamble + code)
 	_lua_state.call("run_code")
 
@@ -1227,6 +1260,10 @@ func close_panel() -> void:
 	Global.resume_ui_pause(self)
 	Global.close_ui()
 	visible = false
+	# The editor is itself a full-screen modal that hides the HUD. Closing it
+	# from its own X button/Escape bypasses LuaUI.close_editor(), so this signal
+	# must be emitted here or the hotbar/minimap/pause strip stay hidden.
+	Global.modal_hud_changed.emit(false)
 	# manage_pause = false: the panel is closed, so it must not re-suspend the
 	# pause for a robot that keeps working without it.
 	_sync_run_state(false)
@@ -1294,7 +1331,7 @@ func _make_btn(label: String, font_col: Color, bg: Color, cb: Callable, s: float
 	var btn := Button.new()
 	btn.text = label
 	btn.custom_minimum_size = Vector2(0, i(38, s))
-	btn.add_theme_font_size_override("font_size", i(13, s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = bg; sb.border_color = C_BORDER
 	sb.set_border_width_all(1); sb.set_corner_radius_all(4)

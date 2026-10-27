@@ -49,6 +49,8 @@ const ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 const INTERACT_RADIUS_PX: float = 48.0
 
 func _ready() -> void:
+	if not Global.gameplay_input_cancelled.is_connected(_on_gameplay_input_cancelled):
+		Global.gameplay_input_cancelled.connect(_on_gameplay_input_cancelled)
 	_play_place_animation()
 	add_to_group("TouchInteractable")
 	col_interact_shape.disabled = true
@@ -185,7 +187,7 @@ func _tick_wobble() -> void:
 # furnace within INTERACT_RADIUS_PX reacted to the same click and the first one
 # in tree order consumed it — so clicking a specific furnace opened a different
 # (previously placed) one. Only the object under the cursor may consume a click.
-func _cursor_over() -> bool:
+func _cursor_over(at: Vector2 = Vector2.INF) -> bool:
 	if _sprite == null or _sprite.texture == null:
 		return true
 	var r: Rect2 = _sprite.get_rect()
@@ -194,7 +196,7 @@ func _cursor_over() -> bool:
 	var b: Vector2 = gt * (r.position + r.size)
 	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
 	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
-	var m: Vector2 = Global.mouse_world(self)
+	var m: Vector2 = Global.mouse_world(self) if at == Vector2.INF else at
 	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
 
 # Left-click (nearby) opens the standalone smelting menu; Shift + left-click
@@ -209,7 +211,7 @@ func _input(event: InputEvent) -> void:
 	var p: Node2D = Global.player_node as Node2D
 	if p == null or p.global_position.distance_to(global_position) > INTERACT_RADIUS_PX:
 		return
-	if not _cursor_over():
+	if not _cursor_over(Global.mouse_event_world(self, event)):
 		return
 	if Global.is_shift_held():
 		if event.pressed:
@@ -603,3 +605,7 @@ func set_furnace_save_data(data: Dictionary) -> void:
 	output_item     = (out_slot as Dictionary)["data"] as ItemData if out_slot != null else null
 	output_quantity = int((out_slot as Dictionary)["quantity"]) if out_slot != null else 0
 	furnace_state_changed.emit()
+
+func _on_gameplay_input_cancelled() -> void:
+	if _breaking:
+		_cancel_breaking()

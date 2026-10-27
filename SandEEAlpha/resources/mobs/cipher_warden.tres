@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="MobCombatData" format=3]
+
+[ext_resource type="Script" path="res://resources/mobs/combat.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+mob_name = "Cipher Warden"
+behavior = 0
+ai_type = "PIXIE"
+damage = 20.0
+health = 220.0
+speed = 26.0
+spawn_during_day = true
+spawn_during_night = true
+spawn_plains = false
+spawn_weight = 0.0
+bestiary_id = "cipher_warden"
+bestiary_category = "Python Dungeon"
+bestiary_description = "A tall brass-and-basalt construct built around a teal diamond core. Its halo and clamp arms move with the precision of an old calculating engine."
+bestiary_icon_path = "res://sprites/mobs/bestiary/cipher_warden_icon.png"
+drops = [{"chance": 1.0, "item_path": "res://resources/items/silicon.tres", "max": 3, "min": 1}, {"chance": 0.25, "item_path": "res://resources/items/cpu.tres", "max": 1, "min": 1}, {"chance": 0.08, "item_path": "res://resources/items/diamond.tres", "max": 1, "min": 1}, {"chance": 0.3, "item_path": "res://resources/items/crystal_silicon_ore.tres", "max": 1, "min": 1}]

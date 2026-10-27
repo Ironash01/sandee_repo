@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="GeneratedStructure" format=3]
+
+[ext_resource type="Script" path="res://resources/structures/generated_structure.gd" id="1_structure"]
+
+[resource]
+script = ExtResource("1_structure")
+name = "Desert Cottage"
+decor_kind = "house"
+biome = "desert"
+type = "structures"
+spawn_world = "overworld"
+min_width = 4
+max_width = 7
+min_height = 4
+max_height = 5
+wall_blocks = ["res://resources/items/sandstone.tres", "res://resources/items/stone.tres"]
+floor_blocks = ["res://resources/items/stone_floor.tres"]
+roof_blocks = ["res://resources/items/sandstone.tres", "res://resources/items/stone.tres"]
+accent_blocks = ["res://resources/items/sandstone.tres", "res://resources/items/stone.tres"]
+decor_weight = 1.0

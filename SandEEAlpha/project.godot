@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="SandEE Alpha"
-config/version="0.9.3.3"
+config/version="0.9.4.0"
 run/main_scene="res://scenes/ui/startup_mode.tscn"
 config/quit_on_go_back=false
 config/features=PackedStringArray("4.6", "Mobile")

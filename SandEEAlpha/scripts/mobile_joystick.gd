@@ -53,8 +53,11 @@ func _gui_input(event: InputEvent) -> void:
 			if _touch_id != -1:
 				return
 			_touch_id = t.index
-			# Floating behaviour: the stick centres on the touch inside the pad.
-			_center = t.position
+			# Floating behaviour: centre on the touch, but keep the drawn base
+			# inside this Control so it cannot paint over the hotbar.
+			var r: float = _base_radius_px()
+			_center = Vector2(clampf(t.position.x, r, size.x - r),
+				clampf(t.position.y, r, size.y - r))
 			_knob   = _center
 			_update_value(_center)
 		elif t.index == _touch_id:
@@ -73,7 +76,9 @@ func _gui_input(event: InputEvent) -> void:
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed and _touch_id == -1:
 				_touch_id = 0
-				_center = mb.position
+				var r: float = _base_radius_px()
+				_center = Vector2(clampf(mb.position.x, r, size.x - r),
+					clampf(mb.position.y, r, size.y - r))
 				_knob   = _center
 				_update_value(_center)
 			elif not mb.pressed and _touch_id == 0:
@@ -84,11 +89,22 @@ func _gui_input(event: InputEvent) -> void:
 		_update_value(_knob)
 		get_viewport().set_input_as_handled()
 
+func _base_radius_px() -> float:
+	var scaled: float = BASE_RADIUS * Global.ui_scale
+	# The HUD may cap the joystick Control on very short screens; keep the drawn
+	# base/knob inside that hit rect instead of spilling over the hotbar.
+	var fit: float = maxf(24.0, size.x * 0.5 - 6.0 * Global.ui_scale)
+	return minf(scaled, fit)
+
+func _knob_radius_px() -> float:
+	return minf(KNOB_RADIUS * Global.ui_scale, _base_radius_px() * 0.56)
+
 func _update_value(pos: Vector2) -> void:
-	var v: Vector2 = (pos - _center) / BASE_RADIUS
+	var base_r: float = _base_radius_px()
+	var v: Vector2 = (pos - _center) / maxf(base_r, 1.0)
 	if v.length() > 1.0:
 		v = v.normalized()
-		_knob = _center + v * BASE_RADIUS
+		_knob = _center + v * base_r
 	if v.length() < DEAD_ZONE:
 		v = Vector2.ZERO
 	_value = v
@@ -99,7 +115,9 @@ func value() -> Vector2:
 	return _value
 
 func _draw() -> void:
-	draw_circle(_center, BASE_RADIUS, COLOR_FILL)
-	draw_arc(_center, BASE_RADIUS, 0.0, TAU, 48, COLOR_RING, 3.0, true)
-	draw_circle(_knob, KNOB_RADIUS, COLOR_KNOB)
-	draw_arc(_knob, KNOB_RADIUS, 0.0, TAU, 32, COLOR_RING, 2.0, true)
+	var base_r: float = _base_radius_px()
+	var knob_r: float = _knob_radius_px()
+	draw_circle(_center, base_r, COLOR_FILL)
+	draw_arc(_center, base_r, 0.0, TAU, 48, COLOR_RING, 3.0 * Global.ui_scale, true)
+	draw_circle(_knob, knob_r, COLOR_KNOB)
+	draw_arc(_knob, knob_r, 0.0, TAU, 32, COLOR_RING, 2.0 * Global.ui_scale, true)

@@ -18,6 +18,8 @@ const TOOLTIP_TAP_SCRIPT: Script = preload("res://scripts/tooltip_tap.gd")
 const NOTIFICATION_HUD_SCRIPT: Script = preload("res://scripts/notification_hud.gd")
 # Optional top-right FPS readout (Settings → Display → Show FPS).
 const FPS_OVERLAY_SCRIPT: Script = preload("res://scripts/fps_overlay.gd")
+# Desktop contextual cursor set (the approved 24x24 cursor draft).
+const CURSOR_MANAGER_SCRIPT: Script = preload("res://scripts/cursor_manager.gd")
 # High-layer world-space mining progress ring (always above world sprites).
 const BREAK_OVERLAY_SCRIPT: Script = preload("res://scripts/break_progress_overlay.gd")
 # Android touch HUD (joystick + action buttons + tap-to-interact). Only added
@@ -31,7 +33,10 @@ const TUTORIAL_GUIDE_SCRIPT: Script = preload("res://scripts/tutorial_guide.gd")
 @onready var _player:    CharacterBody2D = $Player
 
 var _loading_screen: CanvasLayer = null
+var _loading_root:   Control     = null
 var _loading_label:  Label       = null
+var _loading_bar:    ProgressBar = null
+var _loading_progress: float     = 0.0
 var _death_overlay:  ColorRect   = null
 var _cave_world:      CaveWorld  = null
 var _pixie_cave_world: PixieCaveWorld = null
@@ -50,18 +55,19 @@ var _transition_overlay: CanvasLayer = null
 # station/furnace/chest dims this along with the world. The hotbar is NOT here —
 # it stays on $CanvasLayer (10) so it remains bright and draggable on top.
 var _hud_backdrop: CanvasLayer = null
+var _mobile_ui: CanvasLayer = null
+var _notification_hud: CanvasLayer = null
+var _break_layer: CanvasLayer = null
+var _cursor_manager: Node = null
 var _tutorial_guide: Node = null
 
 func _ready() -> void:
 	# Honour the player's saved window/fullscreen choice instead of forcing
 	# fullscreen (see Global.apply_display_mode — a no-op on mobile).
 	Global.apply_display_mode()
-	# Large is only the DEFAULT: if the player already chose a scale (persisted
-	# in the save) we keep it, so Small/Medium/Large survives scene loads.
-	if not Global.ui_scale_set:
-		Global.ui_scale     = 1.5
-		Global.ui_scale_set = true
-	Global.ui_scale_changed.emit(Global.ui_scale)
+	# UI scale is global + responsive. Re-assert it when the gameplay scene
+	# loads so every panel rebuilt here uses the current viewport metrics.
+	Global.refresh_ui_scale()
 	Global.game_node = self
 	CrashLogger.event("GAME", "ready version=%s slot=%d mobile=%s" % [
 		Global.game_version(), Global.active_save_slot, Global.is_mobile()])
@@ -90,6 +96,12 @@ func _ready() -> void:
 	add_child(modal_layer)
 	pause_menu.reparent(modal_layer)
 	_style_pause_button()
+	if not Global.ui_scale_changed.is_connected(_on_hud_ui_scale_changed):
+		Global.ui_scale_changed.connect(_on_hud_ui_scale_changed)
+	if not Global.inventory_toggled.is_connected(_on_inventory_visibility_changed):
+		Global.inventory_toggled.connect(_on_inventory_visibility_changed)
+	if not Global.modal_hud_changed.is_connected(_on_modal_hud_changed):
+		Global.modal_hud_changed.connect(_on_modal_hud_changed)
 	_start_autosave()
 	_add_mission_ui()
 
@@ -107,21 +119,28 @@ func _ready() -> void:
 	# Tap tooltips (touch screens have no hover) — owns its own high layer.
 	add_child(TOOLTIP_TAP_SCRIPT.new())
 	# Top-centre gameplay notifications (fishing, farming, deaths, warnings).
-	add_child(NOTIFICATION_HUD_SCRIPT.new())
+	_notification_hud = NOTIFICATION_HUD_SCRIPT.new() as CanvasLayer
+	add_child(_notification_hud)
 	# Mining ring lives above all world sprites/HUD panels; the object scripts
 	# only report progress, they no longer draw the world ring themselves.
-	var break_layer := CanvasLayer.new()
-	break_layer.name = "BreakProgressLayer"
-	break_layer.layer = 20
-	break_layer.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(break_layer)
-	break_layer.add_child(BREAK_OVERLAY_SCRIPT.new())
+	_break_layer = CanvasLayer.new()
+	_break_layer.name = "BreakProgressLayer"
+	_break_layer.layer = 20
+	_break_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_break_layer)
+	_break_layer.add_child(BREAK_OVERLAY_SCRIPT.new())
+	# Contextual desktop cursor set. Lives under Game so it survives dungeon/cave
+	# world swaps; it is disabled on Android/headless by the manager itself.
+	_cursor_manager = CURSOR_MANAGER_SCRIPT.new()
+	_cursor_manager.name = "CursorManager"
+	add_child(_cursor_manager)
 
 	# Android-only touch HUD. Global.is_mobile() uses Godot's "mobile" feature
 	# tag (Android/iOS), NOT a resolution guess, so a small desktop window still
 	# gets the normal keyboard/mouse interface.
 	if Global.is_mobile():
-		add_child(MOBILE_UI_SCRIPT.new())
+		_mobile_ui = MOBILE_UI_SCRIPT.new() as CanvasLayer
+		add_child(_mobile_ui)
 
 	_setup_death_overlay()
 
@@ -163,53 +182,133 @@ func _show_loading_screen() -> void:
 	_loading_screen.layer = 128  # above HUD and pause menu
 	add_child(_loading_screen)
 
+	# One root Control lets the whole loading screen fade out smoothly over the
+	# already-generated world instead of disappearing in a single hard frame.
+	_loading_root = Control.new()
+	_loading_root.name = "LoadingRoot"
+	_loading_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_loading_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_loading_root.process_mode = Node.PROCESS_MODE_ALWAYS
+	_loading_screen.add_child(_loading_root)
+
 	var bg := ColorRect.new()
 	bg.color = Color(0.05, 0.07, 0.14, 1.0)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_loading_screen.add_child(bg)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP
+	_loading_root.add_child(bg)
 
 	# Center container so content sits in the middle of the screen.
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_loading_screen.add_child(center)
+	Global.apply_safe_area(center)
+	_loading_root.add_child(center)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 16)
+	vbox.add_theme_constant_override("separation", int(16 * Global.ui_scale))
 	center.add_child(vbox)
 
 	var title := Label.new()
 	title.text = "SandEE Alpha"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 40)
+	title.add_theme_font_size_override("font_size",
+		Global.ui_type_size(Global.UI_TYPE_TITLE))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
 	_loading_label = Label.new()
 	_loading_label.text = "Initializing..."
 	_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_loading_label.add_theme_font_size_override("font_size", 16)
+	_loading_label.add_theme_font_size_override("font_size",
+		Global.ui_type_size(Global.UI_TYPE_BODY))
 	_loading_label.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(_loading_label)
+
+	_loading_bar = ProgressBar.new()
+	_loading_bar.min_value = 0.0
+	_loading_bar.max_value = 100.0
+	_loading_bar.value = 0.0
+	_loading_bar.show_percentage = false
+	_loading_bar.custom_minimum_size = Vector2(
+		int(420 * Global.ui_scale), maxi(10, int(14 * Global.ui_scale)))
+	_loading_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.03, 0.05, 0.10, 1.0)
+	bar_bg.border_color = C_BORDER
+	bar_bg.set_border_width_all(1)
+	bar_bg.set_corner_radius_all(int(4 * Global.ui_scale))
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = C_TITLE
+	bar_fill.set_corner_radius_all(int(4 * Global.ui_scale))
+	_loading_bar.add_theme_stylebox_override("background", bar_bg)
+	_loading_bar.add_theme_stylebox_override("fill", bar_fill)
+	vbox.add_child(_loading_bar)
 
 func _on_generation_status(status: String) -> void:
 	if is_instance_valid(_loading_label):
 		_loading_label.text = status
+	var target := _loading_progress_for_status(status)
+	_loading_progress = maxf(_loading_progress, target)
+	if is_instance_valid(_loading_bar):
+		_loading_bar.value = _loading_progress * 100.0
+
+
+func _loading_progress_for_status(status: String) -> float:
+	var lower := status.to_lower()
+	if lower.contains("chunking"):
+		return 0.04
+	if lower.contains("terrain"):
+		return 0.14
+	if lower.contains("forest") or lower.contains("tree"):
+		return 0.40
+	if lower.contains("grass"):
+		var pct := 0.0
+		var marker := status.find("%")
+		if marker > 0:
+			var head := status.substr(0, marker).strip_edges()
+			var i := head.length() - 1
+			while i >= 0 and head[i] >= "0" and head[i] <= "9":
+				i -= 1
+			if i < head.length() - 1:
+				pct = clampf(float(head.substr(i + 1).to_int()), 0.0, 100.0)
+		return 0.72 + 0.26 * (pct / 100.0)
+	return minf(0.68, _loading_progress + 0.03)
+
 
 func _on_generation_complete() -> void:
-	# Re-enable and show the player.
-	_player.process_mode = Node.PROCESS_MODE_INHERIT
-	_player.visible      = true
+	if is_instance_valid(_loading_bar):
+		_loading_bar.value = 100.0
+	if is_instance_valid(_loading_label):
+		_loading_label.text = "Ready"
+	# Show the generated world behind the fading loader, but keep the player
+	# frozen until the fade completes so input cannot act through the overlay.
+	_player.visible = true
+	_player.process_mode = Node.PROCESS_MODE_DISABLED
 
-	# Tear down the loading screen.
-	if is_instance_valid(_loading_screen):
-		_loading_screen.queue_free()
-		_loading_screen = null
-		_loading_label  = null
-
-	# World is fully generated — safe to create the initial save now.
+	# World is fully generated - safe to create the initial save now.
 	if Global.active_save_slot > 0 and not Global.has_save(Global.active_save_slot):
 		Global.save_game(Global.active_save_slot)
+
+	if is_instance_valid(_loading_root):
+		var tween := create_tween()
+		tween.tween_property(_loading_root, "modulate:a", 0.0, 0.55) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tween.tween_callback(_finish_loading_fade)
+	else:
+		_finish_loading_fade()
+
+
+func _finish_loading_fade() -> void:
+	if is_instance_valid(_loading_screen):
+		_loading_screen.queue_free()
+	_loading_screen = null
+	_loading_root = null
+	_loading_label = null
+	_loading_bar = null
+	_loading_progress = 0.0
+	if is_instance_valid(_player):
+		_player.process_mode = Node.PROCESS_MODE_INHERIT
 	_setup_tutorial()
+
 
 func _setup_tutorial() -> void:
 	if Global.tutorial_completed or _tutorial_guide != null:
@@ -223,8 +322,11 @@ func _setup_tutorial() -> void:
 		spawn = _world.call("_world_spawn_pos") as Vector2
 	_tutorial_guide = TUTORIAL_GUIDE_SCRIPT.new()
 	_tutorial_guide.name = "TutorialGuide"
-	_world.add_child(_tutorial_guide)
-	_tutorial_guide.call("setup", spawn)
+	# The onboarding director owns the dialogue/HUD and must survive world
+	# swaps into the guided dungeon. NPC actors are parented to the overworld
+	# by the director itself.
+	add_child(_tutorial_guide)
+	_tutorial_guide.call("setup", spawn, _world)
 
 # ── Cave entry/exit ─────────────────────────────────────────────────────
 # Swaps $World out for a CaveWorld/PixieCaveWorld rather than a full
@@ -457,6 +559,7 @@ func _do_enter_dungeon(dungeon_index: int, mission: DungeonMissionData) -> void:
 	Global.world_node       = _dungeon_world
 	_player.global_position = _dungeon_world.get_player_spawn_pos()
 	Global.is_in_dungeon = true
+	Global.dungeon_entered.emit(dungeon_index)
 	if Global.block_mode:
 		Global.block_mode = false
 		Global.block_mode_changed.emit(false)
@@ -646,11 +749,12 @@ func _run_scene_transition(callback: Callable, label_text: String) -> void:
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	layer.add_child(center)
 	var label := Label.new()
 	label.text = label_text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(18))
 	label.add_theme_color_override("font_color", C_TITLE)
 	center.add_child(label)
 
@@ -668,36 +772,84 @@ func _run_scene_transition(callback: Callable, label_text: String) -> void:
 	)
 
 # ── Pause button styling ──────────────────────────────────────────────
+func _on_inventory_visibility_changed(is_open: bool) -> void:
+	# Inventory is a full modal. Hide every gameplay HUD layer so its tabs,
+	# minimap, quest tracker, FPS/pause controls and hotbar cannot show through
+	# or overlap the inventory panel. The inventory itself lives on the player's
+	# InventoryUI CanvasLayer (layer 12).
+	_set_gameplay_hud_visible(not is_open)
+
+func _on_modal_hud_changed(open: bool) -> void:
+	# Station/editor screens cover the full playfield and have their own item
+	# sources; hiding the HUD prevents the hotbar and overlays from covering
+	# their content.
+	_set_gameplay_hud_visible(not open)
+
+func _set_gameplay_hud_visible(show_hud: bool) -> void:
+	if _hud_backdrop != null:
+		_hud_backdrop.visible = show_hud
+	$CanvasLayer.visible = show_hud
+	if _mobile_ui != null:
+		_mobile_ui.visible = show_hud
+	if _notification_hud != null:
+		_notification_hud.visible = show_hud
+	if _break_layer != null:
+		_break_layer.visible = show_hud
+	if not show_hud:
+		Global.hide_item_tooltip()
+
+func _on_hud_ui_scale_changed(_scale: float) -> void:
+	_style_pause_button()
+
 func _style_pause_button() -> void:
+	var s: float = Global.ui_scale
+	var font_size: int = Global.ui_type_size(Global.UI_TYPE_LABEL)
+	var btn_h: float = maxf(44.0 * s, float(font_size + 20))
+	var btn_w: float = maxf(96.0 * s, float(font_size * 4 + 36))
+	var margin: float = 8.0 * s
+	var safe_top: float = Global.ui_safe_insets.y
+	var safe_right: float = Global.ui_safe_insets.z
+	pause_btn.anchor_left = 1.0
+	pause_btn.anchor_right = 1.0
+	pause_btn.anchor_top = 0.0
+	pause_btn.anchor_bottom = 0.0
+	pause_btn.offset_left = -safe_right - margin - btn_w
+	pause_btn.offset_top = safe_top + margin
+	pause_btn.offset_right = -safe_right - margin
+	pause_btn.offset_bottom = safe_top + margin + btn_h
+	pause_btn.custom_minimum_size = Vector2(btn_w, btn_h)
+	# The FPS overlay sits immediately left of this button.
+	Global.ui_pause_strip = safe_right + margin + btn_w + margin
+	Global.ui_pause_bottom = safe_top + margin + btn_h
 	var normal := StyleBoxFlat.new()
 	normal.bg_color     = C_PANEL
 	normal.border_color = C_BORDER
-	normal.set_border_width_all(1)
-	normal.set_corner_radius_all(4)
-	normal.content_margin_left   = 10
-	normal.content_margin_right  = 10
-	normal.content_margin_top    = 4
-	normal.content_margin_bottom = 4
+	normal.set_border_width_all(maxi(1, int(s)))
+	normal.set_corner_radius_all(int(6 * s))
+	normal.content_margin_left   = int(10 * s)
+	normal.content_margin_right  = int(10 * s)
+	normal.content_margin_top    = int(4 * s)
+	normal.content_margin_bottom = int(4 * s)
 
 	var hover := StyleBoxFlat.new()
 	hover.bg_color     = Color(0.13, 0.17, 0.32, 0.97)
 	hover.border_color = C_TITLE
-	hover.set_border_width_all(1)
-	hover.set_corner_radius_all(4)
-	hover.content_margin_left   = 10
-	hover.content_margin_right  = 10
-	hover.content_margin_top    = 4
-	hover.content_margin_bottom = 4
+	hover.set_border_width_all(maxi(1, int(s)))
+	hover.set_corner_radius_all(int(6 * s))
+	hover.content_margin_left   = int(10 * s)
+	hover.content_margin_right  = int(10 * s)
+	hover.content_margin_top    = int(4 * s)
+	hover.content_margin_bottom = int(4 * s)
 
 	var pressed := StyleBoxFlat.new()
 	pressed.bg_color     = Color(0.06, 0.08, 0.16, 0.97)
 	pressed.border_color = C_MUTED
-	pressed.set_border_width_all(1)
-	pressed.set_corner_radius_all(4)
-	pressed.content_margin_left   = 10
-	pressed.content_margin_right  = 10
-	pressed.content_margin_top    = 4
-	pressed.content_margin_bottom = 4
+	pressed.set_border_width_all(maxi(1, int(s)))
+	pressed.set_corner_radius_all(int(6 * s))
+	pressed.content_margin_left   = int(10 * s)
+	pressed.content_margin_right  = int(10 * s)
+	pressed.content_margin_top    = int(4 * s)
+	pressed.content_margin_bottom = int(4 * s)
 
 	pause_btn.add_theme_stylebox_override("normal",  normal)
 	pause_btn.add_theme_stylebox_override("hover",   hover)
@@ -705,4 +857,4 @@ func _style_pause_button() -> void:
 	pause_btn.add_theme_color_override("font_color",         C_TITLE)
 	pause_btn.add_theme_color_override("font_hover_color",   C_TITLE)
 	pause_btn.add_theme_color_override("font_pressed_color", C_MUTED)
-	pause_btn.add_theme_font_size_override("font_size", 12)
+	pause_btn.add_theme_font_size_override("font_size", font_size)

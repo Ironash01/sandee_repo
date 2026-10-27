@@ -116,6 +116,14 @@ var _show_hitboxes:  bool   = false
 var _ambient:        CanvasModulate = null
 var _shaq_dark:      bool   = false
 
+func _enter_tree() -> void:
+	if not Global.gameplay_input_cancelled.is_connected(_cancel_mining):
+		Global.gameplay_input_cancelled.connect(_cancel_mining)
+
+func _exit_tree() -> void:
+	if Global.gameplay_input_cancelled.is_connected(_cancel_mining):
+		Global.gameplay_input_cancelled.disconnect(_cancel_mining)
+
 func setup(seed_value: int, return_position: Vector2) -> void:
 	overworld_return_position = return_position
 	_seed = seed_value
@@ -422,7 +430,7 @@ func _update_ghost() -> void:
 	if item_key != ghost_last_type:
 		ghost_last_type = item_key
 		_rebuild_ghost_sprite(item)
-	var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
+	var mouse_local: Vector2 = _tilemap.to_local(Global.mouse_world(self))
 	var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
 	# _tilemap and ghost are both direct children of CaveWorld with no
 	# relative offset, so _tilemap's local space IS CaveWorld's local space
@@ -454,7 +462,7 @@ func place_block() -> void:
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		return
-	var cell: Vector2i = _tilemap.local_to_map(_tilemap.get_local_mouse_position())
+	var cell: Vector2i = _tilemap.local_to_map(_tilemap.to_local(Global.mouse_world(self)))
 	if not _is_cell_in_place_radius(cell):
 		return
 	if _cell_blocked_by_player(cell):
@@ -634,7 +642,7 @@ func _update_cursor_highlight() -> void:
 		if _cursor_highlight != null:
 			_cursor_highlight.visible = false
 		return
-	var mouse_local: Vector2 = _tilemap.get_local_mouse_position()
+	var mouse_local: Vector2 = _tilemap.to_local(Global.mouse_world(self))
 	var cell:        Vector2i = _tilemap.local_to_map(mouse_local)
 	_cursor_highlight.position = _tilemap.map_to_local(cell)
 	_cursor_highlight.queue_redraw()

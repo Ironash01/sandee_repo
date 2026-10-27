@@ -34,6 +34,7 @@ var _error_text := ""
 var _fields: Dictionary = {}
 var _buttons: Array[Button] = []
 var _busy_label: Label = null
+var _busy_bar: ProgressBar = null
 var _error_label: Label = null
 var _notice_label: Label = null
 var _content: VBoxContainer = null
@@ -59,11 +60,38 @@ func _ready() -> void:
 
 
 func _fit_center() -> void:
+	var available_h: float = maxf(1.0,
+		Global.ui_content_rect().size.y - _keyboard_inset)
 	if _center != null and is_instance_valid(_center):
+		# The centre must be at least as tall as the panel. Otherwise a tall
+		# form (especially with the keyboard up) is centred around a negative
+		# offset and its top fields land above the screen with no way to scroll
+		# back to them.
+		var pad: float = 16.0 * Global.ui_scale
+		var panel_h: float = 0.0
+		if _panel != null and is_instance_valid(_panel):
+			panel_h = _panel.get_combined_minimum_size().y
 		_center.custom_minimum_size = Vector2(0,
-			maxf(get_viewport_rect().size.y - _keyboard_inset, 1.0))
+			maxf(available_h, panel_h + pad))
 	if _scroll != null and is_instance_valid(_scroll):
-		_scroll.offset_bottom = -_keyboard_inset
+		_scroll.offset_left = Global.ui_safe_insets.x
+		_scroll.offset_top = Global.ui_safe_insets.y
+		_scroll.offset_right = -Global.ui_safe_insets.z
+		_scroll.offset_bottom = -(Global.ui_safe_insets.w + _keyboard_inset)
+
+
+func _ensure_field_visible(field: Control) -> void:
+	if not visible or _scroll == null or field == null:
+		return
+	if not is_instance_valid(field) or not field.is_inside_tree():
+		return
+	_scroll.call_deferred("ensure_control_visible", field)
+
+
+func _ensure_focused_field_visible() -> void:
+	var focused := get_viewport().gui_get_focus_owner()
+	if focused is LineEdit and _content != null and _content.is_ancestor_of(focused):
+		_ensure_field_visible(focused as Control)
 
 
 func _process(_delta: float) -> void:
@@ -73,6 +101,7 @@ func _process(_delta: float) -> void:
 	if not is_equal_approx(inset, _keyboard_inset):
 		_keyboard_inset = inset
 		_fit_center()
+		_ensure_focused_field_visible()
 
 
 ## The parent already dims/blocks input (main-menu overlays); skip the extra dim.
@@ -122,7 +151,7 @@ func is_busy() -> bool:
 # ── Layout ───────────────────────────────────────────────────────────────
 
 func _on_scale_changed(_scale: float) -> void:
-	if not visible:
+	if not visible or _busy:
 		return
 	# Keep whatever the player already typed (never the password), so a scale
 	# change while a UI setting is open cannot wipe their username.
@@ -146,6 +175,7 @@ func _build() -> void:
 	_error_label = null
 	_notice_label = null
 	_busy_label = null
+	_busy_bar = null
 
 	var s: float = Global.ui_scale
 	if _dim_enabled:
@@ -157,16 +187,15 @@ func _build() -> void:
 
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
 	_scroll = scroll
-	scroll.offset_bottom = -_keyboard_inset
 
 	_center = CenterContainer.new()
 	_center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_center.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var viewport_h: float = get_viewport_rect().size.y if is_inside_tree() else 720.0
-	_center.custom_minimum_size = Vector2(0, maxf(viewport_h, 1.0))
+	_center.custom_minimum_size = Vector2(0, 1)
 	scroll.add_child(_center)
 
 	_panel = PanelContainer.new()
@@ -196,6 +225,9 @@ func _build() -> void:
 			_build_register()
 		Mode.ACCOUNT:
 			_build_account()
+	# Scale the centre to the live keyboard inset now that the panel's real
+	# minimum height is known.
+	_fit_center()
 
 
 func _make_title(text: String) -> void:
@@ -203,7 +235,7 @@ func _make_title(text: String) -> void:
 	var title := Label.new()
 	title.text = text
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(20 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	title.add_theme_color_override("font_color", C_TITLE)
 	_content.add_child(title)
 
@@ -215,7 +247,7 @@ func _make_note(text: String, color: Color = C_MUTED) -> Label:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size = Vector2(int(340 * s), 0)
-	label.add_theme_font_size_override("font_size", int(11 * s))
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	label.add_theme_color_override("font_color", color)
 	_content.add_child(label)
 	return label
@@ -227,9 +259,10 @@ func _make_field(key: String, placeholder: String, secret: bool = false) -> Line
 	edit.placeholder_text = placeholder
 	edit.secret = secret
 	edit.custom_minimum_size = Vector2(int(340 * s), int(38 * s))
-	edit.add_theme_font_size_override("font_size", int(13 * s))
+	edit.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	edit.max_length = PASSWORD_MAX if secret else USERNAME_MAX
 	edit.text_submitted.connect(func(_t: String) -> void: _submit_current_mode())
+	edit.focus_entered.connect(_ensure_field_visible.bind(edit))
 	_fields[key] = edit
 	_content.add_child(edit)
 	return edit
@@ -241,7 +274,7 @@ func _make_show_password_toggle() -> void:
 	_content.add_child(row)
 	var toggle := CheckButton.new()
 	toggle.text = "Show password"
-	toggle.add_theme_font_size_override("font_size", int(11 * Global.ui_scale))
+	toggle.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	toggle.toggled.connect(func(on: bool) -> void:
 		for key: String in ["password", "confirm"]:
 			if _fields.has(key):
@@ -254,7 +287,7 @@ func _make_button(label: String, callback: Callable, primary: bool = false) -> B
 	var btn := Button.new()
 	btn.text = label
 	btn.custom_minimum_size = Vector2(int(340 * s), int(40 * s))
-	btn.add_theme_font_size_override("font_size", int(14 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	btn.add_theme_color_override("font_color", C_TITLE if primary else C_MUTED)
 	btn.add_theme_color_override("font_hover_color", C_TITLE)
 	var normal := StyleBoxFlat.new()
@@ -287,7 +320,7 @@ func _make_link(label: String, callback: Callable) -> Button:
 	btn.text = label
 	btn.flat = true
 	btn.custom_minimum_size = Vector2(int(340 * s), int(28 * s))
-	btn.add_theme_font_size_override("font_size", int(12 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	btn.add_theme_color_override("font_color", C_MUTED)
 	btn.add_theme_color_override("font_hover_color", C_TITLE)
 	btn.pressed.connect(callback)
@@ -297,10 +330,31 @@ func _make_link(label: String, callback: Callable) -> Button:
 
 
 func _make_error_and_busy() -> void:
+	var s: float = Global.ui_scale
 	_error_label = _make_note(_error_text, C_ERROR)
 	_error_label.visible = not _error_text.is_empty()
 	_busy_label = _make_note("", C_MUTED)
 	_busy_label.visible = false
+	_busy_bar = ProgressBar.new()
+	_busy_bar.min_value = 0.0
+	_busy_bar.max_value = 100.0
+	_busy_bar.value = 0.0
+	_busy_bar.show_percentage = false
+	_busy_bar.indeterminate = true
+	_busy_bar.custom_minimum_size = Vector2(int(340 * s), maxi(10, int(11 * s)))
+	_busy_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_busy_bar.visible = false
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.04, 0.06, 0.12, 1.0)
+	bar_bg.border_color = C_BORDER
+	bar_bg.set_border_width_all(1)
+	bar_bg.set_corner_radius_all(int(4 * s))
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = C_OK
+	bar_fill.set_corner_radius_all(int(4 * s))
+	_busy_bar.add_theme_stylebox_override("background", bar_bg)
+	_busy_bar.add_theme_stylebox_override("fill", bar_fill)
+	_content.add_child(_busy_bar)
 	if _notice_text != "":
 		_notice_label = _make_note(_notice_text, C_OK)
 
@@ -340,7 +394,7 @@ func _build_account() -> void:
 	var name_label := Label.new()
 	name_label.text = Supabase.display_username()
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.add_theme_font_size_override("font_size", int(18 * s))
+	name_label.add_theme_font_size_override("font_size", Global.ui_font_size(18))
 	name_label.add_theme_color_override("font_color", C_TITLE)
 	_content.add_child(name_label)
 
@@ -364,7 +418,7 @@ func _add_star_stat(parent: HBoxContainer, color: Color, value: int) -> void:
 	icon.setup(color, 16.0 * s)
 	var label := Label.new()
 	label.text = str(value)
-	label.add_theme_font_size_override("font_size", int(13 * s))
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	label.add_theme_color_override("font_color", C_TITLE)
 	parent.add_child(label)
 
@@ -463,6 +517,10 @@ func _on_back() -> void:
 func _input(event: InputEvent) -> void:
 	if visible and event.is_action_pressed("escape"):
 		get_viewport().set_input_as_handled()
+		# Authentication and the initial sync are a barrier: don't let Escape
+		# dismiss the panel while a request/world sync is still in flight.
+		if _busy:
+			return
 		_on_back()
 
 
@@ -475,6 +533,25 @@ func _set_busy(on: bool, text: String = "") -> void:
 	if _busy_label != null:
 		_busy_label.text = text
 		_busy_label.visible = on
+	if _busy_bar != null:
+		_busy_bar.visible = on
+		_busy_bar.indeterminate = on
+		if not on:
+			_busy_bar.value = 0.0
+	# The busy bar changes the panel height; keep the scroll range correct.
+	_fit_center()
+
+
+## Public determinate progress hook used by the main menu while it finishes the
+## initial cloud upload/download batch. A negative value keeps the bar
+## indeterminate for ordinary auth requests.
+func set_operation_progress(text: String, value: float = -1.0, active: bool = true) -> void:
+	_set_busy(active, text)
+	if _busy_bar == null:
+		return
+	if value >= 0.0:
+		_busy_bar.indeterminate = false
+		_busy_bar.value = clampf(value, 0.0, 100.0)
 
 
 func _show_error(text: String) -> void:
@@ -484,6 +561,8 @@ func _show_error(text: String) -> void:
 		_error_label.visible = true
 	if _notice_label != null:
 		_notice_label.visible = false
+	_fit_center()
+	_ensure_focused_field_visible()
 
 
 func _clear_passwords() -> void:
@@ -507,7 +586,9 @@ func _focus_first() -> void:
 	if not is_inside_tree() or not visible:
 		return
 	if _fields.has("username"):
-		(_fields["username"] as LineEdit).grab_focus()
+		var username := _fields["username"] as LineEdit
+		username.grab_focus()
+		_ensure_field_visible(username)
 
 
 func _valid_username(value: String) -> bool:

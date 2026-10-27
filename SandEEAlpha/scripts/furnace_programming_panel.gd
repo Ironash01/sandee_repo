@@ -46,12 +46,17 @@ func _fit() -> void:
 
 func _on_ui_scale(_s: float) -> void:
 	var was: bool = visible
+	# Layout changes can happen while the Android keyboard/system bars rotate or
+	# resize. Preserve the draft exactly as CraftingMenu and LuaEditorUI do.
+	var saved_code: String = _code.text if _code != null else ""
 	if _root != null:
 		_root.queue_free()
 		_root = null
 	_build()
 	_fit()
 	visible = was
+	if _code != null:
+		_code.text = saved_code
 
 func open(furnace_node: Node) -> void:
 	furnace = furnace_node
@@ -109,8 +114,9 @@ func _process(_delta: float) -> void:
 	if not visible or _panel_center == null:
 		return
 	var inset: float = Global.mobile_keyboard_height()
-	if not is_equal_approx(_panel_center.offset_bottom, -inset):
-		_panel_center.offset_bottom = -inset
+	var want: float = -(Global.ui_safe_insets.w + inset)
+	if not is_equal_approx(_panel_center.offset_bottom, want):
+		_panel_center.offset_bottom = want
 
 func _connect_host() -> void:
 	if furnace == null:
@@ -214,7 +220,7 @@ func _target_badge(s: float) -> Control:
 	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var lbl := Label.new()
 	lbl.text = AlgorithmicaAPI.FURNACE.to_upper()
-	lbl.add_theme_font_size_override("font_size", int(9 * s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(9))
 	lbl.add_theme_color_override("font_color", col)
 	panel.add_child(lbl)
 	return panel
@@ -235,11 +241,12 @@ func _build() -> void:
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	root.add_child(center)
 	_panel_center = center
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(int(560 * s), int(420 * s))
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(560, 420))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
@@ -257,7 +264,7 @@ func _build() -> void:
 	vbox.add_child(header)
 	var title := Label.new()
 	title.text = "🐍  ALGORITHMICA — FURNACE"
-	title.add_theme_font_size_override("font_size", int(16 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
@@ -266,7 +273,7 @@ func _build() -> void:
 	close_btn.text = "✕"; close_btn.flat = true
 	close_btn.tooltip_text = "Close the program editor."
 	close_btn.add_theme_color_override("font_color", C_MUTED)
-	close_btn.add_theme_font_size_override("font_size", int(13 * s))
+	close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	close_btn.pressed.connect(close)
 	header.add_child(close_btn)
 
@@ -275,7 +282,7 @@ func _build() -> void:
 	var ref := Label.new()
 	ref.text = "TARGET: FURNACE  ·  feed(name, n) · fuel(name, n) · smelt(n) · take_output() · input_*/fuel_*/output_*"
 	ref.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ref.add_theme_font_size_override("font_size", int(11 * s))
+	ref.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	ref.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(ref)
 
@@ -290,7 +297,7 @@ func _build() -> void:
 	_code.add_theme_stylebox_override("normal", es)
 	_code.add_theme_stylebox_override("focus", es)
 	_code.add_theme_color_override("font_color", C_TITLE)
-	_code.add_theme_font_size_override("font_size", int(13 * s))
+	_code.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	# Python syntax highlighting + light editor chrome. Without this the editor
 	# was plain text AND CodeHighlighter's default token colours are pure black.
 	_code.syntax_highlighter = LanguageSpecification.build_highlighter(PYTHON_SPEC)
@@ -303,7 +310,7 @@ func _build() -> void:
 	_name_popup = PopupPanel.new()
 	var name_list := ItemList.new()
 	name_list.custom_minimum_size = Vector2(int(200 * s), int(180 * s))
-	name_list.add_theme_font_size_override("font_size", int(12 * s))
+	name_list.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	name_list.item_selected.connect(_on_name_item_selected)
 	_name_popup.add_child(name_list)
 	_name_list = name_list
@@ -317,7 +324,7 @@ func _build() -> void:
 	run_btn.tooltip_text = "Run the program now."
 	run_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	run_btn.custom_minimum_size = Vector2(0, int(32 * s))
-	run_btn.add_theme_font_size_override("font_size", int(13 * s))
+	run_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var rs := StyleBoxFlat.new(); rs.bg_color = C_OK; rs.border_color = C_BORDER
 	rs.set_border_width_all(int(1 * s)); rs.set_corner_radius_all(int(4 * s))
 	run_btn.add_theme_stylebox_override("normal", rs)
@@ -329,7 +336,7 @@ func _build() -> void:
 	clr_btn.text = "✕ CLEAR"
 	clr_btn.tooltip_text = "Clear the editor and the output."
 	clr_btn.custom_minimum_size = Vector2(0, int(32 * s))
-	clr_btn.add_theme_font_size_override("font_size", int(13 * s))
+	clr_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var cs := StyleBoxFlat.new(); cs.bg_color = C_ERR; cs.border_color = C_BORDER
 	cs.set_border_width_all(int(1 * s)); cs.set_corner_radius_all(int(4 * s))
 	clr_btn.add_theme_stylebox_override("normal", cs)
@@ -355,6 +362,6 @@ func _build() -> void:
 	_output.scroll_following = true
 	_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_output.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_output.add_theme_font_size_override("font_size", int(12 * s))
+	_output.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_output.add_theme_color_override("default_color", C_TITLE)
 	scroll.add_child(_output)

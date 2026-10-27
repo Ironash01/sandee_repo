@@ -35,7 +35,7 @@ func _init() -> void:
 	# Stack count (bottom-right), matching the inventory/hotbar slots — so a
 	# loaded stack of 20 shows "20" instead of just the icon.
 	_qty = Label.new()
-	_qty.add_theme_font_size_override("font_size", int(11 * Global.ui_scale))
+	_qty.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_qty.offset_left   = -int(24 * Global.ui_scale)
 	_qty.offset_top    = -int(15 * Global.ui_scale)

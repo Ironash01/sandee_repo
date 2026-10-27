@@ -1,0 +1,742 @@
+{
+  "draft": "design_drafts/sprite_concepts_2026",
+  "status": "concept-only; not imported into SandEEAlpha",
+  "game_version_unchanged": "0.9.4.0",
+  "concept_counts": {
+    "friendly_mobs": 2,
+    "overworld_enemies": 2,
+    "lua_dungeon_enemies": 2,
+    "python_dungeon_enemies": 2,
+    "atmospheric_birds": 2,
+    "will_o_wisp": 1,
+    "cursors": 6,
+    "legendary_items": 5
+  },
+  "raw_png_count": 33,
+  "preview_png_count": 44,
+  "readme_links_checked": 99,
+  "readme_missing_links": [],
+  "errors": [],
+  "files": {
+    "sprites/friendly_mobs/mossback_nib.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 663,
+      "sha256_16": "5496224418f49330"
+    },
+    "sprites/friendly_mobs/mossback_nib_idle_4f.png": {
+      "size": [
+        128,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 1055,
+      "sha256_16": "a237880a5117e832"
+    },
+    "sprites/friendly_mobs/emberfox_kit.png": {
+      "size": [
+        48,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 905,
+      "sha256_16": "abf4e0353e6fa7f2"
+    },
+    "sprites/friendly_mobs/emberfox_kit_idle_4f.png": {
+      "size": [
+        192,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 1433,
+      "sha256_16": "bb576a1109616898"
+    },
+    "sprites/overworld_enemies/cinder_ooze.png": {
+      "size": [
+        48,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 1096,
+      "sha256_16": "8496a609a05314ab"
+    },
+    "sprites/overworld_enemies/cinder_ooze_idle_4f.png": {
+      "size": [
+        192,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 1687,
+      "sha256_16": "3d1b0b8a2340c3a3"
+    },
+    "sprites/overworld_enemies/gravebell_shambler.png": {
+      "size": [
+        48,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 1006,
+      "sha256_16": "eff8ce6ca12edcd4"
+    },
+    "sprites/overworld_enemies/gravebell_shambler_idle_4f.png": {
+      "size": [
+        192,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 1510,
+      "sha256_16": "aa4bc9b8d64ab7c2"
+    },
+    "sprites/lua_enemies/rune_sentinel.png": {
+      "size": [
+        64,
+        64
+      ],
+      "mode": "RGBA",
+      "bytes": 1611,
+      "sha256_16": "49d5b541fd238af4"
+    },
+    "sprites/lua_enemies/rune_sentinel_idle_4f.png": {
+      "size": [
+        256,
+        64
+      ],
+      "mode": "RGBA",
+      "bytes": 2654,
+      "sha256_16": "12be870e8296c3d7"
+    },
+    "sprites/lua_enemies/vesper_acolyte.png": {
+      "size": [
+        48,
+        64
+      ],
+      "mode": "RGBA",
+      "bytes": 1161,
+      "sha256_16": "9de398be7d4e806b"
+    },
+    "sprites/lua_enemies/vesper_acolyte_idle_4f.png": {
+      "size": [
+        192,
+        64
+      ],
+      "mode": "RGBA",
+      "bytes": 1799,
+      "sha256_16": "09b465c6a6339300"
+    },
+    "sprites/python_enemies/brass_prowler.png": {
+      "size": [
+        64,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 967,
+      "sha256_16": "17202f83a0ab347b"
+    },
+    "sprites/python_enemies/brass_prowler_idle_4f.png": {
+      "size": [
+        256,
+        48
+      ],
+      "mode": "RGBA",
+      "bytes": 1576,
+      "sha256_16": "be1674f2a8ad7665"
+    },
+    "sprites/python_enemies/cipher_warden.png": {
+      "size": [
+        64,
+        64
+      ],
+      "mode": "RGBA",
+      "bytes": 1228,
+      "sha256_16": "303f90ec36df6b86"
+    },
+    "sprites/python_enemies/cipher_warden_idle_4f.png": {
+      "size": [
+        256,
+        64
+      ],
+      "mode": "RGBA",
+      "bytes": 2026,
+      "sha256_16": "a8a110f8b13e98c5"
+    },
+    "sprites/birds/sunshard_finch.png": {
+      "size": [
+        24,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 410,
+      "sha256_16": "17ec98c2c04a4961"
+    },
+    "sprites/birds/sunshard_finch_wing_4f.png": {
+      "size": [
+        96,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 735,
+      "sha256_16": "9c1f9dcbae77a7b9"
+    },
+    "sprites/birds/dusk_kite.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 452,
+      "sha256_16": "71e128b00e2479ac"
+    },
+    "sprites/birds/dusk_kite_wing_4f.png": {
+      "size": [
+        128,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 852,
+      "sha256_16": "95d3e8c2118e1bc1"
+    },
+    "sprites/wisp/morrow_wisp.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 583,
+      "sha256_16": "fa7b22f166143de2"
+    },
+    "sprites/wisp/morrow_wisp_frames_4f.png": {
+      "size": [
+        128,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 891,
+      "sha256_16": "b60fb627f25cc967"
+    },
+    "sprites/cursors/generic_interact.png": {
+      "size": [
+        24,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 303,
+      "sha256_16": "fb4285d4a3a86d01"
+    },
+    "sprites/cursors/movement.png": {
+      "size": [
+        24,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 309,
+      "sha256_16": "da87e40c805861c8"
+    },
+    "sprites/cursors/open_chest.png": {
+      "size": [
+        24,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 329,
+      "sha256_16": "80d99559772b7d6c"
+    },
+    "sprites/cursors/open_color_crafter.png": {
+      "size": [
+        24,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 404,
+      "sha256_16": "41b22309a09efe81"
+    },
+    "sprites/cursors/open_crafting.png": {
+      "size": [
+        24,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 384,
+      "sha256_16": "bd2546c73ad1f865"
+    },
+    "sprites/cursors/open_furnace.png": {
+      "size": [
+        24,
+        24
+      ],
+      "mode": "RGBA",
+      "bytes": 476,
+      "sha256_16": "63498f8f03105a62"
+    },
+    "sprites/legendary_items/ashen_bell.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 478,
+      "sha256_16": "0cf0a6ec8197bb1f"
+    },
+    "sprites/legendary_items/eclipse_fang.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 488,
+      "sha256_16": "07a86bec3fa4f499"
+    },
+    "sprites/legendary_items/rootbound_crown.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 581,
+      "sha256_16": "43966e2869ff6da9"
+    },
+    "sprites/legendary_items/starfall_prism.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 503,
+      "sha256_16": "1ebfe36d997800d4"
+    },
+    "sprites/legendary_items/tideglass_compass.png": {
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "bytes": 592,
+      "sha256_16": "e83444798c894f84"
+    },
+    "previews/birds.png": {
+      "size": [
+        1570,
+        810
+      ],
+      "mode": "RGBA",
+      "bytes": 40277,
+      "sha256_16": "69808741e468f8ed"
+    },
+    "previews/birds_overworld_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 127011,
+      "sha256_16": "4bf94f57a794bcb2"
+    },
+    "previews/cursors.png": {
+      "size": [
+        1600,
+        1550
+      ],
+      "mode": "RGBA",
+      "bytes": 114193,
+      "sha256_16": "d209289da50ce530"
+    },
+    "previews/friendly_emberfox_kit_overworld_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 128977,
+      "sha256_16": "0088243d98172efa"
+    },
+    "previews/friendly_mobs.png": {
+      "size": [
+        1570,
+        810
+      ],
+      "mode": "RGBA",
+      "bytes": 41687,
+      "sha256_16": "51a25e0beef3941b"
+    },
+    "previews/friendly_mobs_overworld_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 131359,
+      "sha256_16": "bdabb8c64bf0cd45"
+    },
+    "previews/friendly_mossback_nib_overworld_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 129149,
+      "sha256_16": "50f6f861c23c49ff"
+    },
+    "previews/isolated_large/ashen_bell.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 3267,
+      "sha256_16": "dfb6454b22d3ae2c"
+    },
+    "previews/isolated_large/brass_prowler.png": {
+      "size": [
+        552,
+        452
+      ],
+      "mode": "RGBA",
+      "bytes": 6163,
+      "sha256_16": "b74dc45d1a50b96a"
+    },
+    "previews/isolated_large/cinder_ooze.png": {
+      "size": [
+        424,
+        452
+      ],
+      "mode": "RGBA",
+      "bytes": 5237,
+      "sha256_16": "64c836ac05308603"
+    },
+    "previews/isolated_large/cipher_warden.png": {
+      "size": [
+        552,
+        580
+      ],
+      "mode": "RGBA",
+      "bytes": 7331,
+      "sha256_16": "1bb481a7899e3d9a"
+    },
+    "previews/isolated_large/dusk_kite.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 3294,
+      "sha256_16": "3622126d78617f6a"
+    },
+    "previews/isolated_large/eclipse_fang.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 3682,
+      "sha256_16": "3574fbbb07c03cf8"
+    },
+    "previews/isolated_large/emberfox_kit.png": {
+      "size": [
+        424,
+        452
+      ],
+      "mode": "RGBA",
+      "bytes": 5200,
+      "sha256_16": "c6e49554d05067aa"
+    },
+    "previews/isolated_large/generic_interact.png": {
+      "size": [
+        232,
+        260
+      ],
+      "mode": "RGBA",
+      "bytes": 3128,
+      "sha256_16": "5fa094fddc825c8b"
+    },
+    "previews/isolated_large/gravebell_shambler.png": {
+      "size": [
+        424,
+        452
+      ],
+      "mode": "RGBA",
+      "bytes": 5587,
+      "sha256_16": "fa9ad2c7ee262fba"
+    },
+    "previews/isolated_large/morrow_wisp.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 3669,
+      "sha256_16": "34816854722816c1"
+    },
+    "previews/isolated_large/mossback_nib.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 3824,
+      "sha256_16": "68ec972e40459557"
+    },
+    "previews/isolated_large/movement.png": {
+      "size": [
+        232,
+        260
+      ],
+      "mode": "RGBA",
+      "bytes": 2436,
+      "sha256_16": "befbace0c52b4861"
+    },
+    "previews/isolated_large/open_chest.png": {
+      "size": [
+        232,
+        260
+      ],
+      "mode": "RGBA",
+      "bytes": 2617,
+      "sha256_16": "a03f1f7670d2736d"
+    },
+    "previews/isolated_large/open_color_crafter.png": {
+      "size": [
+        232,
+        260
+      ],
+      "mode": "RGBA",
+      "bytes": 3385,
+      "sha256_16": "923e3563906e4806"
+    },
+    "previews/isolated_large/open_crafting.png": {
+      "size": [
+        232,
+        260
+      ],
+      "mode": "RGBA",
+      "bytes": 3171,
+      "sha256_16": "062d4c50847b78a2"
+    },
+    "previews/isolated_large/open_furnace.png": {
+      "size": [
+        232,
+        260
+      ],
+      "mode": "RGBA",
+      "bytes": 2943,
+      "sha256_16": "0b39fc5ea7607737"
+    },
+    "previews/isolated_large/rootbound_crown.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 3972,
+      "sha256_16": "930171788e4eb9c3"
+    },
+    "previews/isolated_large/rune_sentinel.png": {
+      "size": [
+        552,
+        580
+      ],
+      "mode": "RGBA",
+      "bytes": 7579,
+      "sha256_16": "af388264a6d8b4c0"
+    },
+    "previews/isolated_large/starfall_prism.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 3747,
+      "sha256_16": "59bb108b9d1e7831"
+    },
+    "previews/isolated_large/sunshard_finch.png": {
+      "size": [
+        232,
+        260
+      ],
+      "mode": "RGBA",
+      "bytes": 2984,
+      "sha256_16": "b9a4c6a0ec13d444"
+    },
+    "previews/isolated_large/tideglass_compass.png": {
+      "size": [
+        296,
+        324
+      ],
+      "mode": "RGBA",
+      "bytes": 4428,
+      "sha256_16": "3838544162add2b5"
+    },
+    "previews/isolated_large/vesper_acolyte.png": {
+      "size": [
+        424,
+        580
+      ],
+      "mode": "RGBA",
+      "bytes": 6404,
+      "sha256_16": "3520c96b0cd1bf68"
+    },
+    "previews/legendary_items.png": {
+      "size": [
+        1600,
+        1050
+      ],
+      "mode": "RGBA",
+      "bytes": 50967,
+      "sha256_16": "f678b2a6cd10d68d"
+    },
+    "previews/lua_enemies.png": {
+      "size": [
+        1570,
+        810
+      ],
+      "mode": "RGBA",
+      "bytes": 46066,
+      "sha256_16": "e25adfafb829a907"
+    },
+    "previews/lua_enemies_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 40289,
+      "sha256_16": "966b68774781005b"
+    },
+    "previews/lua_rune_sentinel_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 37669,
+      "sha256_16": "a61b93ad0483c1e6"
+    },
+    "previews/lua_vesper_acolyte_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 38765,
+      "sha256_16": "a2de90b9bd68ff85"
+    },
+    "previews/overworld_cinder_ooze_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 128624,
+      "sha256_16": "1f1ecf1097a7dd53"
+    },
+    "previews/overworld_enemies.png": {
+      "size": [
+        1570,
+        810
+      ],
+      "mode": "RGBA",
+      "bytes": 44895,
+      "sha256_16": "93115fe1f206e400"
+    },
+    "previews/overworld_enemies_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 128569,
+      "sha256_16": "ca170253cf05b384"
+    },
+    "previews/overworld_gravebell_shambler_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 130014,
+      "sha256_16": "c358f05536c1455b"
+    },
+    "previews/python_brass_prowler_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 41611,
+      "sha256_16": "794b90704f9275a8"
+    },
+    "previews/python_cipher_warden_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 41855,
+      "sha256_16": "a65ea0381b230b8b"
+    },
+    "previews/python_enemies.png": {
+      "size": [
+        1570,
+        810
+      ],
+      "mode": "RGBA",
+      "bytes": 43520,
+      "sha256_16": "ac632b68be45bc65"
+    },
+    "previews/python_enemies_mockup.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 42583,
+      "sha256_16": "f8241cdc20f7e869"
+    },
+    "previews/wisp.png": {
+      "size": [
+        800,
+        810
+      ],
+      "mode": "RGBA",
+      "bytes": 26487,
+      "sha256_16": "fdf5f4a51ebc7976"
+    },
+    "previews/wisp_backgrounds.png": {
+      "size": [
+        1280,
+        720
+      ],
+      "mode": "RGBA",
+      "bytes": 46781,
+      "sha256_16": "4a687311b90687c6"
+    },
+    "reference/existing_style_inspection.png": {
+      "size": [
+        1600,
+        1080
+      ],
+      "mode": "RGBA",
+      "bytes": 86940,
+      "sha256_16": "8a518064c3c82e75"
+    },
+    "reference/overworld_game_reference.png": {
+      "size": [
+        1600,
+        480
+      ],
+      "mode": "RGB",
+      "bytes": 239389,
+      "sha256_16": "c27b0da63320d00b"
+    },
+    "reference/waypoint_reference.png": {
+      "size": [
+        896,
+        896
+      ],
+      "mode": "RGBA",
+      "bytes": 15789,
+      "sha256_16": "c2fa671eaa0b606b"
+    }
+  }
+}

@@ -459,10 +459,10 @@ signal stamina_changed(value: float, max_value: float)
 var master_volume:      float = 1.0
 var music_volume:       float = 1.0
 var sfx_volume:         float = 1.0
-var camera_zoom:        float = 1.3
+var camera_zoom:        float = 1.9
 var pause_on_inventory: bool  = true
 # Quest tracker: draw an opaque panel background instead of floating text.
-var quest_opaque_bg:    bool  = false
+var quest_opaque_bg:    bool  = true
 signal quest_bg_changed(opaque: bool)
 var pause_menu_open:    bool  = false
 # ── Unified UI stack ──────────────────────────────────────────────
@@ -472,7 +472,42 @@ var _ui_open_count: int = 0
 var player_near_station: bool  = false
 var block_mode:          bool  = false   # Ctrl toggles (gameplay build mode) - shared across all scripts; /blockmode command also works
 var is_in_dungeon:       bool  = false   # true while inside a dungeon - blocks build mode toggle
-var ui_scale:            float = 1.0
+# ── Responsive UI metrics ───────────────────────────────────────────
+# ui_scale is the ONE multiplier every interface uses. It is derived from the
+# live usable viewport (never a per-save preference) and refreshed on resize /
+# orientation / safe-area changes. Base sizes stay in each UI script; this
+# scalar translates them to the current screen size.
+const UI_REFERENCE_SHORT_EDGE: float = 1080.0
+const UI_MIN_SCALE: float = 1.25
+const UI_MAX_SCALE: float = 1.65
+const UI_MOBILE_MIN_SCALE: float = 1.35
+const UI_SCALE_STEP: float = 0.05
+const UI_FALLBACK_FONT_BASE: int = 16
+## Every explicit UI font size goes through ui_font_size(), which applies this
+## readability factor on top of the live ui_scale. The old fixed 9-13px bases
+## looked undersized next to panels/buttons already scaled 1.25-1.65x.
+const UI_FONT_SCALE: float = 1.20
+const UI_TYPE_CAPTION: int = 12
+const UI_TYPE_LABEL: int = 14
+const UI_TYPE_BODY: int = 15
+const UI_TYPE_HEADING: int = 20
+const UI_TYPE_TITLE: int = 26
+var ui_scale:            float = 1.5
+var ui_viewport_size:    Vector2 = Vector2.ZERO
+# left, top, right, bottom in viewport/logical coordinates. Zero on desktop.
+var ui_safe_insets:      Vector4 = Vector4.ZERO
+var ui_pause_strip:      float = 0.0
+## Bottom edge (viewport units) of the top-right pause button. The mission
+## tracker uses this so it always starts BELOW the button instead of guessing a
+## fixed offset that overlaps once the responsive UI scale grows the button.
+var ui_pause_bottom:     float = 0.0
+var _ui_last_viewport:   Vector2 = Vector2.ZERO
+var _ui_last_insets:     Vector4 = Vector4(-1, -1, -1, -1)
+var _ui_scale_timer:     Timer = null
+var _ui_safe_timer:      Timer = null
+## Test/tooling seam: a non-negative value overrides the platform keyboard
+## height (already in viewport units). -1 uses DisplayServer.
+var keyboard_height_override: float = -1.0
 
 # ── Mobile / touch state ──────────────────────────────────────────
 # Written by scripts/mobile_ui.gd (Android only). player.gd blends mobile_move
@@ -531,14 +566,222 @@ func mouse_world(node: Node2D) -> Vector2:
 	var p: Node2D = player_node as Node2D
 	return p.global_position if p != null else Vector2.ZERO
 
+## Pure responsive scale calculation so tests and tooling can verify it without
+## a live window. Short edge (not total area) prevents ultrawide screens from
+## inflating the UI, while mobile gets a comfortable minimum.
+func compute_ui_scale(viewport_size: Vector2, mobile: bool = false) -> float:
+	var short_edge: float = minf(maxf(viewport_size.x, 1.0), maxf(viewport_size.y, 1.0))
+	var raw: float = 1.5 * pow(short_edge / UI_REFERENCE_SHORT_EDGE, 0.35)
+	if mobile:
+		raw = maxf(raw, UI_MOBILE_MIN_SCALE)
+	raw = clampf(raw, UI_MIN_SCALE, UI_MAX_SCALE)
+	return snappedf(raw, UI_SCALE_STEP)
+
+func ui_type_size(role: int) -> int:
+	var base: int = UI_TYPE_BODY
+	match role:
+		UI_TYPE_CAPTION: base = UI_TYPE_CAPTION
+		UI_TYPE_LABEL:   base = UI_TYPE_LABEL
+		UI_TYPE_HEADING: base = UI_TYPE_HEADING
+		UI_TYPE_TITLE:   base = UI_TYPE_TITLE
+		_:               base = UI_TYPE_BODY
+	return ui_font_size(float(base))
+
+## One font-size funnel for UI text. `base` is the old unscaled size; the
+## result tracks the live viewport scale plus a readability factor. World-space
+## drawn labels use this too, so they stay in proportion with the panels.
+func ui_font_size(base: float) -> int:
+	return maxi(11, int(round(base * ui_scale * UI_FONT_SCALE)))
+
+func ui_content_rect() -> Rect2:
+	var size: Vector2 = ui_viewport_size
+	if size.x <= 0.0 or size.y <= 0.0:
+		var vp := get_viewport()
+		size = vp.get_visible_rect().size if vp != null else Vector2(1280, 720)
+	return Rect2(
+		Vector2(ui_safe_insets.x, ui_safe_insets.y),
+		Vector2(
+			maxf(1.0, size.x - ui_safe_insets.x - ui_safe_insets.z),
+			maxf(1.0, size.y - ui_safe_insets.y - ui_safe_insets.w)))
+
+## Constrain a full-rect Control (centres, scroll roots, HUD layers) to the
+## live display safe area. This is a no-op on desktop, so the established
+## desktop layout is unchanged. Call after set_anchors_preset(FULL_RECT).
+func apply_safe_area(control: Control, extra_margin: float = 0.0) -> void:
+	if control == null:
+		return
+	control.offset_left   = ui_safe_insets.x + extra_margin
+	control.offset_top    = ui_safe_insets.y + extra_margin
+	control.offset_right  = -(ui_safe_insets.z + extra_margin)
+	control.offset_bottom = -(ui_safe_insets.w + extra_margin)
+
+## Scaled minimum size for a panel, clamped inside the usable viewport so modal
+## dialogs and their Apply/Cancel buttons can never land off-screen.
+func ui_fit_min_size(base_size: Vector2, margin: float = 12.0) -> Vector2:
+	var content := ui_content_rect().size
+	var pad: float = maxf(2.0, margin * ui_scale)
+	return Vector2(
+		minf(base_size.x * ui_scale, maxf(240.0, content.x - pad * 2.0)),
+		minf(base_size.y * ui_scale, maxf(180.0, content.y - pad * 2.0)))
+
+func _compute_safe_insets(viewport_size: Vector2) -> Vector4:
+	if not is_mobile() or DisplayServer.get_name() == "headless":
+		return Vector4.ZERO
+	var safe: Rect2i = DisplayServer.get_display_safe_area()
+	if safe.size.x <= 0 or safe.size.y <= 0:
+		return Vector4.ZERO
+	var vp := get_viewport()
+	if vp == null:
+		return Vector4.ZERO
+	var xf: Transform2D = vp.get_screen_transform()
+	var start: Vector2 = xf.affine_inverse() * Vector2(safe.position)
+	var end: Vector2 = xf.affine_inverse() * Vector2(safe.position + safe.size)
+	if end.x <= start.x or end.y <= start.y:
+		return Vector4.ZERO
+	if end.x > viewport_size.x + 2.0 or end.y > viewport_size.y + 2.0:
+		return Vector4.ZERO
+	return Vector4(
+		clampf(start.x, 0.0, viewport_size.x),
+		clampf(start.y, 0.0, viewport_size.y),
+		clampf(viewport_size.x - end.x, 0.0, viewport_size.x),
+		clampf(viewport_size.y - end.y, 0.0, viewport_size.y))
+
+func refresh_ui_scale(force_emit: bool = false) -> void:
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var size: Vector2 = vp.get_visible_rect().size
+	var insets: Vector4 = _compute_safe_insets(size)
+	var usable := Vector2(
+		maxf(1.0, size.x - insets.x - insets.z),
+		maxf(1.0, size.y - insets.y - insets.w))
+	var next_scale: float = compute_ui_scale(usable, is_mobile())
+	var scale_changed: bool = absf(next_scale - ui_scale) > 0.001
+	var layout_changed: bool = size != _ui_last_viewport or insets != _ui_last_insets
+	ui_scale = next_scale
+	ui_viewport_size = size
+	ui_safe_insets = insets
+	ThemeDB.fallback_font_size = ui_font_size(float(UI_FALLBACK_FONT_BASE))
+	_ui_last_viewport = size
+	_ui_last_insets = insets
+	if scale_changed or layout_changed or force_emit:
+		ui_scale_changed.emit(ui_scale)
+
+func _on_viewport_size_changed() -> void:
+	if _ui_scale_timer != null:
+		_ui_scale_timer.start(0.10)
+	else:
+		refresh_ui_scale()
+
+func _on_ui_scale_timer_timeout() -> void:
+	refresh_ui_scale()
+
+func _deferred_ui_scale_refresh() -> void:
+	refresh_ui_scale()
+
+func _setup_ui_scaling() -> void:
+	var vp := get_viewport()
+	if vp != null and not vp.size_changed.is_connected(_on_viewport_size_changed):
+		vp.size_changed.connect(_on_viewport_size_changed)
+	if _ui_scale_timer == null:
+		_ui_scale_timer = Timer.new()
+		_ui_scale_timer.one_shot = true
+		_ui_scale_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		_ui_scale_timer.timeout.connect(_on_ui_scale_timer_timeout)
+		add_child(_ui_scale_timer)
+	# Edge-to-edge Android can show/hide system bars or rotate 180 degrees without
+	# a viewport-size change. Poll the safe area cheaply so panels never keep a
+	# stale notch offset. refresh_ui_scale only emits when something changed.
+	if is_mobile() and _ui_safe_timer == null:
+		_ui_safe_timer = Timer.new()
+		_ui_safe_timer.wait_time = 0.75
+		_ui_safe_timer.one_shot = false
+		_ui_safe_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		_ui_safe_timer.timeout.connect(func() -> void: refresh_ui_scale())
+		add_child(_ui_safe_timer)
+		_ui_safe_timer.start()
+	refresh_ui_scale(true)
+	call_deferred("_deferred_ui_scale_refresh")
+
 ## True when a mouse event (including Android's emulated first-touch mouse)
 ## lands on any visible Control. Gameplay _input() handlers run before GUI
 ## consumption, so they must skip these events themselves.
 var _ui_hit_event_id: int = 0
 var _ui_hit_result: bool = false
 
+# ── UI root cache for hit-testing ────────────────────────────────────
+# _control_at_point() used to recurse from the Viewport through EVERY node in
+# the tree. In the overworld that is ~40,000 nodes (grass/trees/blocks), so one
+# is_point_over_ui() call cost ~35 ms. The desktop cursor director calls it ten
+# times a second and the Android touch bridge calls it on every touch event,
+# which made the overworld feel permanently choppy while caves/dungeons (far
+# fewer nodes) were fine. UI is rooted at CanvasLayers (plus the odd top-level
+# Control), so only those roots need to be walked. Roots are registered as they
+# enter the tree; world Node2D subtrees are never visited.
+var _ui_roots: Array[Node] = []
+
+func _register_ui_root(node: Node) -> void:
+	if node == null:
+		return
+	if node is CanvasLayer:
+		if not _ui_roots.has(node):
+			_ui_roots.append(node)
+		return
+	if node is Control:
+		var parent := node.get_parent()
+		if parent == null or not (parent is Control or parent is CanvasLayer):
+			if not _ui_roots.has(node):
+				_ui_roots.append(node)
+
+func _collect_ui_roots(node: Node) -> void:
+	if node == null:
+		return
+	if node is CanvasLayer:
+		# The layer itself is the traversal root; its Controls are reached by
+		# _control_at_point(). A nested CanvasLayer is handled by the generic
+		# child recursion in that function, so no separate registration needed.
+		if not _ui_roots.has(node):
+			_ui_roots.append(node)
+		return
+	if node is Control:
+		_register_ui_root(node)
+		# Keep looking for CanvasLayers nested under Controls (rare but legal).
+		for child in node.get_children():
+			_collect_ui_roots(child)
+		return
+	for child in node.get_children():
+		_collect_ui_roots(child)
+
+func _on_ui_tree_node_added(node: Node) -> void:
+	# Called for every world node too, so keep this branch trivial. Only a
+	# CanvasLayer or a top-level Control can become a new UI traversal root.
+	if node is CanvasLayer or node is Control:
+		_register_ui_root(node)
+
 func is_left_action_held() -> bool:
+	# A pointer released while an interface is open is delivered to that
+	# interface, not to the paused world. Do not let break/hold loops resume on
+	# a stale mouse-down bit after the panel closes.
+	if any_ui_open() or pause_menu_open:
+		return false
 	return pnc_hold_active or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+
+## True when a viewport-space point is over any visible Control. Used by the
+## mobile touch bridge to distinguish world taps from UI taps before it
+## synthesizes mouse events.
+func is_point_over_ui(point: Vector2) -> bool:
+	if get_viewport() == null:
+		return false
+	# Iterate backwards so invalid/freed roots are pruned in place. Order does
+	# not matter for a boolean hit test: any visible blocking Control is enough.
+	for i in range(_ui_roots.size() - 1, -1, -1):
+		var root: Node = _ui_roots[i]
+		if not is_instance_valid(root):
+			_ui_roots.remove_at(i)
+			continue
+		if _control_at_point(root, point):
+			return true
+	return false
 
 func is_mouse_event_over_ui(event: InputEvent) -> bool:
 	if not (event is InputEventMouseButton):
@@ -547,14 +790,23 @@ func is_mouse_event_over_ui(event: InputEvent) -> bool:
 	if eid == _ui_hit_event_id:
 		return _ui_hit_result
 	_ui_hit_event_id = eid
-	var vp := get_viewport()
-	if vp == null:
-		_ui_hit_result = false
-		return false
-	# Use the viewport-local cursor so Android's stretched canvas/item scaling
-	# cannot make a Control hit-test miss and leak the tap into gameplay.
-	_ui_hit_result = _control_at_point(vp, vp.get_mouse_position())
+	# Hit-test THIS event's position, not the current OS cursor. On Android the
+	# emulated first-touch mouse and our secondary-touch bridge can deliver
+	# clicks at a position that is not where get_mouse_position() last pointed;
+	# using the shared cursor let a tap on a UI button leak into world mining or
+	# attacking. Event.position is already in viewport coordinates.
+	_ui_hit_result = is_point_over_ui((event as InputEventMouseButton).position)
 	return _ui_hit_result
+
+## World-space point for a mouse event. Unlike mouse_world(), this never uses
+## the cached touch cursor: a new tap always targets the pixel the player
+## actually touched, even after a previous PNC order moved the cursor.
+func mouse_event_world(node: Node2D, event: InputEvent) -> Vector2:
+	var vp := get_viewport()
+	if vp != null and event is InputEventMouse:
+		return vp.get_canvas_transform().affine_inverse() \
+			* (event as InputEventMouse).position
+	return mouse_world(node)
 
 # Windows/Viewports in this Godot build do not expose gui_find_control(), so
 # walk the visible Control tree manually. Children are checked first to respect
@@ -578,17 +830,47 @@ func _control_at_point(node: Node, point: Vector2) -> bool:
 			return true
 	return false
 
-# Height (px) the Android software keyboard currently covers. 0 on desktop or
-# when it is hidden. Editors shrink their layout by this much so the focused
-# field and RUN/STOP stay visible (see mobile_ui.gd / lua_editor_ui.gd).
+## Convert the Android keyboard height (physical screen pixels) into viewport
+## units. Subtracting the raw value from a logical viewport made high-DPI
+## phones collapse every keyboard-aware panel and push its text fields
+## off-screen. Clamp to the viewport so a bogus platform value can never invert
+## a panel's rect.
+static func keyboard_height_in_viewport(pixels: float, screen_scale_y: float,
+		viewport_height: float) -> float:
+	if pixels <= 0.0:
+		return 0.0
+	var scale_y: float = absf(screen_scale_y)
+	if scale_y <= 0.0001:
+		return 0.0
+	var cap: float = maxf(0.0, viewport_height - 1.0)
+	return clampf(pixels / scale_y, 0.0, cap)
+
+
+# Height the Android software keyboard currently covers, in viewport units.
+# 0 on desktop or when it is hidden. Editors shrink their layout by this much
+# so the focused field and RUN/STOP stay visible (see mobile_ui.gd /
+# lua_editor_ui.gd / online_account_panel.gd).
 func mobile_keyboard_height() -> float:
+	if keyboard_height_override >= 0.0:
+		return keyboard_height_override
 	if not is_mobile():
 		return 0.0
-	return float(DisplayServer.virtual_keyboard_get_height())
-# True once the player has explicitly chosen a scale (pause menu / settings) or
-# one was restored from a save. game_instance only applies its Large default
-# when this is false, so the Small/Medium/Large choice survives scene loads.
-var ui_scale_set:        bool  = false
+	var pixels: float = float(DisplayServer.virtual_keyboard_get_height())
+	if pixels <= 0.0:
+		return 0.0
+	var vp := get_viewport()
+	if vp == null:
+		return 0.0
+	var vp_height: float = ui_viewport_size.y
+	if vp_height <= 0.0:
+		vp_height = vp.get_visible_rect().size.y
+	# Stretch transform only (viewport -> window pixels). Using the screen
+	# transform here would also fold in the active Camera2D's canvas zoom,
+	# which has nothing to do with how much of the window the keyboard covers.
+	return keyboard_height_in_viewport(
+		pixels, vp.get_stretch_transform().get_scale().y, vp_height)
+# The old per-save ui_scale preference is intentionally ignored. UI size is now
+# derived centrally in refresh_ui_scale() from the live usable viewport.
 
 # Fog of war for the minimap: tiles the player has been near (Vector2i -> true).
 # Session-scoped (the minimap marks a radius around the player as it moves).
@@ -741,11 +1023,19 @@ func disintegrate_hostile(node: Node) -> void:
 	node.queue_free()
 
 signal ui_scale_changed(scale: float)
+## Emitted whenever an interface/ pause takes over the screen. Touch HUDs and
+## gesture bridges listen so a held joystick/world touch cannot leak into the
+## resumed game.
+signal gameplay_input_cancelled
 signal request_close_all_ui
 signal chat_logged(message: String)
 
 signal camera_zoom_changed(zoom: float)
 signal inventory_toggled(is_open: bool)
+# Emitted by full-screen station/editor screens that cover the playfield. The
+# game HUD is hidden while these are open so the hotbar/FPS/minimap can never
+# overlap their panels.
+signal modal_hud_changed(open: bool)
 signal block_mode_changed(enabled: bool)
 signal item_picked_up(item_name: String, item_type: String)
 signal hover_label_changed(text: String)
@@ -865,21 +1155,37 @@ var unseen_entries:  Dictionary = {}  # entry base name -> true
 
 signal knowledge_updated
 
+# ── Bestiary ─────────────────────────────────────────────────────────
+# Per-world observation state. The catalog itself is static data loaded from
+# MobCombatData resources (BestiaryCatalog); these dictionaries only remember
+# which entries THIS world has seen and studied. A sighting reveals the name;
+# the first kill unlocks notes, max health and the full drop table.
+var bestiary_seen: Dictionary = {}    # bestiary_id -> true
+var bestiary_killed: Dictionary = {}  # bestiary_id -> true
+var _bestiary_scan_accum: float = 0.0
+const BESTIARY_SCAN_INTERVAL: float = 0.30
+signal bestiary_updated
+
 # ── Dungeon runtime state ─────────────────────────────────────────────
-# cleared_dungeons: a dungeon is worth TWO stars — one for clearing the
-# dungeon (quiz altar all-correct, recorded here) and one for completing
-# its mission (Global.complete_mission, which fires right after). Both are
-# counted by the mission UI's star totals.
+# Every dungeon is worth up to THREE blue stars: the mission star plus a
+# two-star clear. Perfect clears (no hints) earn all three; one hint earns two;
+# two or more hints earn one. `dungeon_stars` stores the final 1..3 award per
+# dungeon (legacy cleared dungeons default to 3, matching the new maximum).
 # dungeon_seeds: rolled ONCE, the first time the player accepts that
 # dungeon's mission, then persisted — re-entering regenerates the exact
 # same layout (DungeonGenerator is deterministic from its seed).
 var cleared_dungeons: Dictionary = {}  # dungeon_index -> true
+var dungeon_stars:    Dictionary = {}  # dungeon_index -> 1..3 blue stars
 var dungeon_seeds:    Dictionary = {}  # dungeon_index -> int
 # Rare dungeon-chest state keyed by "<dungeon_index>:<x>,<y>". Values contain
 # serialized slot contents and/or removed=true so re-entering a dungeon cannot
 # regenerate already-taken rewards.
 var dungeon_chest_states: Dictionary = {}
 signal dungeon_cleared(dungeon_index: int)
+# Emitted after the game has actually swapped the overworld for a generated
+# DungeonWorld. The onboarding director uses this to begin the in-dungeon lesson
+# without polling scene internals.
+signal dungeon_entered(dungeon_index: int)
 
 func load_knowledge_data() -> void:
 	knowledge_entries.clear()
@@ -977,15 +1283,22 @@ func set_dungeon_chest_state(dungeon_index: int, cell: Vector2i,
 	else:
 		dungeon_chest_states[key] = state.duplicate(true)
 
-# Star #1 of a dungeon's two: the quiz altar was cleared (called right before
-# complete_mission fires for star #2). Idempotent so re-clears never double
-# count, and it drives the mission UI popup via dungeon_cleared.
-func record_dungeon_clear(dungeon_index: int) -> void:
+# Records a dungeon clear and its final 1..3 blue-star award. The mission star
+# is emitted separately by complete_mission(); this adds the clear star
+# (stars >= 2) and the perfect-clear bonus (stars >= 3). Two or more hints
+# therefore leave only the mission star. Idempotent so re-clears never
+# double-award, and it drives the mission UI popup via dungeon_cleared.
+func record_dungeon_clear(dungeon_index: int, stars: int = 3) -> void:
 	if cleared_dungeons.has(dungeon_index):
 		return
+	var earned: int = clampi(stars, 1, 3)
 	cleared_dungeons[dungeon_index] = true
+	dungeon_stars[dungeon_index] = earned
 	dungeon_cleared.emit(dungeon_index)
-	mission_star_earned.emit("dungeon_clear:%d" % dungeon_index)
+	if earned >= 2:
+		mission_star_earned.emit("dungeon_clear:%d" % dungeon_index)
+	if earned >= 3:
+		mission_star_earned.emit("dungeon_clear_bonus:%d" % dungeon_index)
 	# The general "Clear a dungeon" quest is separate from the dungeon mission
 	# star; complete_mission is idempotent, so re-clears cannot double-award it.
 	complete_mission("clear_dungeon")
@@ -994,8 +1307,21 @@ func record_dungeon_clear(dungeon_index: int) -> void:
 func is_dungeon_cleared(dungeon_index: int) -> bool:
 	return cleared_dungeons.has(dungeon_index)
 
-# Every dungeon is worth one clear-star in addition to its mission star, so
-# the mission UI's star total = mission count + dungeon count.
+## Final blue-star award for a dungeon (0 = not completed, 1..3 = earned).
+## Legacy cleared saves have no stored value and default to the new maximum so
+## older perfect clears are not punished retroactively.
+func dungeon_stars_for(dungeon_index: int) -> int:
+	if dungeon_stars.has(dungeon_index):
+		return clampi(int(dungeon_stars[dungeon_index]), 0, 3)
+	if cleared_dungeons.has(dungeon_index):
+		return 3
+	var m := _find_mission("dungeon_%d" % dungeon_index)
+	if not m.is_empty() and bool(m.get("completed", false)):
+		return 1
+	return 0
+
+# Every dungeon can now award up to three blue stars. Kept for callers that
+# only need the number of dungeon entries.
 func clearable_dungeon_count() -> int:
 	return dungeon_missions.size()
 
@@ -1211,6 +1537,7 @@ func load_display_settings() -> void:
 		fps_limit = DEFAULT_FPS_LIMIT
 		vsync_enabled = true
 		point_and_click = false
+		point_and_click_auto_sprint = false
 		point_and_click_changed.emit(false)
 		show_fps = false
 		show_fps_changed.emit(false)
@@ -1222,6 +1549,8 @@ func load_display_settings() -> void:
 	show_fps = bool(cfg.get_value(DISPLAY_SECTION, "show_fps", false))
 	show_fps_changed.emit(show_fps)
 	point_and_click = bool(cfg.get_value("controls", "point_and_click", false))
+	point_and_click_auto_sprint = bool(cfg.get_value(
+		"controls", "point_and_click_auto_sprint", false))
 	point_and_click_changed.emit(point_and_click)
 
 func save_display_settings() -> void:
@@ -1232,6 +1561,7 @@ func save_display_settings() -> void:
 	cfg.set_value(DISPLAY_SECTION, "vsync_enabled", vsync_enabled)
 	cfg.set_value(DISPLAY_SECTION, "show_fps", show_fps)
 	cfg.set_value("controls", "point_and_click", point_and_click)
+	cfg.set_value("controls", "point_and_click_auto_sprint", point_and_click_auto_sprint)
 	cfg.save(DISPLAY_PATH)
 
 func _sanitize_fps_limit(limit: int) -> int:
@@ -1315,17 +1645,40 @@ func set_show_fps(on: bool) -> void:
 # left-click / tap on the world issues a move order (see player.gd); right-click,
 # build mode, inventory and every existing control keep working unchanged.
 signal point_and_click_changed(enabled: bool)
+signal point_and_click_auto_sprint_changed(enabled: bool)
 var point_and_click: bool = false
+## When point-and-click issues a movement order, treat it like a held sprint
+## key. Manual WASD/joystick movement still requires Shift, and the shared
+## stamina/exhaustion rules apply to both paths.
+var point_and_click_auto_sprint: bool = false
 
-func set_point_and_click(on: bool) -> void:
+func set_point_and_click_auto_sprint(on: bool) -> void:
+	if point_and_click_auto_sprint == on:
+		return
+	point_and_click_auto_sprint = on
+	CrashLogger.event("SETTINGS", "point_and_click_auto_sprint=%s" % on)
+	point_and_click_auto_sprint_changed.emit(on)
+	save_display_settings()
+
+func set_point_and_click(on: bool, persist: bool = true) -> void:
 	if not POINT_AND_CLICK_ENABLED:
 		on = false
+	# PNC world clicks are deliberately ignored while build mode is active, so
+	# enabling point-and-click must leave build mode. Otherwise the setting
+	# appears to do nothing and every "move" click places a block instead.
+	# Run this even when PNC is already on, so re-selecting it recovers a session
+	# that was left in build mode.
+	if on and block_mode:
+		block_mode = false
+		block_mode_changed.emit(false)
+		CrashLogger.event("BUILD", "mode=off (point-and-click enabled)")
 	if point_and_click == on:
 		return
 	point_and_click = on
 	CrashLogger.event("SETTINGS", "point_and_click=%s" % on)
 	point_and_click_changed.emit(on)
-	save_display_settings()
+	if persist:
+		save_display_settings()
 
 # ── Shared floating item tooltip ──────────────────────────────────
 # Slots and recipe buttons call these on hover; the popup follows the mouse.
@@ -1386,12 +1739,105 @@ func _ready() -> void:
 	load_display_settings()
 	apply_display_mode()
 	apply_frame_settings()   # mobile needs the FPS cap even though display mode is fixed
+	_setup_ui_scaling()
 	Hotbar.resize(HOTBAR_SIZE)
 	Inventory.resize(INVENTORY_SIZE)
 	_init_missions()
 	load_knowledge_data()
 	_append_dungeon_missions()
 	_append_side_missions()
+	# UI hit-testing walks only registered UI roots (see is_point_over_ui).
+	# Autoloads exist before the first scene, so scan them now, then pick up
+	# every later CanvasLayer/top-level Control as it enters the tree.
+	var scene_tree := get_tree()
+	if scene_tree != null:
+		if not scene_tree.node_added.is_connected(_on_ui_tree_node_added):
+			scene_tree.node_added.connect(_on_ui_tree_node_added)
+		_collect_ui_roots(scene_tree.root)
+
+# Scans only while a world is actually running. A creature counts as "seen"
+# when its world sprite is on screen (the same screen the player is looking at),
+# not merely when it spawns off in the dark. This is deliberately throttled: it
+# is a discovery scan, not a per-frame physics query.
+func _process(delta: float) -> void:
+	if active_save_slot <= 0 or not is_instance_valid(player_node) or get_tree().paused:
+		return
+	_bestiary_scan_accum += delta
+	if _bestiary_scan_accum < BESTIARY_SCAN_INTERVAL:
+		return
+	_bestiary_scan_accum = 0.0
+	for mob in get_tree().get_nodes_in_group("Mob"):
+		if not is_instance_valid(mob) or not (mob is Node2D):
+			continue
+		var id: String = _bestiary_id_for_mob(mob)
+		if id.is_empty() or bestiary_seen.has(id):
+			continue
+		if _bestiary_mob_on_screen(mob as Node2D):
+			bestiary_record_seen(id)
+
+func _bestiary_id_for_mob(mob: Node) -> String:
+	var meta_id: Variant = mob.get_meta("bestiary_id", "")
+	var id: String = str(meta_id).strip_edges()
+	if not id.is_empty():
+		return id
+	var data: Variant = mob.get("COMBAT_DATA")
+	if data is MobCombatData:
+		return (data as MobCombatData).bestiary_id.strip_edges()
+	return ""
+
+func _bestiary_mob_on_screen(mob: Node2D) -> bool:
+	if not mob.is_visible_in_tree():
+		return false
+	var vp := get_viewport()
+	if vp == null:
+		return false
+	var screen_pos: Vector2 = vp.get_canvas_transform() * mob.global_position
+	return vp.get_visible_rect().grow(-8.0).has_point(screen_pos)
+
+## True once this world has sighted the catalog entry.
+func bestiary_is_seen(id: String) -> bool:
+	return bestiary_seen.has(id)
+
+## True once this world has defeated the catalog entry at least once.
+func bestiary_is_killed(id: String) -> bool:
+	return bestiary_killed.has(id)
+
+## Record a first sighting and publish a top-centre toast. Returns true only on
+## the first observation for this world.
+func bestiary_record_seen(id: String) -> bool:
+	id = id.strip_edges()
+	if id.is_empty() or bestiary_seen.has(id) or BestiaryCatalog.get_entry(id) == null:
+		return false
+	bestiary_seen[id] = true
+	bestiary_updated.emit()
+	var entry := BestiaryCatalog.get_entry(id)
+	notify("[color=#8fd8ff]Bestiary entry added:[/color] [b]%s[/b]" % entry.mob_name)
+	return true
+
+## Record the first kill for this world. Sight and kill are both marked (a
+## creature can be killed before the observation scan catches it). Returns true
+## only on the first completion.
+func bestiary_record_kill(id: String) -> bool:
+	id = id.strip_edges()
+	if id.is_empty() or BestiaryCatalog.get_entry(id) == null:
+		return false
+	var was_seen: bool = bestiary_seen.has(id)
+	bestiary_seen[id] = true
+	if bestiary_killed.has(id):
+		return false
+	bestiary_killed[id] = true
+	bestiary_updated.emit()
+	var entry := BestiaryCatalog.get_entry(id)
+	if was_seen:
+		notify("[color=#ffd77a]Bestiary entry studied:[/color] [b]%s[/b] - notes, health and drops unlocked." % entry.mob_name)
+	else:
+		notify("[color=#ffd77a]Bestiary entry completed:[/color] [b]%s[/b] - sighted and studied." % entry.mob_name)
+	return true
+
+func reset_bestiary_state() -> void:
+	bestiary_seen.clear()
+	bestiary_killed.clear()
+	bestiary_updated.emit()
 
 # Build mode toggle (Ctrl) — a core gameplay feature that switches between
 # interacting with the world and placing/building blocks. Detected centrally so
@@ -1640,6 +2086,25 @@ func _dungeon_index_by_category(category: String) -> Array:
 func main_dungeon_indices() -> Array:
 	return _dungeon_index_by_category("main")
 
+
+# Lowest main-dungeon index in a language track. The tutorial layout is applied
+# only to this one (Python 1 and Lua 11 in the current registry).
+func first_main_dungeon_index(lang: String) -> int:
+	for idx in main_dungeon_indices():
+		if dungeon_language(int(idx)) == lang:
+			return int(idx)
+	return 0
+
+
+func is_first_main_dungeon(idx: int) -> bool:
+	var mission: DungeonMissionData = get_dungeon_mission_for_index(idx)
+	if mission == null or not mission.is_main():
+		return false
+	var lang: String = dungeon_language(idx)
+	if lang.is_empty():
+		return false
+	return first_main_dungeon_index(lang) == idx
+
 func extra_dungeon_indices() -> Array:
 	return _dungeon_index_by_category("extra")
 
@@ -1789,10 +2254,19 @@ func complete_mission(id: String) -> void:
 # dungeon clear stars; yellow = overworld quests. The account totals below are
 # the cloud profile values when online, with the local totals as a fallback.
 func local_blue_stars() -> int:
-	var total: int = cleared_dungeons.size()
+	var total: int = 0
+	var counted: Dictionary = {}
 	for m in missions:
 		if bool(m.get("completed", false)) and m.has("dungeon_index"):
-			total += 1
+			var idx: int = int(m["dungeon_index"])
+			counted[idx] = true
+			total += dungeon_stars_for(idx) if cleared_dungeons.has(idx) else 1
+	# Defensive: a cleared save whose mission row is missing still contributes
+	# its stored award.
+	for idx_value in cleared_dungeons:
+		var idx: int = int(idx_value)
+		if not counted.has(idx):
+			total += dungeon_stars_for(idx)
 	return total
 
 func local_yellow_stars() -> int:
@@ -1884,6 +2358,7 @@ func reset_missions() -> void:
 		m["completed"] = false
 		m["progress"] = 0
 	cleared_dungeons.clear()
+	dungeon_stars.clear()
 	mission_updated.emit()
 
 # ── Add item ──────────────────────────────────────────────────────
@@ -2242,7 +2717,20 @@ func request_ui_back(event: InputEvent = null) -> bool:
 		return true
 	return false
 
+func cancel_gameplay_input() -> void:
+	mobile_move = Vector2.ZERO
+	mobile_shift = false
+	pnc_hold_active = false
+	var p: Node = player_node
+	if is_instance_valid(p) and p.has_method("cancel_pending_input"):
+		p.call("cancel_pending_input")
+	gameplay_input_cancelled.emit()
+
 func open_ui() -> void:
+	# Opening any interface ends the current world gesture. Without this, a
+	# tap-to-control move or held touch could resume behind the panel when the
+	# paused tree comes back.
+	cancel_gameplay_input()
 	_ui_open_count += 1
 	_apply_pause_state()
 
@@ -2290,8 +2778,17 @@ func _apply_pause_state() -> void:
 # Re-assert the pause when the window regains focus: the game must never come
 # back with control inside the world while a UI panel is still open.
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_APPLICATION_FOCUS_IN:
+	if what == NOTIFICATION_APPLICATION_FOCUS_IN \
+			or what == NOTIFICATION_APPLICATION_RESUMED \
+			or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
+		# System bars/cutouts can change while the app is in the background
+		# without a viewport resize. Recompute safe insets and layouts.
+		call_deferred("refresh_ui_scale", false)
 		_apply_pause_state()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT \
+			or what == NOTIFICATION_APPLICATION_PAUSED \
+			or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		cancel_gameplay_input()
 	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		# Android Back uses the same topmost-first stack as Escape. With no
 		# dismissible UI, open the pause menu instead of letting the platform
@@ -2318,6 +2815,9 @@ func reset_pause_state() -> void:
 	_ui_pause_suspended.clear()
 	_ui_back_stack.clear()
 	pnc_hold_active = false
+	mobile_move = Vector2.ZERO
+	mobile_shift = false
+	clear_touch_mouse()
 	break_hud_progress = 0.0
 	_break_hud_source_id = 0
 	_break_hud_updated_ms = 0
@@ -2472,8 +2972,14 @@ const MAX_WORLDS: int = 10
 var world_name: String = ""
 # Tutorial progress is per-world. Existing pre-tutorial saves are treated as
 # completed on load so returning players are not ambushed by the intro.
+# tutorial_version 2 is the guided onboarding (dialogue + practical lessons).
+var tutorial_version: int = 2
 var tutorial_stage: int = 0
 var tutorial_completed: bool = false
+# Per-lesson completion/reward flags: starter kit, Automatica deployment,
+# dialogue-seen markers, etc. Kept separate from mission progress so tutorial
+# retries never duplicate rewards.
+var tutorial_flags: Dictionary = {}
 
 # The version this world was CREATED with, else the one it was last SAVED with,
 # else a fallback. Never invents a version for an old save that has neither.
@@ -2579,8 +3085,10 @@ func delete_world(slot: int) -> bool:
 func begin_new_world(slot: int, name: String) -> void:
 	active_save_slot    = slot
 	world_name          = name.strip_edges()
+	tutorial_version    = 2
 	tutorial_stage      = 0
 	tutorial_completed  = false
+	tutorial_flags.clear()
 	Hotbar.fill(null)
 	Inventory.fill(null)
 	has_pending_pos     = false
@@ -2595,6 +3103,7 @@ func begin_new_world(slot: int, name: String) -> void:
 	explored_cave_tiles.clear()
 	dungeon_chest_states.clear()
 	reset_missions()
+	reset_bestiary_state()
 
 # ── Item (de)serialization ─────────────────────────────────────────
 # Items are normally saved by resource_path. Runtime-generated color blocks
@@ -2715,8 +3224,10 @@ func save_game(slot: int) -> void:
 		"world_name":       world_name,
 		"world_version":    game_version(),
 		"created_version":  str(existing.get("created_version", game_version())),
+		"tutorial_version":  tutorial_version,
 		"tutorial_stage":    tutorial_stage,
 		"tutorial_completed": tutorial_completed,
+		"tutorial_flags":    tutorial_flags.duplicate(true),
 	}
 	if player_node != null:
 		save_data["player_pos_x"] = (player_node as Node2D).global_position.x
@@ -2751,14 +3262,20 @@ func save_game(slot: int) -> void:
 	else:
 		save_data["cave_states"] = cave_states.duplicate(true)
 	save_data["time_of_day"] = time_of_day
-	save_data["ui_scale"]    = ui_scale
 	save_data["learned_entries"]  = learned_entries.keys()
 	save_data["learned_keywords"] = learned_keywords.keys()
 	save_data["unseen_entries"]   = unseen_entries.keys()
+	# Bestiary state is per-world; existing saves simply load these as empty.
+	save_data["bestiary_seen"]   = bestiary_seen.keys()
+	save_data["bestiary_killed"] = bestiary_killed.keys()
 	var cleared_save: Array = []
 	for idx in cleared_dungeons:
 		cleared_save.append(int(idx))
 	save_data["cleared_dungeons"] = cleared_save
+	var dungeon_stars_save: Array = []
+	for idx in dungeon_stars:
+		dungeon_stars_save.append({"index": int(idx), "stars": int(dungeon_stars[idx])})
+	save_data["dungeon_stars"] = dungeon_stars_save
 	var seeds_save: Array = []
 	for idx in dungeon_seeds:
 		seeds_save.append({"index": int(idx), "seed": int(dungeon_seeds[idx])})
@@ -2832,13 +3349,22 @@ func load_game(slot: int) -> void:
 	explored_cave_tiles.clear()
 	# Restore the world's player-facing name (older saves have none).
 	world_name = str((data as Dictionary).get("world_name", "")).strip_edges()
-	if data.has("tutorial_completed"):
+	var saved_tutorial_version: int = int(data.get("tutorial_version", 0))
+	if saved_tutorial_version >= 2:
+		tutorial_version = saved_tutorial_version
 		tutorial_completed = bool(data.get("tutorial_completed", false))
-		tutorial_stage = clampi(int(data.get("tutorial_stage", 0)), 0, 6)
+		tutorial_stage = maxi(0, int(data.get("tutorial_stage", 0)))
+		tutorial_flags.clear()
+		if data.get("tutorial_flags") is Dictionary:
+			tutorial_flags = (data["tutorial_flags"] as Dictionary).duplicate(true)
 	else:
-		# Legacy world: do not retroactively insert the tutorial.
+		# Legacy world (including old unfinished six-line intros): never
+		# retroactively insert the new multi-stage onboarding. Keep the player's
+		# existing world exactly where it was.
+		tutorial_version = 2
 		tutorial_completed = true
 		tutorial_stage = 0
+		tutorial_flags.clear()
 	if data.has("hotbar"):
 		var arr: Array = data["hotbar"] as Array
 		for i in range(mini(arr.size(), HOTBAR_SIZE)):
@@ -2867,6 +3393,8 @@ func load_game(slot: int) -> void:
 	# not keep the previous world's quests.
 	var saved_missions_version: int = int(data.get("missions_version", 0))
 	reset_missions()
+	bestiary_seen.clear()
+	bestiary_killed.clear()
 	dungeon_chest_states.clear()
 	if data.has("missions"):
 		# v0 = pre-versioning. Unknown/retired ids (e.g. the old wolf mission)
@@ -2892,9 +3420,8 @@ func load_game(slot: int) -> void:
 					break
 		mission_updated.emit()
 	pending_time_of_day = float(data["time_of_day"]) if data.has("time_of_day") else -1.0
-	if data.has("ui_scale"):
-		ui_scale     = float(data["ui_scale"])
-		ui_scale_set = true
+	# `ui_scale` from older saves is deliberately ignored: UI size is now a
+	# live responsive metric and never a per-world preference.
 	if data.has("learned_entries") and data["learned_entries"] is Array:
 		for id in (data["learned_entries"] as Array):
 			if not learned_entries.has(id):
@@ -2905,12 +3432,31 @@ func load_game(slot: int) -> void:
 		for id in (data["unseen_entries"] as Array):
 			if learned_entries.has(id):
 				unseen_entries[id] = true
+	# Bestiary fields are optional: pre-Bestiary saves are valid and simply
+	# start with an empty catalog of observations.
+	if data.has("bestiary_seen") and data["bestiary_seen"] is Array:
+		for id in (data["bestiary_seen"] as Array):
+			var sid: String = str(id).strip_edges()
+			if not sid.is_empty() and BestiaryCatalog.has_entry(sid):
+				bestiary_seen[sid] = true
+	if data.has("bestiary_killed") and data["bestiary_killed"] is Array:
+		for id in (data["bestiary_killed"] as Array):
+			var kid: String = str(id).strip_edges()
+			if not kid.is_empty() and BestiaryCatalog.has_entry(kid):
+				bestiary_killed[kid] = true
+				bestiary_seen[kid] = true
 	_rebuild_learned_keywords()
 	knowledge_updated.emit()
+	bestiary_updated.emit()
 	if data.has("cleared_dungeons") and data["cleared_dungeons"] is Array:
 		for idx in (data["cleared_dungeons"] as Array):
 			if not cleared_dungeons.has(int(idx)):
 				cleared_dungeons[int(idx)] = true
+	if data.has("dungeon_stars") and data["dungeon_stars"] is Array:
+		for entry in (data["dungeon_stars"] as Array):
+			if entry is Dictionary:
+				dungeon_stars[int(entry.get("index", 0))] = clampi(
+					int(entry.get("stars", 3)), 1, 3)
 	if data.has("dungeon_seeds") and data["dungeon_seeds"] is Array:
 		for entry in (data["dungeon_seeds"] as Array):
 			if entry is Dictionary:

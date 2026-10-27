@@ -19,7 +19,7 @@ metadata/_edit_vertical_guides_ = [702.0]
 
 [node name="mainCam" type="Camera2D" parent="." unique_id=2027758664]
 z_index = 5
-zoom = Vector2(2, 2)
+zoom = Vector2(1.9, 1.9)
 
 [node name="PlayerSprite" type="AnimatedSprite2D" parent="." unique_id=2030758558]
 texture_filter = 1
@@ -36,7 +36,7 @@ shape = SubResource("CircleShape2D_0owmy")
 
 [node name="InventoryUI" type="CanvasLayer" parent="." unique_id=866163215]
 process_mode = 3
-layer = 2
+layer = 12
 visible = false
 
 [node name="InventoryUi" parent="InventoryUI" unique_id=762786338 instance=ExtResource("4_lvxji")]

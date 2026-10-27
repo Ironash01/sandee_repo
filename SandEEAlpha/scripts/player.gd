@@ -291,13 +291,20 @@ func _notification(what: int) -> void:
 		_on_window_focus_exited()
 
 func _on_window_focus_exited() -> void:
+	cancel_pending_input()
+	for action in ["gameplay_left", "gameplay_right", "gameplay_up", "gameplay_down"]:
+		if InputMap.has_action(action):
+			Input.action_release(action)
+
+# Called by Global when any interface/menu/pause takes over the screen. Cancels
+# world gestures without releasing the player's still-held keyboard keys; after
+# the panel closes a held key can resume normally, while a lost touch cannot
+# leave a stale tap order or attack latched.
+func cancel_pending_input() -> void:
 	_pnc_cancel()
 	Global.mobile_move  = Vector2.ZERO
 	Global.mobile_shift = false
 	_attack_held = false
-	for action in ["gameplay_left", "gameplay_right", "gameplay_up", "gameplay_down"]:
-		if InputMap.has_action(action):
-			Input.action_release(action)
 	_apply_movement_direction(Vector2.ZERO, false)
 
 func get_input(delta: float = 0.0) -> void:
@@ -317,6 +324,7 @@ func get_input(delta: float = 0.0) -> void:
 	if manual != Vector2.ZERO:
 		_pnc_cancel()
 	var direction: Vector2 = manual
+	var pnc_driving: bool = false
 	# Tap-to-control supplies the SAME direction vector a held WASD key would:
 	# it never drives velocity/physics directly. _pnc_steer only chooses where to
 	# point the shared movement handler below.
@@ -324,7 +332,13 @@ func get_input(delta: float = 0.0) -> void:
 		input_direction = Vector2.ZERO
 		_pnc_steer(delta)
 		direction = input_direction
-	_apply_movement_direction(direction, Global.is_shift_held())
+		pnc_driving = direction != Vector2.ZERO
+	# Optional point-and-click auto-sprint. It only applies while the order is
+	# actually driving movement; direct keyboard/joystick input still needs Shift,
+	# and _apply_movement_direction enforces stamina/exhaustion for both paths.
+	var sprint_held: bool = Global.is_shift_held() \
+		or (pnc_driving and Global.point_and_click_auto_sprint)
+	_apply_movement_direction(direction, sprint_held)
 
 ## The single movement engine for every control scheme. WASD/joystick and
 ## tap-to-control all arrive here with a direction vector, so speed, diagonal
@@ -341,10 +355,8 @@ func _apply_movement_direction(direction: Vector2, sprint_held: bool) -> void:
 # ── Optional point-and-click movement (Global.point_and_click) ──────
 # OFF by default. When ON, a world click/tap issues one move order:
 #   • empty ground            → pathfind there; stop when arrived or
-#   • interactive target      → walk into range, then perform the normal click
-#                               action there (re-dispatched through the existing
-#                               mouse pipeline, so all range/collision rules are
-#                               the game's own);
+#   • interactive target      → walk into one-block range, then open/interact directly
+#                               (no synthetic swing replay);
 #   • hostile/any mob         → chase it and auto-attack until it dies, the
 #                               player clicks elsewhere, or moves manually;
 #   • valid held-item target  → the item acts (rod on water, hoe on grass, …),
@@ -355,12 +367,20 @@ const PNC_ACTION_STOP: float        = 30.0
 const PNC_ATTACK_STOP: float        = 40.0
 const PNC_ATTACK_INTERVAL_MS: int   = 550
 const PNC_STUCK_MS: int             = 1200
-const PNC_MOB_PICK_RADIUS: float    = 30.0
+# Mob taps use the animated sprite's world bounds, not a large origin radius.
+const PNC_MOB_FALLBACK_RADIUS: float = 18.0
 const PNC_SELF_TAP_RADIUS: float    = 44.0
 const PNC_CHOP_STOP: float          = 46.0
 const PNC_CHOP_INTERVAL_MS: int     = 420
 const PNC_CHOP_AMOUNT: float        = 0.45
-const PNC_INTERACT_STOP: float      = 44.0
+const PNC_INTERACT_STOP: float      = 36.0
+# Clickable objects are resolved directly; a plain block is not in this list
+# and keeps its walk-then-hold-to-mine behaviour.
+const PNC_INTERACT_GROUPS: Array[String] = [
+	"Chest", "CraftingStation", "ColorCrafter", "TouchInteractable",
+	"PlainClickBlock", "WorldWaypoint", "DungeonPortal", "CavePortal",
+	"KnowledgeAltar", "QuizAltar", "LuaNPC", "TutorialNPC",
+]
 const PNC_PATH_CELL: float          = 32.0
 const PNC_TREE_BUCKET: float        = 128.0
 const PNC_PATH_RECALC_MS: int       = 800
@@ -373,8 +393,11 @@ const PNC_INDICATOR_SCRIPT: GDScript = preload("res://scripts/pnc_indicator.gd")
 var _pnc_active:           bool    = false
 var _pnc_dest:             Vector2 = Vector2.ZERO
 var _pnc_chase:            Node2D  = null
-var _pnc_pending:          String  = ""   # "", "click", "swing", "chop", "fish"
+var _pnc_chase_id:         int     = 0  # survives as a validity token after free()
+var _pnc_pending:          String  = ""   # "", "click", "interact", "swing", "chop", "fish"
 var _pnc_pending_tree:     Node2D  = null
+var _pnc_interact_target:  Node    = null
+var _pnc_interact_point:   Vector2 = Vector2.INF
 var _pnc_fish_point:       Vector2 = Vector2.ZERO
 var _pnc_chop:             Node2D  = null
 var _pnc_chop_at_ms:       int     = 0
@@ -411,8 +434,13 @@ var _pnc_hold_prev_pos:    Vector2 = Vector2.ZERO
 var _pnc_hold_needs_press: bool    = false
 var _pnc_hold_seq:         int     = 0
 
-func _pnc_node_text(node: Node) -> String:
-	return str(node) if node != null and is_instance_valid(node) else "<none/freed>"
+func _pnc_node_text(node) -> String:
+	# Keep the parameter untyped: a target can be freed between a chase order
+	# and its cleanup. Typing it as Node makes GDScript throw before the
+	# is_instance_valid() guard can run.
+	if node == null or not is_instance_valid(node):
+		return "<none/freed>"
+	return str(node)
 
 func _pnc_cancel() -> void:
 	if _pnc_active:
@@ -424,8 +452,11 @@ func _pnc_cancel() -> void:
 	_pnc_release_hold()
 	_pnc_active       = false
 	_pnc_chase        = null
+	_pnc_chase_id     = 0
 	_pnc_pending      = ""
 	_pnc_pending_tree = null
+	_pnc_interact_target = null
+	_pnc_interact_point  = Vector2.INF
 	_pnc_chop         = null
 	_pnc_path         = PackedVector2Array()
 	_pnc_path_index   = 0
@@ -453,7 +484,10 @@ func _pnc_begin(dest: Vector2, chase: Node2D, pending: String, mode: String) -> 
 	_pnc_release_hold()
 	_pnc_dest     = dest
 	_pnc_chase    = chase
+	_pnc_chase_id = chase.get_instance_id() if chase != null else 0
 	_pnc_pending  = pending
+	_pnc_interact_target = null
+	_pnc_interact_point  = Vector2.INF
 	_pnc_active   = true
 	_pnc_last_pos = global_position
 	_pnc_last_progress_ms = Time.get_ticks_msec()
@@ -641,7 +675,16 @@ func _pnc_release_hold() -> void:
 
 func _pnc_hold_emit(pressed: bool, at: Vector2 = Vector2.INF) -> void:
 	var pos: Vector2 = _pnc_hold_pos if at == Vector2.INF else at
-	var screen: Vector2 = get_viewport().get_canvas_transform() * pos
+	# This can run from a deferred release while the player is being removed for
+	# a world transition (for example entering the guided dungeon). In that gap
+	# get_viewport() is null; just drop the stale synthetic event instead of
+	# crashing the scene swap.
+	var vp := get_viewport()
+	if vp == null or not is_inside_tree():
+		_pnc_hold_click = false
+		Global.pnc_hold_active = false
+		return
+	var screen: Vector2 = vp.get_canvas_transform() * pos
 	_pnc_dispatching = true
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
@@ -650,7 +693,11 @@ func _pnc_hold_emit(pressed: bool, at: Vector2 = Vector2.INF) -> void:
 	ev.global_position = screen
 	ev.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
 	ev.set_meta("pnc_synthetic", true)
-	Input.parse_input_event(ev)
+	# push_input(..., true) means "this position is already in viewport
+	# coordinates". Input.parse_input_event() treats positions as WINDOW
+	# coordinates instead; on Android (canvas_items stretch) that scaled the
+	# synthetic press away from the block, so PNC walked to it but never mined.
+	vp.push_input(ev, true)
 	_pnc_dispatching = false
 
 func _pnc_emit_release_if_current(seq: int, at: Vector2) -> void:
@@ -664,8 +711,11 @@ func _pnc_begin_hold(world_pos: Vector2) -> void:
 	_pnc_active = true
 	_pnc_dest = world_pos
 	_pnc_chase = null
+	_pnc_chase_id = 0
 	_pnc_pending = ""
 	_pnc_pending_tree = null
+	_pnc_interact_target = null
+	_pnc_interact_point  = Vector2.INF
 	_pnc_chop = null
 	_pnc_path = PackedVector2Array()
 	_pnc_path_index = 0
@@ -715,14 +765,30 @@ func _pnc_handle_click(world_pos: Vector2) -> bool:
 			_pnc_pending_tree = tree
 			_pnc_begin(tree.global_position, null, "chop", "act")
 		return true
+	# Self-food taps keep priority over nearby interactables (for example a
+	# non-solid bonfire under the player). Clicking a distant chest with food
+	# still resolves to the chest below.
+	if _pnc_held_food_self_tap(world_pos) and _pnc_try_item_use(world_pos):
+		_pnc_marker_pulse(world_pos, "act")
+		_pnc_cancel()
+		return true
+	# Real interactables (chests, stations, furnaces, doors, altars, portals,
+	# guides, waypoints) walk to ONE BLOCK of the object's own origin and then
+	# invoke its interaction directly. Replaying a left-click here used to make
+	# the player swing forever after arrival, and tapping a tall sprite could
+	# stop outside the object's actual interact radius.
+	var interact_target := _pnc_interact_target_at(world_pos)
+	if interact_target != null:
+		_pnc_start_interact(interact_target, world_pos)
+		return true
 	# Held-item actions that target a tile (rod/hoe/bucket/water) act when valid;
 	# food is eaten only when tapping yourself, so it can't block walking.
 	if _pnc_try_item_use(world_pos):
 		_pnc_marker_pulse(world_pos, "act")
 		_pnc_cancel()
 		return true
-	# Solid/interactive objects win over grass (a chest on a grass tile must
-	# open, not start a swing).
+	# Solid non-interactable objects (ordinary placed blocks / torches) keep
+	# the old walk-then-hold behaviour so mining and demolition still work.
 	if _pnc_point_has_target(world_pos):
 		if global_position.distance_to(world_pos) <= PNC_INTERACT_STOP:
 			_pnc_begin_hold(world_pos)
@@ -771,8 +837,12 @@ func _pnc_steer(_delta: float) -> void:
 		input_direction = Vector2.ZERO
 		_pnc_face(_pnc_hold_pos)
 		return
-	if _pnc_chase != null:
-		if not _pnc_mob_alive(_pnc_chase):
+	if _pnc_chase_id != 0:
+		# A dying mob can be freed while it is still the stored chase target.
+		# The id token distinguishes "no chase" from "freed chase" because a
+		# freed Object compares equal to null in GDScript.
+		if not is_instance_valid(_pnc_chase) or _pnc_chase.is_queued_for_deletion() \
+				or not _pnc_mob_alive(_pnc_chase):
 			_pnc_cancel()
 			return
 		_pnc_dest = _pnc_chase.global_position
@@ -804,9 +874,18 @@ func _pnc_steer(_delta: float) -> void:
 		if global_position.distance_to(_pnc_dest) <= PNC_CHOP_STOP:
 			_pnc_arrive()
 			return
-	elif _pnc_pending == "interact" and not _pnc_point_has_target(_pnc_dest):
-		_pnc_cancel()
-		return
+	elif _pnc_pending == "interact":
+		if _pnc_interact_target != null:
+			if not is_instance_valid(_pnc_interact_target) \
+					or (_pnc_interact_target is Node2D and not (_pnc_interact_target as Node2D).is_visible_in_tree()):
+				_pnc_cancel()
+				return
+		elif not _pnc_point_has_target(_pnc_dest):
+			_pnc_cancel()
+			return
+		if global_position.distance_to(_pnc_dest) <= PNC_INTERACT_STOP:
+			_pnc_arrive()
+			return
 	else:
 		var arrive_stop := _pnc_stop_for_pending(_pnc_pending)
 		if global_position.distance_to(_pnc_dest) <= arrive_stop:
@@ -830,10 +909,22 @@ func _pnc_arrive() -> void:
 	_pnc_active  = false
 	_pnc_pending = ""
 	_pnc_chase   = null
+	_pnc_chase_id = 0
 	if _pnc_marker != null:
 		_pnc_marker.call("hide_marker")
 	if pending == "interact":
-		_pnc_begin_hold(at)
+		var interact_target: Node = _pnc_interact_target
+		var interact_point: Vector2 = _pnc_interact_point
+		_pnc_interact_target = null
+		_pnc_interact_point = Vector2.INF
+		if interact_point != Vector2.INF:
+			# Direct object order. If it vanished mid-walk, do nothing rather
+			# than mining whatever happens to be at its old anchor.
+			if interact_target != null and is_instance_valid(interact_target):
+				_pnc_interact_with(interact_target, interact_point)
+		else:
+			# Unknown solid point: retain the old block-mining replay.
+			_pnc_begin_hold(at)
 	elif pending == "click":
 		_pnc_dispatch_click(at)
 	elif pending == "swing":
@@ -975,6 +1066,7 @@ func _pnc_begin_chop(tree: Node2D) -> void:
 	_pnc_dest         = tree.global_position
 	_pnc_pending      = ""
 	_pnc_chase        = null
+	_pnc_chase_id     = 0
 	_pnc_pending_tree = null
 	_pnc_chop         = tree
 	if tree.has_method("set_pnc_auto_chop"):
@@ -1076,7 +1168,10 @@ func _pnc_dispatch_click(world_pos: Vector2) -> void:
 		ev.global_position = screen
 		ev.button_mask     = MOUSE_BUTTON_MASK_LEFT if pressed else 0
 		ev.set_meta("pnc_synthetic", true)
-		Input.parse_input_event(ev)
+		# Viewport-local coordinates, matching _pnc_hold_emit (see the stretch
+		# explanation there). Input.parse_input_event treats these as window
+		# coordinates and misplaces every synthetic click on Android.
+		get_viewport().push_input(ev, true)
 	_pnc_dispatching = false
 	Global.restore_mouse_override(prev_active, prev_pos)
 
@@ -1142,7 +1237,9 @@ func _pnc_check_stuck() -> void:
 			Global.notify("Can't reach that target.")
 		_pnc_cancel()
 
-func _pnc_mob_alive(m: Node2D) -> bool:
+func _pnc_mob_alive(m) -> bool:
+	# Untyped for the same reason as _pnc_node_text: a freed target is a normal
+	# race after an attack, not an error.
 	if m == null or not is_instance_valid(m):
 		return false
 	for prop in ["health", "hp", "_mob_health"]:
@@ -1153,23 +1250,43 @@ func _pnc_mob_alive(m: Node2D) -> bool:
 
 func _pnc_mob_near(world_pos: Vector2) -> Node2D:
 	var best: Node2D = null
-	var best_d: float = PNC_MOB_PICK_RADIUS
+	var best_d: float = INF
 	var seen: Dictionary = {}
 	# Sheep are their own group rather than "Mob", but they are legitimate
 	# point-and-click targets. Include both groups and de-duplicate.
 	for group_name in ["Mob", "Sheep"]:
 		for n in get_tree().get_nodes_in_group(group_name):
-			if seen.has(n):
+			if seen.has(n) or not is_instance_valid(n) or not (n is Node2D):
 				continue
 			seen[n] = true
 			var m := n as Node2D
 			if not _pnc_mob_alive(m):
 				continue
-			var d: float = m.global_position.distance_to(world_pos)
+			if not _pnc_mob_click_rect(m).has_point(world_pos):
+				continue
+			var d: float = m.global_position.distance_squared_to(world_pos)
 			if d <= best_d:
 				best_d = d
 				best = m
 	return best
+
+## Precise mob click bounds. The old 30px origin radius made taps on nearby
+## walkable ground attack the mob instead. Prefer the animated sprite's actual
+## world rectangle (so head/feet clicks still work) and use a small fallback
+## only for unusual mob nodes without a sprite.
+func _pnc_mob_click_rect(m: Node2D) -> Rect2:
+	var sprite := m.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+	if sprite != null and sprite.sprite_frames != null:
+		var tex: Texture2D = sprite.sprite_frames.get_frame_texture(
+			sprite.animation, sprite.frame)
+		if tex != null:
+			var sprite_scale := Vector2(absf(sprite.scale.x), absf(sprite.scale.y))
+			var size := tex.get_size() * sprite_scale
+			var center := m.global_position + sprite.position + sprite.offset
+			return Rect2(center - size * 0.5, size).grow(5.0)
+	return Rect2(
+		m.global_position - Vector2(PNC_MOB_FALLBACK_RADIUS, PNC_MOB_FALLBACK_RADIUS),
+		Vector2(PNC_MOB_FALLBACK_RADIUS, PNC_MOB_FALLBACK_RADIUS) * 2.0)
 
 # True when something solid/interactive sits under the point (block, tree,
 # station, chest, furnace, portal…). Empty walkable ground returns false.
@@ -1209,6 +1326,170 @@ func _pnc_point_has_target(world_pos: Vector2) -> bool:
 			if data is ItemData and not (data as ItemData).is_floor:
 				return true
 	return false
+
+# Find an actual clickable object under the tap. Unlike _pnc_point_has_target()
+# this returns the owning node, so PNC can walk to its origin and invoke the
+# correct interaction instead of replaying a left-click that swings the item.
+func _pnc_held_food_self_tap(world_pos: Vector2) -> bool:
+	var held: Variant = Global.get_hotbar_item()
+	if held == null:
+		return false
+	var data: ItemData = (held as Dictionary).get("data") as ItemData
+	return data != null and data.heal_amount > 0.0 \
+			and global_position.distance_to(world_pos) <= PNC_SELF_TAP_RADIUS
+
+func _pnc_interact_target_at(world_pos: Vector2) -> Node2D:
+	var tree := get_tree()
+	if tree == null:
+		return null
+	for group_name in PNC_INTERACT_GROUPS:
+		for value in tree.get_nodes_in_group(group_name):
+			if _pnc_interact_contains(value, world_pos):
+				return value as Node2D
+	return null
+
+func _pnc_interact_contains(value: Variant, world_pos: Vector2) -> bool:
+	if value == null or not is_instance_valid(value) or not (value is Node2D):
+		return false
+	var node := value as Node2D
+	if not node.is_visible_in_tree():
+		return false
+	# Chests, stations and ObjectItem machines provide their own sprite test.
+	if node.has_method("_cursor_over"):
+		return bool(node.call("_cursor_over", world_pos))
+	if node.is_in_group("WorldWaypoint"):
+		return _pnc_local_rect_contains(node, _pnc_script_rect(node, "CLICK_RECT"), world_pos)
+	if node.is_in_group("DungeonPortal"):
+		return _pnc_local_rect_contains(node, _pnc_script_rect(node, "DOOR_HITBOX"), world_pos)
+	if node.is_in_group("CavePortal"):
+		var cave_rect: Variant = node.get("interact_rect")
+		if cave_rect is Rect2:
+			var cr := cave_rect as Rect2
+			return cr.size != Vector2.ZERO and cr.has_point(world_pos)
+		return false
+	if node.is_in_group("KnowledgeAltar") or node.is_in_group("QuizAltar"):
+		return node.global_position.distance_to(world_pos) <= 32.0
+	if node.is_in_group("LuaNPC"):
+		var robot: Variant = node.get("_robot")
+		var centre: Vector2 = (robot as Node2D).global_position \
+				if robot is Node2D else node.global_position
+		# The station's ClickArea is centred on the node, while the robot can
+		# stand a tile below it; accept either valid click surface.
+		return node.global_position.distance_to(world_pos) <= 32.0 \
+				or centre.distance_to(world_pos) <= 48.0
+	if node.is_in_group("TutorialNPC"):
+		# Match tutorial_npc.gd's own click rectangle (sprite + name area).
+		var local := node.to_local(world_pos)
+		return absf(local.x) <= 34.0 and local.y <= 18.0 and local.y >= -76.0
+	# Doors, bonfires and Color Crafters expose only a sprite.
+	return _pnc_sprite_contains(node, world_pos)
+
+func _pnc_script_rect(node: Node, key: String) -> Rect2:
+	var node_script: Script = node.get_script() as Script
+	if node_script == null:
+		return Rect2()
+	var constants: Dictionary = node_script.get_script_constant_map()
+	var value: Variant = constants.get(key)
+	return value as Rect2 if value is Rect2 else Rect2()
+
+func _pnc_local_rect_contains(node: Node2D, rect: Rect2, world_pos: Vector2) -> bool:
+	return rect.size != Vector2.ZERO and rect.has_point(node.to_local(world_pos))
+
+func _pnc_sprite_contains(node: Node2D, world_pos: Vector2) -> bool:
+	var sprite_value: Variant = node.get("_sprite")
+	if not (sprite_value is Sprite2D):
+		return false
+	var sprite := sprite_value as Sprite2D
+	if sprite.texture == null:
+		return false
+	var local_rect := sprite.get_rect()
+	var xf := sprite.global_transform
+	var a: Vector2 = xf * local_rect.position
+	var b: Vector2 = xf * (local_rect.position + local_rect.size)
+	var bounds := Rect2(
+		Vector2(minf(a.x, b.x), minf(a.y, b.y)),
+		Vector2(absf(b.x - a.x), absf(b.y - a.y))).grow(2.0)
+	return bounds.has_point(world_pos)
+
+func _pnc_start_interact(target: Node2D, world_pos: Vector2) -> void:
+	var anchor: Vector2 = _pnc_interact_anchor(target)
+	_pnc_interact_target = target
+	_pnc_interact_point = world_pos
+	if global_position.distance_to(anchor) <= PNC_INTERACT_STOP:
+		_pnc_interact_target = null
+		_pnc_interact_point = Vector2.INF
+		_pnc_face(anchor)
+		_pnc_marker_pulse(world_pos, "act")
+		_pnc_interact_with(target, world_pos)
+		return
+	_pnc_begin(anchor, null, "interact", "act")
+	# _pnc_begin clears any previous target; restore this order's target.
+	_pnc_interact_target = target
+	_pnc_interact_point = world_pos
+
+func _pnc_interact_anchor(target: Node2D) -> Vector2:
+	# Large facades need a walkable approach point, not the collider centre.
+	if target.is_in_group("WorldWaypoint"):
+		return target.global_position + Vector2(0.0, 48.0)
+	if target.is_in_group("CavePortal"):
+		var door: Variant = target.get("door_rect")
+		if door is Rect2:
+			var door_rect := door as Rect2
+			if door_rect.size != Vector2.ZERO:
+				return door_rect.get_center()
+	return target.global_position
+
+func _pnc_interact_with(target: Node, at: Vector2) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	if target is Node2D:
+		_pnc_face((target as Node2D).global_position)
+	# Machines/chests: their own autoplay API also respects proximity/UI state.
+	if target.has_method("open_from_touch") and bool(target.call("open_from_touch")):
+		return true
+	# Plain-click blocks (doors and bonfires).
+	if target.has_method("has_plain_click") \
+			and bool(target.call("has_plain_click")) \
+			and target.has_method("on_plain_click"):
+		target.call("on_plain_click")
+		return true
+	if target.is_in_group("ColorCrafter") and target.has_method("_open_menu"):
+		target.call("_open_menu")
+		return true
+	if target.is_in_group("WorldWaypoint") and target.has_method("_open_map"):
+		target.call("_open_map")
+		return true
+	if target.has_method("_show_confirm"):
+		target.call("_show_confirm")
+		return true
+	if target.is_in_group("KnowledgeAltar") and target.has_method("_show"):
+		target.call("_show")
+		return true
+	if target.is_in_group("QuizAltar") and target.has_method("_start_quiz"):
+		target.call("_start_quiz")
+		return true
+	if target.is_in_group("LuaNPC"):
+		var lua_ui: Variant = target.get("_lua_ui")
+		if lua_ui != null and is_instance_valid(lua_ui) and (lua_ui as Node).has_method("open_editor"):
+			lua_ui.call("open_editor")
+			return true
+	if target.is_in_group("TutorialNPC"):
+		var guide: Variant = target.get("guide")
+		if guide != null and is_instance_valid(guide) and (guide as Node).has_method("request_dialogue"):
+			guide.call("request_dialogue")
+			return true
+	# Direct fallbacks for older panels or a stale proximity area after walking.
+	if target.is_in_group("Chest") and target.has_method("_open_chest_ui"):
+		target.call("_open_chest_ui")
+		return true
+	var ui: Variant = target.get("_ui")
+	if ui != null and is_instance_valid(ui) and (ui as Node).has_method("open_as_station"):
+		ui.call("open_as_station")
+		return true
+	# Last resort only: replay a click for an unexpected custom interactable.
+	# Player._input ignores pnc_synthetic, so this cannot trigger a swing.
+	_pnc_dispatch_click(at)
+	return true
 
 # Held-item actions. Food only counts when tapping near yourself; rod/hoe/
 # bucket calls fall through to the existing validators, which return false on
@@ -1824,6 +2105,11 @@ func _mouse_event_world(event: InputEventMouse) -> Vector2:
 	return vp.get_canvas_transform().affine_inverse() * event.position
 
 func _input(event: InputEvent) -> void:
+	# PNC replays target interactions through the normal event pipeline, but the
+	# player must NOT also swing/use/eat from that synthetic press. The target
+	# node receives the same event and performs its own action.
+	if event.has_meta("pnc_synthetic"):
+		return
 	# Any real tap/click outside the hotbar releases an active PNC mining lock.
 	# A hotbar tap is an item switch instead: the lock stays alive and the block
 	# or tree restarts its break bar with the newly selected tool. Synthetic

@@ -111,7 +111,7 @@ func _add_section(text: String) -> void:
 	var s: float = Global.ui_scale
 	var lbl := Label.new()
 	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", int(11 * s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	lbl.add_theme_color_override("font_color", C_SECTION)
 	lbl.add_theme_constant_override("line_spacing", int(1 * s))
 	_rows_vbox.add_child(lbl)
@@ -183,8 +183,8 @@ func _active_gameplay() -> Array:
 # ── Add a dungeon mission row ──────────────────────────────────────
 # Informational only — there is no accept/Go step anymore. Each language's
 # current dungeon entrance is already standing in the world (see world.gd's
-# _ensure_current_dungeon_entrances), so the row shows progress: a star for
-# the mission and a second star for clearing the dungeon.
+# _ensure_current_dungeon_entrances). Every dungeon has THREE blue-star slots:
+# three for a no-hint clear, two for one hint, one for two or more hints.
 func _add_dungeon_row(m: Dictionary) -> void:
 	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
@@ -192,15 +192,16 @@ func _add_dungeon_row(m: Dictionary) -> void:
 	_rows_vbox.add_child(row)
 
 	var d_idx: int = int(m.get("dungeon_index", 0))
-	var cleared: bool = d_idx > 0 and Global.is_dungeon_cleared(d_idx)
-
-	var star_text: String = ("★" if m["completed"] else "☆") + ("★" if cleared else "☆")
+	var earned: int = Global.dungeon_stars_for(d_idx) if d_idx > 0 else 0
+	var star_text: String = ""
+	for i in range(3):
+		star_text += "★" if i < earned else "☆"
 	var star := Label.new()
 	star.text = star_text
-	star.add_theme_font_size_override("font_size", int(14 * s))
+	star.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	star.add_theme_color_override("font_color",
-			C_STAR if (m["completed"] or cleared) else C_MUTED)
-	star.custom_minimum_size = Vector2(int(24 * s), 0)
+			C_STAR if earned > 0 else C_MUTED)
+	star.custom_minimum_size = Vector2(int(48 * s), 0)
 	row.add_child(star)
 
 	var lbl := Label.new()
@@ -208,7 +209,7 @@ func _add_dungeon_row(m: Dictionary) -> void:
 	if d_idx > 0:
 		m_title += " — " + Global.dungeon_difficulty(d_idx)
 	lbl.text = m_title
-	lbl.add_theme_font_size_override("font_size", int(12 * s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	lbl.add_theme_color_override("font_color", C_ACTIVE)
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(lbl)
@@ -224,7 +225,7 @@ func _add_gameplay_row(m: Dictionary) -> void:
 
 	var star := Label.new()
 	star.text = "★" if m["completed"] else "☆"
-	star.add_theme_font_size_override("font_size", int(14 * s))
+	star.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	star.add_theme_color_override("font_color",
 			C_STAR if m["completed"] else C_MUTED)
 	star.custom_minimum_size = Vector2(int(24 * s), 0)
@@ -236,7 +237,7 @@ func _add_gameplay_row(m: Dictionary) -> void:
 	if goal > 1 and not m["completed"]:
 		title += "  (%d/%d)" % [int(m.get("progress", 0)), goal]
 	lbl.text = title
-	lbl.add_theme_font_size_override("font_size", int(12 * s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	lbl.add_theme_color_override("font_color",
 			C_DONE if m["completed"] else C_ACTIVE)
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -337,7 +338,7 @@ func _refresh_star_header() -> void:
 		# Worlds created before 0.9.3.0 still show their local stars but never
 		# contribute to the account/leaderboard totals.
 		suffix.text = "legacy · not ranked"
-	suffix.add_theme_font_size_override("font_size", int(9 * s))
+	suffix.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	suffix.add_theme_color_override("font_color", C_MUTED)
 	_stars_row.add_child(suffix)
 
@@ -345,7 +346,7 @@ func _refresh_star_header() -> void:
 	if cloud and eligible:
 		var world_lbl := Label.new()
 		world_lbl.text = "this world"
-		world_lbl.add_theme_font_size_override("font_size", int(9 * s))
+		world_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 		world_lbl.add_theme_color_override("font_color", C_MUTED)
 		_world_row.add_child(world_lbl)
 		_world_row.add_child(_star_chip(StarIcon.BLUE, Global.local_blue_stars(), s, 11.0))
@@ -360,7 +361,7 @@ func _star_chip(color: Color, value: int, s: float, icon_px: float) -> HBoxConta
 	icon.setup(color, icon_px * s)
 	var label := Label.new()
 	label.text = str(value)
-	label.add_theme_font_size_override("font_size", int(12 * s))
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	label.add_theme_color_override("font_color", C_TITLE)
 	chip.add_child(label)
 	return chip
@@ -385,7 +386,14 @@ func _refit() -> void:
 		return
 	var s: float = Global.ui_scale
 	var vp_w := get_viewport_rect().size.x
-	_panel.position = Vector2(vp_w - PANEL_WIDTH * s - RIGHT_MARGIN * s, TOP_OFFSET * s)
+	var right := Global.ui_safe_insets.z + RIGHT_MARGIN * s
+	var top := Global.ui_safe_insets.y + TOP_OFFSET * s
+	# Stay clear of the top-right pause button. A fixed offset stopped being
+	# enough once the responsive UI scale began growing the button's height;
+	# start one small gap below its real bottom edge instead.
+	if Global.ui_pause_bottom > 0.0:
+		top = maxf(top, Global.ui_pause_bottom + 4.0 * s)
+	_panel.position = Vector2(maxf(0.0, vp_w - PANEL_WIDTH * s - right), top)
 	_panel.size = _panel.get_combined_minimum_size()
 
 func _input(event: InputEvent) -> void:

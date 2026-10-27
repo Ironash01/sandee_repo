@@ -107,6 +107,7 @@ func open_as_station() -> void:
 func show_menu() -> void:
 	visible = true
 	Global.open_ui()
+	Global.modal_hud_changed.emit(true)
 	Global.register_ui_back(self, Callable(self, "dismiss_back"))
 
 # Escape/Back leaves Algorithmica first, then closes the furnace itself.
@@ -126,6 +127,7 @@ func hide_menu() -> void:
 	visible = false
 	Global.unregister_ui_back(self)
 	Global.close_ui()
+	Global.modal_hud_changed.emit(false)
 
 # ── Recipe loading ─────────────────────────────────────────────────
 func _load_recipes() -> void:
@@ -166,7 +168,7 @@ func _build_ui() -> void:
 	add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(int(680 * s), int(420 * s))
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(680, 420))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(2); ps.set_corner_radius_all(8)
@@ -185,14 +187,14 @@ func _build_ui() -> void:
 	vbox.add_child(header)
 	var title := Label.new()
 	title.text = "🔥  Furnace"
-	title.add_theme_font_size_override("font_size", int(18 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(18))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	var prog_btn := Button.new()
 	prog_btn.text = "🐍 ALGORITHMICA"
 	prog_btn.tooltip_text = "Algorithmica — write Python that automates this furnace and imbues regular items with automation."
-	prog_btn.add_theme_font_size_override("font_size", int(12 * s))
+	prog_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	prog_btn.add_theme_color_override("font_color", C_TITLE)
 	var pbs := StyleBoxFlat.new(); pbs.bg_color = C_SMELT; pbs.border_color = C_BORDER
 	pbs.set_border_width_all(1); pbs.set_corner_radius_all(4)
@@ -205,7 +207,7 @@ func _build_ui() -> void:
 	close_btn.text = "✕"; close_btn.flat = true
 	close_btn.tooltip_text = "Close the furnace."
 	close_btn.add_theme_color_override("font_color", C_MUTED)
-	close_btn.add_theme_font_size_override("font_size", int(13 * s))
+	close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	close_btn.pressed.connect(hide_menu)
 	header.add_child(close_btn)
 
@@ -226,7 +228,7 @@ func _build_ui() -> void:
 
 	var inv_lbl := Label.new()
 	inv_lbl.text = "INVENTORY — drag items into the furnace slots"
-	inv_lbl.add_theme_font_size_override("font_size", int(11 * s))
+	inv_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	inv_lbl.add_theme_color_override("font_color", C_MUTED)
 	inv_col.add_child(inv_lbl)
 
@@ -300,7 +302,7 @@ func _build_ui() -> void:
 	arrow_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
 	arrow_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	arrow_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	arrow_lbl.add_theme_font_size_override("font_size", int(18 * s))
+	arrow_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(18))
 	arrow_lbl.add_theme_color_override("font_color", C_TITLE)
 	arrow_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	arrow.add_child(arrow_lbl)
@@ -312,7 +314,7 @@ func _build_ui() -> void:
 
 	_timer_label = Label.new()
 	_timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_timer_label.add_theme_font_size_override("font_size", int(11 * s))
+	_timer_label.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_timer_label.add_theme_color_override("font_color", C_MUTED)
 	fvbox.add_child(_timer_label)
 
@@ -320,7 +322,7 @@ func _build_ui() -> void:
 	_smelt_btn.text = "SMELT"
 	_smelt_btn.custom_minimum_size = Vector2(int(140 * s), int(36 * s))
 	_smelt_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_smelt_btn.add_theme_font_size_override("font_size", int(13 * s))
+	_smelt_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_SMELT; sb.border_color = C_BORDER
 	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
@@ -333,7 +335,7 @@ func _build_ui() -> void:
 
 	_hint_label = Label.new()
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_hint_label.add_theme_font_size_override("font_size", int(10 * s))
+	_hint_label.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	_hint_label.add_theme_color_override("font_color", C_MUTED)
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_label.custom_minimum_size = Vector2(int(200 * s), 0)

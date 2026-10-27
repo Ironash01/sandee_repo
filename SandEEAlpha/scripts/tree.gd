@@ -62,6 +62,8 @@ var _last_hit_ms:    int   = -1
 @onready var _interact: Area2D   = $InteractArea
 
 func _ready() -> void:
+	if not Global.gameplay_input_cancelled.is_connected(_on_gameplay_input_cancelled):
+		Global.gameplay_input_cancelled.connect(_on_gameplay_input_cancelled)
 	set_process(false)
 	_interact.body_entered.connect(_on_body_entered)
 	_interact.body_exited.connect(_on_body_exited)
@@ -76,6 +78,10 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if not _player_nearby:
 		return
+	# A release delivered to a newly opened interface never reaches this pausable
+	# node; clear the held flag on the next unpaused tick before chopping again.
+	if _mouse_held and not Global.is_left_action_held():
+		_mouse_held = false
 	_update_hover()
 	_tick_progress_expiry()
 	_sync_break_tool()
@@ -88,10 +94,13 @@ func _process(delta: float) -> void:
 	_add_break_progress(delta)
 
 func _update_hover() -> void:
+	_update_hover_at(Global.mouse_world(self))
+
+func _update_hover_at(world_pos: Vector2) -> void:
 	if _sprite.texture == null:
 		_hovered = false
 		return
-	var mouse_local: Vector2 = to_local(Global.mouse_world(self))
+	var mouse_local: Vector2 = to_local(world_pos)
 	# Hover box matches the sprite's actual frame bounds, centred on the
 	# sprite's VISUAL centre. The canopy is drawn upward via Sprite2D.offset
 	# (sprite.position stays at the trunk base so the y-sort anchors there),
@@ -123,6 +132,11 @@ func _input(event: InputEvent) -> void:
 		return
 	if not _player_nearby or Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
 		return
+	# Touch has no persistent hover pass before the tap; resolve the trunk hit
+	# from this event's own position instead of last frame's touch cursor.
+	if event is InputEventMouseButton \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		_update_hover_at(Global.mouse_event_world(self, event))
 	if not _hovered:
 		if _breaking:
 			_cancel_breaking()
@@ -317,3 +331,8 @@ func _on_body_exited(body: Node) -> void:
 		_mouse_held    = false
 		_cancel_breaking()
 		set_process(false)
+
+func _on_gameplay_input_cancelled() -> void:
+	_mouse_held = false
+	if _breaking:
+		_cancel_breaking()

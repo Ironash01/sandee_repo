@@ -30,6 +30,8 @@ var item_data:      ItemData = null
 @onready var _interact: Area2D   = $InteractArea
 
 func _ready() -> void:
+	if not Global.gameplay_input_cancelled.is_connected(_on_gameplay_input_cancelled):
+		Global.gameplay_input_cancelled.connect(_on_gameplay_input_cancelled)
 	slots.resize(MAX_SLOTS)
 	add_to_group("Chest")
 	add_to_group("TouchInteractable")
@@ -127,7 +129,7 @@ func _input(event: InputEvent) -> void:
 	# chest/station within the interact radius consumed the same click, so
 	# clicking a crafting station could open a chest instead — and two panels
 	# opening together left the tree paused with nothing on screen.
-	if not _cursor_over(): return
+	if not _cursor_over(Global.mouse_event_world(self, event)): return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		# Shift + left-click: mine the chest off the wall (respects pickaxe
 		# tier + block_level break time) instead of toggling its UI.
@@ -146,7 +148,7 @@ func _input(event: InputEvent) -> void:
 
 # True when the cursor is over THIS chest's sprite (same guard the furnace and
 # crafting station use — see crafting_station_object.gd:_cursor_over).
-func _cursor_over() -> bool:
+func _cursor_over(at: Vector2 = Vector2.INF) -> bool:
 	if _sprite == null or _sprite.texture == null:
 		return true
 	var r: Rect2 = _sprite.get_rect()
@@ -155,7 +157,7 @@ func _cursor_over() -> bool:
 	var b: Vector2 = gt * (r.position + r.size)
 	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
 	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
-	var m: Vector2 = Global.mouse_world(self)
+	var m: Vector2 = Global.mouse_world(self) if at == Vector2.INF else at
 	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
 
 # ── Docking into the player's inventory panel ─────────────────────
@@ -468,3 +470,7 @@ func _do_break() -> void:
 			(drop as Node2D).global_position = global_position + Vector2(0, -16)
 	notify_contents_changed()
 	queue_free()
+
+func _on_gameplay_input_cancelled() -> void:
+	if _breaking:
+		_cancel_breaking()

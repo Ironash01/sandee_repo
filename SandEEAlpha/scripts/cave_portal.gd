@@ -177,7 +177,7 @@ func _ready() -> void:
 	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
 		Global.ui_scale_changed.connect(_on_ui_scale)
 
-# Rebuild the confirm dialog at the new scale (when open) so a Small/Medium/
+# Rebuild the confirm dialog at the new scale (when open) so a responsive scale/
 # Large change applies live rather than only on the next approach.
 func _on_ui_scale(_s: float) -> void:
 	if _confirm_ui == null:
@@ -238,7 +238,7 @@ func _draw() -> void:
 		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), COLOR_ENTER)
 		draw_rect(Rect2(-half, -half, TILE_SIZE, TILE_SIZE), Color(0, 0, 0, 0.6), false, 2.0 * s)
 		var font: Font  = ThemeDB.fallback_font
-		var fsize: int  = int(8 * s)
+		var fsize: int  = Global.ui_font_size(8)
 		var text_size: Vector2 = font.get_string_size(_label_text, HORIZONTAL_ALIGNMENT_CENTER, -1, fsize)
 		draw_string(font, Vector2(-text_size.x / 2.0, fsize / 2.0), _label_text,
 			HORIZONTAL_ALIGNMENT_CENTER, -1, fsize, Color.WHITE)
@@ -297,14 +297,15 @@ func _input(event: InputEvent) -> void:
 	if _confirm_ui != null and _confirm_ui.visible:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if _click_is_on_entrance():
+		if _click_is_on_entrance(event):
 			_show_confirm()
 
 # True when the click landed anywhere on the entrance structure.
-func _click_is_on_entrance() -> bool:
+func _click_is_on_entrance(event: InputEvent = null) -> bool:
 	if interact_rect.size == Vector2.ZERO:
 		return false
-	return interact_rect.has_point(Global.mouse_world(self))
+	var at: Vector2 = Global.mouse_world(self) if event == null else Global.mouse_event_world(self, event)
+	return interact_rect.has_point(at)
 
 func _on_body_entered(body: Node) -> void:
 	if not body.is_in_group("Player"):
@@ -428,6 +429,7 @@ func _build_confirm_ui() -> void:
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	_confirm_ui.add_child(center)
 
 	var panel := PanelContainer.new()
@@ -449,11 +451,11 @@ func _build_confirm_ui() -> void:
 	vbox.add_child(header)
 	var icon_lbl := Label.new()
 	icon_lbl.text = "⛰"
-	icon_lbl.add_theme_font_size_override("font_size", int(20 * s))
+	icon_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	header.add_child(icon_lbl)
 	var title := Label.new()
 	title.text = "Large Cave Entrance"
-	title.add_theme_font_size_override("font_size", int(14 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
@@ -464,7 +466,7 @@ func _build_confirm_ui() -> void:
 
 	var hint := Label.new()
 	hint.text = "Enter the cave?"
-	hint.add_theme_font_size_override("font_size", int(12 * s))
+	hint.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	hint.add_theme_color_override("font_color", C_MUTED)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(hint)
@@ -477,7 +479,7 @@ func _build_confirm_ui() -> void:
 	var enter_btn := Button.new()
 	enter_btn.text = "  Enter  "
 	enter_btn.custom_minimum_size = Vector2(int(120 * s), int(36 * s))
-	enter_btn.add_theme_font_size_override("font_size", int(13 * s))
+	enter_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_ENTER; es.border_color = C_BORDER
 	es.set_border_width_all(int(1 * s)); es.set_corner_radius_all(int(4 * s))
@@ -491,7 +493,7 @@ func _build_confirm_ui() -> void:
 	var cancel_btn := Button.new()
 	cancel_btn.text = "  Cancel  "
 	cancel_btn.custom_minimum_size = Vector2(int(100 * s), int(36 * s))
-	cancel_btn.add_theme_font_size_override("font_size", int(13 * s))
+	cancel_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var cs := StyleBoxFlat.new()
 	cs.bg_color = C_CANCEL; cs.border_color = C_BORDER
 	cs.set_border_width_all(int(1 * s)); cs.set_corner_radius_all(int(4 * s))

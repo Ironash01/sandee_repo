@@ -167,6 +167,48 @@ func generate_boss(seed_value: int) -> void:
 	_carve_mouth()
 
 
+# Deterministic first-dungeon tutorial: exactly TWO simple rooms joined by one
+# wide corridor. Room 1 holds the player spawn and Knowledge Altar; room 2 holds
+# the Quiz Altar. No bonus rooms, chests, enemies (hitmen/guards), traps, flares,
+# or safe-zone markers are generated.
+func generate_tutorial(_seed_value: int) -> void:
+	width = 48
+	height = 32
+	bonus_count = 0
+	bonus_rooms = []
+	rare_chest_positions = []
+	flare_positions = []
+	trap_positions = []
+	gap_positions = []
+	quiz_guard_positions = []
+	quiz_trap_positions = []
+	boss_room = {}
+	boss_spawn_pos = Vector2i.ZERO
+
+	grid = []
+	grid.resize(width)
+	for x in range(width):
+		var col: Array = []
+		col.resize(height)
+		for y in range(height):
+			col[y] = Tile.WALL
+		grid[x] = col
+
+	var room_one := {"pos": Vector2i(8, 11), "size": Vector2i(10, 10)}
+	var room_two := {"pos": Vector2i(30, 11), "size": Vector2i(10, 10)}
+	entrance_room = room_one
+	knowledge_room = room_one
+	quiz_room = room_two
+	_carve_room(room_one)
+	_carve_room(room_two)
+	_carve_thick_line(_room_center(room_one), _room_center(room_two))
+
+	player_spawn_pos = Vector2i(15, 16)
+	knowledge_altar_pos = Vector2i(11, 16)
+	quiz_altar_pos = _room_center(room_two)
+	_carve_mouth()
+
+
 func _generate_once(seed_value: int, size_tier: int, altar_amount: int, chest_amount: int) -> void:
 	boss_room = {}
 	boss_spawn_pos = Vector2i.ZERO

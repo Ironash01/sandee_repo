@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/bestiary_mob.gd" id="1_script"]
+[ext_resource type="Resource" path="res://resources/mobs/vesper_acolyte.tres" id="2_data"]
+
+[sub_resource type="RectangleShape2D" id="Shape"]
+size = Vector2(16, 12)
+
+[node name="VesperAcolyte" type="CharacterBody2D" groups=["Mob"]]
+collision_layer = 2
+script = ExtResource("1_script")
+COMBAT_DATA = ExtResource("2_data")
+sprite_sheet_path = "res://sprites/mobs/bestiary/vesper_acolyte_sheet.png"
+sprite_frame_size = Vector2i(48, 64)
+visual_scale = 1.0
+sprite_offset = Vector2(0, -15)
+collision_size = Vector2(16, 12)
+collision_offset = Vector2(0, 8)
+shadow_offset = Vector2(0, 10)
+shadow_scale = Vector2(0.55, 0.22)
+shadow_alpha = 0.35
+avoid_water = false
+is_floating = false
+separation_distance = 26.0
+separation_strength = 40.0
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, 8)
+shape = SubResource("Shape")

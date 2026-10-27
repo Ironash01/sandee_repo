@@ -18,6 +18,7 @@ var _qty:    Label = null
 var _type:   Label = null
 var _effect: Label = null
 var _desc:   Label = null
+var _panel_style: StyleBoxFlat = null
 
 func _ready() -> void:
 	layer = 55
@@ -25,13 +26,9 @@ func _ready() -> void:
 
 	_panel = PanelContainer.new()
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_panel.custom_minimum_size = Vector2(200, 0)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_PANEL; sb.border_color = C_BORDER
-	sb.set_border_width_all(1); sb.set_corner_radius_all(6)
-	sb.content_margin_left = 10; sb.content_margin_right = 10
-	sb.content_margin_top = 8; sb.content_margin_bottom = 8
-	_panel.add_theme_stylebox_override("panel", sb)
+	_panel_style = StyleBoxFlat.new()
+	_panel_style.bg_color = C_PANEL; _panel_style.border_color = C_BORDER
+	_panel.add_theme_stylebox_override("panel", _panel_style)
 	_panel.visible = false
 	add_child(_panel)
 
@@ -39,22 +36,39 @@ func _ready() -> void:
 	vbox.add_theme_constant_override("separation", 3)
 	_panel.add_child(vbox)
 
-	_name = _mk(vbox, 13, C_TITLE)
+	_name = _mk(vbox, Global.UI_TYPE_BODY, C_TITLE)
 	_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_qty = _mk(vbox, 11, C_MUTED)
-	_type = _mk(vbox, 11, C_MUTED)
-	_effect = _mk(vbox, 11, C_EFFECT)
-	_desc = _mk(vbox, 11, C_MUTED)
+	_qty = _mk(vbox, Global.UI_TYPE_LABEL, C_MUTED)
+	_type = _mk(vbox, Global.UI_TYPE_LABEL, C_MUTED)
+	_effect = _mk(vbox, Global.UI_TYPE_LABEL, C_EFFECT)
+	_desc = _mk(vbox, Global.UI_TYPE_LABEL, C_MUTED)
 	_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_desc.custom_minimum_size = Vector2(200, 0)
+	Global.ui_scale_changed.connect(func(_s: float) -> void: _apply_scale())
+	_apply_scale()
 
-func _mk(parent: Node, fs: int, col: Color) -> Label:
-	var s: float = Global.ui_scale
+func _mk(parent: Node, role: int, col: Color) -> Label:
 	var l := Label.new()
-	l.add_theme_font_size_override("font_size", int(fs * s))
+	l.add_theme_font_size_override("font_size", Global.ui_type_size(role))
 	l.add_theme_color_override("font_color", col)
 	parent.add_child(l)
 	return l
+
+func _apply_scale() -> void:
+	var s: float = Global.ui_scale
+	var width: float = maxf(230.0 * s, 220.0)
+	_panel.custom_minimum_size = Vector2(int(width), 0)
+	_panel_style.set_border_width_all(maxi(1, int(2 * s)))
+	_panel_style.set_corner_radius_all(int(6 * s))
+	_panel_style.content_margin_left = int(12 * s)
+	_panel_style.content_margin_right = int(12 * s)
+	_panel_style.content_margin_top = int(9 * s)
+	_panel_style.content_margin_bottom = int(9 * s)
+	if _desc != null:
+		_desc.custom_minimum_size = Vector2(int(width), 0)
+	for label in [_name, _qty, _type, _effect, _desc]:
+		if label != null:
+			label.add_theme_font_size_override("font_size",
+				Global.ui_type_size(Global.UI_TYPE_BODY if label == _name else Global.UI_TYPE_LABEL))
 
 func show_item(inv_item: Dictionary) -> void:
 	if inv_item == null or not inv_item.has("data") or inv_item["data"] == null:
@@ -112,6 +126,11 @@ func _follow() -> void:
 	var vp_size := vp.get_visible_rect().size
 	var sz := _panel.size
 	var m: Vector2 = vp.get_mouse_position()
+	var safe := Global.ui_safe_insets
+	var min_x: float = safe.x + 4.0
+	var min_y: float = safe.y + 4.0
+	var max_x: float = vp_size.x - safe.z - sz.x - 4.0
+	var max_y: float = vp_size.y - safe.w - sz.y - 4.0
 	_panel.position = Vector2(
-		clampf(m.x + 16.0, 4.0, maxf(4.0, vp_size.x - sz.x - 4.0)),
-		clampf(m.y + 16.0, 4.0, maxf(4.0, vp_size.y - sz.y - 4.0)))
+		clampf(m.x + 16.0, min_x, maxf(min_x, max_x)),
+		clampf(m.y + 16.0, min_y, maxf(min_y, max_y)))

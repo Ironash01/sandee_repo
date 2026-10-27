@@ -1,0 +1,102 @@
+{
+  "lua": {
+    "wall_sheet": "res://sprites/dungeon/lua/walls.png",
+    "wall_cells": [
+      "top_left",
+      "top_mid",
+      "top_right",
+      "mid_left",
+      "mid_mid",
+      "mid_right",
+      "bot_left",
+      "bot_mid",
+      "bot_right",
+      "alt_rune",
+      "alt_weathered"
+    ],
+    "wall_cell_size": [
+      32,
+      32
+    ],
+    "floor_sheet": "res://sprites/dungeon/lua/floors.png",
+    "floor_cells": [
+      "floor_1",
+      "floor_2",
+      "floor_3",
+      "floor_alt_a",
+      "floor_alt_b"
+    ],
+    "floor_cell_size": [
+      32,
+      32
+    ],
+    "pillar": "res://sprites/dungeon/lua/pillar_32x96.png",
+    "pilaster": "res://sprites/dungeon/lua/pilaster_32x64.png",
+    "door_frame": "res://sprites/dungeon/lua/door_frame_96x96.png",
+    "blind_arch": "res://sprites/dungeon/lua/blind_arch_96x64.png",
+    "masonry_panel": "res://sprites/dungeon/lua/masonry_panel_64x32.png",
+    "sconce_sheet": "res://sprites/dungeon/lua/sconce_sheet.png",
+    "sconce_frame_size": [
+      16,
+      32
+    ],
+    "sconce_frames": 8,
+    "medallion_sheet": "res://sprites/dungeon/lua/medallion_sheet.png",
+    "medallion_frame_size": [
+      64,
+      64
+    ],
+    "medallion_frames": 8,
+    "fps": 10.0
+  },
+  "python": {
+    "wall_sheet": "res://sprites/dungeon/python/walls.png",
+    "wall_cells": [
+      "top_left",
+      "top_mid",
+      "top_right",
+      "mid_left",
+      "mid_mid",
+      "mid_right",
+      "bot_left",
+      "bot_mid",
+      "bot_right",
+      "alt_rune",
+      "alt_weathered"
+    ],
+    "wall_cell_size": [
+      32,
+      32
+    ],
+    "floor_sheet": "res://sprites/dungeon/python/floors.png",
+    "floor_cells": [
+      "floor_1",
+      "floor_2",
+      "floor_3",
+      "floor_alt_a",
+      "floor_alt_b"
+    ],
+    "floor_cell_size": [
+      32,
+      32
+    ],
+    "pillar": "res://sprites/dungeon/python/pillar_32x96.png",
+    "pilaster": "res://sprites/dungeon/python/pilaster_32x64.png",
+    "door_frame": "res://sprites/dungeon/python/door_frame_96x96.png",
+    "blind_arch": "res://sprites/dungeon/python/blind_arch_96x64.png",
+    "masonry_panel": "res://sprites/dungeon/python/masonry_panel_64x32.png",
+    "sconce_sheet": "res://sprites/dungeon/python/sconce_sheet.png",
+    "sconce_frame_size": [
+      16,
+      32
+    ],
+    "sconce_frames": 8,
+    "medallion_sheet": "res://sprites/dungeon/python/medallion_sheet.png",
+    "medallion_frame_size": [
+      64,
+      64
+    ],
+    "medallion_frames": 8,
+    "fps": 10.0
+  }
+}

@@ -38,7 +38,7 @@ func setup(owner_npc: Node, robot: Node2D) -> void:
 func _build_label(robot: Node2D) -> void:
 	_label = Label.new()
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_label.add_theme_font_size_override("font_size", LABEL_FONT_SIZE)
+	_label.add_theme_font_size_override("font_size", Global.ui_font_size(float(LABEL_FONT_SIZE)))
 	_label.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0, 1.0))
 	_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	_label.add_theme_constant_override("outline_size", 3)
@@ -79,6 +79,7 @@ func open_editor() -> bool:
 	if _editor == null or not is_instance_valid(_editor) or _editor.visible:
 		return false
 	Global.open_ui()
+	Global.modal_hud_changed.emit(true)
 	# open_panel() re-syncs RUN/STOP with the robot's real state — plainly
 	# setting visible = true would leave STOP disabled (and a still-running robot
 	# unstoppable) after a close/reopen.
@@ -98,10 +99,13 @@ func close_editor() -> void:
 	if not _editor.visible:
 		return
 	if _editor.has_method("close_panel"):
+		# close_panel() emits modal_hud_changed(false) itself because the X
+		# button/Escape can close the editor without going through this wrapper.
 		_editor.call("close_panel")
 	else:
 		Global.close_ui()
 		_editor.visible = false
+		Global.modal_hud_changed.emit(false)
 
 # A station freed (or its world swapped out) while its editor was open must not
 # leave the tree paused with no visible UI — which reads as the game freezing.

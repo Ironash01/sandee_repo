@@ -12,6 +12,7 @@ const SHOW_SEC: float = 2.2
 
 var _popup: PanelContainer = null
 var _label: Label = null
+var _style: StyleBoxFlat = null
 var _timer: float = 0.0
 
 func _ready() -> void:
@@ -24,21 +25,18 @@ func _ready() -> void:
 	_popup = PanelContainer.new()
 	_popup.visible = false
 	_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.08, 0.10, 0.20, 0.98)
-	sb.border_color = Color(0.22, 0.32, 0.58, 1.0)
-	sb.set_border_width_all(1); sb.set_corner_radius_all(4)
-	sb.content_margin_left = 8; sb.content_margin_right = 8
-	sb.content_margin_top = 5; sb.content_margin_bottom = 5
-	_popup.add_theme_stylebox_override("panel", sb)
+	_style = StyleBoxFlat.new()
+	_style.bg_color = Color(0.08, 0.10, 0.20, 0.98)
+	_style.border_color = Color(0.22, 0.32, 0.58, 1.0)
+	_popup.add_theme_stylebox_override("panel", _style)
 	layer.add_child(_popup)
 
 	_label = Label.new()
-	_label.add_theme_font_size_override("font_size", 12)
 	_label.add_theme_color_override("font_color", Color(0.80, 0.90, 1.0))
 	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_label.custom_minimum_size = Vector2(180, 0)
 	_popup.add_child(_label)
+	Global.ui_scale_changed.connect(func(_s: float) -> void: _apply_scale())
+	_apply_scale()
 
 func _input(event: InputEvent) -> void:
 	var pos := Vector2.INF
@@ -51,6 +49,18 @@ func _input(event: InputEvent) -> void:
 	if pos == Vector2.INF:
 		return
 	_show_at(pos)
+
+func _apply_scale() -> void:
+	var s: float = Global.ui_scale
+	_style.set_border_width_all(maxi(1, int(2 * s)))
+	_style.set_corner_radius_all(int(4 * s))
+	_style.content_margin_left = int(10 * s)
+	_style.content_margin_right = int(10 * s)
+	_style.content_margin_top = int(7 * s)
+	_style.content_margin_bottom = int(7 * s)
+	_label.add_theme_font_size_override("font_size",
+		Global.ui_type_size(Global.UI_TYPE_LABEL))
+	_label.custom_minimum_size = Vector2(int(190 * s), 0)
 
 func _show_at(pos: Vector2) -> void:
 	var ctrl: Control = get_viewport().gui_get_hovered_control()
@@ -69,9 +79,11 @@ func _show_at(pos: Vector2) -> void:
 	_popup.reset_size()
 	var vp := get_viewport().get_visible_rect().size
 	var sz := _popup.get_combined_minimum_size()
+	var safe := Global.ui_safe_insets
 	_popup.position = Vector2(
-		clampf(pos.x, 4.0, maxf(4.0, vp.x - sz.x - 4.0)),
-		clampf(pos.y - sz.y - 10.0, 4.0, maxf(4.0, vp.y - sz.y - 4.0)))
+		clampf(pos.x, safe.x + 4.0, maxf(safe.x + 4.0, vp.x - safe.z - sz.x - 4.0)),
+		clampf(pos.y - sz.y - 10.0, safe.y + 4.0,
+			maxf(safe.y + 4.0, vp.y - safe.w - sz.y - 4.0)))
 	_timer = SHOW_SEC
 
 func _process(delta: float) -> void:

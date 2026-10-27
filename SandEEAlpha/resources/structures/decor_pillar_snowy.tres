@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="GeneratedStructure" format=3]
+
+[ext_resource type="Script" path="res://resources/structures/generated_structure.gd" id="1_structure"]
+
+[resource]
+script = ExtResource("1_structure")
+name = "Snowy Pillar"
+decor_kind = "pillar"
+biome = "snowy"
+type = "structures"
+spawn_world = "overworld"
+min_width = 1
+max_width = 2
+min_height = 3
+max_height = 6
+wall_blocks = ["res://resources/items/snowy_wood.tres", "res://resources/items/snowy_planks.tres"]
+accent_blocks = ["res://resources/items/stone.tres"]
+decor_weight = 0.85

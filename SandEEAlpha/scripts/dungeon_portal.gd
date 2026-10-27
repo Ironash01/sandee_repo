@@ -3,20 +3,21 @@ extends Node2D
 # Spawned by world.gd for each language's current dungeon mission (see
 # world.gd's _ensure_current_dungeon_entrances) — NOT placed by the player
 # (the old "Dungeon Spawner" placeable-item flow was removed).
-# The entrance structure is a 3x3 sprite whose cells are all walkable (see
-# sample_structure.tres's door_rect), and this node sits on its CENTRE tile.
+# The persistent entrance facade is the language-specific native large portal
+# (Python Stonegate 5x4 / Lua Ancient Rune Gate 6x5). Every footprint cell except
+# the bottom-centre door has a solid body, so the player can walk into the door
+# and the DungeonPortal trigger stays on exactly that cell.
+#
 # Walking onto it shows the confirm dialog that dispatches to
-# Global.game_node.enter_dungeon(dungeon_index) — the same parent-scene
-# pattern CavePortal uses, instead of the old change_scene_to_file (which
-# destroyed Player/UI — see game_instance.gd). A left-click on the centre
-# tile works too.
+# Global.game_node.enter_dungeon(dungeon_index) - the same parent-scene pattern
+# CavePortal uses. A left-click on the door tile works too; the role is unchanged.
 #
 # Dungeon mapping comes from the DungeonMissionData the index points at (see
 # _portal_title) — each language runs its own sequential track, so the same
 # portal tile may serve the Lua or the Python dungeon depending on dungeon_index.
 
 # ── Glow + luminescent motes ──────────────────────────────────────
-# A pulsing blue PointLight2D on the middle tile, plus drifting glowing
+# A pulsing blue PointLight2D on the door tile, plus drifting glowing
 # motes that float around it. The overworld's WorldEnvironment glow makes
 # both bloom. Purely cosmetic — no gameplay effect.
 const GLOW_COLOR:        Color = Color(0.45, 0.55, 1.0)
@@ -39,11 +40,10 @@ const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.55)
 
 # ── Door hitbox ────────────────────────────────────────────────────
 # The confirm only pops on a left-click that lands ON the portal. This node's
-# origin sits on the entrance structure's CENTRE tile (see world.gd's
-# _place_dungeon_entrance_structure), so the door is a small rect centered
-# at the origin — the visible portal in the middle of the 3x3 art, plus a
-# little click slack. A click anywhere else (the surrounding frames, the
-# ground nearby) does nothing.
+# origin sits on the large entrance's bottom-centre door tile (see world.gd's
+# _place_dungeon_entrance_structure), so the door is a small rect centered at
+# the origin plus a little click slack. Clicking surrounding stonework or the
+# nearby ground does nothing.
 const DOOR_HITBOX := Rect2(-18.0, -20.0, 36.0, 40.0)  # px, centered on the door tile
 
 # ── Door highlight ─────────────────────────────────────────────────
@@ -194,7 +194,7 @@ func _ready() -> void:
 	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
 		Global.ui_scale_changed.connect(_on_ui_scale)
 
-# Rebuild the confirm dialog at the new scale (when open) so a Small/Medium/
+# Rebuild the confirm dialog at the new scale (when open) so a responsive scale/
 # Large change applies live rather than only on the next approach.
 func _on_ui_scale(_s: float) -> void:
 	if _confirm_ui == null:
@@ -304,14 +304,15 @@ func _input(event: InputEvent) -> void:
 	if not _player_nearby or Global.block_mode or Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if _click_is_on_door():
+		if _click_is_on_door(event):
 			_show_confirm()
 
 # True when the click position is on the door sprite — the portal's origin
 # sits on the structure's door tile, so the mouse just has to land inside
 # DOOR_HITBOX around it.
-func _click_is_on_door() -> bool:
-	return DOOR_HITBOX.has_point(to_local(Global.mouse_world(self)))
+func _click_is_on_door(event: InputEvent = null) -> bool:
+	var at: Vector2 = Global.mouse_world(self) if event == null else Global.mouse_event_world(self, event)
+	return DOOR_HITBOX.has_point(to_local(at))
 
 # ── Proximity ─────────────────────────────────────────────────────
 # The area is the walkable centre tile — stepping onto it plays the beckoning
@@ -366,9 +367,9 @@ func _on_beacon_done(pulse: Node) -> void:
 
 # ── Confirm UI ────────────────────────────────────────────────────
 # "Python Dungeon — While Loops": the language band + the mission's own name,
-# read from the DungeonMissionData this portal's index points at. Both tracks
-# share one entrance structure sprite, so this label is how the player tells
-# the two live entrances apart.
+# read from the DungeonMissionData this portal's index points at. The large
+# language-specific facades also distinguish the two live entrances, and this
+# label keeps the mission title explicit.
 func _portal_title() -> String:
 	var dm := Global.get_dungeon_mission_for_index(dungeon_index)
 	var mission_name: String = dm.mission_name if dm != null else "Unknown Dungeon"
@@ -399,6 +400,7 @@ func _build_confirm_ui() -> void:
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	_confirm_ui.add_child(center)
 
 	var panel := PanelContainer.new()
@@ -421,11 +423,11 @@ func _build_confirm_ui() -> void:
 	vbox.add_child(header)
 	var icon_lbl := Label.new()
 	icon_lbl.text = "🌀"
-	icon_lbl.add_theme_font_size_override("font_size", int(20 * s))
+	icon_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	header.add_child(icon_lbl)
 	var title := Label.new()
 	title.text = _portal_title()
-	title.add_theme_font_size_override("font_size", int(14 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
@@ -436,7 +438,7 @@ func _build_confirm_ui() -> void:
 
 	var hint := Label.new()
 	hint.text = "Enter the dungeon?"
-	hint.add_theme_font_size_override("font_size", int(12 * s))
+	hint.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	hint.add_theme_color_override("font_color", C_MUTED)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(hint)
@@ -449,7 +451,7 @@ func _build_confirm_ui() -> void:
 	var enter_btn := Button.new()
 	enter_btn.text = "  Enter  "
 	enter_btn.custom_minimum_size = Vector2(int(120 * s), int(36 * s))
-	enter_btn.add_theme_font_size_override("font_size", int(13 * s))
+	enter_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_ENTER; es.border_color = C_BORDER
 	es.set_border_width_all(int(1 * s)); es.set_corner_radius_all(int(4 * s))
@@ -463,7 +465,7 @@ func _build_confirm_ui() -> void:
 	var cancel_btn := Button.new()
 	cancel_btn.text = "  Cancel  "
 	cancel_btn.custom_minimum_size = Vector2(int(100 * s), int(36 * s))
-	cancel_btn.add_theme_font_size_override("font_size", int(13 * s))
+	cancel_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var cs := StyleBoxFlat.new()
 	cs.bg_color = C_CANCEL; cs.border_color = C_BORDER
 	cs.set_border_width_all(int(1 * s)); cs.set_corner_radius_all(int(4 * s))

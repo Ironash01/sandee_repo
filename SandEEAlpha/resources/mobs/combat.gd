@@ -6,7 +6,7 @@ class_name MobCombatData
 
 # ── AI ────────────────────────────────────────────────────────────
 ## Selects which script under scripts/AI/ drives this mob's movement/behavior.
-@export_enum("WOLF", "PIXIE", "HEADLESS_FISH") var ai_type: String = "WOLF"
+@export_enum("WOLF", "WANDER", "PIXIE", "HEADLESS_FISH") var ai_type: String = "WOLF"
 
 # ── Combat ────────────────────────────────────────────────────────
 ## HOSTILE mobs fight the player; PASSIVE mobs run away when hit.
@@ -54,6 +54,23 @@ enum Behavior { HOSTILE, PASSIVE }
 ## Ambient director: spawn a whole GROUP of min_spawn..max_spawn together
 ## (herds). Off for existing mobs so their spawn behaviour is unchanged.
 @export var group_spawn: bool = false
+
+# ── Bestiary ──────────────────────────────────────────────────────────
+# Only resources with a non-empty bestiary_id appear in the Bestiary tab.
+# The catalog is data-driven so adding a new creature never requires a second
+# registry in the UI.
+@export_group("Bestiary")
+@export var bestiary_id: String = ""
+@export var bestiary_category: String = "Creature"
+@export_multiline var bestiary_description: String = ""
+@export_file("*.png") var bestiary_icon_path: String = ""
+
+# ── Loot ──────────────────────────────────────────────────────────────
+# Each entry is {"item_path": String, "min": int, "max": int, "chance": 0..1}.
+# The mob rolls each entry independently on death; the Bestiary reads the same
+# table so the displayed loot list can never drift from what can drop.
+@export_group("Drops")
+@export var drops: Array = []
 
 # ── Daytime damage reduction ──────────────────────────────────────────
 ## Enemies that spawn during the day (sandworms, wolves, pixies) are daytime

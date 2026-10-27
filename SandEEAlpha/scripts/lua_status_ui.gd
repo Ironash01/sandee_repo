@@ -87,7 +87,7 @@ func _build() -> void:
 
 	var title := Label.new()
 	title.text = "AUTOMATICA STATUS  (click for all)"
-	title.add_theme_font_size_override("font_size", int(10 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(title)
@@ -109,7 +109,10 @@ func _refit() -> void:
 	var s: float = Global.ui_scale
 	var vp: Vector2 = get_viewport_rect().size
 	_panel.size = _panel.get_combined_minimum_size()
-	_panel.position = Vector2(LEFT_MARGIN * s, vp.y * 0.5 - _panel.size.y * 0.5)
+	var left := Global.ui_safe_insets.x + LEFT_MARGIN * s
+	_panel.position = Vector2(left,
+		clampf(vp.y * 0.5 - _panel.size.y * 0.5,
+			Global.ui_safe_insets.y, vp.y - Global.ui_safe_insets.w - _panel.size.y))
 
 func _process(delta: float) -> void:
 	_poll_accum += delta
@@ -178,7 +181,7 @@ func _make_label(text: String, col: Color) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	l.add_theme_font_size_override("font_size", int(10 * Global.ui_scale))
+	l.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	l.add_theme_color_override("font_color", col)
 	return l
 

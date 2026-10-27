@@ -197,18 +197,29 @@ var _provoked_by: Node2D = null
 func provoke(node: Node2D) -> void:
 	_provoked_by = node
 
+func _valid_player_node() -> Node2D:
+	# The player can be freed during a scene/teardown transition while a fish
+	# is still processing. Check the raw Variant before casting to avoid the
+	# "Trying to cast a freed object" error storm.
+	var raw: Variant = Global.player_node
+	if not is_instance_valid(raw):
+		return null
+	if raw is Node2D and (raw as Node2D).is_inside_tree():
+		return raw as Node2D
+	return null
+
 func combat_target() -> Node2D:
 	if _provoked_by != null and is_instance_valid(_provoked_by) and _provoked_by.is_inside_tree():
 		if (_provoked_by as Node2D).global_position.distance_to(global_position) <= PROVOKE_LEASH_PX:
 			return _provoked_by
 	_provoked_by = null
-	return Global.player_node as Node2D
+	return _valid_player_node()
 
 func _try_attack_player(delta: float) -> void:
 	if COMBAT_DATA.damage <= 1.0:
 		return
 	_attack_cooldown = maxf(0.0, _attack_cooldown - delta)
-	var p: Node2D = Global.player_node as Node2D
+	var p: Node2D = _valid_player_node()
 	if p == null or _attack_cooldown > 0.0:
 		return
 	# Provoked by a combat LUA → the LUA is the target, not the player.

@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="MobCombatData" format=3]
+
+[ext_resource type="Script" path="res://resources/mobs/combat.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+mob_name = "Vesper Acolyte"
+behavior = 0
+ai_type = "PIXIE"
+damage = 14.0
+health = 110.0
+speed = 32.0
+spawn_during_day = true
+spawn_during_night = true
+spawn_plains = false
+spawn_weight = 0.0
+bestiary_id = "vesper_acolyte"
+bestiary_category = "Lua Dungeon"
+bestiary_description = "A hooded candle-cultist whose face is a void lit by two bright eyes. It carries a violet flame staff through the deepest Lua corridors."
+bestiary_icon_path = "res://sprites/mobs/bestiary/vesper_acolyte_icon.png"
+drops = [{"chance": 1.0, "item_path": "res://resources/items/charcoal.tres", "max": 3, "min": 1}, {"chance": 0.4, "item_path": "res://resources/items/copper.tres", "max": 1, "min": 1}, {"chance": 0.15, "item_path": "res://resources/items/crystal_silicon_ore.tres", "max": 1, "min": 1}]

@@ -43,7 +43,7 @@ func setup(section: Dictionary, s: float) -> void:
 	_header = Button.new()
 	_header.alignment            = HORIZONTAL_ALIGNMENT_LEFT
 	_header.custom_minimum_size  = Vector2(0, int(30 * s))
-	_header.add_theme_font_size_override("font_size", int(13 * s))
+	_header.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	_header.focus_mode           = Control.FOCUS_NONE
 	_header.tooltip_text         = "Click to expand or collapse this section."
 	_header.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -65,7 +65,7 @@ func setup(section: Dictionary, s: float) -> void:
 
 	var note := Label.new()
 	note.text = str(section.get("note", ""))
-	note.add_theme_font_size_override("font_size", int(10 * s))
+	note.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	note.add_theme_color_override("font_color", C_MUTED)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_body.add_child(note)
@@ -133,7 +133,7 @@ func add_entry(e: Dictionary, s: float) -> void:
 
 	var sig := Label.new()
 	sig.text = str(e.get("sig", ""))
-	sig.add_theme_font_size_override("font_size", int(13 * s))
+	sig.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	sig.add_theme_color_override("font_color", C_ENTRY)
 	sig.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sig.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -145,7 +145,7 @@ func add_entry(e: Dictionary, s: float) -> void:
 
 	var desc := Label.new()
 	desc.text = str(e.get("desc", ""))
-	desc.add_theme_font_size_override("font_size", int(11 * s))
+	desc.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	desc.add_theme_color_override("font_color", C_MUTED)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(desc)
@@ -170,7 +170,7 @@ func _target_badge(target: String, s: float) -> Control:
 
 	var lbl := Label.new()
 	lbl.text = target.to_upper()
-	lbl.add_theme_font_size_override("font_size", int(9 * s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(9))
 	lbl.add_theme_color_override("font_color", col)
 	panel.add_child(lbl)
 	return panel

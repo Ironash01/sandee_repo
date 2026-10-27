@@ -27,6 +27,7 @@ var _status_label: Label = null
 var _account_panel: Control = null
 var _panorama: Node = null
 var _bg_tex: TextureRect = null
+var _progress_bar: ProgressBar = null
 
 var _connectivity: Dictionary = {"internet": false, "backend": false, "detail": ""}
 ## Test seam: when non-empty, `_probe_connectivity()` uses this result instead of
@@ -49,6 +50,8 @@ func _ready() -> void:
 	_build_account_panel()
 	if not Global.ui_scale_changed.is_connected(_on_ui_scale):
 		Global.ui_scale_changed.connect(_on_ui_scale)
+	if not CloudSync.sync_progress_changed.is_connected(_on_sync_progress):
+		CloudSync.sync_progress_changed.connect(_on_sync_progress)
 	_check_connectivity()
 
 
@@ -80,7 +83,7 @@ func _build_background() -> void:
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(scrim)
 
-	# Reuse the cached title panorama (generated on a later frame if missing).
+	# Reuse this launch's generated dungeon panoramas, or start generating them.
 	_panorama = load("res://scripts/title_panorama.gd").new()
 	_panorama.name = "TitlePanorama"
 	add_child(_panorama)
@@ -119,6 +122,7 @@ func _build_ui() -> void:
 	var s: float = Global.ui_scale
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	_ui_root.add_child(center)
 
 	var vbox := VBoxContainer.new()
@@ -130,14 +134,15 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "SandEE"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(64 * s))
+	title.add_theme_font_size_override("font_size", int(minf(float(Global.ui_font_size(64)),
+		maxf(48.0, get_viewport_rect().size.y * 0.12))))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
 	var sub := Label.new()
 	sub.text = "Alpha  ·  v%s" % Global.game_version()
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", int(14 * s))
+	sub.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	sub.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(sub)
 
@@ -167,7 +172,7 @@ func _build_ui() -> void:
 	var heading := Label.new()
 	heading.text = "Sign in to play SandEE"
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	heading.add_theme_font_size_override("font_size", int(16 * s))
+	heading.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	heading.add_theme_color_override("font_color", C_TITLE)
 	inner.add_child(heading)
 
@@ -175,7 +180,7 @@ func _build_ui() -> void:
 	online_hint.text = "Sign in to sync your worlds, cloud saves and leaderboards."
 	online_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	online_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	online_hint.add_theme_font_size_override("font_size", int(11 * s))
+	online_hint.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	online_hint.add_theme_color_override("font_color", C_MUTED)
 	inner.add_child(online_hint)
 
@@ -192,7 +197,7 @@ func _build_ui() -> void:
 	_status_label.text = "Checking connection…"
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_status_label.custom_minimum_size = Vector2(int(250 * s), 0)
-	_status_label.add_theme_font_size_override("font_size", int(11 * s))
+	_status_label.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_status_label.add_theme_color_override("font_color", C_MUTED)
 	status_row.add_child(_status_label)
 
@@ -201,30 +206,82 @@ func _build_ui() -> void:
 	_retry_btn.visible = false
 	status_row.add_child(_retry_btn)
 
+	_progress_bar = ProgressBar.new()
+	_progress_bar.min_value = 0.0
+	_progress_bar.max_value = 100.0
+	_progress_bar.value = 0.0
+	_progress_bar.show_percentage = false
+	_progress_bar.custom_minimum_size = Vector2(int(340 * s), maxi(10, int(12 * s)))
+	_progress_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_progress_bar.visible = false
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.04, 0.06, 0.12, 1.0)
+	bar_bg.border_color = C_BORDER
+	bar_bg.set_border_width_all(1)
+	bar_bg.set_corner_radius_all(int(4 * s))
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = C_OK
+	bar_fill.set_corner_radius_all(int(4 * s))
+	_progress_bar.add_theme_stylebox_override("background", bar_bg)
+	_progress_bar.add_theme_stylebox_override("fill", bar_fill)
+	inner.add_child(_progress_bar)
+
 	var footer := Label.new()
 	footer.text = "Sign-in is required. You can switch to offline play from the main menu."
 	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	footer.add_theme_font_size_override("font_size", int(10 * s))
+	footer.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	footer.add_theme_color_override("font_color", Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.8))
 	inner.add_child(footer)
 
 	var version := Label.new()
 	version.text = "SandEE v%s" % Global.game_version()
-	version.add_theme_font_size_override("font_size", int(11 * s))
+	version.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	version.add_theme_color_override("font_color", C_MUTED)
 	version.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	version.add_theme_constant_override("outline_size", int(3 * s))
 	version.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	version.offset_left = int(14 * s)
-	version.offset_bottom = -int(14 * s)
+	version.offset_left = int(Global.ui_safe_insets.x) + int(14 * s)
+	version.offset_bottom = -int(Global.ui_safe_insets.w) - int(14 * s)
 	version.grow_horizontal = Control.GROW_DIRECTION_END
 	version.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_ui_root.add_child(version)
 
 
+func _set_progress(show: bool, value: float = -1.0, text: String = "") -> void:
+	if _progress_bar != null and is_instance_valid(_progress_bar):
+		_progress_bar.visible = show
+		if value >= 0.0:
+			_progress_bar.value = clampf(value, 0.0, 100.0)
+	if not text.is_empty():
+		_set_status(text, C_MUTED)
+
+
+func _on_sync_progress(info: Dictionary) -> void:
+	if _progress_bar == null or not is_instance_valid(_progress_bar) or _leaving:
+		return
+	var stage := str(info.get("stage", ""))
+	var done := maxi(0, int(info.get("done", 0)))
+	var total := maxi(0, int(info.get("total", 0)))
+	var message := str(info.get("message", ""))
+	var value := 20.0
+	if stage == "listing":
+		value = 10.0
+	elif stage == "syncing":
+		value = 20.0 + 65.0 * (float(done) / float(maxi(1, total)))
+	elif stage == "progress" or stage == "done":
+		value = 90.0
+	elif stage == "error" or stage == "offline":
+		value = 100.0
+	_progress_bar.visible = true
+	_progress_bar.value = value
+	if not message.is_empty():
+		_set_status(message, C_MUTED)
+
+
 func _build_account_panel() -> void:
 	_account_panel = load("res://scripts/online_account_panel.gd").new()
 	_account_panel.name = "AccountPanel"
+	_account_panel.z_index = 20
 	_account_panel.set_dim_enabled(true)
 	add_child(_account_panel)
 	_account_panel.authenticated.connect(_on_authenticated)
@@ -238,7 +295,7 @@ func _make_btn(label: String, callback: Callable, primary: bool) -> Button:
 	btn.text = label
 	btn.custom_minimum_size = Vector2(int(340 * s), int(42 * s))
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", int(15 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(15))
 	btn.add_theme_color_override("font_color", C_TITLE)
 	btn.add_theme_color_override("font_hover_color", C_TITLE)
 	btn.add_theme_color_override("font_disabled_color", Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.45))
@@ -344,6 +401,7 @@ func _on_online() -> void:
 		return
 	_busy = true
 	_set_mode_buttons_enabled(false)
+	_set_progress(true, 5.0)
 	_set_status("Checking online services…", C_MUTED)
 
 	var connectivity := await _probe_connectivity()
@@ -352,6 +410,7 @@ func _on_online() -> void:
 	if not connectivity.get("backend", false):
 		_connectivity = connectivity
 		_busy = false
+		_set_progress(false)
 		_set_mode_buttons_enabled(true)
 		_apply_connectivity()
 		return
@@ -376,6 +435,7 @@ func _on_online() -> void:
 
 func _show_login(message: String) -> void:
 	_busy = false
+	_set_progress(false)
 	_set_mode_buttons_enabled(true)
 	# Without this the screen kept saying "Restoring session…" behind the panel,
 	# which looked like an endless restore when there was simply no session.
@@ -388,6 +448,7 @@ func _on_login_cancelled() -> void:
 	if _account_panel != null and _account_panel.visible:
 		_account_panel.close()
 	_busy = false
+	_set_progress(false)
 	_set_mode_buttons_enabled(true)
 	_apply_connectivity()
 
@@ -405,6 +466,7 @@ func _enter_online() -> void:
 	_busy = true
 	_set_mode_buttons_enabled(false)
 	Global.set_online_mode(true)
+	_set_progress(true, 10.0)
 	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Initializing cloud saves…")
 	_set_status("Setting up your online account…", C_MUTED)
 
@@ -422,6 +484,7 @@ func _enter_online() -> void:
 			return
 		# Signed in, but the profile could not be fetched (service/network).
 		Global.set_cloud_status(Global.CloudStatus.ERROR, "Could not load your profile.")
+		_set_progress(true, 100.0, "Continuing without cloud saves...")
 		await _go_to_menu()
 		return
 
@@ -432,16 +495,23 @@ func _enter_online() -> void:
 	var cloud_ok: bool = saves_result.ok and saves_result.data is Array
 	if cloud_ok:
 		Global.set_cloud_status(Global.CloudStatus.ACTIVE)
-		# Automatic startup sync: upload any local world whose cloud copy is
-		# missing or older. Runs in the background so the menu opens promptly.
-		CloudSync.sync_all()
+		# Startup is a sync barrier: every local world is uploaded and every
+		# automatically-resolvable cloud world is downloaded before the menu.
+		_set_progress(true, 10.0, "Syncing your worlds...")
+		await CloudSync.sync_all()
+		if not is_inside_tree():
+			return
+		_set_progress(true, 90.0, "Finishing cloud sync...")
 	else:
 		Global.set_cloud_status(Global.CloudStatus.ERROR, "Cloud saves could not be initialized.")
+		_set_progress(true, 90.0, "Continuing without cloud sync...")
 
 	# Warm the leaderboard cache before the menu (the overlay reloads live data).
+	_set_progress(true, 95.0, "Preparing the main menu...")
 	await Supabase.get_leaderboard("total_stars", 25)
 
 	_busy = false
+	_set_progress(true, 100.0, "Ready.")
 	await _go_to_menu()
 
 

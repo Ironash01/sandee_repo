@@ -78,13 +78,16 @@ func _apply_scale() -> void:
 	if _label == null:
 		return
 	var s: float = maxf(Global.ui_scale, 0.5)
-	var font_size: int = maxi(10, int(BASE_FONT_SIZE * s))
+	var font_size: int = maxi(12, Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	var width: float = maxf(BASE_WIDTH * s, font_size * 5.0)
-	var height: float = maxf(BASE_HEIGHT * s, font_size + 8.0 * s)
-	var top: float = TOP_OFFSET * s
+	var height: float = maxf(BASE_HEIGHT * s, float(font_size) + 10.0 * s)
+	var top: float = Global.ui_safe_insets.y + TOP_OFFSET * s
 	var vp: Vector2 = get_viewport_rect().size
+	var pause_strip: float = Global.ui_pause_strip
+	if pause_strip <= 0.0:
+		pause_strip = PAUSE_STRIP * s
 	_label.add_theme_font_size_override("font_size", font_size)
 	_label.add_theme_constant_override("outline_size", maxi(2, int(4.0 * s)))
 	_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_label.position = Vector2(vp.x - PAUSE_STRIP - width, top)
+	_label.position = Vector2(vp.x - pause_strip - width, top)
 	_label.size = Vector2(width, height)

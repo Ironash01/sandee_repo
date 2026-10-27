@@ -56,7 +56,7 @@ func _build() -> void:
 	_rebind_buttons.clear()
 
 	var s: float = Global.ui_scale
-	custom_minimum_size = Vector2(int(640 * s), int(440 * s))
+	custom_minimum_size = Global.ui_fit_min_size(Vector2(640, 440))
 	var style := StyleBoxFlat.new()
 	style.bg_color = C_PANEL
 	style.border_color = C_BORDER
@@ -74,13 +74,13 @@ func _build() -> void:
 	add_child(margin)
 
 	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", int(12 * s))
+	outer.add_theme_constant_override("separation", int(10 * s))
 	margin.add_child(outer)
 
 	var title := Label.new()
 	title.text = "SETTINGS"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(22 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_HEADING))
 	title.add_theme_color_override("font_color", C_TITLE)
 	outer.add_child(title)
 
@@ -96,8 +96,8 @@ func _build() -> void:
 	for cat in CATEGORIES:
 		var b := Button.new()
 		b.text = cat
-		b.custom_minimum_size = Vector2(0, int(34 * s))
-		b.add_theme_font_size_override("font_size", int(13 * s))
+		b.custom_minimum_size = Vector2(0, maxi(44, int(38 * s)))
+		b.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.tooltip_text = "Show the %s settings." % cat
 		var c: String = cat
@@ -112,7 +112,7 @@ func _build() -> void:
 	body.add_child(scroll)
 	_settings_content = VBoxContainer.new()
 	_settings_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_settings_content.add_theme_constant_override("separation", int(10 * s))
+	_settings_content.add_theme_constant_override("separation", int(8 * s))
 	scroll.add_child(_settings_content)
 
 	var footer := HBoxContainer.new()
@@ -137,12 +137,12 @@ func _footer_btn(text: String, callback: Callable) -> Button:
 	var s: float = Global.ui_scale
 	var btn := Button.new()
 	btn.text = text
-	btn.custom_minimum_size = Vector2(int(120 * s), int(34 * s))
-	btn.add_theme_font_size_override("font_size", int(12 * s))
+	btn.custom_minimum_size = Vector2(int(132 * s), maxi(44, int(44 * s)))
+	btn.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_LABEL))
 	btn.pressed.connect(callback)
 	return btn
 
-# ── Categories ─────────────────────────────────────────────────────────────
+# â”€â”€ Categories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func _show_settings_category(cat: String) -> void:
 	_settings_category = cat
@@ -174,33 +174,14 @@ func _build_settings_display() -> void:
 	_add_slider_row(_settings_content, "Camera Zoom", "camera_zoom", 0.5, 3.0, 0.1, Global.camera_zoom,
 		"How far the camera is zoomed out. Higher = see more of the world.")
 
-	var ui_row := HBoxContainer.new()
-	ui_row.add_theme_constant_override("separation", int(6 * s))
-	ui_row.tooltip_text = "Size of every interface element (menus, text, slots)."
-	_settings_content.add_child(ui_row)
-	var ui_lbl := Label.new()
-	ui_lbl.text = "UI Scale"
-	ui_lbl.custom_minimum_size = Vector2(int(140 * s), 0)
-	ui_lbl.add_theme_font_size_override("font_size", int(13 * s))
-	ui_lbl.tooltip_text = ui_row.tooltip_text
-	ui_row.add_child(ui_lbl)
-	for entry in [["S", 0.75], ["M", 1.0], ["L", 1.5]]:
-		var scale_btn := Button.new()
-		scale_btn.text = entry[0] as String
-		scale_btn.custom_minimum_size = Vector2(int(38 * s), 0)
-		scale_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scale_btn.tooltip_text = "UI scale: " + ("Small" if entry[0] == "S" else "Medium" if entry[0] == "M" else "Large")
-		var scale_val: float = entry[1] as float
-		scale_btn.pressed.connect(func() -> void: _on_ui_scale_preset(scale_val))
-		ui_row.add_child(scale_btn)
-
 	var fs_row := HBoxContainer.new()
 	_settings_content.add_child(fs_row)
 	var fs_lbl := Label.new()
 	fs_lbl.text = "Fullscreen"
 	fs_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	fs_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	fs_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	fs_lbl.tooltip_text = "Play in fullscreen mode. Saved for the next launch."
+	fs_row.custom_minimum_size.y = maxi(44, int(38 * s))
 	fs_row.add_child(fs_lbl)
 	var fs_btn := CheckButton.new()
 	fs_btn.button_pressed = Global.fullscreen
@@ -214,12 +195,13 @@ func _build_settings_display() -> void:
 	var limit_lbl := Label.new()
 	limit_lbl.text = "FPS Limit"
 	limit_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	limit_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	limit_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	limit_lbl.tooltip_text = "Maximum frames per second. Lower values reduce heat and battery use; Unlimited removes the cap."
+	limit_row.custom_minimum_size.y = maxi(44, int(38 * s))
 	limit_row.add_child(limit_lbl)
 	var limit_opt := OptionButton.new()
 	limit_opt.custom_minimum_size = Vector2(int(132 * s), 0)
-	limit_opt.add_theme_font_size_override("font_size", int(12 * s))
+	limit_opt.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_LABEL))
 	limit_opt.tooltip_text = limit_lbl.tooltip_text
 	for raw_limit in Global.FPS_LIMIT_OPTIONS:
 		var limit_value := int(raw_limit)
@@ -240,7 +222,7 @@ func _build_settings_display() -> void:
 		var vsync_lbl := Label.new()
 		vsync_lbl.text = "VSync"
 		vsync_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		vsync_lbl.add_theme_font_size_override("font_size", int(13 * s))
+		vsync_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 		vsync_lbl.tooltip_text = "Sync presentation to the monitor refresh rate. Turn off for lower input latency; the FPS Limit still applies."
 		vsync_row.add_child(vsync_lbl)
 		var vsync_btn := CheckButton.new()
@@ -254,8 +236,9 @@ func _build_settings_display() -> void:
 	var fps_lbl := Label.new()
 	fps_lbl.text = "Show FPS"
 	fps_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	fps_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	fps_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	fps_lbl.tooltip_text = "Show a small FPS counter in the top-right corner during gameplay. Saved for the next launch."
+	fps_row.custom_minimum_size.y = maxi(44, int(38 * s))
 	fps_row.add_child(fps_lbl)
 	var fps_btn := CheckButton.new()
 	fps_btn.button_pressed = Global.show_fps
@@ -271,8 +254,9 @@ func _build_settings_gameplay() -> void:
 	var pi_lbl := Label.new()
 	pi_lbl.text = "Pause on Inventory"
 	pi_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	pi_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	pi_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	pi_lbl.tooltip_text = "Pause the game while your inventory is open."
+	pi_row.custom_minimum_size.y = maxi(44, int(38 * s))
 	pi_row.add_child(pi_lbl)
 	var pi_btn := CheckButton.new()
 	pi_btn.button_pressed = Global.pause_on_inventory
@@ -285,8 +269,9 @@ func _build_settings_gameplay() -> void:
 	var qb_lbl := Label.new()
 	qb_lbl.text = "Opaque Quest Background"
 	qb_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	qb_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	qb_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	qb_lbl.tooltip_text = "Draw the quest tracker on a solid panel instead of floating text."
+	qb_row.custom_minimum_size.y = maxi(44, int(38 * s))
 	qb_row.add_child(qb_lbl)
 	var qb_btn := CheckButton.new()
 	qb_btn.button_pressed = Global.quest_opaque_bg
@@ -305,39 +290,67 @@ func _build_settings_controls() -> void:
 		var pnc_lbl := Label.new()
 		pnc_lbl.text = "Point-and-Click Movement"
 		pnc_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		pnc_lbl.add_theme_font_size_override("font_size", int(13 * s))
+		pnc_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 		pnc_lbl.tooltip_text = "Left-click / tap the world to walk there. Right-click, build mode, inventory and the keyboard/joystick controls are unchanged."
+		pnc_row.custom_minimum_size.y = maxi(44, int(38 * s))
 		pnc_row.add_child(pnc_lbl)
 		var pnc_btn := CheckButton.new()
 		pnc_btn.button_pressed = Global.point_and_click
 		pnc_btn.tooltip_text = pnc_lbl.tooltip_text
-		pnc_btn.toggled.connect(func(on: bool) -> void: Global.set_point_and_click(on))
 		pnc_row.add_child(pnc_btn)
+
 		var pnc_hint := Label.new()
 		pnc_hint.text = "Click ground to move, a target to walk into range and act, a mob to chase and attack. WASD/joystick always cancels."
 		pnc_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		pnc_hint.add_theme_font_size_override("font_size", int(10 * s))
+		pnc_hint.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 		pnc_hint.add_theme_color_override("font_color", C_MUTED)
 		_settings_content.add_child(pnc_hint)
+
+		var auto_row := HBoxContainer.new()
+		_settings_content.add_child(auto_row)
+		var auto_lbl := Label.new()
+		auto_lbl.text = "Automatic Sprint"
+		auto_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		auto_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
+		auto_lbl.tooltip_text = "Sprint automatically while point-and-click movement is driving the player. Stamina drains normally and exhaustion still stops sprinting. WASD/joystick sprinting still uses Shift."
+		auto_row.custom_minimum_size.y = maxi(44, int(38 * s))
+		auto_row.add_child(auto_lbl)
+		var auto_btn := CheckButton.new()
+		auto_btn.button_pressed = Global.point_and_click_auto_sprint
+		auto_btn.disabled = not Global.point_and_click
+		auto_btn.tooltip_text = auto_lbl.tooltip_text
+		auto_btn.toggled.connect(func(on: bool) -> void:
+			Global.set_point_and_click_auto_sprint(on))
+		auto_row.add_child(auto_btn)
+		pnc_btn.toggled.connect(func(on: bool) -> void:
+			Global.set_point_and_click(on)
+			auto_btn.disabled = not on)
+
+		var auto_hint := Label.new()
+		auto_hint.text = "Automatic sprint applies to click/tap movement only; stamina limits still apply."
+		auto_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		auto_hint.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
+		auto_hint.add_theme_color_override("font_color", C_MUTED)
+		_settings_content.add_child(auto_hint)
 
 	_section_label(_settings_content, "Keyboard")
 	var hint := Label.new()
 	hint.text = "Click a binding, then press a key. Esc cancels."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.add_theme_font_size_override("font_size", int(11 * s))
+	hint.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	hint.add_theme_color_override("font_color", C_MUTED)
 	_settings_content.add_child(hint)
 	_rebind_warning = Label.new()
 	_rebind_warning.text = ""
 	_rebind_warning.visible = false
 	_rebind_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rebind_warning.add_theme_font_size_override("font_size", int(11 * s))
+	_rebind_warning.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	_rebind_warning.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
 	_settings_content.add_child(_rebind_warning)
 	for entry in REBINDABLE:
 		_add_rebind_row(_settings_content, str(entry[0]), str(entry[1]))
 
-# ── Rebinding ──────────────────────────────────────────────────────────────
+# â”€â”€ Rebinding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func _add_rebind_row(parent: Node, action: String, label_text: String) -> void:
 	var s: float = Global.ui_scale
@@ -347,12 +360,12 @@ func _add_rebind_row(parent: Node, action: String, label_text: String) -> void:
 	var lbl := Label.new()
 	lbl.text = label_text
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lbl.add_theme_font_size_override("font_size", int(13 * s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	row.add_child(lbl)
 	var btn := Button.new()
 	btn.text = _key_text(action)
-	btn.custom_minimum_size = Vector2(int(130 * s), int(30 * s))
-	btn.add_theme_font_size_override("font_size", int(12 * s))
+	btn.custom_minimum_size = Vector2(int(130 * s), maxi(44, int(34 * s)))
+	btn.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_LABEL))
 	btn.tooltip_text = "Click, then press a key to rebind \"%s\"." % label_text
 	btn.pressed.connect(func() -> void: _start_rebind(action))
 	row.add_child(btn)
@@ -363,14 +376,14 @@ func _key_text(action: String) -> String:
 	for e in InputMap.action_get_events(action):
 		if e is InputEventKey:
 			names.append(OS.get_keycode_string((e as InputEventKey).physical_keycode))
-	return ", ".join(names) if not names.is_empty() else "—"
+	return ", ".join(names) if not names.is_empty() else "â€”"
 
 func _start_rebind(action: String) -> void:
 	_rebind_action = action
 	if _rebind_warning != null:
 		_rebind_warning.visible = false
 	for a in _rebind_buttons:
-		(_rebind_buttons[a] as Button).text = "Press a key…" if a == action else _key_text(a)
+		(_rebind_buttons[a] as Button).text = "Press a keyâ€¦" if a == action else _key_text(a)
 
 func _action_using_key(keycode: int, except_action: String) -> String:
 	if keycode == 0:
@@ -430,12 +443,12 @@ func _input(event: InputEvent) -> void:
 			_apply_rebind(event as InputEventKey)
 		get_viewport().set_input_as_handled()
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func _section_label(parent: Node, text: String) -> void:
 	var lbl := Label.new()
 	lbl.text = text.to_upper()
-	lbl.add_theme_font_size_override("font_size", int(11 * Global.ui_scale))
+	lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	lbl.add_theme_color_override("font_color", C_MUTED)
 	parent.add_child(lbl)
 
@@ -444,11 +457,12 @@ func _add_slider_row(parent: Node, label_text: String, key: String,
 		tooltip: String = "") -> void:
 	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
+	row.custom_minimum_size.y = maxi(44, int(38 * s))
 	parent.add_child(row)
 	var lbl := Label.new()
 	lbl.text = label_text
 	lbl.custom_minimum_size = Vector2(int(140 * s), 0)
-	lbl.add_theme_font_size_override("font_size", int(13 * s))
+	lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	lbl.tooltip_text = tooltip
 	row.add_child(lbl)
 	var slider := HSlider.new()
@@ -494,8 +508,3 @@ func _fmt(value: float, key: String) -> String:
 	if key == "camera_zoom":
 		return "%.1fx" % value
 	return "%d%%" % int(value * 100.0)
-
-func _on_ui_scale_preset(scale_val: float) -> void:
-	Global.ui_scale = scale_val
-	Global.ui_scale_set = true
-	Global.ui_scale_changed.emit(scale_val)

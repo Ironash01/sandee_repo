@@ -21,6 +21,108 @@ class SwingProbe:
 		swing_count += 1
 
 
+class CancelProbe:
+	extends Node
+	var cancelled: int = 0
+
+	func cancel_pending_input() -> void:
+		cancelled += 1
+
+
+class CursorProbe:
+	extends Node2D
+	var item_data: ItemData = null
+	var _player_nearby: bool = true
+
+	func _cursor_over(_at: Vector2 = Vector2.INF) -> bool:
+		return true
+
+
+class CursorPortalProbe:
+	extends Node2D
+	var _player_nearby: bool = true
+
+	func _click_is_on_entrance() -> bool:
+		return true
+
+	func _click_is_on_door() -> bool:
+		return true
+
+
+class PncInteractProbe:
+	extends Node2D
+	var opened: int = 0
+	var _player_nearby: bool = true
+
+	func _cursor_over(_at: Vector2 = Vector2.INF) -> bool:
+		return true
+
+	func open_from_touch() -> bool:
+		opened += 1
+		return true
+
+
+class PNCInputProbe:
+	extends Node
+	var press_count: int = 0
+	var last_position: Vector2 = Vector2(-1, -1)
+
+	func _input(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			press_count += 1
+			last_position = (event as InputEventMouseButton).position
+
+
+class FakeWaypointNode:
+	extends Node2D
+	var anchor_cell := Vector2i.ZERO
+	var language := "lua"
+
+
+class FakeWorldNode:
+	extends Node
+	var teleported_id := ""
+
+	func teleport_to_world_waypoint(id: String) -> bool:
+		teleported_id = id
+		return true
+
+
+class ExitGameProbe:
+	extends Node
+	var exit_calls: int = 0
+
+	func exit_dungeon() -> void:
+		exit_calls += 1
+
+
+class BuildWorldProbe:
+	extends Node
+	var placed: Array = []
+
+	func cell_to_world(cell: Vector2i) -> Vector2:
+		return Vector2(cell) * 32.0
+
+	func can_place_at(_cell: Vector2i) -> bool:
+		return true
+
+	func place_block_at(cell: Vector2i, data: ItemData) -> Node:
+		placed.append({"cell": cell, "data": data})
+		return self
+
+
+class AutoNextOverworld:
+	extends Node2D
+	var ensure_calls := 0
+	var removed_indices: Array = []
+
+	func remove_dungeon_entrance(index: int) -> void:
+		removed_indices.append(index)
+
+	func ensure_current_dungeon_entrances() -> void:
+		ensure_calls += 1
+
+
 func _ready() -> void:
 	await _run()
 	print("QA_RESULT: %d/%d passed, %d failed" % [checks - fails, checks, fails])
@@ -41,11 +143,16 @@ func _run() -> void:
 	Global.reset_pause_state()
 	_test_registry()
 	_test_friendly_mobs()
+	await _test_bestiary()
 	await _test_save_and_progress()
+	await _test_tutorial_state_and_dialogue()
 	await _test_triggers()
 	await _test_pause_and_build()
+	await _test_pause_menu_short_layout()
+	await _test_tutorial_help_and_cursors()
 	_test_world_eligibility()
 	_test_dungeon_generation()
+	await _test_first_dungeon_tutorial()
 	await _test_dungeon_progression_and_sides()
 	_test_damage_and_spawn_constants()
 	await _test_damage_application()
@@ -71,12 +178,26 @@ func _run() -> void:
 	await _test_escape()
 	await _test_ui_back_stack()
 	await _test_ui_back_actual()
+	await _test_chest_inventory_panel()
 	_test_cloud_save_identity()
+	await _test_sync_loading()
 	_test_android_config()
 	_test_display_frame_limits()
+	_test_ui_scaling()
+	await _test_android_input_and_safe_area()
+	await _test_android_keyboard_layout()
+	await _test_ambient_birds()
+	await _test_automatica_api()
+	await _test_automatica_build_queue()
+	await _test_quiz_reward_ui()
+	await _test_altar_mobile_layout()
+	await _test_title_panorama()
 	await _test_interpreters()
 	await _test_crash_logger()
 	await _test_control_scheme_parity()
+	_test_tree_canopy_occupancy()
+	_test_decorative_structures()
+	_test_waypoints()
 
 
 func _test_registry() -> void:
@@ -118,8 +239,176 @@ func _test_friendly_mobs() -> void:
 	sheep.free()
 
 
+func _test_bestiary() -> void:
+	var old_slot: int = Global.active_save_slot
+	Global.active_save_slot = -1
+	Global.reset_bestiary_state()
+
+	var entries: Array = BestiaryCatalog.entries()
+	var ids: Array = []
+	for value in entries:
+		var data: MobCombatData = value as MobCombatData
+		ids.append(data.bestiary_id)
+	check(entries.size() == 8 and ids.has("cinder_ooze")
+		and ids.has("gravebell_shambler") and ids.has("rune_sentinel")
+		and ids.has("vesper_acolyte") and ids.has("brass_prowler")
+		and ids.has("cipher_warden") and ids.has("mossback_nib")
+		and ids.has("emberfox_kit"),
+		"all eight Bestiary creatures are present in the data catalog")
+	var drop_paths_ok := true
+	var icons_ok := true
+	for value in entries:
+		var data: MobCombatData = value as MobCombatData
+		if not ResourceLoader.exists(data.bestiary_icon_path):
+			icons_ok = false
+		for drop_value in data.drops:
+			if not (drop_value is Dictionary):
+				drop_paths_ok = false
+				continue
+			var path := str((drop_value as Dictionary).get("item_path", ""))
+			if path.is_empty() or not ResourceLoader.exists(path):
+				drop_paths_ok = false
+	check(icons_ok, "every Bestiary entry has an existing portrait icon")
+	check(drop_paths_ok, "every Bestiary drop points at an existing ItemData resource")
+
+	# Exercise the first-sighting and first-kill transitions, including the
+	# toast contract used by NotificationHUD.
+	var toasts: Array = []
+	var on_notification := func(msg: String) -> void: toasts.append(msg)
+	Global.notification_posted.connect(on_notification)
+	var first_seen := Global.bestiary_record_seen("cinder_ooze")
+	var duplicate_seen := Global.bestiary_record_seen("cinder_ooze")
+	check(first_seen and not duplicate_seen and Global.bestiary_is_seen("cinder_ooze")
+		and toasts.size() == 1 and str(toasts[0]).contains("Cinder Ooze"),
+		"first sighting records the name and posts one notification")
+	var first_kill := Global.bestiary_record_kill("cinder_ooze")
+	var duplicate_kill := Global.bestiary_record_kill("cinder_ooze")
+	check(first_kill and not duplicate_kill and Global.bestiary_is_killed("cinder_ooze")
+		and toasts.size() == 2,
+		"first kill unlocks the entry and notifications are not repeated")
+	var unseen_kill := Global.bestiary_record_kill("rune_sentinel")
+	check(unseen_kill and Global.bestiary_is_seen("rune_sentinel")
+		and Global.bestiary_is_killed("rune_sentinel"),
+		"a kill before the sighting scan still marks both discovery states")
+	Global.notification_posted.disconnect(on_notification)
+
+	var scenes: Dictionary = {
+		"res://scenes/mobs/MossbackNib.tscn": false,
+		"res://scenes/mobs/EmberfoxKit.tscn": false,
+		"res://scenes/mobs/CinderOoze.tscn": true,
+		"res://scenes/mobs/GravebellShambler.tscn": true,
+		"res://scenes/mobs/RuneSentinel.tscn": true,
+		"res://scenes/mobs/VesperAcolyte.tscn": true,
+		"res://scenes/mobs/BrassProwler.tscn": true,
+		"res://scenes/mobs/CipherWarden.tscn": true,
+	}
+	var anims_ok := true
+	var walk_frames_ok := true
+	var hostility_ok := true
+	for path in scenes:
+		var scene: PackedScene = load(path) as PackedScene
+		if scene == null:
+			anims_ok = false
+			continue
+		var mob: Node2D = scene.instantiate() as Node2D
+		add_child(mob)
+		await get_tree().process_frame
+		var sprite := mob.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+		if sprite == null or sprite.sprite_frames == null:
+			anims_ok = false
+		else:
+			var names: Array = sprite.sprite_frames.get_animation_names()
+			for dir in ["south", "north", "east", "west"]:
+				if not names.has("idle_" + dir) or not names.has("walk_" + dir):
+					anims_ok = false
+				elif sprite.sprite_frames.get_frame_count("walk_" + dir) < 4:
+					walk_frames_ok = false
+		var expected_hostile: bool = bool(scenes[path])
+		if Global.is_hostile_mob(mob) != expected_hostile:
+			hostility_ok = false
+		mob.queue_free()
+		await get_tree().process_frame
+	check(anims_ok, "each Bestiary creature has four-direction idle/walk animations")
+	check(walk_frames_ok, "each walk cycle uses four gait frames")
+	check(hostility_ok, "new hostile creatures report hostile and friendlies do not")
+
+	# A real death must reach both halves of the feature: the Bestiary study
+	# state and the actual loot spawner.
+	Global.reset_bestiary_state()
+	var kill_scene: PackedScene = load("res://scenes/mobs/CinderOoze.tscn") as PackedScene
+	var kill_mob: Node2D = kill_scene.instantiate() as Node2D
+	add_child(kill_mob)
+	await get_tree().process_frame
+	kill_mob.call("take_hit", 9999.0, kill_mob.global_position + Vector2(0, -1))
+	await get_tree().process_frame
+	var dropped_item := false
+	for child in get_children():
+		if child.get("item_data") is ItemData:
+			dropped_item = true
+			child.queue_free()
+	check(Global.bestiary_is_killed("cinder_ooze") and dropped_item,
+		"a real kill unlocks the Bestiary entry and spawns its loot")
+
+	# Restore the deterministic UI fixture.
+	Global.reset_bestiary_state()
+	Global.bestiary_record_seen("cinder_ooze")
+	Global.bestiary_record_kill("cinder_ooze")
+	Global.bestiary_record_kill("rune_sentinel")
+
+	# The inventory page exposes the Bestiary as a sibling of CRAFT and the
+	# Encyclopedia. The studied entry must show its health and guaranteed drop.
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	var ui: Control = load("res://scenes/ui/inventory_ui.tscn").instantiate() as Control
+	layer.add_child(ui)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	ui.call("_switch_tab", "bestiary")
+	await get_tree().process_frame
+	var has_tab := false
+	var has_entry := false
+	var has_health := false
+	var has_drop := false
+	for n in ui.find_children("*", "Button", true, false):
+		var button := n as Button
+		if button == null:
+			continue
+		if button.text == "BESTIARY":
+			has_tab = true
+		if button.text.begins_with("Cinder Ooze") and button.text.contains("STUDIED"):
+			has_entry = true
+	for n in ui.find_children("*", "Label", true, false):
+		var label := n as Label
+		if label == null:
+			continue
+		if label.text.begins_with("MAX HEALTH   85"):
+			has_health = true
+		if label.text == "Always":
+			has_drop = true
+	check(has_tab and has_entry and has_health and has_drop,
+		"Bestiary tab shows a studied creature, its health and its drops")
+	layer.queue_free()
+	await get_tree().process_frame
+
+	var world_src := FileAccess.get_file_as_string("res://scripts/world.gd")
+	var dungeon_src := FileAccess.get_file_as_string("res://scripts/dungeon_world.gd")
+	check(world_src.contains("CinderOoze.tscn") and world_src.contains("GravebellShambler.tscn")
+		and world_src.contains("MossbackNib.tscn") and world_src.contains("EmberfoxKit.tscn"),
+		"overworld ambient pool contains both enemies and both friendly creatures")
+	check(dungeon_src.contains("THEME_DUNGEON_ENEMIES") and dungeon_src.contains("RuneSentinel.tscn")
+		and dungeon_src.contains("VesperAcolyte.tscn") and dungeon_src.contains("BrassProwler.tscn")
+		and dungeon_src.contains("CipherWarden.tscn"),
+		"Lua/Python dungeon pools contain their theme-specific enemies")
+
+	Global.reset_bestiary_state()
+	Global.active_save_slot = old_slot
+
+
 func _test_save_and_progress() -> void:
 	Global.reset_missions()
+	Global.reset_bestiary_state()
+	Global.bestiary_record_seen("cinder_ooze")
+	Global.bestiary_record_kill("rune_sentinel")
 	var wood := Global._find_mission("collect_wood")
 	wood["progress"] = 7
 	Global.reset_missions()
@@ -135,11 +424,22 @@ func _test_save_and_progress() -> void:
 	moved["completed"] = true
 	moved["progress"] = 1
 	wood["progress"] = 7
+	Global.cleared_dungeons[77] = true
+	Global.dungeon_stars[77] = 2
 	Global.save_game(slot)
 	Global.reset_missions()
 	Global.load_game(slot)
 	check(int(wood.get("progress", -1)) == 7, "partial progress survives save/load")
 	check(bool(moved.get("completed", false)), "completion survives save/load")
+	check(Global.dungeon_stars_for(77) == 2,
+		"per-dungeon blue-star awards survive save/load")
+	check(Global.bestiary_is_seen("cinder_ooze")
+		and Global.bestiary_is_killed("rune_sentinel")
+		and Global.bestiary_is_seen("rune_sentinel"),
+		"Bestiary sighting/study state survives save/load")
+	check(FileAccess.get_file_as_string(path).contains("\"bestiary_seen\"")
+		and FileAccess.get_file_as_string(path).contains("\"bestiary_killed\""),
+		"Bestiary state is persisted in the world save")
 	check(_saved_missions_version(path) >= 2, "save stores the mission-content version")
 	var first_uid := Global.world_uid_of(slot)
 	var first_rev := Global.save_revision_of(slot)
@@ -185,14 +485,140 @@ func _test_save_and_progress() -> void:
 	Global.set_mission_progress("build_shelter", 1)
 	check(bool(shelter.get("completed", false)), "at-goal progress completes immediately")
 
+	Global.cleared_dungeons.erase(77)
+	Global.dungeon_stars.erase(77)
 	Global.delete_world(slot)
+	Global.reset_bestiary_state()
+
+
+func _test_tutorial_state_and_dialogue() -> void:
+	var old_version: int = Global.tutorial_version
+	var old_stage: int = Global.tutorial_stage
+	var old_completed: bool = Global.tutorial_completed
+	var old_flags: Dictionary = Global.tutorial_flags.duplicate(true)
+	var old_slot: int = Global.active_save_slot
+	Global.reset_pause_state()
+
+	var slot: int = Global.next_free_slot()
+	if slot > 0:
+		Global.tutorial_version = 2
+		Global.tutorial_stage = 7
+		Global.tutorial_completed = false
+		Global.tutorial_flags = {
+			"starter_kit": true,
+			"automatica_awarded": true,
+			"camp_cells": {"build": [3, 4]},
+		}
+		Global.save_game(slot)
+		Global.tutorial_stage = 0
+		Global.tutorial_completed = true
+		Global.tutorial_flags.clear()
+		Global.load_game(slot)
+		check(Global.tutorial_version == 2 and Global.tutorial_stage == 7
+			and not Global.tutorial_completed
+			and bool(Global.tutorial_flags.get("starter_kit", false))
+			and bool(Global.tutorial_flags.get("automatica_awarded", false)),
+			"guided tutorial version, step and one-time reward flags survive save/load")
+		check(FileAccess.get_file_as_string("user://save_slot_%d.json" % slot).contains("tutorial_flags"),
+			"tutorial reward flags are persisted in the world save")
+
+		# A pre-v2 save must not be ambushed by the new onboarding, even if the
+		# old six-line tutorial was left unfinished.
+		var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string("user://save_slot_%d.json" % slot))
+		if raw is Dictionary:
+			(raw as Dictionary).erase("tutorial_version")
+			(raw as Dictionary).erase("tutorial_flags")
+			(raw as Dictionary)["tutorial_completed"] = false
+			(raw as Dictionary)["tutorial_stage"] = 4
+			var f := FileAccess.open("user://save_slot_%d.json" % slot, FileAccess.WRITE)
+			f.store_string(JSON.stringify(raw))
+			f.close()
+			Global.load_game(slot)
+			check(Global.tutorial_completed and Global.tutorial_stage == 0,
+				"legacy unfinished tutorials are treated as complete, not replayed")
+		Global.delete_world(slot)
+
+	Global.tutorial_version = old_version
+	Global.tutorial_stage = old_stage
+	Global.tutorial_completed = old_completed
+	Global.tutorial_flags = old_flags
+	Global.active_save_slot = old_slot
+	Global.reset_pause_state()
+
+	# Exercise the real overlay input contract: first input reveals the line,
+	# a same-tick second input is swallowed, the next input advances one line,
+	# and the final input closes and releases the pause/modal ownership.
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	var dlg: Control = load("res://scripts/tutorial_dialogue.gd").new() as Control
+	layer.add_child(dlg)
+	await get_tree().process_frame
+	var callback_hits := [0]
+	var opened: bool = bool(dlg.call("show_conversation", [
+		{"speaker": "Py-San", "portrait": "res://sprites/char/pysan.png", "text": "First line."},
+		{"speaker": "LUA", "portrait": "res://sprites/char/lua/front.png", "text": "Second line."},
+	], func() -> void: callback_hits[0] += 1))
+	check(opened and bool(dlg.call("is_active")) and Global.any_ui_open(),
+		"RPG dialogue opens as a real modal with a portrait-capable line list")
+	dlg.call("advance_from_input")
+	check(bool(dlg.get("_continue_label").visible) and int(dlg.call("current_line_index")) == 0,
+		"first dialogue input reveals the current line without advancing it")
+	dlg.call("advance_from_input")
+	check(int(dlg.call("current_line_index")) == 0,
+		"duplicate same-tick dialogue input cannot skip a line")
+	await get_tree().create_timer(0.35).timeout
+	dlg.call("advance_from_input")
+	check(int(dlg.call("current_line_index")) == 1,
+		"the next dialogue input advances exactly one line")
+	dlg.call("advance_from_input")
+	await get_tree().create_timer(0.35).timeout
+	dlg.call("advance_from_input")
+	await get_tree().create_timer(0.35).timeout
+	dlg.call("advance_from_input")
+	await get_tree().create_timer(0.35).timeout
+	dlg.call("advance_from_input")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check(int(callback_hits[0]) == 1 and not bool(dlg.call("is_active")) and not Global.any_ui_open(),
+		"dialogue completion runs one callback and releases pause/modal state")
+	layer.queue_free()
+	await get_tree().process_frame
+	Global.reset_pause_state()
 
 
 func _test_triggers() -> void:
 	Global.reset_missions()
-	Global.record_dungeon_clear(50)
+	var star_ids: Array = []
+	var on_star := func(id: String) -> void: star_ids.append(id)
+	Global.mission_star_earned.connect(on_star)
+	Global.record_dungeon_clear(50, 3)
 	check(bool(Global._find_mission("clear_dungeon").get("completed", false)),
 		"dungeon clear completes Clear a Dungeon")
+	check(Global.dungeon_stars_for(50) == 3
+		and Global.local_blue_stars() == 3
+		and star_ids.has("dungeon_clear:50")
+		and star_ids.has("dungeon_clear_bonus:50"),
+		"perfect dungeon clears award three blue stars")
+	Global.mission_star_earned.disconnect(on_star)
+	# 1 hint = 2 stars; 2+ hints = 1 star.
+	Global.cleared_dungeons[51] = true
+	Global.dungeon_stars[51] = 2
+	Global.cleared_dungeons[52] = true
+	Global.dungeon_stars[52] = 1
+	check(Global.dungeon_stars_for(51) == 2
+		and Global.dungeon_stars_for(52) == 1
+		and Global.local_blue_stars() == 6,
+		"hint penalties award two stars for one hint and one for more")
+	Global.cleared_dungeons.erase(51)
+	Global.dungeon_stars.erase(51)
+	Global.cleared_dungeons.erase(52)
+	Global.dungeon_stars.erase(52)
+	# Legacy cleared saves without a stored award count as perfect clears.
+	Global.cleared_dungeons[53] = true
+	check(Global.dungeon_stars_for(53) == 3,
+		"legacy dungeon clears default to three blue stars")
+	Global.cleared_dungeons.erase(53)
+	Global.reset_missions()
 
 	Global.reset_missions()
 	var entry: KnowledgeEntry = null
@@ -363,15 +789,163 @@ func _test_dungeon_generation() -> void:
 		"dungeon camera bounds include the wall padding")
 
 
+func _test_first_dungeon_tutorial() -> void:
+	var py_first: int = Global.first_main_dungeon_index("python")
+	var lua_first: int = Global.first_main_dungeon_index("lua")
+	check(py_first == 1 and lua_first == 11,
+		"the first main dungeon is identified per language")
+	check(Global.is_first_main_dungeon(py_first)
+		and Global.is_first_main_dungeon(lua_first)
+		and not Global.is_first_main_dungeon(py_first + 1),
+		"only the first main dungeon of each language is marked tutorial")
+
+	for theme in ["lua", "python"]:
+		var themed: Dictionary = DungeonWorld._get_theme_tile_data(theme)
+		check(themed.get("tileset") != null
+			and (themed.get("wall_cells", {}) as Dictionary).size() == 11
+			and (themed.get("floor_cells", []) as Array).size() == 5,
+			"%s dungeon theme loads 11 walls and 5 floors" % theme)
+		var sconce_tex := load("res://sprites/dungeon/%s/sconce_sheet.png" % theme) as Texture2D
+		var medallion_tex := load("res://sprites/dungeon/%s/medallion_sheet.png" % theme) as Texture2D
+		var sconce_frames := WaypointAnim.build(sconce_tex, Vector2i(16, 32))
+		var medallion_frames := WaypointAnim.build(medallion_tex, Vector2i(64, 64))
+		check(sconce_tex != null and medallion_tex != null
+			and sconce_frames.get_frame_count("idle") == 8
+			and medallion_frames.get_frame_count("idle") == 8
+			and is_equal_approx(sconce_frames.get_animation_speed("idle"), 10.0)
+			and is_equal_approx(medallion_frames.get_animation_speed("idle"), 10.0),
+			"%s sconces and floor medallions are 8-frame 10 fps animations" % theme)
+		var arch_paths: Dictionary = DungeonWorld.THEME_ARCH_PATHS.get(theme, {}) as Dictionary
+		var missing_arch := false
+		for arch_path in arch_paths.values():
+			if not ResourceLoader.exists(str(arch_path)):
+				missing_arch = true
+		check(arch_paths.size() == 7 and not missing_arch,
+			"%s themed architecture and animation assets are present" % theme)
+
+	var gen := DungeonGenerator.new()
+	gen.generate_tutorial(24680)
+	var knowledge_center: Vector2i = gen._room_center(gen.knowledge_room)
+	var quiz_center: Vector2i = gen._room_center(gen.quiz_room)
+	check(gen.entrance_room["pos"] == gen.knowledge_room["pos"]
+		and gen.entrance_room["size"] == gen.knowledge_room["size"],
+		"tutorial room one is both the entrance and Knowledge room")
+	check(knowledge_center != quiz_center and gen.bonus_rooms.is_empty()
+		and gen.flare_positions.is_empty() and gen.trap_positions.is_empty()
+		and gen.quiz_guard_positions.is_empty()
+		and gen.quiz_trap_positions.is_empty()
+		and gen.rare_chest_positions.is_empty(),
+		"tutorial generation has exactly two rooms and no hazards, guards, or bonus rooms")
+	check(gen.grid[gen.knowledge_altar_pos.x][gen.knowledge_altar_pos.y]
+			== DungeonGenerator.Tile.FLOOR
+		and gen.grid[gen.quiz_altar_pos.x][gen.quiz_altar_pos.y]
+			== DungeonGenerator.Tile.FLOOR
+		and gen.grid[gen.player_spawn_pos.x][gen.player_spawn_pos.y]
+			== DungeonGenerator.Tile.FLOOR,
+		"tutorial spawn and both altars sit on walkable floor")
+
+	for lang in ["python", "lua"]:
+		var idx: int = int(py_first if lang == "python" else lua_first)
+		var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(idx)
+		var overworld := AutoNextOverworld.new()
+		add_child(overworld)
+		var dun := DungeonWorld.new()
+		add_child(dun)
+		dun.setup(idx, mission, 13579 + idx, overworld, Vector2.ZERO)
+		await get_tree().process_frame
+		var sconce_anims := _count_dungeon_anims(dun, Vector2(16, 32))
+		var medallion_anims := _count_dungeon_anims(dun, Vector2(64, 64))
+		check(str(dun.get("_theme")) == lang
+			and (dun.get("_theme_wall_cells") as Dictionary).size() == 11
+			and (dun.get("_theme_floor_cells") as Array).size() == 5,
+			"%s dungeon uses its themed runtime tileset" % lang)
+		check(sconce_anims >= 1 and medallion_anims >= 1
+			and (dun.get("_theme_lights") as Array).size() >= sconce_anims,
+			"%s dungeon spawns animated sconces, medallions and local lights" % lang)
+		check((dun.get("_architecture_blocked") as Dictionary).size() > 0,
+			"%s dungeon registers solid pillar bases for navigation" % lang)
+		var knowledge := 0
+		var quizzes := 0
+		var hitmen := 0
+		var traps := 0
+		var flares := 0
+		for child in dun.get_children():
+			if child.is_in_group("KnowledgeAltar"):
+				knowledge += 1
+			if child.is_in_group("QuizAltar"):
+				quizzes += 1
+			if child.is_in_group("Hitman"):
+				hitmen += 1
+			if child.is_in_group("DungeonTrap"):
+				traps += 1
+			if child.is_in_group("DungeonFlare"):
+				flares += 1
+		check(bool(dun.get("_tutorial_layout")) and knowledge == 1 and quizzes == 1,
+			"%s first dungeon spawns Knowledge + Quiz altars only" % lang)
+		check(hitmen == 0 and traps == 0 and flares == 0,
+			"%s first dungeon is enemy- and hazard-free" % lang)
+		dun.call("_on_dungeon_cleared", idx)
+		check(overworld.ensure_calls >= 1 and overworld.removed_indices.has(idx),
+			"%s dungeon completion asks the overworld to post the next entrance" % lang)
+		dun.queue_free()
+		overworld.queue_free()
+		await get_tree().process_frame
+
+
+func _count_dungeon_anims(node: Node, frame_size: Vector2) -> int:
+	var count := 0
+	for child in node.get_children():
+		if child is AnimatedSprite2D:
+			var spr := child as AnimatedSprite2D
+			if spr.sprite_frames != null \
+					and spr.sprite_frames.has_animation("idle") \
+					and spr.sprite_frames.get_frame_count("idle") == 8:
+				var at := spr.sprite_frames.get_frame_texture("idle", 0) as AtlasTexture
+				if at != null and at.region.size == frame_size:
+					count += 1
+		count += _count_dungeon_anims(child, frame_size)
+	return count
+
+
 func _test_dungeon_progression_and_sides() -> void:
 	var mains: Array = Global.main_dungeon_indices()
 	var extras: Array = Global.extra_dungeon_indices()
 	var boss_idx: int = Global.boss_dungeon_index()
-	check(not mains.is_empty() and extras.size() == 14 and boss_idx > 0,
-		"main, extra, and Hitman boss dungeon categories are registered")
+	var lua_main_count := 0
+	var py_main_count := 0
+	for idx in mains:
+		if Global.dungeon_language(int(idx)) == "lua":
+			lua_main_count += 1
+		elif Global.dungeon_language(int(idx)) == "python":
+			py_main_count += 1
+	check(mains.size() == 25 and lua_main_count == 15 and py_main_count == 10
+		and boss_idx > 0,
+		"Lua (15) and Python (10) main tracks plus the Hitman boss are registered")
+	check(extras.is_empty(),
+		"all shipped Lua lessons are part of the main progression, not post-boss extras")
 	check(Global.get_dungeon_mission_for_index(boss_idx) != null
 		and Global.get_dungeon_mission_for_index(boss_idx).is_boss(),
 		"the final main mission is the Hitman boss dungeon")
+
+	# Regression: clearing Lua 11 must advance to Lua 26 instead of leaving the
+	# Lua track with no current dungeon until the Python track/ boss finishes.
+	var saved_dungeon_states: Dictionary = {}
+	for m in Global.missions:
+		if m.has("dungeon_index"):
+			saved_dungeon_states[str(m["id"])] = {
+				"completed": bool(m["completed"]),
+				"progress": int(m.get("progress", 0)),
+			}
+			m["completed"] = false
+	Global._find_mission("dungeon_11")["completed"] = true
+	var lua_next: int = Global.current_main_dungeon_index("lua")
+	check(lua_next == 26 and Global.current_dungeon_indices().has(26),
+		"clearing Lua 11 exposes Lua 26 as the next Lua dungeon")
+	for m in Global.missions:
+		var id := str(m.get("id", ""))
+		if saved_dungeon_states.has(id):
+			m["completed"] = bool(saved_dungeon_states[id]["completed"])
+			m["progress"] = int(saved_dungeon_states[id]["progress"])
 
 	var blank_starters := true
 	for dm_value in Global.dungeon_missions.values():
@@ -397,6 +971,7 @@ func _test_dungeon_progression_and_sides() -> void:
 	var old_player := Global.player_node
 	var old_mission: Dictionary = Global._find_mission("dungeon_%d" % boss_idx).duplicate(true)
 	var old_cleared := Global.cleared_dungeons.has(boss_idx)
+	var old_dungeon_stars: Dictionary = Global.dungeon_stars.duplicate(true)
 	var dun := DungeonWorld.new()
 	add_child(dun)
 	dun.setup(boss_idx, boss_mission, 12345, null, Vector2.ZERO)
@@ -439,15 +1014,21 @@ func _test_dungeon_progression_and_sides() -> void:
 		Global.cleared_dungeons[boss_idx] = true
 	else:
 		Global.cleared_dungeons.erase(boss_idx)
+	Global.dungeon_stars = old_dungeon_stars
 	var bm := Global._find_mission("dungeon_%d" % boss_idx)
 	bm["completed"] = bool(old_mission.get("completed", false))
 	bm["progress"] = int(old_mission.get("progress", 0))
 	Global.mission_updated.emit()
 
-	var extra_mission: DungeonMissionData = Global.get_dungeon_mission_for_index(int(extras[0]))
+	# The optional extra-dungeon code path remains supported for future
+	# post-boss content. Exercise it with a duplicate of Lua 26 rather than
+	# requiring a shipped extra mission.
+	var extra_source: DungeonMissionData = Global.get_dungeon_mission_for_index(26)
+	var extra_mission: DungeonMissionData = extra_source.duplicate(true) as DungeonMissionData
+	extra_mission.dungeon_category = "extra"
 	var edun := DungeonWorld.new()
 	add_child(edun)
-	edun.setup(int(extras[0]), extra_mission, 54321, null, Vector2.ZERO)
+	edun.setup(26, extra_mission, 54321, null, Vector2.ZERO)
 	await get_tree().process_frame
 	var knowledge_count := 0
 	var quiz_count := 0
@@ -457,7 +1038,7 @@ func _test_dungeon_progression_and_sides() -> void:
 		if child.is_in_group("QuizAltar"):
 			quiz_count += 1
 	check(knowledge_count == 0 and quiz_count >= 2,
-		"extra dungeons have no Knowledge Altar and at least two Quiz Altars")
+		"the supported extra-dungeon path has no Knowledge Altar and two Quiz Altars")
 	edun.queue_free()
 	await get_tree().process_frame
 
@@ -495,7 +1076,7 @@ func _test_dungeon_progression_and_sides() -> void:
 		if m.has("dungeon_index"):
 			m["completed"] = true
 	check(Global.side_missions_unlocked() and Global.active_side_missions().size() == 3,
-		"completing main, boss and extra dungeons unlocks the side mission pool")
+		"completing all main and boss dungeons unlocks the side mission pool")
 	Global.add_mission_progress("side_chest_collector", 1)
 	check(int(Global._find_mission("side_chest_collector").get("progress", 0)) == 1,
 		"side missions track progress after unlock")
@@ -1428,43 +2009,17 @@ func _test_algorithmica_color() -> void:
 		and Global.count_item(cactus_data) == before_block,
 		"a different pending color is rejected without consuming Cactus")
 
-	# RGB/HEX is a presentation-only UI on the color output block. It must not
-	# touch program code, quantity, cactus cost, or the Python signature.
+	# Algorithmica is code-only: the recipe picker, input slot and output/color
+	# inspector are intentionally absent. take_output() is the collection path,
+	# and the Python signature is unchanged.
 	station.set("program_code", "# code is untouched")
 	var menu: Control = station.get("_ui") as Control
-	menu.call("_refresh_output")
-	var color_panel: Control = menu.get("_color_output_panel") as Control
-	var color_edit: LineEdit = menu.get("_color_edit") as LineEdit
-	var color_note: Label = menu.get("_color_note") as Label
-	check(color_panel != null and color_panel.visible,
-		"color output block appears for a pending Color Block")
-	check(color_edit != null and color_edit.text == "255, 0, 0",
-		"RGB mode displays the output color channels")
-	var cactus_before_edit := Global.count_item(cactus_data)
-	menu.call("_on_color_mode_selected", 1)
-	check(color_edit.text == "#FF0000"
-		and (station.call("get_output_item") as ItemData) == red
-		and int(station.call("get_output_quantity")) == 1,
-		"HEX mode shows #RRGGBB without changing the output color")
-	menu.call("_commit_color_text", "#00FF00")
-	check((station.call("get_output_item") as ItemData) == green
-		and int(station.call("get_output_quantity")) == 1
-		and Global.count_item(cactus_data) == cactus_before_edit,
-		"editing HEX updates output color without consuming materials")
-	check(menu.get("_color_preview") != null
-		and ((menu.get("_color_preview") as ColorRect).color == Color8(0, 255, 0)),
-		"editing HEX updates the color preview")
-	menu.call("_commit_color_text", "#ZZZZZZ")
-	check((station.call("get_output_item") as ItemData) == green
-		and color_note != null and color_note.visible,
-		"malformed HEX is rejected without corrupting the output")
-	menu.call("_on_color_mode_selected", 0)
-	check(color_edit.text == "0, 255, 0",
-		"switching back to RGB shows the equivalent channels")
-	menu.call("_commit_color_text", "255, 0, 0")
-	check((station.call("get_output_item") as ItemData) == red
+	check(menu != null and menu.get("_code_edit") != null
+		and menu.get("_auto_grid") == null
+		and menu.get("_input_section") == null
+		and menu.get("_output_slot") == null
 		and station.get("program_code") == "# code is untouched",
-		"editing RGB restores the color and leaves program code untouched")
+		"Algorithmica exposes only the code panel")
 
 	# Save/load keeps the custom RGB output identity and quantity.
 	var station_save: Dictionary = station.call("get_station_save_data")
@@ -2048,7 +2603,7 @@ func _test_mining_tool_switch() -> void:
 	# A PNC order walked here from a distant tap: the real cursor/camera moved,
 	# so the cached hover is stale. The synthetic press must rebuild hover from
 	# the PNC target cursor and still start mining.
-	Global.set_touch_mouse(block.global_position)
+	Global.set_touch_mouse(Vector2(-9999, -9999))
 	var pnc_press := InputEventMouseButton.new()
 	pnc_press.button_index = MOUSE_BUTTON_LEFT
 	pnc_press.pressed = true
@@ -2420,10 +2975,213 @@ func _test_ui_back_actual() -> void:
 	Global.register_ui_back(inventory, Callable(inventory, "dismiss_back"))
 	check(Global.request_ui_back() and not inv_layer.visible,
 		"back closes the real inventory panel and releases its pause")
+
+	# The X button calls _close() directly, and a docked chest can close the
+	# same panel when the player walks away. Both must emit the visibility
+	# signal or the HUD/hotbar remain hidden after the inventory disappears.
+	var inv_events: Array = []
+	var on_inv := func(is_open: bool) -> void: inv_events.append(is_open)
+	Global.inventory_toggled.connect(on_inv)
+	inv_events.clear()
+	inv_layer.visible = true
+	Global.open_ui()
+	Global.register_ui_back(inventory, Callable(inventory, "dismiss_back"))
+	inventory.call("_close")
+	await get_tree().process_frame
+	check(not inv_layer.visible and inv_events == [false] and not Global.any_ui_open(),
+		"inventory X button restores the HUD/hotbar via one close signal")
+	inv_events.clear()
+	inv_layer.visible = true
+	Global.open_ui()
+	Global.register_ui_back(inventory, Callable(inventory, "dismiss_back"))
+	var fake_chest := Node.new()
+	add_child(fake_chest)
+	inventory.set("_chest", fake_chest)
+	inventory.call("close_chest", fake_chest)
+	await get_tree().process_frame
+	check(not inv_layer.visible and inv_events == [false] and not Global.any_ui_open(),
+		"chest auto-close restores the HUD/hotbar via one close signal")
+	fake_chest.queue_free()
+	Global.inventory_toggled.disconnect(on_inv)
 	inv_layer.queue_free()
+
+	# The Lua editor's own X button/Escape closes its panel directly, not
+	# through LuaUI.close_editor(); it must still restore the HUD.
+	var lua_editor: Control = load("res://scenes/ui/LuaEditorUI.tscn").instantiate() as Control
+	add_child(lua_editor)
+	await get_tree().process_frame
+	var modal_events: Array = []
+	var on_modal := func(is_open: bool) -> void: modal_events.append(is_open)
+	Global.modal_hud_changed.connect(on_modal)
+	Global.open_ui()
+	Global.modal_hud_changed.emit(true)
+	lua_editor.call("open_panel")
+	lua_editor.call("close_panel")
+	await get_tree().process_frame
+	check(not lua_editor.visible and modal_events == [true, false]
+		and not Global.any_ui_open(),
+		"Lua editor close restores the HUD via one modal signal")
+	Global.modal_hud_changed.disconnect(on_modal)
+	lua_editor.queue_free()
+
+	# The hotbar owns a nested CanvasLayer, so hiding the game's parent
+	# CanvasLayer does not hide it. Verify both inventory and station/editor
+	# modal signals drive the same visibility state.
+	var hotbar: Control = load("res://scenes/ui/Hotbar.tscn").instantiate() as Control
+	add_child(hotbar)
+	await get_tree().process_frame
+	var hotbar_canvas: CanvasLayer = hotbar.get_node("CanvasLayer") as CanvasLayer
+	Global.inventory_toggled.emit(true)
+	check(not hotbar_canvas.visible, "inventory hides the nested hotbar canvas")
+	Global.modal_hud_changed.emit(true)
+	Global.inventory_toggled.emit(false)
+	check(not hotbar_canvas.visible,
+		"a station/editor modal keeps the hotbar hidden after inventory closes")
+	Global.modal_hud_changed.emit(false)
+	check(hotbar_canvas.visible, "closing the last modal restores the hotbar")
+	hotbar.queue_free()
 
 	await get_tree().process_frame
 	Global.reset_pause_state()
+
+func _test_sync_loading() -> void:
+	var old_online: bool = Global.online_mode
+	var old_status: int = Global.cloud_status
+	var events: Array = []
+	var on_progress := func(info: Dictionary) -> void: events.append(info)
+	CloudSync.sync_progress_changed.connect(on_progress)
+	Global.set_online_mode(false)
+	var summary: Dictionary = await CloudSync.sync_all()
+	check(summary is Dictionary and summary.has("uploaded") and summary.has("failed")
+		and events.size() > 0
+		and str((events[events.size() - 1] as Dictionary).get("stage", "")) == "offline",
+		"cloud sync exposes an offline progress event and a complete summary")
+	CloudSync.sync_progress_changed.disconnect(on_progress)
+	Global.set_online_mode(old_online)
+	Global.set_cloud_status(old_status)
+
+	# The shared account panel owns the sign-in/create busy bar; the main menu
+	# reuses it as a determinate world-sync bar.
+	var account: Control = load("res://scripts/online_account_panel.gd").new() as Control
+	add_child(account)
+	await get_tree().process_frame
+	account.call("open_login")
+	await get_tree().process_frame
+	var bar: ProgressBar = account.get("_busy_bar") as ProgressBar
+	account.call("_set_busy", true, "Signing in...")
+	check(bar != null and bar.visible and bar.indeterminate,
+		"account sign-in/create shows an indeterminate loading bar")
+	account.call("set_operation_progress", "Syncing your worlds...", 50.0)
+	check(bar != null and bar.visible and not bar.indeterminate
+		and int(round(bar.value)) == 50,
+		"account panel can show determinate cloud-sync progress")
+	account.call("set_operation_progress", "", 100.0, false)
+	check(bar != null and not bar.visible,
+		"account panel hides its loading bar when the operation finishes")
+	account.queue_free()
+	await get_tree().process_frame
+
+	var startup_src := FileAccess.get_file_as_string("res://scripts/startup_mode.gd")
+	var menu_src := FileAccess.get_file_as_string("res://scripts/main_menu_ver.gd")
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	check(startup_src.contains("_progress_bar")
+		and startup_src.contains("await CloudSync.sync_all()"),
+		"startup sign-in is a cloud-sync barrier with a loading bar")
+	check(menu_src.contains("set_operation_progress")
+		and menu_src.contains("await CloudSync.sync_all()"),
+		"in-menu sign-in waits for cloud sync before refreshing worlds")
+	check(game_src.contains("_loading_bar")
+		and game_src.contains("_finish_loading_fade")
+		and game_src.contains('"modulate:a"'),
+		"world loading has a progress bar and fades out into the world")
+
+
+func _test_chest_inventory_panel() -> void:
+	var old_inventory: Array = Global.Inventory.duplicate(true)
+	var old_player: Node = Global.player_node
+	var wood := load("res://resources/items/wood.tres") as ItemData
+	var chest_data := load("res://resources/items/chest.tres") as ItemData
+	var player_stub := CharacterBody2D.new()
+	player_stub.name = "PlayerStub"
+	add_child(player_stub)
+	var layer := CanvasLayer.new()
+	layer.name = "InventoryUI"
+	layer.layer = 12
+	player_stub.add_child(layer)
+	var ui: Control = load("res://scenes/ui/inventory_ui.tscn").instantiate() as Control
+	layer.add_child(ui)
+	layer.visible = true
+	Global.player_node = player_stub
+	for i in range(Global.INVENTORY_SIZE):
+		Global.Inventory[i] = null
+	Global.Inventory[0] = {"data": wood, "quantity": 4}
+	Global.Inventory_updated.emit()
+
+	var chest: Node = load("res://scenes/objects/ChestBlock.tscn").instantiate()
+	add_child(chest)
+	chest.call("setup", chest_data)
+	var chest_slots: Array = chest.get("slots") as Array
+	chest_slots[0] = {"data": wood, "quantity": 12}
+	chest_slots[1] = {"data": wood, "quantity": 3}
+	chest.set("_player_nearby", true)
+	ui.call("attach_chest", chest)
+	await get_tree().process_frame
+	chest.set("_open_ui", ui)
+
+	var header_icon: TextureRect = ui.get("_chest_icon") as TextureRect
+	var header_title: Label = ui.get("_chest_title") as Label
+	var trash_row: HBoxContainer = ui.get("_trash_row") as HBoxContainer
+	var inv_body: HBoxContainer = ui.get("_inv_body") as HBoxContainer
+	check(bool((ui.get("_chest_section") as Control).visible)
+		and (ui.get("_chest_slots") as Array).size() == 8
+		and header_title != null and header_title.text == "Chest",
+		"opening a chest adds the labelled Chest drawer under the inventory")
+	check(header_icon != null and header_icon.texture == chest_data.icon,
+		"the Chest drawer shows the chest item icon")
+	check(trash_row != null and trash_row.alignment == BoxContainer.ALIGNMENT_END,
+		"the delete control is aligned to the inventory's bottom-right")
+	check(inv_body != null
+		and inv_body.size_flags_vertical == Control.SIZE_SHRINK_BEGIN,
+		"the player grid moves up when the chest drawer is open")
+
+	# Chest -> player drag.
+	var chest_payload: Variant = chest.call("make_drag_data", 0, true)
+	var player_slot: Control = (ui.get("_slots") as Array)[1] as Control
+	player_slot.call("_drop_data", Vector2.ZERO, chest_payload)
+	var inv_one: Variant = Global.Inventory[1]
+	check(inv_one is Dictionary and (inv_one as Dictionary)["data"] == wood
+		and chest_slots[0] == null,
+		"dragging a chest stack into the player grid moves it out of the chest")
+
+	# Player -> chest drag.
+	var inv_payload := {"from_index": 1, "item": Global.Inventory[1], "source": "inventory"}
+	var chest_slot: Control = (ui.get("_chest_slots") as Array)[4] as Control
+	chest_slot.call("_drop_data", Vector2.ZERO, inv_payload)
+	check(chest_slots[4] is Dictionary and (chest_slots[4] as Dictionary)["data"] == wood
+		and Global.Inventory[1] == null,
+		"dragging a player stack into the chest stores it in the chest")
+
+	# Trash receives chest-origin drags too (not Global.Inventory[from_index]).
+	chest_slots[2] = {"data": wood, "quantity": 2}
+	var trash: Control = ui.get("_trash") as Control
+	trash.call("_drop_data", Vector2.ZERO,
+		{"from_index": 2, "item": chest_slots[2], "source": "chest"})
+	check(chest_slots[2] == null,
+		"dragging a chest stack to delete removes it from the chest")
+
+	ui.call("detach_chest")
+	check(inv_body.size_flags_vertical == Control.SIZE_EXPAND_FILL,
+		"closing the chest restores the normal inventory layout")
+	Global.unregister_ui_back(ui)
+	layer.visible = false
+	layer.queue_free()
+	chest.queue_free()
+	player_stub.queue_free()
+	await get_tree().process_frame
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	Global.Inventory = old_inventory
+	Global.Inventory_updated.emit()
+
 
 func _test_cloud_save_identity() -> void:
 	var uid_a := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -2468,6 +3226,614 @@ func _test_android_config() -> void:
 		"application/config/quit_on_go_back", true)),
 		"Android Back does not quit without giving the player a pause menu")
 
+func _test_android_input_and_safe_area() -> void:
+	Global.reset_pause_state()
+	var old_player: Node = Global.player_node
+	var old_move: Vector2 = Global.mobile_move
+	var old_shift: bool = Global.mobile_shift
+	var old_pnc: bool = Global.pnc_hold_active
+	var old_size: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_scale: float = Global.ui_scale
+
+	# Opening any modal/pause must cancel the tap-to-control order and held
+	# touch input via the same path used by Global.open_ui().
+	var probe := CancelProbe.new()
+	add_child(probe)
+	Global.player_node = probe
+	Global.mobile_move = Vector2.RIGHT
+	Global.mobile_shift = true
+	Global.pnc_hold_active = true
+	var cancelled_events: Array = []
+	var on_cancel := func() -> void: cancelled_events.append(true)
+	Global.gameplay_input_cancelled.connect(on_cancel)
+	Global.cancel_gameplay_input()
+	check(probe.cancelled == 1 and cancelled_events.size() == 1
+		and Global.mobile_move == Vector2.ZERO and not Global.mobile_shift
+		and not Global.pnc_hold_active,
+		"opening an interface cancels PNC, held touch movement and sprint")
+	Global.gameplay_input_cancelled.disconnect(on_cancel)
+	probe.queue_free()
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	Global.mobile_move = old_move
+	Global.mobile_shift = old_shift
+	Global.pnc_hold_active = old_pnc
+
+	# UI hit-testing must use the event's own viewport position. Android's
+	# secondary-touch bridge and emulated first touch can deliver a click away
+	# from the current OS cursor; using the cursor let UI taps leak into world
+	# mining/attacking.
+	var hit_probe := Control.new()
+	hit_probe.position = Vector2(2, 2)
+	hit_probe.size = Vector2(8, 8)
+	hit_probe.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(hit_probe)
+	await get_tree().process_frame
+	var inside := InputEventMouseButton.new()
+	inside.button_index = MOUSE_BUTTON_LEFT
+	inside.pressed = true
+	inside.position = Vector2(5, 5)
+	var outside := InputEventMouseButton.new()
+	outside.button_index = MOUSE_BUTTON_LEFT
+	outside.pressed = true
+	outside.position = Vector2(40, 40)
+	check(Global.is_mouse_event_over_ui(inside)
+		and not Global.is_mouse_event_over_ui(outside),
+		"mouse/UI hit-testing follows the event position, not a stale cursor")
+	hit_probe.queue_free()
+	await get_tree().process_frame
+
+	# UI hit-testing must only walk UI roots. The overworld has ~40k world
+	# nodes; scanning them from the Viewport used to cost ~35 ms per call.
+	var ui_layer := CanvasLayer.new()
+	ui_layer.visible = false
+	var ui_control := Control.new()
+	ui_control.position = Vector2(200, 200)
+	ui_control.size = Vector2(40, 40)
+	ui_control.mouse_filter = Control.MOUSE_FILTER_STOP
+	ui_layer.add_child(ui_control)
+	add_child(ui_layer)
+	await get_tree().process_frame
+	check(not Global.is_point_over_ui(Vector2(210, 210)),
+		"a hidden UI layer never blocks world input")
+	ui_layer.visible = true
+	check(Global.is_point_over_ui(Vector2(210, 210)),
+		"a runtime-added CanvasLayer joins the UI hit-test roots")
+	ui_control.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	check(not Global.is_point_over_ui(Vector2(210, 210)),
+		"mouse-ignore controls do not block world input")
+	ui_layer.queue_free()
+	await get_tree().process_frame
+	check(not Global.is_point_over_ui(Vector2(210, 210)),
+		"freed UI roots are pruned from the hit-test cache")
+
+	var roots_before: int = (Global.get("_ui_roots") as Array).size()
+	var world_probe := Node2D.new()
+	for i in range(100):
+		world_probe.add_child(Node2D.new())
+	add_child(world_probe)
+	await get_tree().process_frame
+	check((Global.get("_ui_roots") as Array).size() == roots_before,
+		"non-UI world nodes never enter the UI hit-test cache")
+	world_probe.queue_free()
+
+	# Safe-area helper: all four insets become full-rect offsets, and content
+	# rect math matches them. This is what centres modal/scrolled panels away
+	# from a notch or system bar.
+	Global.ui_viewport_size = Vector2(1152, 648)
+	Global.ui_safe_insets = Vector4(80, 24, 40, 32)
+	var safe_probe := Control.new()
+	safe_probe.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(safe_probe)
+	var content := Global.ui_content_rect()
+	check(is_equal_approx(safe_probe.offset_left, 80.0)
+		and is_equal_approx(safe_probe.offset_top, 24.0)
+		and is_equal_approx(safe_probe.offset_right, -40.0)
+		and is_equal_approx(safe_probe.offset_bottom, -32.0)
+		and is_equal_approx(content.size.x, 1032.0)
+		and is_equal_approx(content.size.y, 592.0),
+		"safe-area helper maps notches/system bars into full-rect offsets")
+	safe_probe.free()
+
+	Global.ui_viewport_size = old_size
+	Global.ui_safe_insets = old_insets
+	Global.ui_scale = old_scale
+
+	# Touch-ID bridge: primary touch remains Godot-emulated; secondary touches
+	# are explicitly tracked and released on modal open. Hide the HUD root so
+	# this test exercises state without relying on the tiny headless viewport
+	# for control coordinates.
+	var mobile: Node = load("res://scripts/mobile_ui.gd").new()
+	add_child(mobile)
+	await get_tree().process_frame
+	var mobile_root: Control = mobile.get("_root") as Control
+	if mobile_root != null:
+		mobile_root.visible = false
+	var primary := InputEventScreenTouch.new()
+	primary.index = 11
+	primary.position = Vector2(30, 30)
+	primary.pressed = true
+	mobile.call("_input", primary)
+	check(int(mobile.get("_primary_touch")) == 11
+		and (mobile.get("_bridged_touches") as Dictionary).is_empty(),
+		"mobile primary touch stays in the normal emulated-mouse path")
+	var secondary := InputEventScreenTouch.new()
+	secondary.index = 12
+	secondary.position = Vector2(45, 30)
+	secondary.pressed = true
+	mobile.call("_input", secondary)
+	check((mobile.get("_bridged_touches") as Dictionary).has(12),
+		"mobile secondary touch is tracked and bridged as one gesture")
+	var secondary_up := InputEventScreenTouch.new()
+	secondary_up.index = 12
+	secondary_up.position = Vector2(45, 30)
+	secondary_up.pressed = false
+	mobile.call("_input", secondary_up)
+	check((mobile.get("_bridged_touches") as Dictionary).is_empty(),
+		"mobile secondary touch release releases exactly its tracked gesture")
+	# Opening a modal resets all gesture state, including a still-down primary.
+	Global.open_ui()
+	var modal_touch := InputEventScreenTouch.new()
+	modal_touch.index = 13
+	modal_touch.position = Vector2(30, 30)
+	modal_touch.pressed = true
+	mobile.call("_input", modal_touch)
+	check(int(mobile.get("_primary_touch")) == -1
+		and (mobile.get("_bridged_touches") as Dictionary).is_empty(),
+		"mobile touch bridge is disabled/reset while a modal owns the screen")
+	Global.close_ui()
+	Global.reset_pause_state()
+	mobile.queue_free()
+	await get_tree().process_frame
+	Global.reset_pause_state()
+
+
+func _test_android_keyboard_layout() -> void:
+	# Regression: the Android keyboard is reported in physical pixels. A
+	# high-DPI phone used to hand the sign-in form an inset larger than the
+	# whole logical viewport, collapsing the scroll area and pushing the
+	# username/password fields above the screen.
+	var old_scale: float = Global.ui_scale
+	var old_size: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_override: float = Global.keyboard_height_override
+
+	Global.ui_scale = 1.35
+	Global.ui_viewport_size = Vector2(1152, 648)
+	Global.ui_safe_insets = Vector4.ZERO
+	Global.keyboard_height_override = 360.0
+
+	var sub := SubViewport.new()
+	sub.size = Vector2i(1152, 648)
+	add_child(sub)
+	var panel: Control = load("res://scripts/online_account_panel.gd").new()
+	panel.call("set_dim_enabled", false)
+	sub.add_child(panel)
+	panel.call("open_login")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var fields: Dictionary = panel.get("_fields")
+	var scroll: ScrollContainer = panel.get("_scroll") as ScrollContainer
+	var panel_rect: Rect2 = (panel.get("_panel") as Control).get_global_rect()
+	var scroll_rect: Rect2 = scroll.get_global_rect()
+	var fields_visible: bool = fields.has("username") and fields.has("password") \
+		and scroll_rect.intersects((fields["username"] as Control).get_global_rect()) \
+		and scroll_rect.intersects((fields["password"] as Control).get_global_rect())
+	check(scroll.size.y > 1.0 and panel_rect.position.y >= 0.0 and fields_visible,
+		"Android keyboard keeps the sign-in fields inside the scrollable viewport")
+
+	Global.keyboard_height_override = old_override
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_size
+	Global.ui_safe_insets = old_insets
+	panel.queue_free()
+	sub.queue_free()
+	await get_tree().process_frame
+
+
+func _test_ambient_birds() -> void:
+	var old_player: Node = Global.player_node
+	var old_day: bool = Global.is_daytime
+	# CharacterBody2D, not Node2D: live fish AI probes Global.player_node.get_rid().
+	var probe_player := CharacterBody2D.new()
+	probe_player.global_position = Vector2(400, 300)
+	add_child(probe_player)
+	Global.player_node = probe_player
+
+	var birds: Node2D = load("res://scripts/ambient_birds.gd").new()
+	add_child(birds)
+	await get_tree().process_frame
+
+	Global.is_daytime = true
+	birds.call("_try_spawn")
+	var day_kinds: Array = []
+	for b in birds.get("_birds"):
+		day_kinds.append(str((b as Dictionary).get("kind", "")))
+	var first: AnimatedSprite2D = null
+	if not (birds.get("_birds") as Array).is_empty():
+		first = (birds.get("_birds")[0] as Dictionary)["node"] as AnimatedSprite2D
+	var day_ok: bool = int(birds.call("bird_count")) > 0 \
+		and day_kinds.has("finch") and not day_kinds.has("kite")
+	var frames_ok: bool = first != null and first.sprite_frames != null \
+		and first.sprite_frames.get_frame_count("fly") == 4 \
+		and first.z_index == 2000
+
+	for b in birds.get("_birds"):
+		var n: Node = (b as Dictionary)["node"]
+		if n != null and is_instance_valid(n):
+			n.queue_free()
+	(birds.get("_birds") as Array).clear()
+	Global.is_daytime = false
+	birds.call("_try_spawn")
+	var night_kinds: Array = []
+	for b in birds.get("_birds"):
+		night_kinds.append(str((b as Dictionary).get("kind", "")))
+	var night_ok: bool = not night_kinds.is_empty() and not night_kinds.has("finch") \
+		and night_kinds.has("kite")
+	check(day_ok and frames_ok and night_ok,
+		"ambient birds use 4-frame wing strips and switch finch/kite by day/night")
+
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	Global.is_daytime = old_day
+	birds.queue_free()
+	probe_player.queue_free()
+	await get_tree().process_frame
+
+
+func _test_automatica_api() -> void:
+	# The Lua helper preamble is the shared source of truth for the built-in
+	# Automatica helpers. Run EVERY domain through Lua and ensure the Rust
+	# bridge still accepts it, then cross-check the documented API surface.
+	var editor_script: GDScript = load("res://scripts/lua_editor_ui.gd") as GDScript
+	var preamble: String = str(editor_script.get_script_constant_map().get("LUA_PREAMBLE", ""))
+	check(preamble.length() > 1000, "Automatica exposes its Lua helper preamble")
+
+	var lua := LuaState.new()
+	add_child(lua)
+	var failed := [""]
+	var ok := [false]
+	var printed: Array = []
+	lua.connect("code_failed", func(e: String) -> void: failed[0] = e)
+	lua.connect("code_executed", func() -> void: ok[0] = true)
+	lua.connect("signal_print", func(s: String) -> void: printed.append(s))
+	lua.set("held_item", "Wood")
+	lua.set("held_item_quantity", 2)
+	lua.set("station_recipe", "Planks")
+	lua.set("station_output_item", "Plank")
+	lua.set("station_output_count", 3)
+	var code: String = preamble + """
+move(1, 0)
+place_item()
+place_item(1, 2)
+place_at(0, 0)
+select_block(0)
+withdraw("Wood", 1)
+build_line(0, 0, 3, 0)
+build_rect(0, 1, 2, 2, true)
+build_circle(2, false)
+build_ring(2)
+build_spiral(0, 0)
+build_wave(3, 1)
+build_stairs(2)
+chop_trees(4)
+auto_work()
+deposit_chest()
+chest_contents()
+return_to_spawn()
+craft_example()
+attack()
+drop_item(1)
+mine("Stone", 4)
+rename("Birdy")
+input_slot(1)
+put_input("Wood", 1)
+set_recipe("Planks")
+craft(1)
+take_output()
+combat_mode(false)
+list_items()
+print(held_item.name)
+print(held_item.quantity)
+print(station_recipe)
+print(station_output_item)
+print(station_output_count)
+"""
+	lua.set("code", code)
+	lua.call("run_code")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var globals_ok: bool = printed.size() >= 5 \
+		and str(printed[printed.size() - 5]).strip_edges() == "Wood" \
+		and str(printed[printed.size() - 4]).strip_edges() == "2" \
+		and str(printed[printed.size() - 3]).strip_edges() == "Planks" \
+		and str(printed[printed.size() - 2]).strip_edges() == "Plank" \
+		and str(printed[printed.size() - 1]).strip_edges() == "3"
+	check(ok[0] and failed[0].is_empty() and globals_ok,
+		"every Automatica helper/function runs and held/station globals are readable")
+	lua.queue_free()
+
+	# Every documented Automatica name must exist in the Lua preamble or the
+	# Rust bridge. This catches an API reference drifting ahead of the runtime.
+	var editor_src: String = FileAccess.get_file_as_string("res://scripts/lua_editor_ui.gd")
+	check(editor_src.contains('set("station_recipe"')
+		and editor_src.contains('set("station_output_item"')
+		and editor_src.contains('set("station_output_count"')
+		and preamble.contains("__place_item"),
+		"Automatica publishes station globals and supports no-offset place_item()")
+
+	var lua_src: String = FileAccess.get_file_as_string("res://extension/src/runner/lua.rs")
+	var documented: Dictionary = {}
+	for e in APIReference.automatica_entries():
+		var sig: String = str(e.get("sig", ""))
+		for part in sig.split("/"):
+			var name: String = part.strip_edges().split("(")[0].split("=")[0].strip_edges()
+			if not name.is_empty():
+				documented[name] = true
+	var missing: Array = []
+	for name in documented:
+		var in_preamble: bool = preamble.contains("function %s(" % name)
+		var in_rust: bool = lua_src.contains('globals.set("%s"' % name)
+		if not in_preamble and not in_rust:
+			missing.append(name)
+	check(missing.is_empty(),
+		"the Automatica reference lists only implemented helpers/functions")
+
+	# Algorithmica station/furnace bases must expose the documented names too.
+	var station_src: String = FileAccess.get_file_as_string("res://resources/godot_station_base.gd")
+	var furnace_src: String = FileAccess.get_file_as_string("res://resources/godot_furnace_base.gd")
+	var algo_missing: Array = []
+	for e in APIReference.CUSTOM_PYTHON_STATION:
+		var name: String = str(e.get("sig", "")).split("(")[0].strip_edges()
+		if not station_src.contains("func %s(" % name) or not AlgorithmicaAPI.STATION_FUNCTIONS.has(name):
+			algo_missing.append(name)
+	for e in APIReference.CUSTOM_PYTHON_FURNACE:
+		var name: String = str(e.get("sig", "")).split("(")[0].strip_edges()
+		if not furnace_src.contains("func %s(" % name) or not AlgorithmicaAPI.FURNACE_FUNCTIONS.has(name):
+			algo_missing.append(name)
+	check(algo_missing.is_empty(),
+		"the Algorithmica reference matches both Python host bases")
+
+
+func _test_automatica_build_queue() -> void:
+	# Build helpers emit a whole loop of place_item() calls in one Lua frame.
+	# They must be serialized and consume exactly the captured build slots, not
+	# race each other into placing more blocks than the robot carried.
+	var old_world: Node = Global.world_node
+	var fake := BuildWorldProbe.new()
+	add_child(fake)
+	Global.world_node = fake
+	var npc: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	add_child(npc)
+	await get_tree().process_frame
+	(npc.get_node("Robot") as Node2D).position = Vector2.ZERO
+	var stone: ItemData = load("res://resources/items/stone.tres")
+	var wood: ItemData = load("res://resources/items/wood.tres")
+	var palette: Array = npc.get("_build_palette")
+	palette[0] = {"data": stone, "quantity": 1}
+	palette[1] = {"data": wood, "quantity": 1}
+	npc.set("_selected_slot", 0)
+	npc.call("_on_lua_place_at", 10, 10)
+	npc.set("_selected_slot", 1)
+	npc.call("_on_lua_place_at", 11, 10)
+	npc.set("_selected_slot", 0)
+	npc.call("_on_lua_place_at", 12, 10)
+	await get_tree().create_timer(0.8).timeout
+	var cells: Array = []
+	for p in fake.placed:
+		cells.append((p as Dictionary)["cell"])
+	check(fake.placed.size() == 2 and cells.has(Vector2i(10, 10))
+		and cells.has(Vector2i(11, 10)) and not cells.has(Vector2i(12, 10))
+		and palette[0] == null and palette[1] == null,
+		"queued build helpers place once per block and respect the captured slot")
+	Global.world_node = old_world
+	npc.queue_free()
+	fake.queue_free()
+	await get_tree().process_frame
+
+
+func _test_quiz_reward_ui() -> void:
+	check(QuizAltar.stars_for_hints(0) == 3
+		and QuizAltar.stars_for_hints(1) == 2
+		and QuizAltar.stars_for_hints(2) == 1
+		and QuizAltar.stars_for_hints(9) == 1,
+		"quiz hints award 3 / 2 / 1 blue stars")
+
+	var mission: DungeonMissionData = null
+	for m in Global.dungeon_missions.values():
+		var dm := m as DungeonMissionData
+		if dm != null and not dm.questions.is_empty() \
+				and not Global.is_dungeon_cleared(dm.dungeon_index):
+			mission = dm
+			break
+	if mission == null:
+		check(false, "quiz mission available for reward UI test")
+		return
+
+	var altar := QuizAltar.new()
+	add_child(altar)
+	altar.setup(mission)
+	altar.call("_start_quiz")
+	await get_tree().process_frame
+	check(altar.get("_hint_btn") != null,
+		"quiz altar exposes a top-right hint button")
+
+	# Compiler output is boxed in a rectangle, not bare text on the panel.
+	var comp_q := DungeonQuestion.new()
+	comp_q.type = DungeonQuestion.Type.COMPILER
+	comp_q.language = "lua"
+	comp_q.answer_output = "hint"
+	var comp_questions: Array[DungeonQuestion] = [comp_q]
+	altar.set("_questions", comp_questions)
+	altar.set("_index", 0)
+	altar.call("_show_question")
+	await get_tree().process_frame
+	var out := altar.get("_compiler_output") as RichTextLabel
+	check(out != null and out.get_parent() is PanelContainer,
+		"quiz compiler output is wrapped in a rectangle")
+	var hint_code := str(altar.call("_hint_code_for", comp_q))
+	check(hint_code.contains("print(") and hint_code.contains("hint"),
+		"compiler hints generate a print of the expected output")
+
+	# HINT auto-completes the current MCQ and advances exactly one question.
+	var q1 := DungeonQuestion.new()
+	q1.type = DungeonQuestion.Type.MCQ
+	q1.answer_a = "A"
+	q1.answer_b = "B"
+	q1.correct_index = 0
+	var q2 := DungeonQuestion.new()
+	q2.type = DungeonQuestion.Type.MCQ
+	q2.answer_a = "C"
+	q2.answer_b = "D"
+	q2.correct_index = 0
+	var mc_questions: Array[DungeonQuestion] = [q1, q2]
+	altar.set("_questions", mc_questions)
+	altar.set("_index", 0)
+	altar.set("_hints_used", 0)
+	altar.set("_answered", 0)
+	altar.call("_show_question")
+	await get_tree().process_frame
+	altar.call("_use_hint")
+	await get_tree().create_timer(0.8).timeout
+	check(int(altar.get("_hints_used")) == 1
+		and int(altar.get("_index")) == 1
+		and int(altar.get("_answered")) == 1,
+		"HINT auto-completes one question and counts one usage")
+
+	# Results screen: achievements, 3-star layout and Done returns to world.
+	altar.set("_answered", 2)
+	altar.call("_show_reward_screen", 2)
+	await get_tree().process_frame
+	var scroll := altar.get("_panel_scroll") as ScrollContainer
+	var reward_root := altar.get("_reward_root") as Control
+	var done_found := false
+	if reward_root != null:
+		for child in reward_root.find_children("*", "Button", true, false):
+			if (child as Button).text.contains("DONE"):
+				done_found = true
+	check(bool(altar.get("_reward_visible"))
+		and int(altar.get("_reward_stars")) == 2
+		and scroll != null and not scroll.visible and done_found,
+		"quiz results screen shows achievements and a Done/return button")
+
+	var old_game: Node = Global.game_node
+	var probe := ExitGameProbe.new()
+	add_child(probe)
+	Global.game_node = probe
+	altar.call("_on_reward_done")
+	await get_tree().process_frame
+	check(probe.exit_calls == 1,
+		"quiz results Done teleports back to the overworld")
+	Global.game_node = old_game if is_instance_valid(old_game) else null
+	probe.queue_free()
+	altar.queue_free()
+	await get_tree().process_frame
+	Global.reset_pause_state()
+
+
+func _test_altar_mobile_layout() -> void:
+	var old_scale: float = Global.ui_scale
+	var old_viewport: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	Global.ui_scale = 1.25
+	Global.ui_viewport_size = Vector2(1024, 473)
+	Global.ui_safe_insets = Vector4.ZERO
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+	var knowledge := KnowledgeAltar.new()
+	knowledge.set("_entry", load("res://resources/entries/entry_11_lua.tres"))
+	add_child(knowledge)
+	knowledge.call("_build_panel")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var kp: PanelContainer = null
+	for p in knowledge.find_children("*", "PanelContainer", true, false):
+		if (p as PanelContainer).size.x > 100.0:
+			kp = p as PanelContainer
+			break
+	check(kp != null and kp.size.x <= 1025.0 and kp.size.y <= 474.0,
+		"knowledge altar panel is capped to the mobile viewport")
+	var body_scroll := knowledge.find_child("BodyScroll", true, false) as ScrollContainer
+	check(body_scroll != null and kp != null and body_scroll.size.y < kp.size.y,
+		"knowledge altar body scrolls inside the capped panel")
+	if body_scroll != null:
+		var body_rect: Rect2 = body_scroll.get_global_rect()
+		var touch_at := Vector2(body_rect.position.x + body_rect.size.x * 0.5,
+			body_rect.position.y + 10.0)
+		var touch := InputEventScreenTouch.new()
+		touch.index = 0
+		touch.position = touch_at
+		touch.pressed = true
+		knowledge.call("_handle_touch_scroll", touch)
+		for i in range(6):
+			var drag := InputEventScreenDrag.new()
+			drag.index = 0
+			drag.position = touch_at + Vector2(0, -float(i + 1) * 20.0)
+			drag.relative = Vector2(0, -20)
+			knowledge.call("_handle_touch_scroll", drag)
+		check(body_scroll.scroll_vertical > 0,
+			"knowledge altar body follows a finger drag on mobile")
+		touch.pressed = false
+		knowledge.call("_handle_touch_scroll", touch)
+	knowledge.queue_free()
+	await get_tree().process_frame
+
+	var quiz := QuizAltar.new()
+	add_child(quiz)
+	quiz.call("_build_panel")
+	var q := DungeonQuestion.new()
+	q.type = DungeonQuestion.Type.MCQ
+	q.question = "A long mobile quiz question that must wrap inside the panel without widening the whole modal, followed by four long answer choices so the body needs scrolling."
+	q.answer_a = "A very long multiple-choice answer that must wrap instead of widening the whole panel."
+	q.answer_b = "Another long multiple-choice answer that also wraps across several lines on a phone."
+	q.answer_c = "A third long multiple-choice answer so the quiz body is taller than the visible viewport."
+	q.answer_d = "A fourth long multiple-choice answer to guarantee the question body scrolls."
+	q.correct_index = 0
+	var qs: Array[DungeonQuestion] = [q]
+	quiz.set("_questions", qs)
+	quiz.set("_index", 0)
+	quiz.call("_rebuild_controls")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var qp: PanelContainer = null
+	for p in quiz.find_children("*", "PanelContainer", true, false):
+		if (p as PanelContainer).size.x > 100.0:
+			qp = p as PanelContainer
+			break
+	check(qp != null and qp.size.x <= 1025.0 and qp.size.y <= 474.0,
+		"quiz altar panel is capped to the mobile viewport")
+	var question_scroll := quiz.find_child("QuestionScroll", true, false) as ScrollContainer
+	check(question_scroll != null and qp != null and question_scroll.size.y < qp.size.y,
+		"quiz question and answers scroll inside the capped panel")
+	if question_scroll != null:
+		var q_rect: Rect2 = question_scroll.get_global_rect()
+		var q_touch_at := Vector2(q_rect.position.x + q_rect.size.x * 0.5,
+			q_rect.position.y + 10.0)
+		var q_touch := InputEventScreenTouch.new()
+		q_touch.index = 0
+		q_touch.position = q_touch_at
+		q_touch.pressed = true
+		quiz.call("_handle_touch_scroll", q_touch)
+		for i in range(6):
+			var q_drag := InputEventScreenDrag.new()
+			q_drag.index = 0
+			q_drag.position = q_touch_at + Vector2(0, -float(i + 1) * 20.0)
+			q_drag.relative = Vector2(0, -20)
+			quiz.call("_handle_touch_scroll", q_drag)
+		check(question_scroll.scroll_vertical > 0,
+			"quiz question body follows a finger drag on mobile")
+		q_touch.pressed = false
+		quiz.call("_handle_touch_scroll", q_touch)
+	quiz.queue_free()
+	await get_tree().process_frame
+
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_viewport
+	Global.ui_safe_insets = old_insets
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+
 func _test_display_frame_limits() -> void:
 	var all_values_valid := true
 	for value in [30, 60, 90, 120, 144, 165, 240, 0]:
@@ -2500,6 +3866,133 @@ func _test_display_frame_limits() -> void:
 		and panel_src.contains("VSync")
 		and panel_src.contains("if not Global.is_mobile():"),
 		"settings expose the FPS limit everywhere and VSync only on desktop")
+
+func _test_ui_scaling() -> void:
+	var desktop := Global.compute_ui_scale(Vector2(1920, 1080), false)
+	var hd := Global.compute_ui_scale(Vector2(1280, 720), false)
+	var qhd := Global.compute_ui_scale(Vector2(2560, 1440), false)
+	var phone := Global.compute_ui_scale(Vector2(1152, 648), true)
+	check(desktop >= 1.45 and desktop <= 1.55,
+		"1080p desktop defaults to the Large UI scale")
+	check(hd >= Global.UI_MIN_SCALE and hd < desktop,
+		"smaller desktop windows get a smaller but still readable scale")
+	check(qhd <= Global.UI_MAX_SCALE + 0.001,
+		"high-resolution desktop UI is capped instead of becoming oversized")
+	check(phone >= Global.UI_MOBILE_MIN_SCALE,
+		"phones keep a comfortable minimum touch/readability scale")
+	var ultrawide := Global.compute_ui_scale(Vector2(3440, 1440), false)
+	check(is_equal_approx(ultrawide, qhd),
+		"ultrawide aspect ratio does not inflate UI scale")
+	check(is_equal_approx(Global.compute_ui_scale(Vector2(800, 600), false),
+		Global.UI_MIN_SCALE), "tiny windows clamp to the readable minimum")
+
+	# DisplayServer.virtual_keyboard_get_height() reports PHYSICAL pixels. On a
+	# high-DPI phone the raw value can exceed the logical viewport, which used to
+	# collapse keyboard-aware panels and push their text fields off-screen.
+	check(is_equal_approx(Global.keyboard_height_in_viewport(900.0, 2.25, 648.0), 400.0),
+		"Android keyboard height is converted from physical pixels to viewport units")
+	check(is_equal_approx(Global.keyboard_height_in_viewport(2000.0, 1.0, 648.0), 647.0),
+		"a bogus keyboard height is clamped inside the viewport")
+	check(is_zero_approx(Global.keyboard_height_in_viewport(0.0, 2.25, 648.0)),
+		"a hidden keyboard reports zero viewport height")
+
+	var old_size: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_scale: float = Global.ui_scale
+	Global.ui_viewport_size = Vector2(800, 600)
+	Global.ui_safe_insets = Vector4.ZERO
+	Global.ui_scale = Global.UI_MIN_SCALE
+	var fitted: Vector2 = Global.ui_fit_min_size(Vector2(1080, 540))
+	check(fitted.x <= 800.0 and fitted.y <= 600.0,
+		"large modal panels are clamped inside a compact viewport")
+	Global.ui_viewport_size = old_size
+	Global.ui_safe_insets = old_insets
+	Global.ui_scale = old_scale
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+	Global.ui_scale = 1.5
+	var expected_body: int = int(round(
+		float(Global.UI_TYPE_BODY) * 1.5 * Global.UI_FONT_SCALE))
+	check(Global.ui_font_size(float(Global.UI_TYPE_BODY)) == expected_body
+		and Global.ui_type_size(Global.UI_TYPE_BODY) == expected_body
+		and expected_body > int(round(float(Global.UI_TYPE_BODY) * 1.5)),
+		"font sizes track ui_scale with the readability boost at the same scale")
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+	Global.ui_scale = old_scale
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+	# The mission tracker sits under the top-right pause button. With the
+	# responsive UI scale the button grew taller than the old fixed top offset,
+	# so the tracker now derives its top edge from the button's real bottom.
+	var old_pause_bottom: float = Global.ui_pause_bottom
+	var old_tracker_viewport: Vector2 = Global.ui_viewport_size
+	var old_tracker_insets: Vector4 = Global.ui_safe_insets
+	var old_tracker_scale: float = Global.ui_scale
+	Global.ui_scale = 1.0
+	Global.ui_safe_insets = Vector4.ZERO
+	Global.ui_viewport_size = Vector2(1152, 648)
+	Global.ui_pause_bottom = 120.0
+	var tracker: Control = load("res://scripts/mission_ui.gd").new()
+	add_child(tracker)
+	tracker.call("_refit")
+	var tracker_panel := tracker.get("_panel") as Control
+	check(tracker_panel != null and tracker_panel.position.y >= 124.0,
+		"mission tracker starts below the pause button instead of overlapping it")
+	tracker.free()
+	Global.ui_pause_bottom = old_pause_bottom
+	Global.ui_viewport_size = old_tracker_viewport
+	Global.ui_safe_insets = old_tracker_insets
+	Global.ui_scale = old_tracker_scale
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+	var settings_src := FileAccess.get_file_as_string("res://scripts/settings_panel.gd")
+	var global_src := FileAccess.get_file_as_string("res://scripts/global.gd")
+	check(not settings_src.contains("UI Scale")
+		and not settings_src.contains("_on_ui_scale_preset"),
+		"the obsolete user-facing UI scale control is gone")
+	check(settings_src.contains("Automatic Sprint")
+		and settings_src.contains("set_point_and_click_auto_sprint")
+		and settings_src.contains("auto_btn.disabled = not Global.point_and_click"),
+		"Controls settings expose and gate the PNC automatic-sprint option")
+	check(not global_src.contains('save_data["ui_scale"]')
+		and not global_src.contains('data.has("ui_scale")')
+		and not global_src.contains("ui_scale_set"),
+		"old per-save UI scale preferences are ignored and no longer written")
+	check(global_src.contains("point_and_click_auto_sprint")
+		and global_src.contains("point_and_click_auto_sprint_changed")
+		and global_src.contains('"point_and_click_auto_sprint", point_and_click_auto_sprint'),
+		"PNC automatic-sprint preference is loaded and saved globally")
+
+func _test_title_panorama() -> void:
+	var script: GDScript = load("res://scripts/title_panorama.gd") as GDScript
+	var constants: Dictionary = script.get_script_constant_map()
+	var languages: Array = constants.get("PANORAMA_LANGUAGES", []) as Array
+	var cycle_min: float = float(constants.get("CYCLE_MIN_SEC", 0.0))
+	var cycle_max: float = float(constants.get("CYCLE_MAX_SEC", 0.0))
+	check(languages.size() == 2 and languages.has("lua") and languages.has("python")
+		and cycle_min > 0.0 and cycle_max > cycle_min,
+		"title panorama covers both dungeon languages and a randomized cycle interval")
+	var tp: Node = script.new()
+	add_child(tp)
+	var lua_choices: Array = tp.call("_missions_for_language", "lua") as Array
+	var py_choices: Array = tp.call("_missions_for_language", "python") as Array
+	var lang_ok := true
+	for idx_value in lua_choices:
+		if Global.dungeon_language(int(idx_value)) != "lua":
+			lang_ok = false
+	for idx_value in py_choices:
+		if Global.dungeon_language(int(idx_value)) != "python":
+			lang_ok = false
+	check(lua_choices.size() == 15 and py_choices.size() == 10 and lang_ok,
+		"title panorama can pick from every ready Lua and Python dungeon")
+	var panorama_src := FileAccess.get_file_as_string("res://scripts/title_panorama.gd")
+	check(panorama_src.contains("DungeonWorld.new()")
+		and panorama_src.contains("static var _textures")
+		and panorama_src.contains("randf_range(CYCLE_MIN_SEC, CYCLE_MAX_SEC)"),
+		"title panoramas are rendered from dungeons and cycle per launch")
+	tp.queue_free()
+	await get_tree().process_frame
+
 
 func _test_interpreters() -> void:
 	var lua := LuaState.new()
@@ -2557,6 +4050,20 @@ func _test_interpreters() -> void:
 	check(py3_failed[0], "Python runtime errors are reported through code_failed")
 	py3.queue_free()
 
+	# GDScript types cannot be used as variable names. Catch the collision before
+	# GDScript.reload() so unsupported Python (e.g. `int = 2026`) returns an
+	# ordinary compiler error instead of hitting the engine parser.
+	var py4 := PythonState.new()
+	add_child(py4)
+	var py4_failed := [""]
+	py4.connect("code_failed", func(e: String) -> void: py4_failed[0] = e)
+	py4.set("code", "int = 2026")
+	py4.call("run_code")
+	await get_tree().process_frame
+	check(py4_failed[0].contains("reserved"),
+		"Python reports reserved GDScript type assignments without a parser crash")
+	py4.queue_free()
+
 
 func _test_crash_logger() -> void:
 	var path: String = str(CrashLogger.call("get_current_log_path"))
@@ -2599,6 +4106,8 @@ func _test_control_scheme_parity() -> void:
 	var old_player := Global.player_node
 	var old_world := Global.world_node
 	var old_pnc: bool = Global.point_and_click
+	var old_auto_sprint: bool = Global.point_and_click_auto_sprint
+	var old_block_mode: bool = Global.block_mode
 	var old_mobile_move: Vector2 = Global.mobile_move
 	var old_mobile_shift: bool = Global.mobile_shift
 	var old_stamina: float = Global.stamina
@@ -2616,6 +4125,21 @@ func _test_control_scheme_parity() -> void:
 	Global.Hotbar[0] = {"data": load("res://resources/items/wooden_pickaxe.tres"), "quantity": 1}
 	Global.set_hotbar_selection(0)
 	Global.point_and_click = false
+	Global.point_and_click_auto_sprint = false
+	# Enabling PNC while build mode is active must return the player to movement
+	# instead of silently ignoring clicks and placing blocks.
+	Global.block_mode = true
+	Global.block_mode_changed.emit(true)
+	Global.set_point_and_click(true, false)
+	check(Global.point_and_click and not Global.block_mode,
+		"enabling point-and-click leaves build mode")
+	Global.block_mode = true
+	Global.set_point_and_click(true, false)
+	check(not Global.block_mode,
+		"re-enabling an already-on point-and-click also leaves build mode")
+	Global.point_and_click = false
+	Global.block_mode = false
+	Global.block_mode_changed.emit(false)
 	Global.clear_touch_mouse()
 	Global.mobile_move = Vector2.ZERO
 	Global.mobile_shift = false
@@ -2634,6 +4158,26 @@ func _test_control_scheme_parity() -> void:
 	player.set("_move_mission_done", true)
 	player.global_position = Vector2(100, 100)
 	player.velocity = Vector2.ZERO
+
+	# PNC replays a mining press into the viewport. It must use viewport-local
+	# coordinates: Input.parse_input_event() treats the position as WINDOW
+	# coordinates, which scales it away from the block on Android's canvas_items
+	# stretch (the PNC walked to the block but never mined it).
+	var pnc_input := PNCInputProbe.new()
+	add_child(pnc_input)
+	var hold_world := Vector2(180, 140)
+	player.set("_pnc_hold_pos", hold_world)
+	player.set("_pnc_hold_click", true)
+	Global.pnc_hold_active = true
+	player.call("_pnc_hold_emit", true)
+	var hold_screen: Vector2 = get_viewport().get_canvas_transform() * hold_world
+	check(pnc_input.press_count == 1
+		and pnc_input.last_position.is_equal_approx(hold_screen),
+		"PNC synthetic hold is pushed in viewport-local coordinates")
+	Global.pnc_hold_active = false
+	player.set("_pnc_hold_click", false)
+	pnc_input.queue_free()
+	await get_tree().process_frame
 
 	# Wolves are not click-to-attack targets: the tap becomes a move order.
 	var wolf_probe := Node2D.new()
@@ -2658,9 +4202,19 @@ func _test_control_scheme_parity() -> void:
 		"clicking a non-wolf mob still starts a chase/attack order")
 	player.call("_pnc_cancel")
 
+	# A tap on walkable ground beside a mob is a move order, not an attack.
+	# Mob targeting uses the sprite bounds (with a small fallback), not a wide
+	# origin radius that swallowed nearby ground taps.
+	player.call("_pnc_handle_click", mob_probe.global_position + Vector2(30, 0))
+	check(bool(player.get("_pnc_active"))
+		and player.get("_pnc_chase") == null
+		and str(player.get("_pnc_pending")) == "",
+		"tapping the ground beside a mob still issues a move order")
+	player.call("_pnc_cancel")
+
 	# Sheep share Wolf/Mob groups for AI dispatch but must remain clickable.
 	var sheep_probe := Node2D.new()
-	sheep_probe.global_position = player.global_position + Vector2(40, 0)
+	sheep_probe.global_position = player.global_position + Vector2(0, -40)
 	add_child(sheep_probe)
 	sheep_probe.add_to_group("Mob")
 	sheep_probe.add_to_group("Wolf")
@@ -2669,6 +4223,47 @@ func _test_control_scheme_parity() -> void:
 	check(player.get("_pnc_chase") == sheep_probe,
 		"clicking a sheep still starts a chase/attack order")
 	player.call("_pnc_cancel")
+
+	# Validate the precise target box against a real mob sprite, not just the
+	# fallback used by the lightweight fake probes above.
+	var real_sheep: Node2D = load("res://scenes/mobs/Sheep.tscn").instantiate() as Node2D
+	add_child(real_sheep)
+	await get_tree().process_frame
+	real_sheep.set_physics_process(false)
+	real_sheep.global_position = player.global_position + Vector2(0, 120)
+	var mob_rect: Rect2 = player.call("_pnc_mob_click_rect", real_sheep)
+	check(mob_rect.size.x > 38.0 and mob_rect.size.y > 38.0
+		and mob_rect.has_point(real_sheep.global_position + Vector2(0, -8))
+		and not mob_rect.has_point(real_sheep.global_position + Vector2(30, 0)),
+		"real mob taps use sprite bounds, not a wide origin radius")
+	player.call("_pnc_handle_click", real_sheep.global_position + Vector2(0, -8))
+	check(player.get("_pnc_chase") == real_sheep,
+		"tapping a real mob sprite still starts a chase/attack order")
+	player.call("_pnc_cancel")
+	real_sheep.queue_free()
+	await get_tree().process_frame
+
+	# A dying mob can be freed between frames while the chase reference is
+	# still stored. Steering must cancel cleanly instead of throwing on the
+	# freed object (which froze/error-looped the game in play).
+	var dying_probe := Node2D.new()
+	dying_probe.global_position = player.global_position + Vector2(0, 40)
+	add_child(dying_probe)
+	dying_probe.add_to_group("Mob")
+	player.call("_pnc_handle_click", dying_probe.global_position)
+	check(player.get("_pnc_chase") == dying_probe,
+		"a living mob becomes the PNC chase target")
+	# Simulate the mob dying and being freed before the next steering frame.
+	dying_probe.free()
+	Global.point_and_click = true
+	Global.pause_menu_open = false
+	Global.block_mode = false
+	Global.player_is_dead = false
+	player.call("_pnc_steer", 0.016)
+	check(not bool(player.get("_pnc_active")),
+		"PNC cancels safely when its chase target was freed mid-combat")
+	player.call("_pnc_cancel")
+
 	wolf_probe.queue_free()
 	mob_probe.queue_free()
 	sheep_probe.queue_free()
@@ -2698,6 +4293,60 @@ func _test_control_scheme_parity() -> void:
 		"PNC still resolves canopy taps from its spatial tree index")
 	tree_probe.queue_free()
 	await get_tree().process_frame
+
+	# Interactables must be walked to their own origin, then opened directly.
+	# Tapping a tall sprite used to stop at the click point outside the object's
+	# real interact radius, then replay a left-click that made the player swing.
+	var interact_probe := PncInteractProbe.new()
+	interact_probe.global_position = player.global_position + Vector2(240, 0)
+	add_child(interact_probe)
+	interact_probe.add_to_group("Chest")
+	await get_tree().process_frame
+	Global.point_and_click = true
+	Global.block_mode = false
+	Global.pause_menu_open = false
+	Global.player_is_dead = false
+	var interact_click := interact_probe.global_position + Vector2(0, -20)
+	player.call("_pnc_handle_click", interact_click)
+	check(str(player.get("_pnc_pending")) == "interact"
+		and player.get("_pnc_interact_target") == interact_probe
+		and player.get("_pnc_dest") == interact_probe.global_position
+		and player.get("_pnc_interact_point") == interact_click
+		and not bool(player.get("_pnc_hold_click")),
+		"PNC stores the interactable's origin and click point instead of replaying a swing")
+
+	# The synthetic replay is for the target only; it must never make the player
+	# latch a held attack (the old continuous-swing bug).
+	player.set("_attack_held", false)
+	var synthetic_click := InputEventMouseButton.new()
+	synthetic_click.button_index = MOUSE_BUTTON_LEFT
+	synthetic_click.pressed = true
+	synthetic_click.position = Vector2(32, 32)
+	synthetic_click.set_meta("pnc_synthetic", true)
+	player.call("_input", synthetic_click)
+	check(not bool(player.get("_attack_held")) and player.get("_active_swing") == null,
+		"PNC synthetic clicks are ignored by the player and cannot start a swing")
+
+	player.global_position = interact_probe.global_position + Vector2(30, 0)
+	player.call("_pnc_steer", 0.016)
+	check(interact_probe.opened == 1 and not bool(player.get("_pnc_active"))
+		and player.get("_pnc_interact_target") == null
+		and not bool(player.get("_pnc_hold_click")),
+		"PNC opens an interactable directly after arriving within one block")
+	player.call("_pnc_cancel")
+	interact_probe.queue_free()
+	await get_tree().process_frame
+	# Verify the resolver against a real chest scene (not only a fake probe).
+	var real_chest: Node2D = load("res://scenes/objects/ChestBlock.tscn").instantiate() as Node2D
+	add_child(real_chest)
+	await get_tree().process_frame
+	real_chest.global_position = player.global_position + Vector2(160, 0)
+	check(player.call("_pnc_interact_target_at",
+		real_chest.global_position + Vector2(0, -8)) == real_chest,
+		"PNC target resolution finds a real chest sprite")
+	real_chest.queue_free()
+	await get_tree().process_frame
+	Global.point_and_click = false
 
 	# Cardinal and diagonal taps must produce the exact same direction, speed
 	# and animation as the equivalent held WASD action.
@@ -2769,6 +4418,64 @@ func _test_control_scheme_parity() -> void:
 		and str(wasd_sprint["anim"]) == str(pnc_sprint["anim"]),
 		"tap sprint uses the same sprint state and animation")
 	Global.mobile_shift = false
+
+	# Optional point-and-click auto-sprint: PNC orders sprint without Shift, but
+	# direct WASD/joystick control still requires Shift and stamina gates apply.
+	Global.point_and_click_auto_sprint = true
+	Global.point_and_click = true
+	Global.stamina = 100.0
+	player.set("_stamina_exhausted", false)
+	player.call("_pnc_cancel")
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var auto_pnc := _movement_snapshot(player)
+	check(bool(auto_pnc["sprint"])
+		and (auto_pnc["vel"] as Vector2).length() > 100.0
+		and str(auto_pnc["anim"]).begins_with("sprint_"),
+		"PNC auto-sprint uses the sprint state, speed and animation")
+
+	Global.point_and_click = false
+	player.call("_pnc_cancel")
+	Input.action_press("gameplay_right")
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var manual_auto := _movement_snapshot(player)
+	_release_parity_moves()
+	check(not bool(manual_auto["sprint"]),
+		"auto-sprint does not apply to direct WASD movement")
+
+	Global.point_and_click_auto_sprint = false
+	Global.point_and_click = true
+	player.call("_pnc_cancel")
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var auto_off := _movement_snapshot(player)
+	check(not bool(auto_off["sprint"]),
+		"turning automatic sprint off returns PNC movement to walking")
+
+	Global.point_and_click_auto_sprint = true
+	Global.stamina = 0.0
+	player.set("_stamina_exhausted", true)
+	player.call("_pnc_cancel")
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	player.call("get_input", 0.016)
+	var auto_exhausted := _movement_snapshot(player)
+	check(not bool(auto_exhausted["sprint"]),
+		"stamina exhaustion still blocks PNC auto-sprint")
+	player.set("_stamina_exhausted", false)
+	Global.stamina = 100.0
+	Global.point_and_click_auto_sprint = false
 
 	# Snowstorm is a shared movement modifier, not a control-scheme modifier.
 	Global.snowstorm_active = true
@@ -2937,6 +4644,9 @@ func _test_control_scheme_parity() -> void:
 	player.queue_free()
 	await get_tree().process_frame
 	Global.point_and_click = old_pnc
+	Global.point_and_click_auto_sprint = old_auto_sprint
+	Global.block_mode = old_block_mode
+	Global.block_mode_changed.emit(old_block_mode)
 	Global.mobile_move = old_mobile_move
 	Global.mobile_shift = old_mobile_shift
 	Global.stamina = old_stamina
@@ -2953,6 +4663,750 @@ func _test_control_scheme_parity() -> void:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
+
+func _test_pause_menu_short_layout() -> void:
+	# The pause card now sits inside a scroll root so short landscape screens
+	# can still reach the bottom Help/Settings/Quit controls.
+	Global.reset_pause_state()
+	var old_vp: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_scale: float = Global.ui_scale
+	Global.ui_viewport_size = Vector2(640.0, 360.0)
+	Global.ui_safe_insets = Vector4.ZERO
+	Global.ui_scale = 1.25
+	var vp := SubViewport.new()
+	vp.size = Vector2i(640, 360)
+	add_child(vp)
+	var pause: Control = load("res://scenes/ui/PauseMenu.tscn").instantiate() as Control
+	vp.add_child(pause)
+	await get_tree().process_frame
+	pause.call("show_menu")
+	await get_tree().process_frame
+	var scroll: ScrollContainer = pause.get("_pause_center") as ScrollContainer
+	var bar: VScrollBar = scroll.get_v_scroll_bar() if scroll != null else null
+	check(scroll != null and bar != null and bar.max_value > bar.page + 1.0,
+		"pause menu becomes scrollable on a 640x360 landscape screen")
+	if scroll != null:
+		scroll.scroll_vertical = int(bar.max_value)
+	await get_tree().process_frame
+	var quit_button: Button = null
+	for node in pause.find_children("*", "Button", true, false):
+		if (node as Button).text == "Quit to Menu":
+			quit_button = node as Button
+			break
+	var content := Global.ui_content_rect()
+	check(quit_button != null and content.encloses(quit_button.get_global_rect()),
+		"the bottom pause-menu controls are reachable inside the safe area")
+	pause.call("hide_menu")
+	vp.queue_free()
+	await get_tree().process_frame
+	Global.ui_viewport_size = old_vp
+	Global.ui_safe_insets = old_insets
+	Global.ui_scale = old_scale
+	Global.reset_pause_state()
+
+
+func _test_tutorial_help_and_cursors() -> void:
+	# ?? Tutorial compass arrow ????????????????????????????????????????
+	Global.reset_pause_state()
+	var old_player: Node = Global.player_node
+	var old_viewport: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_scale: float = Global.ui_scale
+	var fake_player := Node2D.new()
+	add_child(fake_player)
+	fake_player.global_position = Vector2(500.0, 500.0)
+	Global.player_node = fake_player
+	var arrow: Node2D = load("res://scripts/tutorial_arrow.gd").new() as Node2D
+	fake_player.add_child(arrow)
+	await get_tree().process_frame
+	arrow.call("set_target", fake_player.global_position + Vector2(320.0, 0.0), "Target")
+	await get_tree().process_frame
+	var arrow_dir: Vector2 = arrow.get("_dir") as Vector2
+	check(arrow.visible and arrow_dir.x > 0.9 and absf(arrow_dir.y) < 0.1,
+		"tutorial compass points at an off-screen target and stays player-anchored")
+	var arrow_target: Vector2 = arrow.get("_target")
+	fake_player.global_position = arrow_target + Vector2(0.0, 30.0)
+	await get_tree().process_frame
+	check(not arrow.visible, "tutorial compass hides on arrival")
+	arrow.call("clear_target")
+	check(not arrow.visible, "clearing a tutorial target hides the compass")
+
+	# A UI modal must not leave the compass floating over panels.
+	arrow.call("set_target", fake_player.global_position + Vector2(320.0, 0.0), "Target")
+	await get_tree().process_frame
+	Global.open_ui()
+	await get_tree().process_frame
+	var hidden_by_ui: bool = not arrow.visible
+	Global.close_ui()
+	await get_tree().process_frame
+	check(hidden_by_ui and arrow.visible, "tutorial compass hides while UI is open and returns afterwards")
+	fake_player.queue_free()
+	Global.player_node = old_player
+	Global.reset_pause_state()
+
+	var guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	var marker_src := FileAccess.get_file_as_string("res://scripts/tutorial_marker.gd")
+	check(guide_src.contains("ARROW_SCRIPT") and guide_src.contains("_setup_guide_arrow")
+		and guide_src.contains("_guide_arrow.call(\"set_target\"") and guide_src.contains("_guide_arrow.call(\"clear_target\")"),
+		"tutorial guide attaches and drives the world compass arrow")
+	check(marker_src.contains("var arrows: Array") and marker_src.contains("draw_colored_polygon")
+		and marker_src.contains("Vector2(0.0, -off)") and marker_src.contains("Vector2(0.0, off)"),
+		"tutorial tile marker draws four inward arrowheads")
+
+	# ?? Dialogue skip button ?????????????????????????????????????????
+	Global.ui_viewport_size = Vector2(1152.0, 648.0)
+	Global.ui_safe_insets = Vector4(40.0, 12.0, 28.0, 16.0)
+	Global.ui_scale = 1.5
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	var dlg: Control = load("res://scripts/tutorial_dialogue.gd").new() as Control
+	layer.add_child(dlg)
+	await get_tree().process_frame
+	var opened := bool(dlg.call("show_conversation", [
+		{"speaker": "Py-San", "portrait": "res://sprites/char/pysan.png", "text": "First line."},
+		{"speaker": "LUA", "portrait": "res://sprites/char/lua/front.png", "text": "Second line."},
+	]))
+	dlg.call("_layout")
+	var skip_btn: Button = dlg.get("_skip_button") as Button
+	var safe := Global.ui_content_rect()
+	var skip_rect := skip_btn.get_global_rect() if skip_btn != null else Rect2()
+	check(opened and skip_btn != null and skip_btn.visible,
+		"active dialogue exposes a real top-right skip button")
+	check(skip_btn != null and safe.encloses(skip_rect)
+		and skip_rect.position.x > safe.position.x + safe.size.x * 0.6,
+		"dialogue skip button stays inside the safe content area at the top right")
+	var skip_hits := [0]
+	var on_skip := func() -> void: skip_hits[0] += 1
+	dlg.skip_requested.connect(on_skip)
+	if skip_btn != null:
+		skip_btn.emit_signal("pressed")
+	check(skip_hits[0] == 1 and bool(dlg.call("is_active")),
+		"the skip button emits skip_requested without force-closing the dialogue")
+	# The dialogue's own _input must leave the skip-button rect for the GUI.
+	var skip_event := InputEventMouseButton.new()
+	skip_event.button_index = MOUSE_BUTTON_LEFT
+	skip_event.pressed = true
+	skip_event.position = skip_rect.get_center()
+	var line_before: int = int(dlg.call("current_line_index"))
+	dlg.call("_input", skip_event)
+	check(bool(dlg.call("is_active")) and int(dlg.call("current_line_index")) == line_before,
+		"clicking the skip button rectangle does not advance the dialogue line")
+	if dlg.skip_requested.is_connected(on_skip):
+		dlg.skip_requested.disconnect(on_skip)
+	dlg.call("dismiss")
+	check(not skip_btn.visible, "closing a dialogue hides the skip button")
+	layer.queue_free()
+	await get_tree().process_frame
+	Global.reset_pause_state()
+	check(guide_src.contains("_dialogue.skip_requested.connect(_on_dialogue_skip_requested)"),
+		"tutorial guide consumes the dialogue skip signal")
+
+	# Behavioural skip flow: the guide must dismiss the current dialogue (so it
+	# cannot re-open the skipped lesson) and advance exactly one step.
+	var old_tut_stage: int = Global.tutorial_stage
+	var old_tut_completed: bool = Global.tutorial_completed
+	var old_tut_version: int = Global.tutorial_version
+	Global.reset_pause_state()
+	Global.tutorial_stage = 0
+	Global.tutorial_completed = false
+	var guide: Node = load("res://scripts/tutorial_guide.gd").new() as Node
+	add_child(guide)
+	var skip_dlg: Control = load("res://scripts/tutorial_dialogue.gd").new() as Control
+	add_child(skip_dlg)
+	await get_tree().process_frame
+	guide.set("_dialogue", skip_dlg)
+	guide.set("_current_step", 0)
+	guide.set("_finished", false)
+	guide.set("_step_complete", false)
+	var dismissed_cb := Callable(guide, "_on_dialogue_dismissed")
+	if not skip_dlg.dismissed.is_connected(dismissed_cb):
+		skip_dlg.dismissed.connect(dismissed_cb)
+	var welcome_open := bool(skip_dlg.call("show_conversation", [
+		{"speaker": "Py-San", "portrait": "res://sprites/char/pysan.png", "text": "Welcome lesson."},
+	]))
+	guide.call("_on_dialogue_skip_requested")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check(welcome_open and int(guide.get("_current_step")) == 1
+		and Global.tutorial_stage == 1 and bool(guide.call("_step_id") == "movement")
+		and bool(skip_dlg.call("is_active")),
+		"dialogue skip advances one lesson and opens the next lesson's dialogue")
+	skip_dlg.call("dismiss")
+	await get_tree().process_frame
+
+	# Skipping the travel lesson must never start its automatic teleport just
+	# because the dialogue's dismissed handler ran.
+	var step_ids: Array = guide.get_script().get_script_constant_map().get("STEPS", []) as Array
+	var travel_idx: int = step_ids.find("dungeon_travel")
+	if travel_idx >= 0:
+		guide.set("_current_step", travel_idx)
+		guide.set("_step_complete", false)
+		guide.set("_finished", false)
+		guide.set("_travel_started", false)
+		var skip_travel_open := bool(skip_dlg.call("show_conversation", [
+			{"speaker": "Py-San", "portrait": "res://sprites/char/pysan.png", "text": "Travel lesson."},
+		]))
+		guide.call("_on_dialogue_skip_requested")
+		await get_tree().process_frame
+		await get_tree().process_frame
+		check(skip_travel_open and not bool(guide.get("_travel_started"))
+			and int(guide.get("_current_step")) == step_ids.size() - 1
+			and str(guide.call("_step_id")) == "finish"
+			and bool(skip_dlg.call("is_active")),
+			"skipping the dungeon-travel lesson does not start its teleport")
+		skip_dlg.call("dismiss")
+		await get_tree().process_frame
+	guide.queue_free()
+	skip_dlg.queue_free()
+	await get_tree().process_frame
+	Global.tutorial_stage = old_tut_stage
+	Global.tutorial_completed = old_tut_completed
+	Global.tutorial_version = old_tut_version
+	Global.reset_pause_state()
+
+	# ?? Help panel content and pause-menu integration ????????????????
+	Global.ui_viewport_size = Vector2(1152.0, 648.0)
+	Global.ui_safe_insets = Vector4.ZERO
+	Global.ui_scale = 1.5
+	var help_script: Script = load("res://scripts/help_panel.gd")
+	var categories: Array = help_script.get_script_constant_map().get("CATEGORIES", []) as Array
+	check(categories.size() == 9, "help panel exposes nine player-facing documentation categories")
+	var all_help := ""
+	var category_ids: Array = []
+	var category_titles: Array = []
+	for value in categories:
+		var entry: Dictionary = value as Dictionary
+		category_ids.append(str(entry.get("id", "")))
+		category_titles.append(str(entry.get("title", "")))
+		var body := str(entry.get("body", ""))
+		all_help += body + "\n"
+		check(body.length() > 450 and not body.contains("TODO") and not body.contains("draft only"),
+			"help category '%s' contains substantive documentation" % str(entry.get("title", "")))
+	check(category_titles.has("Start Here") and category_titles.has("Controls")
+		and category_titles.has("Dungeons & Bestiary") and category_titles.has("Settings & Troubleshooting"),
+		"help covers onboarding, controls, dungeons and troubleshooting")
+	for term in ["Automatica", "Algorithmica", "Bestiary", "Cloud saves", "Furnace",
+			"Color Crafter", "Point-and-Click", "SKIP LESSON", "INV", "Knowledge Altar",
+			"Quiz Altar", "Bonfire", "stamina", "seed", "waypoint", "SKIP", "save"]:
+		check(all_help.to_lower().contains(term.to_lower()),
+			"help documents '%s'" % term)
+	var help_panel: Control = help_script.new() as Control
+	add_child(help_panel)
+	await get_tree().process_frame
+	var help_buttons: Dictionary = help_panel.get("_category_buttons") as Dictionary
+	var help_content: RichTextLabel = help_panel.get("_content") as RichTextLabel
+	check(help_buttons.size() == categories.size() and help_content != null,
+		"help panel builds a category sidebar and scrollable content pane")
+	var dungeons_button: Button = help_buttons.get("dungeons") as Button
+	if dungeons_button != null:
+		dungeons_button.emit_signal("pressed")
+	check(str(help_panel.get("_current_category")) == "dungeons"
+		and help_content.text.to_upper().contains("KNOWLEDGE ALTAR"),
+		"selecting a help category swaps the documentation content")
+	remove_child(help_panel)
+	help_panel.free()
+
+	# The panel's combined minimum must fit representative safe areas.
+	var profiles := [
+		{"vp": Vector2(1152, 648), "insets": Vector4.ZERO, "scale": 1.5},
+		{"vp": Vector2(1024, 600), "insets": Vector4(90, 0, 60, 0), "scale": 1.25},
+		{"vp": Vector2(800, 480), "insets": Vector4(40, 0, 20, 0), "scale": 1.25},
+		{"vp": Vector2(640, 360), "insets": Vector4.ZERO, "scale": 1.25},
+		{"vp": Vector2(1920, 1080), "insets": Vector4.ZERO, "scale": 1.65},
+	]
+	for profile_value in profiles:
+		var profile: Dictionary = profile_value as Dictionary
+		Global.ui_viewport_size = profile["vp"] as Vector2
+		Global.ui_safe_insets = profile["insets"] as Vector4
+		Global.ui_scale = float(profile["scale"])
+		var probe_help: Control = help_script.new() as Control
+		add_child(probe_help)
+		await get_tree().process_frame
+		var usable := Global.ui_content_rect()
+		var minimum := probe_help.get_combined_minimum_size()
+		check(minimum.x <= usable.size.x + 1.0 and minimum.y <= usable.size.y + 1.0,
+			"help panel fits a %dx%d safe area" % [int(usable.size.x), int(usable.size.y)])
+		probe_help.queue_free()
+		await get_tree().process_frame
+
+	Global.reset_pause_state()
+	Global.ui_scale = 1.5
+	var pause: Control = load("res://scripts/pause_menu.gd").new() as Control
+	add_child(pause)
+	await get_tree().process_frame
+	pause.call("show_menu")
+	var help_center: CenterContainer = pause.get("_help_center") as CenterContainer
+	var pause_center: ScrollContainer = pause.get("_pause_center") as ScrollContainer
+	var menu_has_help := false
+	for node in pause.find_children("*", "Button", true, false):
+		if (node as Button).text == "Help & Documentation":
+			menu_has_help = true
+			break
+	check(menu_has_help, "pause menu exposes Help & Documentation")
+	pause.call("_on_open_help")
+	var help_panel_node: Control = help_center.get_node_or_null("HelpPanel") as Control if help_center != null else null
+	check(help_center != null and help_center.visible and not pause_center.visible
+		and help_panel_node != null,
+		"Help & Documentation replaces the pause panel and opens its documentation view")
+	var back_button: Button = null
+	if help_panel_node != null:
+		for node in help_panel_node.find_children("*", "Button", true, false):
+			if (node as Button).text == "< Back":
+				back_button = node as Button
+				break
+	if back_button != null:
+		back_button.emit_signal("pressed")
+	check(back_button != null and not help_center.visible and pause_center.visible,
+		"help Back button returns to the pause panel")
+	pause.call("_on_open_help")
+	var help_back_ok := Global.request_ui_back()
+	check(help_back_ok and not help_center.visible and pause_center.visible,
+		"Escape/Back closes Help one layer before the pause menu")
+	pause.call("hide_menu")
+	pause.queue_free()
+	await get_tree().process_frame
+	Global.reset_pause_state()
+
+	# ?? Contextual desktop cursor manager ????????????????????????????
+	var cursor_script: Script = load("res://scripts/cursor_manager.gd")
+	var cursor_src := FileAccess.get_file_as_string("res://scripts/cursor_manager.gd")
+	check(cursor_src.contains("Global.is_mobile()") and cursor_src.contains("headless"),
+		"contextual cursor host guard covers Android and headless runs")
+	var cursor_files: Dictionary = cursor_script.get_script_constant_map().get("CURSOR_FILES", {}) as Dictionary
+	var all_cursors_24 := true
+	for key in cursor_files:
+		var path := str(cursor_files[key])
+		var tex := load(path) as Texture2D if ResourceLoader.exists(path) else null
+		if tex == null or tex.get_width() != 24 or tex.get_height() != 24:
+			all_cursors_24 = false
+	check(cursor_files.size() == 6 and all_cursors_24,
+		"all six approved 24x24 cursor sprites are imported and registered")
+	var hotspot: Vector2 = cursor_script.get_script_constant_map().get("HOTSPOT", Vector2.ZERO) as Vector2
+	check(hotspot.x >= 0.0 and hotspot.y >= 0.0 and hotspot.x < 24.0 and hotspot.y < 24.0,
+		"custom cursor hotspot stays inside the 24x24 artwork")
+	var cursor_manager: Node = cursor_script.new() as Node
+	add_child(cursor_manager)
+	await get_tree().process_frame
+	check(not cursor_manager.is_processing(), "contextual cursor director is disabled in headless/mobile environments")
+
+	# Build mode is for placing/demolishing, so interaction cursors must not
+	# suggest that a chest/station is about to open.
+	var cursor_old_player: Node = Global.player_node
+	var cursor_old_world: Node = Global.world_node
+	var cursor_old_build: bool = Global.block_mode
+	var cursor_player := Node2D.new()
+	var cursor_world := Node2D.new()
+	add_child(cursor_player)
+	add_child(cursor_world)
+	Global.player_node = cursor_player
+	Global.world_node = cursor_world
+	var build_probe := CursorProbe.new()
+	add_child(build_probe)
+	build_probe.add_to_group("Chest")
+	Global.block_mode = true
+	cursor_manager.set("_current", "movement")
+	cursor_manager.call("_refresh_cursor")
+	check(str(cursor_manager.get("_current")) == "default",
+		"contextual cursor falls back to the OS arrow in build mode")
+	Global.block_mode = bool(cursor_old_build)
+	build_probe.queue_free()
+	cursor_player.queue_free()
+	cursor_world.queue_free()
+	await get_tree().process_frame
+	Global.player_node = cursor_old_player
+	Global.world_node = cursor_old_world
+
+	var chest_probe := CursorProbe.new()
+	add_child(chest_probe)
+	chest_probe.add_to_group("Chest")
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "chest",
+		"cursor resolves a nearby chest")
+	chest_probe.queue_free()
+	await get_tree().process_frame
+
+	var station_probe := CursorProbe.new()
+	add_child(station_probe)
+	station_probe.add_to_group("CraftingStation")
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "crafting",
+		"cursor resolves a crafting station")
+	station_probe.queue_free()
+	await get_tree().process_frame
+
+	var color_probe := CursorProbe.new()
+	add_child(color_probe)
+	color_probe.add_to_group("ColorCrafter")
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "color",
+		"cursor resolves a Color Crafter")
+	color_probe.queue_free()
+	await get_tree().process_frame
+
+	var furnace_data := ItemData.new()
+	furnace_data.item_name = "Furnace"
+	var furnace_probe := CursorProbe.new()
+	furnace_probe.item_data = furnace_data
+	add_child(furnace_probe)
+	furnace_probe.add_to_group("TouchInteractable")
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "furnace",
+		"cursor resolves a furnace from its interactable item data")
+	furnace_probe.queue_free()
+	await get_tree().process_frame
+
+	var generic_probe := CursorProbe.new()
+	add_child(generic_probe)
+	generic_probe.add_to_group("PlainClickBlock")
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "generic",
+		"cursor resolves doors and other plain-click blocks")
+	generic_probe.queue_free()
+	await get_tree().process_frame
+
+	var waypoint_probe := CursorProbe.new()
+	waypoint_probe.global_position = Vector2(50.0, 50.0)
+	add_child(waypoint_probe)
+	waypoint_probe.add_to_group("WorldWaypoint")
+	check(str(cursor_manager.call("_kind_at", Vector2(50.0, 50.0))) == "generic",
+		"cursor resolves a nearby world waypoint")
+	waypoint_probe._player_nearby = false
+	check(str(cursor_manager.call("_kind_at", Vector2(50.0, 50.0))) == "movement",
+		"cursor ignores a waypoint while the player is out of range")
+	waypoint_probe.queue_free()
+	await get_tree().process_frame
+
+	var dungeon_step_probe := CursorProbe.new()
+	add_child(dungeon_step_probe)
+	dungeon_step_probe.add_to_group("DungeonWaypoint")
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "movement",
+		"cursor does not imply a click action on the step-only dungeon waypoint")
+	dungeon_step_probe.queue_free()
+	await get_tree().process_frame
+
+	var portal_probe := CursorPortalProbe.new()
+	add_child(portal_probe)
+	portal_probe.add_to_group("CavePortal")
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "generic",
+		"cursor resolves a nearby cave entrance")
+	portal_probe._player_nearby = false
+	check(str(cursor_manager.call("_kind_at", Vector2.ZERO)) == "movement",
+		"cursor ignores a cave entrance while the player is out of range")
+	portal_probe.queue_free()
+	await get_tree().process_frame
+
+	check(str(cursor_manager.call("_kind_at", Vector2(100000.0, 100000.0))) == "movement",
+		"cursor falls back to movement over empty ground")
+	cursor_manager.queue_free()
+	await get_tree().process_frame
+	Global.ui_viewport_size = old_viewport
+	Global.ui_safe_insets = old_insets
+	Global.ui_scale = old_scale
+	Global.player_node = old_player
+	Global.reset_pause_state()
+
+
+func _test_tree_canopy_occupancy() -> void:
+	var world: Node = load("res://scripts/world.gd").new()
+	var cell := Vector2i(10, 10)
+	world.call("_mark_tree_occupied", cell)
+	var occupied: Dictionary = world.get("_tree_occupied_tiles") as Dictionary
+	check(occupied.has(Vector2i(10, 7)) and occupied.has(Vector2i(9, 10)) \
+		and occupied.has(Vector2i(10, 11)),
+		"tree occupancy covers the canopy, trunk and base")
+	check(not occupied.has(Vector2i(10, 6)) and not occupied.has(Vector2i(8, 10)) \
+		and not occupied.has(Vector2i(10, 12)),
+		"tree occupancy matches the visible 3x3-tile sprite footprint")
+	check(bool(world.call("_scatter_canopy_blocked", Vector2i(10, 14))),
+		"scattered tree crown cannot overlap an existing tree")
+	check(not bool(world.call("_scatter_canopy_blocked", Vector2i(14, 10))),
+		"scattered tree crown permits horizontal clearance")
+	world.call("_unmark_tree_occupied", cell)
+	check(occupied.is_empty(), "chopping a tree clears its full canopy occupancy")
+	world.free()
+
+
+func _test_decorative_structures() -> void:
+	var templates: Array = []
+	var coverage: Dictionary = {}
+	for file_name in ResourceLoader.list_directory("res://resources/structures/"):
+		if not file_name.begins_with("decor_") or not file_name.ends_with(".tres"):
+			continue
+		var template := load("res://resources/structures/" + file_name) as GeneratedStructure
+		check(template != null and template.is_valid(),
+			"decor template loads and validates: " + file_name)
+		if template == null or not template.is_valid():
+			continue
+		templates.append(template)
+		coverage[template.decor_kind + ":" + template.biome] = true
+		var layout: Dictionary = template.build_layout(12345)
+		var layout_again: Dictionary = template.build_layout(12345)
+		var cells: Dictionary = layout.get("cells", {})
+		var size: Vector2i = layout.get("size", Vector2i.ZERO)
+		check(not layout.is_empty() and cells.size() >= 4,
+			"decor template builds a non-empty layout: " + file_name)
+		check(layout == layout_again,
+			"decor layout is deterministic for a seed: " + file_name)
+		var floors := 0
+		var solids := 0
+		var invalid_paths := 0
+		for cell_value in cells.keys():
+			var cell := cell_value as Vector2i
+			if cell.x < 0 or cell.y < 0 or cell.x >= size.x or cell.y >= size.y:
+				invalid_paths += 1
+			var path := str(cells[cell_value])
+			if not ResourceLoader.exists(path):
+				invalid_paths += 1
+				continue
+			var data := load(path) as ItemData
+			if data == null or not data.is_placeable or data.place_scene_path.is_empty() \
+					or not ResourceLoader.exists(data.place_scene_path):
+				invalid_paths += 1
+				continue
+			if data.is_floor:
+				floors += 1
+			else:
+				solids += 1
+		check(invalid_paths == 0,
+			"decor layout uses existing placeable blocks only: " + file_name)
+		if template.decor_kind == "house":
+			check(floors > 0 and solids > 0 and not template.roof_blocks.is_empty(),
+				"house layout has floor, walls and roof blocks: " + file_name)
+			check(size.x >= template.min_width \
+				and size.x <= template.max_width + 2 \
+				and size.y >= template.min_height \
+				and size.y <= template.max_height + 3,
+				"house footprint stays within template dimensions: " + file_name)
+		else:
+			check(floors == 0 and solids > 0,
+				"pillar layout is built from solid column blocks: " + file_name)
+			check(size.x >= template.min_width and size.x <= template.max_width \
+				and size.y >= template.min_height and size.y <= template.max_height,
+				"pillar footprint stays within template dimensions: " + file_name)
+	check(templates.size() >= 6, "six biome-specific house/pillar templates exist")
+	for biome_name in ["plain", "desert", "snowy"]:
+		for kind_name in ["house", "pillar"]:
+			check(coverage.has(kind_name + ":" + biome_name),
+				"%s template exists for the %s biome" % [kind_name, biome_name])
+
+	# Save persistence logic: every expected generated cell is present, except
+	# cells the player mined/replaced. This exercises the same comparison used by
+	# get_world_save_data without generating a whole world in the QA suite.
+	var house_template: GeneratedStructure = null
+	for candidate in templates:
+		if (candidate as GeneratedStructure).decor_kind == "house":
+			house_template = candidate as GeneratedStructure
+			break
+	if house_template != null:
+		var layout: Dictionary = house_template.build_layout(777)
+		var cells: Dictionary = layout.get("cells", {})
+		var anchor := Vector2i(20, 20)
+		var def := {
+			"template_path": house_template.resource_path,
+			"anchor_x": anchor.x,
+			"anchor_y": anchor.y,
+			"seed": 777,
+			"biome": house_template.biome,
+			"layout_version": 1,
+		}
+		var placed: Dictionary = {}
+		for cell_value in cells.keys():
+			placed[anchor + (cell_value as Vector2i)] = {
+				"node": null,
+				"name": "generated",
+				"decor_generated": true,
+				"decor_index": 0,
+			}
+		var world: Node = load("res://scripts/world.gd").new()
+		world.set("_decor_structures", [def])
+		world.set("_placed_blocks", placed)
+		var removed: Array = world.call("_decor_save_removed") as Array
+		check(removed.is_empty(),
+			"intact generated structure records no removed cells")
+		var removed_cell: Vector2i = anchor + (cells.keys()[0] as Vector2i)
+		placed.erase(removed_cell)
+		world.set("_placed_blocks", placed)
+		removed = world.call("_decor_save_removed") as Array
+		check(removed.size() == 1,
+			"mined generated block is recorded as removed")
+		placed[removed_cell] = {"node": null, "name": "player block"}
+		world.set("_placed_blocks", placed)
+		removed = world.call("_decor_save_removed") as Array
+		check(removed.size() == 1,
+			"player replacement still records the original structure cell as removed")
+		world.free()
+
+
+func _test_waypoints() -> void:
+	# The production assets are the approved draft sheets copied verbatim.
+	var py_tex := load("res://sprites/waypoints/portal_python_stonegate_sheet.png") as Texture2D
+	var lua_tex := load("res://sprites/waypoints/portal_lua_ancient_sheet.png") as Texture2D
+	var tower_tex := load("res://sprites/waypoints/world_waypoint_tower_sheet.png") as Texture2D
+	check(py_tex != null and py_tex.get_width() == 1280 and py_tex.get_height() == 128,
+		"Python waypoint sheet is the approved 8x160x128 animation")
+	check(lua_tex != null and lua_tex.get_width() == 1536 and lua_tex.get_height() == 160,
+		"Lua waypoint sheet is the approved 8x192x160 animation")
+	check(tower_tex != null and tower_tex.get_width() == 1280 and tower_tex.get_height() == 224,
+		"world waypoint tower sheet is the approved 8x160x224 animation")
+	var frames := WaypointAnim.build(py_tex, Vector2i(160, 128))
+	check(frames.get_frame_count("idle") == 8,
+		"waypoint helper builds all eight animation frames")
+	check(is_equal_approx(frames.get_animation_speed("idle"), 10.0)
+		and frames.get_animation_loop("idle"),
+		"waypoint animation is a 10 fps infinite loop")
+	var first := frames.get_frame_texture("idle", 0) as AtlasTexture
+	var last := frames.get_frame_texture("idle", 7) as AtlasTexture
+	check(first != null and first.region.position == Vector2.ZERO
+		and last != null and last.region.position == Vector2(1120, 0),
+		"waypoint sheet frames slice horizontally from source art")
+
+	var world_script := load("res://scripts/world.gd") as GDScript
+	var constants: Dictionary = world_script.get_script_constant_map()
+	check(constants.get("WORLD_WAYPOINT_SIZE") == Vector2i(5, 7),
+		"world waypoint towers reserve a 5x7 footprint")
+	check(float(constants.get("WORLD_WAYPOINT_DENSITY", 0.0)) > 0.0
+		and int(constants.get("DUNGEON_NEAR_CHUNK_RADIUS", 0)) >= 3,
+		"world towers have a density target and dungeons prefer nearby chunks")
+	check(constants.get("DUNGEON_ENTRANCE_PYTHON_SIZE") == Vector2i(5, 4)
+		and constants.get("DUNGEON_ENTRANCE_LUA_SIZE") == Vector2i(6, 5),
+		"dungeon entrances use native 5x4 Python and 6x5 Lua large portals")
+
+	var tower := WorldWaypointTower.new()
+	tower.setup("ww_10_20", "Skyglass Waypoint 01", Vector2i(10, 20))
+	check(tower.waypoint_id == "ww_10_20" and tower.foot_cell == Vector2i(12, 26),
+		"world tower setup derives a stable id and bottom-centre foot")
+	add_child(tower)
+	var tower_groups := tower.is_in_group("WorldWaypoint")
+	var tower_constants: Dictionary = tower.get_script().get_script_constant_map()
+	var click_rect: Rect2 = tower_constants.get("CLICK_RECT", Rect2()) as Rect2
+	check(click_rect.has_point(Vector2(0, -220))
+		and click_rect.has_point(Vector2(80, -10))
+		and click_rect.has_point(Vector2(0, 18)),
+		"the full tower facade and shaded base are clickable")
+	var tower_shadow := tower.get_node_or_null("TowerShadow") as Sprite2D
+	var tower_base := tower.get_node_or_null("TowerBaseShade") as Polygon2D
+	check(tower_shadow != null and tower_shadow.texture != null
+		and tower_base != null and tower_base.polygon.size() >= 4,
+		"world towers cast a soft floor shadow and shaded base")
+	remove_child(tower)
+	tower.free()
+	check(tower_groups, "world tower joins the permanent waypoint map group")
+
+	var world_src := FileAccess.get_file_as_string("res://scripts/world.gd")
+	var recall_src := FileAccess.get_file_as_string("res://scripts/waypoint_recall_fx.gd")
+	check(world_src.contains("WAYPOINT_RECALL_FX_SCRIPT")
+		and world_src.contains("WAYPOINT_WHITE_FADE_IN_SEC")
+		and world_src.contains('call_deferred("_run_waypoint_recall"')
+		and recall_src.contains("draw_colored_polygon"),
+		"waypoint travel plays a recall beacon and white screen fade")
+
+	var temp := DungeonWaypoint.new()
+	temp.setup(11, "lua", null, Vector2i(1, 2))
+	check(temp.language == "lua" and temp.dungeon_index == 11
+		and temp.anchor_cell == Vector2i(1, 2),
+		"temporary dungeon waypoint setup keeps dungeon identity and anchor")
+	add_child(temp)
+	var temp_is_dungeon := temp.is_in_group("DungeonWaypoint")
+	var temp_is_world := temp.is_in_group("WorldWaypoint")
+	var temp_sprite := temp.get_node_or_null("WaypointSprite") as Sprite2D
+	var temp_step := temp.get_node_or_null("StepArea") as Area2D
+	check(temp_sprite != null and temp_sprite.texture != null
+		and temp_sprite.texture.resource_path == "res://sprites/dungeon/dungeon_portal.png",
+		"temporary waypoint uses the existing 3x3 dungeon-portal sprite")
+	check(temp_step != null and temp_step.collision_mask == 4,
+		"temporary waypoint has a player step trigger")
+	remove_child(temp)
+	temp.free()
+	check(temp_is_dungeon and not temp_is_world,
+		"temporary dungeon waypoint is excluded from permanent map destinations")
+
+	var world: Node = world_script.new()
+	var fake_wp := FakeWaypointNode.new()
+	fake_wp.anchor_cell = Vector2i(4, 5)
+	fake_wp.language = "python"
+	world.set("_dungeon_waypoint_nodes", {7: fake_wp})
+	world.set("_world_waypoints", [{"id": "ww_a", "label": "A", "x": 1, "y": 2}])
+	var temp_rows: Array = world.call("_dungeon_waypoint_save_data") as Array
+	var tower_rows: Array = world.call("_world_waypoint_save_data") as Array
+	check(temp_rows.size() == 1 and int((temp_rows[0] as Dictionary)["index"]) == 7
+		and str((temp_rows[0] as Dictionary)["language"]) == "python",
+		"temporary waypoint save rows preserve dungeon index and language")
+	check(tower_rows.size() == 1 and str((tower_rows[0] as Dictionary)["id"]) == "ww_a",
+		"permanent world waypoint save rows preserve stable ids")
+	world.free()
+	fake_wp.free()
+
+	# Selection closes the map only after the world reports a successful
+	# teleport, and the source map uses the real minimap overlay lifecycle.
+	Global.reset_pause_state()
+	var old_world: Node = Global.world_node
+	var fake_world := FakeWorldNode.new()
+	Global.world_node = fake_world
+	var minimap_src := FileAccess.get_file_as_string("res://scripts/minimap.gd")
+	check(minimap_src.contains('get_nodes_in_group("WorldWaypoint")')
+		and minimap_src.contains('"World Waypoint"')
+		and minimap_src.contains("_map_close_rect"),
+		"the overworld map draws world waypoints, legends them and exposes an X close control")
+	var mm := Minimap.new()
+	add_child(mm)
+	var opened := bool(mm.call("open_world_waypoint_map", "source"))
+	check(opened and bool(mm.get("_waypoint_mode")) and bool(mm.get("_expanded")),
+		"world waypoint map opens through the existing exclusive map overlay")
+	# Headless runs use a 64x64 viewport; simulate a real screen so the
+	# fullscreen safe-area layout can be checked for containment and sizing.
+	var old_ui_viewport: Vector2 = Global.ui_viewport_size
+	var old_ui_insets: Vector4 = Global.ui_safe_insets
+	Global.ui_viewport_size = Vector2(1920, 1080)
+	Global.ui_safe_insets = Vector4.ZERO
+	var content := Global.ui_content_rect()
+	var panel: Rect2 = mm.call("_expanded_panel_rect") as Rect2
+	var map_rect: Rect2 = mm.call("_expanded_map_rect") as Rect2
+	var legend_rect: Rect2 = mm.call("_expanded_legend_rect") as Rect2
+	var close_rect: Rect2 = mm.call("_map_close_rect") as Rect2
+	var margin: float = Minimap.MARGIN * Global.ui_scale
+	var pad: float = 18.0 * Global.ui_scale
+	var gap: float = 16.0 * Global.ui_scale
+	check(absf(panel.position.x - (content.position.x + margin)) <= 1.0
+		and absf(panel.size.x - (content.size.x - margin * 2.0)) <= 1.0
+		and absf(panel.size.y - (content.size.y - margin * 2.0)) <= 1.0,
+		"the expanded map fills the safe content area")
+	check(map_rect.size.x > 0.0 and map_rect.size.y > 0.0
+		and legend_rect.size.x > 0.0
+		and absf(map_rect.size.y - legend_rect.size.y) <= 1.0
+		and absf(map_rect.size.x + gap + legend_rect.size.x
+			- (panel.size.x - pad * 2.0)) <= 1.0
+		and legend_rect.position.x >= map_rect.end.x
+		and panel.has_point(map_rect.position)
+		and panel.has_point(legend_rect.end - Vector2(1, 1))
+		and panel.has_point(close_rect.get_center()),
+		"the fullscreen map fills its rectangle with the legend list on the right")
+	var map_layer: CanvasLayer = mm.get("_map_layer") as CanvasLayer
+	check(map_layer != null and map_layer.layer >= 100
+		and mm.get_parent() == map_layer
+		and bool(mm.get("_hud_hidden_by_map")),
+		"the expanded map is promoted above the HUD and hides the gameplay HUD")
+	mm.set("_waypoint_hitboxes", [{"id": "dest", "label": "Destination",
+		"pos": Vector2(24, 24)}])
+	var selected := bool(mm.call("_try_select_waypoint", Vector2(24, 24)))
+	check(selected and fake_world.teleported_id == "dest"
+		and not bool(mm.get("_expanded")),
+		"selecting a waypoint teleports and closes the map")
+	# The X button closes without selecting a waypoint.
+	var reopened := bool(mm.call("open_world_waypoint_map", "source"))
+	var close_rect_2: Rect2 = mm.call("_map_close_rect") as Rect2
+	var close_event := InputEventMouseButton.new()
+	close_event.button_index = MOUSE_BUTTON_LEFT
+	close_event.pressed = true
+	close_event.position = close_rect_2.get_center()
+	mm.call("_input", close_event)
+	check(reopened and not bool(mm.get("_expanded"))
+		and mm.get("_map_layer") == null
+		and not bool(mm.get("_hud_hidden_by_map")),
+		"the fullscreen map X button closes it and restores the HUD layer")
+	Global.ui_viewport_size = old_ui_viewport
+	Global.ui_safe_insets = old_ui_insets
+	remove_child(mm)
+	mm.free()
+	Global.world_node = old_world
+	fake_world.free()
+	Global.reset_pause_state()
+
 
 func _saved_missions_version(path: String) -> int:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))

@@ -91,6 +91,8 @@ func _enter_tree() -> void:
 		_register_torch_light()
 
 func _ready() -> void:
+	if not Global.gameplay_input_cancelled.is_connected(_on_gameplay_input_cancelled):
+		Global.gameplay_input_cancelled.connect(_on_gameplay_input_cancelled)
 	set_process(false)
 	if item_data != null:
 		_apply_sprite()
@@ -105,6 +107,9 @@ func _ready() -> void:
 	_interact.body_exited.connect(_on_body_exited)
 	refresh_u_collision()
 	refresh_torch_connection()
+	# Contextual cursors only need to scan doors/bonfires, not every stone block.
+	if has_plain_click():
+		add_to_group("PlainClickBlock")
 
 # ── Floor ─────────────────────────────────────────────────────────
 # A floor is walkable (its collider is disabled) and sits under the world (low
@@ -422,10 +427,13 @@ func _tick_wobble() -> void:
 	_sprite.rotation = Global.block_wobble_rotation()
 
 func _update_hover() -> void:
+	_update_hover_at(Global.mouse_world(self))
+
+func _update_hover_at(world_pos: Vector2) -> void:
 	if _sprite.texture == null:
 		_hovered = false
 		return
-	var mouse_local: Vector2 = to_local(Global.mouse_world(self))
+	var mouse_local: Vector2 = to_local(world_pos)
 	var half_w: float = (_sprite.texture.get_width()  / float(maxi(_sprite.hframes, 1))) * 0.5
 	var half_h: float = (_sprite.texture.get_height() / float(maxi(_sprite.vframes, 1))) * 0.5
 	_hovered = abs(mouse_local.x - _sprite.position.x) <= half_w \
@@ -439,7 +447,11 @@ func _draw() -> void:
 
 # ── Input ─────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
-	if Global.is_mouse_event_over_ui(event):
+	# A PNC synthetic press targets a world point that was already accepted by
+	# the player's tap filter. Do not re-classify it as UI: on Android the
+	# screen-position mapping can differ under canvas stretch, which made the
+	# block reject the very press that should start its mining.
+	if not event.has_meta("pnc_synthetic") and Global.is_mouse_event_over_ui(event):
 		return
 	if not _player_nearby or Global.any_ui_open() or Global.pause_menu_open:
 		return
@@ -452,7 +464,20 @@ func _input(event: InputEvent) -> void:
 	# point. By then the real mouse/camera may have moved, leaving the cached
 	# hover stale; the PNC touch cursor is still pinned to the ordered block, so
 	# rebuild hover from that before deciding whether this click is ours.
-	if Global.pnc_hold_active:
+	# Use this click's own screen position for the hover test. Android secondary
+	# touches are bridged to mouse events and the shared touch cursor may point
+	# at a previous order; event position is authoritative.
+	if event is InputEventMouseButton \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		# PNC already knows the ordered world point. Trust that over the
+		# synthetic event's screen position, which can be stretched differently
+		# on Android and used to make the block ignore its own mining press.
+		if event.has_meta("pnc_synthetic") and Global.pnc_hold_active \
+				and Global.mouse_override_active():
+			_update_hover_at(Global.mouse_override_pos())
+		else:
+			_update_hover_at(Global.mouse_event_world(self, event))
+	elif Global.pnc_hold_active:
 		_update_hover()
 	if not _hovered or not _player_within_radius():
 		if _breaking:
@@ -632,3 +657,8 @@ func _on_body_exited(body: Node) -> void:
 		_mouse_held    = false
 		_cancel_breaking()   # also rests the sprite rotation
 		set_process(false)
+
+func _on_gameplay_input_cancelled() -> void:
+	_mouse_held = false
+	if _breaking:
+		_cancel_breaking()

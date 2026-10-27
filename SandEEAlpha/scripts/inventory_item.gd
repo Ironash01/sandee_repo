@@ -37,7 +37,7 @@ func _ready() -> void:
 			icon_sprite.texture = item_data.icon
 		var s: float = Global.ui_scale
 		_qty_label = Label.new()
-		_qty_label.add_theme_font_size_override("font_size", int(12 * s))
+		_qty_label.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		_qty_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 		_qty_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 		_qty_label.add_theme_constant_override("outline_size", int(3 * s))
@@ -53,13 +53,13 @@ func _ready() -> void:
 		# nudge runs.
 		_repel_from_blocks.call_deferred()
 
-# Re-apply the stack-count label's sizing so a Small/Medium/Large change applies
+# Re-apply the stack-count label's sizing so a responsive scale change applies
 # live to items already lying on the ground.
 func _on_ui_scale(_s: float) -> void:
 	if _qty_label == null or not is_instance_valid(_qty_label):
 		return
 	var s: float = Global.ui_scale
-	_qty_label.add_theme_font_size_override("font_size", int(12 * s))
+	_qty_label.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_qty_label.add_theme_constant_override("outline_size", int(3 * s))
 	_qty_label.position = Vector2(6, 6) * s
 

@@ -8,7 +8,6 @@ const C_MUTED  := Color(0.55, 0.65, 0.85, 1.00)
 const BASE_TITLE_SIZE: int = 28
 const BASE_LABEL_SIZE: int = 17
 
-var _ui_scale_lbl: Label  = null
 var _cam_zoom_lbl: Label  = null
 var _content:      Control = null
 var _rebuilding:   bool    = false
@@ -55,7 +54,7 @@ func _build_settings(panel: ColorRect) -> void:
 	# Title
 	var title := Label.new()
 	title.text = "Settings"
-	title.add_theme_font_size_override("font_size", int(BASE_TITLE_SIZE * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(float(BASE_TITLE_SIZE)))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(title)
@@ -70,7 +69,7 @@ func _build_settings(panel: ColorRect) -> void:
 	var fs_btn := CheckButton.new()
 	fs_btn.button_pressed = \
 		DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
-	fs_btn.add_theme_font_size_override("font_size", int(BASE_LABEL_SIZE * s))
+	fs_btn.add_theme_font_size_override("font_size", Global.ui_font_size(float(BASE_LABEL_SIZE)))
 	fs_btn.add_theme_color_override("font_color", C_MUTED)
 	fs_btn.toggled.connect(func(on: bool) -> void:
 		DisplayServer.window_set_mode(
@@ -85,18 +84,11 @@ func _build_settings(panel: ColorRect) -> void:
 		var pnc_btn := CheckButton.new()
 		pnc_btn.text = "Point-and-Click Movement"
 		pnc_btn.button_pressed = Global.point_and_click
-		pnc_btn.add_theme_font_size_override("font_size", int(BASE_LABEL_SIZE * s))
+		pnc_btn.add_theme_font_size_override("font_size", Global.ui_font_size(float(BASE_LABEL_SIZE)))
 		pnc_btn.add_theme_color_override("font_color", C_MUTED)
 		pnc_btn.tooltip_text = "Left-click / tap the world to walk there. Existing keyboard, mouse and joystick controls are unchanged."
 		pnc_btn.toggled.connect(func(on: bool) -> void: Global.set_point_and_click(on))
 		vbox.add_child(pnc_btn)
-
-	# ── UI Scale ─────────────────────────────────────────────────
-	_ui_scale_lbl = _lbl("UI Scale:  %.2f×" % Global.ui_scale, s)
-	vbox.add_child(_ui_scale_lbl)
-	var ui_slider := _make_slider(0.5, 2.0, 0.25, Global.ui_scale, s)
-	ui_slider.value_changed.connect(_on_ui_scale_changed)
-	vbox.add_child(ui_slider)
 
 	# ── Camera Zoom ───────────────────────────────────────────────
 	_cam_zoom_lbl = _lbl("Camera Zoom:  %.1f×" % Global.camera_zoom, s)
@@ -106,18 +98,11 @@ func _build_settings(panel: ColorRect) -> void:
 	vbox.add_child(cam_slider)
 
 # ── Handlers ──────────────────────────────────────────────────────
-func _on_ui_scale_changed(v: float) -> void:
-	Global.ui_scale     = v
-	Global.ui_scale_set = true
-	Global.ui_scale_changed.emit(v)
-	if _ui_scale_lbl != null and is_instance_valid(_ui_scale_lbl):
-		_ui_scale_lbl.text = "UI Scale:  %.2f×" % v
-
 func _on_cam_zoom_changed(v: float) -> void:
 	Global.camera_zoom = v
 	Global.camera_zoom_changed.emit(v)
 	if _cam_zoom_lbl != null and is_instance_valid(_cam_zoom_lbl):
-		_cam_zoom_lbl.text = "Camera Zoom:  %.1f×" % v
+		_cam_zoom_lbl.text = "Camera Zoom:  %.1fx" % v
 
 # Kept so the scene file's existing connection doesn't error on load.
 func _on_cam_slider_value_changed(value: float) -> void:
@@ -127,7 +112,7 @@ func _on_cam_slider_value_changed(value: float) -> void:
 func _lbl(text: String, s: float = 1.0) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", int(BASE_LABEL_SIZE * s))
+	l.add_theme_font_size_override("font_size", Global.ui_font_size(float(BASE_LABEL_SIZE)))
 	l.add_theme_color_override("font_color", C_TITLE)
 	return l
 

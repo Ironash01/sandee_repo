@@ -3,11 +3,11 @@ class_name QuizAltar
 # ── Quiz Altar (final dungeon room object) ────────────────────────
 # Placed by the dungeon generator in the last room. Presents every question
 # embedded in the mission's `questions` (Array[DungeonQuestion], MCQ or COMPILER)
-# one at a time. When the player answers ALL of them correctly the exit opens
-# and the dungeon is cleared: the reward is granted, the matching
-# Global.mission is marked complete, and dungeon_cleared() fires so the
-# dungeon world can teleport the player out and remove the entrance from
-# the overworld map.
+# one at a time. Answering ALL of them correctly clears the dungeon: the reward
+# is granted, the mission/star state is recorded, and a results screen shows the
+# player's achievements and 1-3 blue stars. The top-right HINT button can
+# auto-complete a question, lowering that star award. Done teleports back to the
+# overworld, so quiz dungeons no longer use a physical exit tile.
 #
 # Built entirely in code (no .tscn) like CavePortal — the dungeon generator
 # instantiates it with .new().
@@ -45,12 +45,24 @@ var _cleared:       bool = false
 var _glow:          PointLight2D = null
 var _glow_time:     float = 0.0
 
-var _panel:      Control = null
+var _panel:        Control = null
+var _panel_scroll: ScrollContainer = null
+var _content_scroll: ScrollContainer = null
+var _touch_scroll_active: bool = false
+var _touch_scroll_accum:  float = 0.0
 var _q_progress: Label = null
 var _q_text:     Label = null
 var _feedback:   Label = null
 var _controls:   Control = null
 var _close_btn:  Button = null
+var _hint_btn:   Button = null
+var _hints_used: int = 0
+var _hint_busy:  bool = false
+var _answered:   int = 0
+var _reward_root: Control = null
+var _reward_visible: bool = false
+var _reward_stars: int = 3
+var _exiting: bool = false
 
 # ── Compiler (COMPILER) state ─────────────────────────────────────
 # The in-dungeon editor reuses the project's existing CodeEdit widget
@@ -106,22 +118,47 @@ func _ready() -> void:
 # The quiz panel is built at the current UI scale and cached — rebuild it in
 # place (keeping the current question) so a scale change applies live.
 func _on_ui_scale(_s: float) -> void:
-	if _panel == null:
+	if _panel == null or _exiting:
 		return
 	var was_visible: bool = _panel.visible
+	var was_reward: bool = _reward_visible
+	var saved_stars: int = _reward_stars
+	var saved_hints: int = _hints_used
+	var saved_answered: int = _answered
+	var saved_code: String = _code_entry.text if _code_entry != null \
+			and is_instance_valid(_code_entry) else ""
 	var canvas: Node = _panel.get_parent()
 	if canvas != null:
 		canvas.queue_free()
 	_panel = null
+	_panel_scroll = null
+	_content_scroll = null
 	_q_progress = null; _q_text = null; _feedback = null
-	_controls = null; _close_btn = null
+	_controls = null; _close_btn = null; _hint_btn = null
+	_reward_root = null
 	_code_entry = null; _compiler_output = null; _error_label = null
 	if was_visible:
 		_panel = _build_panel()
 		_panel.visible = true
-		_show_question()
+		if _ui_registered:
+			Global.register_ui_back(_panel, Callable(self, "_escape_close"))
+		_hints_used = saved_hints
+		_answered = saved_answered
+		if was_reward:
+			_reward_stars = saved_stars
+			_show_reward_screen(saved_stars)
+		else:
+			_reward_visible = false
+			_show_question()
+			if _code_entry != null and is_instance_valid(_code_entry):
+				_code_entry.text = saved_code
 
 func _process(delta: float) -> void:
+	if _panel != null and _panel.visible and _panel_scroll != null:
+		var want: float = -(Global.ui_safe_insets.w + Global.mobile_keyboard_height())
+		if not is_equal_approx(_panel_scroll.offset_bottom, want):
+			_panel_scroll.offset_bottom = want
+			_ensure_code_visible()
 	if _glow != null:
 		_glow_time += delta
 		_glow.energy = GLOW_ENERGY_BASE + sin(_glow_time * GLOW_BLINK_SPEED) * GLOW_ENERGY_AMP
@@ -165,12 +202,20 @@ func _on_body_entered(body: Node) -> void:
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = false
+		if _reward_visible:
+			return
 		if _panel != null and _panel.visible:
 			_panel.visible = false
 			_release_ui()
 
 func _input(event: InputEvent) -> void:
 	if _panel != null and _panel.visible:
+		if _reward_visible:
+			if event.is_action_pressed("escape"):
+				get_viewport().set_input_as_handled()
+			return
+		if _handle_touch_scroll(event):
+			return
 		if event.is_action_pressed("escape"):
 			get_viewport().set_input_as_handled()
 			if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
@@ -181,18 +226,68 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_start_quiz()
 
+## ScrollContainer does not consume finger drags on Android. _input runs before
+## GUI, so scroll the question body here while leaving taps/buttons untouched.
+## A drag that starts on the code editor is excluded so touch text selection
+## still works.
+func _handle_touch_scroll(event: InputEvent) -> bool:
+	if _content_scroll == null or not is_instance_valid(_content_scroll):
+		return false
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			var over_code: bool = _code_entry != null \
+				and is_instance_valid(_code_entry) \
+				and _code_entry.get_global_rect().has_point(t.position)
+			_touch_scroll_active = not over_code \
+				and _content_scroll.get_global_rect().has_point(t.position) \
+				and not _touch_over_button(t.position)
+			_touch_scroll_accum = 0.0
+		else:
+			_touch_scroll_active = false
+		return false
+	if event is InputEventScreenDrag and _touch_scroll_active:
+		var d := event as InputEventScreenDrag
+		_touch_scroll_accum -= d.relative.y
+		var step: int = int(_touch_scroll_accum)
+		if step != 0:
+			_content_scroll.scroll_vertical += step
+			_touch_scroll_accum -= float(step)
+		get_viewport().set_input_as_handled()
+		return true
+	return false
+
+func _touch_over_button(pos: Vector2) -> bool:
+	for b in _content_scroll.find_children("*", "Button", true, false):
+		if (b as Control).get_global_rect().has_point(pos):
+			return true
+	return false
+
 func _start_quiz() -> void:
 	if mission != null and Global.is_dungeon_cleared(mission.dungeon_index):
 		return
-	if _questions.is_empty():
-		if mission != null and mission.questions.is_empty():
-			# Mission with no questions is trivially clearable.
-			_complete_dungeon()
-		return
-	_index = 0
 	if _panel == null:
 		_panel = _build_panel()
+	if _reward_root != null:
+		_reward_root.queue_free()
+		_reward_root = null
+	_reward_visible = false
+	_index = 0
+	_hints_used = 0
+	_answered = 0
+	_hint_busy = false
+	_exiting = false
 	_panel.visible = true
+	_panel_scroll.visible = true
+	if _content_scroll != null:
+		_content_scroll.scroll_vertical = 0
+	if _panel_scroll != null:
+		_panel_scroll.scroll_vertical = 0
+	if _hint_btn != null:
+		_hint_btn.visible = true
+		_hint_btn.disabled = false
+	if _close_btn != null:
+		_close_btn.visible = true
 	# Clear any stale compiler-run suspension before registering this opening;
 	# otherwise a previous interrupted Run can leave the quiz visibly open while
 	# the world keeps simulating.
@@ -204,13 +299,26 @@ func _start_quiz() -> void:
 	# always autopauses even if an older UI refcount edge case slipped through.
 	if not get_tree().paused:
 		get_tree().paused = true
+	if _questions.is_empty():
+		# Mission with no questions is trivially clearable (still shows the
+		# reward summary and Done button).
+		_complete_dungeon()
+		return
 	_show_question()
 
 func _show_question() -> void:
+	if _cleared or _reward_visible:
+		return
 	if _index >= _questions.size():
 		_complete_dungeon()
 		return
+	_hint_busy = false
+	if _hint_btn != null:
+		_hint_btn.disabled = false
+		_hint_btn.visible = true
 	_rebuild_controls()
+	if _content_scroll != null:
+		_content_scroll.scroll_vertical = 0
 
 func _rebuild_controls() -> void:
 	var q: DungeonQuestion = _questions[_index]
@@ -242,9 +350,10 @@ func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text
 	var s: float = Global.ui_scale
 	var btn := Button.new()
 	btn.text = (label + "  —  " + opt_text) if not opt_text.is_empty() else label
-	btn.custom_minimum_size = Vector2(int(150 * s), int(42 * s))
-	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", int(13 * s))
+	btn.custom_minimum_size = Vector2(0, int(42 * s))
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.14, 0.18, 0.34, 1.0); sb.border_color = C_BORDER
 	sb.set_border_width_all(int(1 * s)); sb.set_corner_radius_all(int(4 * s))
@@ -254,6 +363,58 @@ func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text
 	btn.add_theme_color_override("font_color", C_QUESTION)
 	btn.pressed.connect(func() -> void: _grade(q, value))
 	return btn
+
+func _ensure_code_visible() -> void:
+	var target := _content_scroll if _content_scroll != null else _panel_scroll
+	if target == null or _code_entry == null:
+		return
+	if not is_instance_valid(target) or not is_instance_valid(_code_entry):
+		return
+	target.call_deferred("ensure_control_visible", _code_entry)
+
+
+## 3 stars with no hints, 2 with exactly one, 1 with two or more.
+static func stars_for_hints(hints_used: int) -> int:
+	if hints_used <= 0:
+		return 3
+	if hints_used == 1:
+		return 2
+	return 1
+
+
+func _hint_code_for(q: DungeonQuestion) -> String:
+	# Both supported quiz languages print the expected output. c_escape keeps
+	# quotes/newlines/backslashes valid inside the generated string literal.
+	return "print(\"%s\")" % q.answer_output.c_escape()
+
+
+## The HINT button reveals/auto-completes the CURRENT question. It is optional;
+## each use is counted and lowers the final star award.
+func _use_hint() -> void:
+	if _cleared or _reward_visible or _hint_busy or _running \
+			or _index >= _questions.size():
+		return
+	var q: DungeonQuestion = _questions[_index]
+	_hints_used += 1
+	_hint_busy = true
+	if _hint_btn != null:
+		_hint_btn.disabled = true
+	if _feedback != null:
+		_feedback.text = ""
+	if q.is_compiler():
+		var answer: String = _hint_code_for(q)
+		if _code_entry != null and is_instance_valid(_code_entry):
+			_code_entry.text = answer
+		if q.language == "lua" or q.language == "python":
+			_run_compiler(q, answer)
+		else:
+			# Unknown/non-interpreted language: accept the expected output
+			# directly so the hint can never soft-lock the altar.
+			_captured_output = q.answer_output
+			_grade_compiler(q)
+	else:
+		_grade(q, str(q.correct_option_index()))
+
 
 # ── Compiler (Shape.COMPILER) controls ─────────────────────────────
 # The code editor (a CodeEdit carrying the language's real syntax
@@ -268,11 +429,12 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	var lang: String = q.language
 	var entry := CodeEdit.new()
 	entry.set_script(CODE_EDIT_SCRIPT)
-	entry.custom_minimum_size = Vector2(int(440 * s), int(150 * s))
+	entry.custom_minimum_size = Vector2(int(320 * s), int(150 * s))
+	entry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	entry.placeholder_text = "-- write your %s code here\nprint(\"...\")" % lang
 	entry.text = q.starter_code
 	entry.add_theme_font_override("font", CODE_FONT)
-	entry.add_theme_font_size_override("font_size", int(14 * s))
+	entry.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	entry.gutters_draw_line_numbers     = true
 	entry.code_completion_enabled       = true
 	entry.indent_use_spaces             = true
@@ -289,6 +451,7 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	if spec != null:
 		entry.call("load_language_spec", spec)
 		entry.text_changed.connect(Callable(entry, "code_completion_request"))
+	entry.focus_entered.connect(_ensure_code_visible)
 	_controls.add_child(entry)
 	_code_entry = entry
 
@@ -296,20 +459,34 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	# label is reserved for MCQ answers / rubric results) so a failed compile
 	# is read right where the code was typed.
 	var err := Label.new()
-	err.custom_minimum_size = Vector2(int(440 * s), int(18 * s))
+	err.custom_minimum_size = Vector2(0, int(18 * s))
 	err.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	err.add_theme_font_size_override("font_size", int(12 * s))
+	err.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	err.add_theme_color_override("font_color", C_ERROR)
 	_controls.add_child(err)
 	_error_label = err
 
+	var out_box := PanelContainer.new()
+	out_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var obs := StyleBoxFlat.new()
+	obs.bg_color = Color(0.05, 0.07, 0.14, 1.0)
+	obs.border_color = C_BORDER
+	obs.set_border_width_all(int(1 * s))
+	obs.set_corner_radius_all(int(4 * s))
+	obs.content_margin_left = int(8 * s)
+	obs.content_margin_right = int(8 * s)
+	obs.content_margin_top = int(6 * s)
+	obs.content_margin_bottom = int(6 * s)
+	out_box.add_theme_stylebox_override("panel", obs)
 	var out := RichTextLabel.new()
 	out.bbcode_enabled = true
-	out.custom_minimum_size = Vector2(int(440 * s), int(80 * s))
+	out.custom_minimum_size = Vector2(0, int(80 * s))
+	out.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	out.scroll_following = true
-	out.add_theme_font_size_override("font_size", int(13 * s))
+	out.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	out.add_theme_color_override("default_color", C_MUTED)
-	_controls.add_child(out)
+	out_box.add_child(out)
+	_controls.add_child(out_box)
 	_compiler_output = out
 
 	# Lua runs through LuaState; Python is transpiled to GDScript and run. Both
@@ -320,7 +497,7 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 		# by string comparison so the dungeon never soft-locks.
 		var note := Label.new()
 		note.text = "[%s] interpreter not available yet — type the correct code and press Check." % lang
-		note.add_theme_font_size_override("font_size", int(11 * s))
+		note.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 		note.add_theme_color_override("font_color", Color(1.0, 0.85, 0.5, 1.0))
 		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_controls.add_child(note)
@@ -329,7 +506,7 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	check_btn.text = "▶  %s" % ("Run" if is_interp else "Check")
 	check_btn.custom_minimum_size = Vector2(int(140 * s), int(38 * s))
 	check_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	check_btn.add_theme_font_size_override("font_size", int(13 * s))
+	check_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.14, 0.34, 0.20, 1.0); sb.border_color = C_BORDER
 	sb.set_border_width_all(int(1 * s)); sb.set_corner_radius_all(int(4 * s))
@@ -350,6 +527,8 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	CrashLogger.code(q.language, "QUIZ_RUN", "question=%s chars=%d\n%s" % [
 		(q.question.left(80) if q != null else "?"), code.length(), code])
 	_set_status("", C_MUTED)   # a fresh run clears the previous error line
+	if _hint_btn != null:
+		_hint_btn.disabled = true
 	# Python is transpiled to GDScript and executed by PythonState (its signals
 	# mirror LuaState's, so the same capture/grade flow below is reused).
 	if q.language == "python":
@@ -439,6 +618,9 @@ func _on_quiz_failed(error: String) -> void:
 	_running = false
 	if _panel != null and _panel.visible:
 		Global.resume_ui_pause(self)
+		_hint_busy = false
+		if _hint_btn != null:
+			_hint_btn.disabled = false
 		_set_status("✘ " + error, C_ERROR)
 
 # Compiler-question status — errors AND the rubric result — goes to the line
@@ -457,6 +639,7 @@ func _grade_compiler(q: DungeonQuestion) -> void:
 	if _normalize_text(_captured_output) == _normalize_text(q.answer_output):
 		_set_status("✔ Correct!", C_OK)
 		_index += 1
+		_answered += 1
 		await get_tree().create_timer(0.6).timeout
 		if not is_inside_tree():
 			return
@@ -464,6 +647,9 @@ func _grade_compiler(q: DungeonQuestion) -> void:
 			_show_question()
 	else:
 		_set_status("✘ Not quite — try again.", C_ERROR)
+		_hint_busy = false
+		if _hint_btn != null:
+			_hint_btn.disabled = false
 
 # Grades a non-interpreted language's typed code against the expected code in
 # answer_output (normalized comparison) — the old LONG behaviour under COMPILER.
@@ -471,6 +657,7 @@ func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 	if _normalize_text(code) == _normalize_text(q.answer_output):
 		_set_status("✔ Correct!", C_OK)
 		_index += 1
+		_answered += 1
 		await get_tree().create_timer(0.6).timeout
 		if not is_inside_tree():
 			return
@@ -478,6 +665,9 @@ func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 			_show_question()
 	else:
 		_set_status("✘ Not quite — try again.", C_ERROR)
+		_hint_busy = false
+		if _hint_btn != null:
+			_hint_btn.disabled = false
 
 # MCQ grading: the button passes the option index (0..3); it's correct when it
 # matches the question's correct_index.
@@ -486,6 +676,7 @@ func _grade(q: DungeonQuestion, input_text: String) -> void:
 		_feedback.text = "✔ Correct!"
 		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
 		_index += 1
+		_answered += 1
 		await get_tree().create_timer(0.6).timeout
 		if not is_inside_tree():
 			return
@@ -517,17 +708,199 @@ func _complete_dungeon() -> void:
 	_cleared = true
 	_accept_results = false
 	_running = false
-	if _panel != null:
-		_panel.visible = false
-	_release_ui()
+	_hint_busy = false
+	_answered = maxi(_answered, _questions.size())
+	_reward_stars = stars_for_hints(_hints_used)
 
 	Global.grant_item(mission.reward_item_path, 1)
 	var mission_id: String = "dungeon_%d" % mission.dungeon_index
 	Global.complete_mission(mission_id)
-	# Star #1 of the dungeon's two — emitted after complete_mission (star #2)
-	# so the mission UI popup that ends up on screen carries the clear flavor.
-	Global.record_dungeon_clear(mission.dungeon_index)
+	# Mission star (1) + clear star (>=2) + perfect bonus (3). The reward
+	# screen stays open until the player reviews it and presses Done.
+	Global.record_dungeon_clear(mission.dungeon_index, _reward_stars)
 	cleared.emit(mission.dungeon_index)
+	_show_reward_screen(_reward_stars)
+
+
+func _show_reward_screen(stars: int) -> void:
+	if _panel == null:
+		return
+	_touch_scroll_active = false
+	_touch_scroll_accum = 0.0
+	if _reward_root != null and is_instance_valid(_reward_root):
+		_reward_root.queue_free()
+	_reward_visible = true
+	_reward_stars = clampi(stars, 1, 3)
+	_panel_scroll.visible = false
+	if _hint_btn != null:
+		_hint_btn.visible = false
+	if _close_btn != null:
+		_close_btn.visible = false
+
+	var s: float = Global.ui_scale
+	var root := Control.new()
+	root.name = "RewardScreen"
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.process_mode = Node.PROCESS_MODE_ALWAYS
+	_panel.add_child(root)
+	_reward_root = root
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.58)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	root.add_child(scroll)
+
+	var center := CenterContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	center.custom_minimum_size = Global.ui_content_rect().size
+	scroll.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(540, 420))
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = C_PANEL
+	ps.border_color = C_BORDER
+	ps.set_border_width_all(int(2 * s))
+	ps.set_corner_radius_all(int(8 * s))
+	ps.content_margin_left = int(26 * s)
+	ps.content_margin_right = int(26 * s)
+	ps.content_margin_top = int(20 * s)
+	ps.content_margin_bottom = int(20 * s)
+	panel.add_theme_stylebox_override("panel", ps)
+	center.add_child(panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", int(9 * s))
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "DUNGEON CLEARED"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(22))
+	title.add_theme_color_override("font_color", C_TITLE)
+	vbox.add_child(title)
+
+	var mission_name := mission.mission_name if mission != null else "Dungeon"
+	if mission_name.strip_edges().is_empty():
+		mission_name = "Dungeon %d" % (mission.dungeon_index if mission != null else 0)
+	var name_lbl := Label.new()
+	name_lbl.text = "%s  ·  %s" % [mission_name,
+		Global.dungeon_difficulty(mission.dungeon_index) if mission != null else "Medium"]
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	name_lbl.add_theme_color_override("font_color", C_MUTED)
+	vbox.add_child(name_lbl)
+
+	var div := ColorRect.new()
+	div.color = Color(0.45, 0.25, 0.55, 1.0)
+	div.custom_minimum_size = Vector2(0, int(1 * s))
+	vbox.add_child(div)
+
+	var ach := Label.new()
+	ach.text = "ACHIEVEMENTS"
+	ach.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ach.add_theme_font_size_override("font_size", Global.ui_font_size(11))
+	ach.add_theme_color_override("font_color", C_MUTED)
+	vbox.add_child(ach)
+
+	_reward_row(vbox, "Questions answered",
+		"%d / %d" % [_answered, _questions.size()])
+	_reward_row(vbox, "Hints used", str(_hints_used))
+	var reward_data: ItemData = null
+	if mission != null and not mission.reward_item_path.is_empty():
+		reward_data = load(mission.reward_item_path) as ItemData
+	_reward_row(vbox, "Dungeon reward",
+		reward_data.item_name if reward_data != null else "—")
+
+	var div2 := ColorRect.new()
+	div2.color = Color(0.45, 0.25, 0.55, 1.0)
+	div2.custom_minimum_size = Vector2(0, int(1 * s))
+	vbox.add_child(div2)
+
+	var stars_lbl := Label.new()
+	stars_lbl.text = "BLUE STARS EARNED"
+	stars_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	stars_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
+	stars_lbl.add_theme_color_override("font_color", C_MUTED)
+	vbox.add_child(stars_lbl)
+
+	var stars_row := HBoxContainer.new()
+	stars_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	stars_row.add_theme_constant_override("separation", int(10 * s))
+	vbox.add_child(stars_row)
+	for i in range(3):
+		var star := StarIcon.new()
+		stars_row.add_child(star)
+		star.setup(StarIcon.BLUE if i < _reward_stars else Color(0.30, 0.34, 0.48, 0.9),
+			28.0 * s)
+
+	var note := Label.new()
+	note.text = "0 hints = 3 stars  ·  1 hint = 2 stars  ·  2+ hints = 1 star"
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+	note.add_theme_color_override("font_color", C_MUTED)
+	vbox.add_child(note)
+
+	var done := Button.new()
+	done.text = "DONE — RETURN TO WORLD"
+	done.custom_minimum_size = Vector2(int(260 * s), int(42 * s))
+	done.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	done.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	var db := StyleBoxFlat.new()
+	db.bg_color = Color(0.15, 0.42, 0.22, 1.0)
+	db.border_color = C_BORDER
+	db.set_border_width_all(int(1 * s))
+	db.set_corner_radius_all(int(4 * s))
+	done.add_theme_stylebox_override("normal", db)
+	done.add_theme_stylebox_override("hover", db)
+	done.add_theme_stylebox_override("pressed", db)
+	done.add_theme_color_override("font_color", Color(0.80, 1.0, 0.82, 1.0))
+	done.pressed.connect(_on_reward_done)
+	vbox.add_child(done)
+
+
+func _reward_row(parent: VBoxContainer, label_text: String, value_text: String) -> void:
+	var s: float = Global.ui_scale
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(10 * s))
+	parent.add_child(row)
+	var l := Label.new()
+	l.text = label_text
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	l.add_theme_color_override("font_color", C_MUTED)
+	row.add_child(l)
+	var v := Label.new()
+	v.text = value_text
+	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	v.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	v.add_theme_color_override("font_color", C_TITLE)
+	row.add_child(v)
+
+
+func _on_reward_done() -> void:
+	if _exiting:
+		return
+	_exiting = true
+	if _reward_root != null and is_instance_valid(_reward_root):
+		_reward_root.visible = false
+	if _panel != null:
+		_panel.visible = false
+	_release_ui()
+	if is_instance_valid(Global.game_node) and Global.game_node.has_method("exit_dungeon"):
+		Global.game_node.call("exit_dungeon")
+
 
 func _build_panel() -> Control:
 	var s: float = Global.ui_scale
@@ -547,12 +920,25 @@ func _build_panel() -> Control:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(overlay)
 
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	root.add_child(scroll)
+	_panel_scroll = scroll
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_child(center)
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var content_size: Vector2 = Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(
+		maxf(1.0, content_size.x - 16.0 * s), content_size.y)
+	scroll.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(int(520 * s), 0)
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(520, 380))
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
@@ -563,6 +949,7 @@ func _build_panel() -> Control:
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", int(14 * s))
+	vbox.mouse_filter = Control.MOUSE_FILTER_PASS
 	panel.add_child(vbox)
 
 	var hdr := HBoxContainer.new()
@@ -570,37 +957,77 @@ func _build_panel() -> Control:
 	vbox.add_child(hdr)
 	var icon := Label.new()
 	icon.text = "❓"
-	icon.add_theme_font_size_override("font_size", int(22 * s))
+	icon.add_theme_font_size_override("font_size", Global.ui_font_size(22))
 	hdr.add_child(icon)
 	var title := Label.new()
 	title.text = "Quiz Altar"
-	title.add_theme_font_size_override("font_size", int(18 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(18))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.add_child(title)
 	_q_progress = Label.new()
-	_q_progress.add_theme_font_size_override("font_size", int(12 * s))
+	_q_progress.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_q_progress.add_theme_color_override("font_color", C_MUTED)
 	hdr.add_child(_q_progress)
+
+	_hint_btn = Button.new()
+	_hint_btn.text = "HINT"
+	_hint_btn.tooltip_text = "Auto-complete this question. 3 stars = 0 hints, 2 stars = 1 hint, 1 star = 2+ hints."
+	_hint_btn.custom_minimum_size = Vector2(int(76 * s), int(30 * s))
+	_hint_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
+	var hb := StyleBoxFlat.new()
+	hb.bg_color = Color(0.20, 0.16, 0.36, 1.0)
+	hb.border_color = C_BORDER
+	hb.set_border_width_all(int(1 * s))
+	hb.set_corner_radius_all(int(4 * s))
+	hb.content_margin_left = int(8 * s)
+	hb.content_margin_right = int(8 * s)
+	_hint_btn.add_theme_stylebox_override("normal", hb)
+	_hint_btn.add_theme_stylebox_override("hover", hb)
+	_hint_btn.add_theme_stylebox_override("pressed", hb)
+	_hint_btn.add_theme_color_override("font_color", C_TITLE)
+	_hint_btn.pressed.connect(_use_hint)
+	hdr.add_child(_hint_btn)
 
 	var div := ColorRect.new()
 	div.color = Color(0.45, 0.25, 0.55, 1.0); div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 
+	# Question + answer controls scroll inside a viewport-capped panel, keeping
+	# the title, HINT and Close reachable on phones instead of a panel that runs
+	# off the bottom of the screen.
+	var content_scroll := ScrollContainer.new()
+	content_scroll.name = "QuestionScroll"
+	content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	content_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.add_child(content_scroll)
+	_content_scroll = content_scroll
+
+	var content_vbox := VBoxContainer.new()
+	content_vbox.add_theme_constant_override("separation", int(10 * s))
+	content_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
+	content_scroll.add_child(content_vbox)
+
 	_q_text = Label.new()
-	_q_text.add_theme_font_size_override("font_size", int(15 * s))
+	_q_text.add_theme_font_size_override("font_size", Global.ui_font_size(15))
 	_q_text.add_theme_color_override("font_color", C_QUESTION)
 	_q_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vbox.add_child(_q_text)
+	_q_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content_vbox.add_child(_q_text)
 
 	_controls = VBoxContainer.new()
 	_controls.add_theme_constant_override("separation", int(10 * s))
-	vbox.add_child(_controls)
+	_controls.mouse_filter = Control.MOUSE_FILTER_PASS
+	content_vbox.add_child(_controls)
 
 	_feedback = Label.new()
 	_feedback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_feedback.add_theme_font_size_override("font_size", int(14 * s))
-	vbox.add_child(_feedback)
+	_feedback.add_theme_font_size_override("font_size", Global.ui_font_size(14))
+	_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_feedback.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content_vbox.add_child(_feedback)
 
 	_close_btn = Button.new()
 	_close_btn.text = "Close"
@@ -612,6 +1039,10 @@ func _build_panel() -> Control:
 	return root
 
 func _close_quiz() -> void:
+	# The reward summary must be reviewed and dismissed with Done; it is the
+	# only path back to the overworld for quiz dungeons.
+	if _reward_visible:
+		return
 	# Closing mid-quiz leaves progress untouched; reopening (_input → _start_quiz)
 	# resets to question 1 so the player can pick up or restart at will.
 	if _panel != null:
@@ -621,6 +1052,12 @@ func _close_quiz() -> void:
 ## Esc is a back action, but typed code is unsaved. Refuse quietly and let the
 ## player use the deliberate Close button if they mean to discard it.
 func _escape_close() -> void:
+	if _reward_visible:
+		# Results are mandatory; keep the modal back entry alive for any later
+		# Back press even though request_ui_back() popped it before calling here.
+		if _panel != null and _panel.visible:
+			Global.register_ui_back(_panel, Callable(self, "_escape_close"))
+		return
 	if _code_entry != null and is_instance_valid(_code_entry) \
 			and not _code_entry.text.strip_edges().is_empty():
 		_set_status("Use Close to discard the code you typed.", C_MUTED)
@@ -634,6 +1071,8 @@ func _escape_close() -> void:
 # Releases the pause suspension + the open_ui() reference exactly once. Called
 # on Close, on walking away, on completion and on tree exit (death/transition).
 func _release_ui() -> void:
+	_touch_scroll_active = false
+	_touch_scroll_accum = 0.0
 	_accept_results = false
 	_running = false
 	if _panel != null:

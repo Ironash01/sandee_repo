@@ -13,6 +13,10 @@ const C_TEXT:    Color = Color(1.0, 1.0, 1.0, 1.0)
 const C_SHADOW:  Color = Color(0.0, 0.0, 0.0, 1.0)
 
 var mob_name: String = ""
+# Optional per-mob override for the baseline offset. Existing mobs keep the
+# historical -34 px value; tall Bestiary actors raise the name above the whole
+# silhouette.
+@export var vertical_offset: float = OFFSET_Y
 
 var _timer: float = 0.0
 var _alpha: float = 0.0
@@ -46,12 +50,12 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	if mob_name.is_empty() or _alpha <= 0.0:
 		return
-	# Read the scale live at draw time so a Small/Medium/Large change applies
+	# Read the scale live at draw time so a responsive scale change applies
 	# immediately without a signal hookup.
-	var fs: int = int(FONT_SIZE * Global.ui_scale)
+	var fs: int = Global.ui_font_size(float(FONT_SIZE))
 	var font := ThemeDB.fallback_font
 	var w := font.get_string_size(mob_name, HORIZONTAL_ALIGNMENT_CENTER, -1, fs).x
-	var pos := Vector2(-w * 0.5, OFFSET_Y)
+	var pos := Vector2(-w * 0.5, vertical_offset)
 	var shadow_col := Color(C_SHADOW.r, C_SHADOW.g, C_SHADOW.b, _alpha)
 	var text_col := Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, _alpha)
 	# Cheap 8-direction outline so the name stays readable on any background.

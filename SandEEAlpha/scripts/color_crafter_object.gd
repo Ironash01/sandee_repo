@@ -12,6 +12,7 @@ var _menu: Control = null
 
 func _ready() -> void:
 	super._ready()
+	add_to_group("ColorCrafter")
 	var canvas := CanvasLayer.new()
 	canvas.layer        = 2
 	canvas.process_mode = Node.PROCESS_MODE_ALWAYS

@@ -29,7 +29,10 @@ var _history: Array = []
 var _completion: VBoxContainer = null
 var _structure_names: Array = []
 var _panel: PanelContainer = null
+var _default_panel_x: int = 0
 var _default_panel_y: int = 0
+var _default_panel_w: int = 0
+var _default_panel_h: int = 0
 
 # ── Item picker (the /items command) ──────────────────────────────
 var _item_picker: Control = null        # root of the picker overlay (null when closed)
@@ -45,11 +48,14 @@ func _ready() -> void:
 
 func _build() -> void:
 	var s: float = Global.ui_scale
-	var width:  int = int(440 * s)
-	var height: int = int(150 * s)
-	var x: int = int(12 * s)
-	# Middle-left: the minimap now owns the upper-left corner.
-	var y: int = int(get_viewport_rect().size.y * 0.30)
+	var content := Global.ui_content_rect()
+	var width:  int = mini(int(440 * s), maxi(240, int(content.size.x - 24 * s)))
+	var x: int = int(content.position.x + 12 * s)
+	# Middle-left inside the display safe area; the minimap owns the upper-left.
+	var y: int = int(content.position.y + content.size.y * 0.30)
+	var entry_h: int = int(26 * s)
+	var height: int = mini(int(150 * s),
+		maxi(72, int(content.end.y - y - 4 * s - entry_h - int(2 * s))))
 
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -59,7 +65,10 @@ func _build() -> void:
 	panel.offset_right  = x + width
 	panel.offset_bottom = y + height
 	_panel = panel
+	_default_panel_x = x
 	_default_panel_y = y
+	_default_panel_w = width
+	_default_panel_h = height
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_BG
 	sb.border_color = C_BORDER
@@ -81,7 +90,7 @@ func _build() -> void:
 	_log.scroll_active = true
 	_log.scroll_following = true
 	_log.selection_enabled = true
-	_log.add_theme_font_size_override("normal_font_size", int(13 * s))
+	_log.add_theme_font_size_override("normal_font_size", Global.ui_font_size(13))
 	panel.add_child(_log)
 
 	_entry = LineEdit.new()
@@ -102,6 +111,8 @@ func _build() -> void:
 	_completion.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_completion.offset_left = x
 	_completion.offset_top  = _entry.offset_bottom + int(2 * s)
+	# Suggestions stay inside the same safe column as the log.
+	_completion.custom_minimum_size.x = width
 	_completion.visible = false
 	add_child(_completion)
 
@@ -246,7 +257,7 @@ func _make_completion_btn(name: String) -> Button:
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.focus_mode = Control.FOCUS_NONE  # never steal focus from the input (would close it)
 	b.custom_minimum_size = Vector2(int(280 * s), int(22 * s))
-	b.add_theme_font_size_override("font_size", int(12 * s))
+	b.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.10, 0.12, 0.22, 0.95)
 	sb.border_color = C_BORDER
@@ -355,10 +366,11 @@ func _open_item_picker() -> void:
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	root.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(int(560 * s), int(520 * s))
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(560, 520))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = Color(0.06, 0.08, 0.16, 0.98); ps.border_color = Color(0.35, 0.45, 0.75, 1.0)
 	ps.set_border_width_all(2); ps.set_corner_radius_all(8)
@@ -376,7 +388,7 @@ func _open_item_picker() -> void:
 	vbox.add_child(hdr)
 	var title := Label.new()
 	title.text = "Item Picker"
-	title.add_theme_font_size_override("font_size", int(17 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(17))
 	title.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0, 1.0))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.add_child(title)
@@ -401,7 +413,7 @@ func _open_item_picker() -> void:
 		btn.text = "  %s" % data.item_name
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.custom_minimum_size = Vector2(0, int(30 * s))
-		btn.add_theme_font_size_override("font_size", int(13 * s))
+		btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 		btn.pressed.connect(_grant_and_close.bind(data))
 		list.add_child(btn)
 
@@ -555,6 +567,38 @@ func _cmd_spawn(arg: String = "") -> void:
 			"scene": preload("res://scenes/mobs/HeadlessFish.tscn"),
 			"data": preload("res://resources/mobs/headless_fish.tres"),
 		},
+		"mossback_nib": {
+			"scene": preload("res://scenes/mobs/MossbackNib.tscn"),
+			"data": preload("res://resources/mobs/mossback_nib.tres"),
+		},
+		"emberfox_kit": {
+			"scene": preload("res://scenes/mobs/EmberfoxKit.tscn"),
+			"data": preload("res://resources/mobs/emberfox_kit.tres"),
+		},
+		"cinder_ooze": {
+			"scene": preload("res://scenes/mobs/CinderOoze.tscn"),
+			"data": preload("res://resources/mobs/cinder_ooze.tres"),
+		},
+		"gravebell_shambler": {
+			"scene": preload("res://scenes/mobs/GravebellShambler.tscn"),
+			"data": preload("res://resources/mobs/gravebell_shambler.tres"),
+		},
+		"rune_sentinel": {
+			"scene": preload("res://scenes/mobs/RuneSentinel.tscn"),
+			"data": preload("res://resources/mobs/rune_sentinel.tres"),
+		},
+		"vesper_acolyte": {
+			"scene": preload("res://scenes/mobs/VesperAcolyte.tscn"),
+			"data": preload("res://resources/mobs/vesper_acolyte.tres"),
+		},
+		"brass_prowler": {
+			"scene": preload("res://scenes/mobs/BrassProwler.tscn"),
+			"data": preload("res://resources/mobs/brass_prowler.tres"),
+		},
+		"cipher_warden": {
+			"scene": preload("res://scenes/mobs/CipherWarden.tscn"),
+			"data": preload("res://resources/mobs/cipher_warden.tres"),
+		},
 	}
 
 	var id: String = arg.strip_edges().to_lower()
@@ -607,7 +651,7 @@ func _cmd_help() -> void:
 		"  /dungeon — teleport to dungeon entrance",
 		"  /tcm — teleport to current mission",
 		"  /daynight — toggle day/night",
-		"  /spawn <mob> — spawn mob (wolf, worm, pixie, headless_fish)",
+		"  /spawn <mob> — spawn mob (wolf, worm, pixie, headless_fish, cinder_ooze, gravebell_shambler, mossback_nib, emberfox_kit, rune_sentinel, vesper_acolyte, brass_prowler, cipher_warden)",
 		"  /shaq — toggle dark mode",
 		"  /shaq — make the cave pitch black (torches only), toggle back",
 	]:

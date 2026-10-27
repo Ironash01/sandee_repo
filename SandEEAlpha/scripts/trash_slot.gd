@@ -70,6 +70,26 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	var from_idx: int  = data["from_index"]
 	var source: String = data.get("source", "inventory")
 
+	# A stack dragged out of the docked chest is owned by the chest array, not
+	# Global.Inventory. Deleting the wrong array would either lose a player item
+	# or leave the chest display stale.
+	if source == "chest":
+		var ui := _open_inventory_ui()
+		if ui == null:
+			return
+		var chest: Variant = ui.call("opened_chest")
+		if chest == null or not is_instance_valid(chest):
+			return
+		var slots: Array = chest.get("slots") as Array
+		if from_idx < 0 or from_idx >= slots.size():
+			return
+		slots[from_idx] = null
+		if chest.has_method("notify_contents_changed"):
+			chest.call("notify_contents_changed")
+		if ui.has_method("refresh_chest_slots"):
+			ui.call("refresh_chest_slots")
+		return
+
 	if source == "hotbar":
 		if from_idx < 0 or from_idx >= Global.Hotbar.size():
 			return
@@ -80,6 +100,18 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 			return
 		Global.Inventory[from_idx] = null
 		Global.Inventory_updated.emit()
+
+
+func _open_inventory_ui() -> Node:
+	if Global.player_node == null or not is_instance_valid(Global.player_node):
+		return null
+	var layer: Node = Global.player_node.get_node_or_null("InventoryUI")
+	if layer == null:
+		return null
+	for child in layer.get_children():
+		if child.has_method("opened_chest"):
+			return child
+	return null
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_DRAG_END:

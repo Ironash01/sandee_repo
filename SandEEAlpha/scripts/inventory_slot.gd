@@ -12,6 +12,9 @@ const C_DRAG_OVER  := Color(1.00, 0.85, 0.25, 1.00)
 # ── State ─────────────────────────────────────────────────────────
 var slot_index: int = -1
 var item: Variant = null
+# The main inventory has its own item-details sidebar, so it suppresses the
+# floating tooltip (which would cover the grid). Other item panels keep it.
+var suppress_floating_tooltip: bool = false
 
 # ── Chest binding (combined chest + inventory panel) ──────────────
 # The SAME slot scene is used for the chest's storage when a chest is open.
@@ -43,7 +46,7 @@ func _ready() -> void:
 func _on_hover_in() -> void:
 	_hovered = true
 	queue_redraw()
-	if item != null:
+	if item != null and not suppress_floating_tooltip:
 		Global.show_item_tooltip(item as Dictionary)
 
 func _on_hover_out() -> void:
@@ -54,7 +57,7 @@ func _on_hover_out() -> void:
 # Press-and-hold to inspect (touch screens have no hover). A mouse press that
 # turns into a drag cancels the hold; releasing always ends it.
 func _on_press() -> void:
-	if item != null:
+	if item != null and not suppress_floating_tooltip:
 		Global.item_hold_start(item as Dictionary)
 
 func _on_release() -> void:
@@ -85,7 +88,7 @@ func _build_visuals() -> void:
 
 	# Quantity label (bottom-right)
 	_qty = Label.new()
-	_qty.add_theme_font_size_override("font_size", int(12 * s))
+	_qty.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_qty.offset_left   = -int(26 * s)
 	_qty.offset_top    = -int(16 * s)

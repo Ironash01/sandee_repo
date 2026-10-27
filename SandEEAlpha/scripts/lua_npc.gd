@@ -146,6 +146,12 @@ var _npc_inventory:   Array   = []       # [{data: ItemData, quantity: int}, ...
 # into a slot (LuaEditorUI) or by the robot itself — chop/collect adds wood,
 # withdraw(name, n) pulls from the nearest chest.
 const BUILD_SLOTS: int = 3
+# Build-helper calls arrive in one Lua frame. They are queued and played out
+# one block at a time so a loop cannot race itself or place more blocks than
+# the selected slot actually holds.
+var _build_queue: Array = []
+var _build_queue_running: bool = false
+const BUILD_PLACE_SEC: float = 0.06
 # Highest auto-assigned LUA index. Placed LUAs are labelled "LUA 0".."LUA 30";
 # placing more than MAX_LUA_INDEX+1 in the world is refused (world.gd).
 const MAX_LUA_INDEX: int = 30
@@ -470,6 +476,9 @@ func _on_lua_move(vec: Vector2) -> void:
 
 func _on_lua_interact() -> void:
 	if _is_working:
+		# The action was not accepted; drop its sentinel so it can't fire on a
+		# later unrelated interact().
+		_pending_action = "chop"
 		return
 	_is_working = true
 	match _pending_action:
@@ -566,9 +575,10 @@ func _on_lua_print(t: String) -> void:
 # ── Building (place_item / place_at / select_block / withdraw) ─────
 # The robot places from its 3-slot build palette. Every placement reuses the
 # world's own validity rules (World.can_place_at), so the robot obeys exactly
-# the same water/tree/grass/occupancy constraints the player does. Calls drain
-# ONE PER PHYSICS FRAME (see LuaState.physics_process), so a Lua loop that
-# places 40 blocks visibly builds them over ~40 frames — paced for free.
+# the same water/tree/grass/occupancy constraints the player does. Lua delivers
+# a whole loop's calls in one frame, so they are queued and played out one
+# block at a time with a short swing beat: a 40-block build is visible and can
+# never out-run the blocks actually held in the selected slot.
 
 func _on_lua_select_block(index: int) -> void:
 	_selected_slot = clampi(index, 0, BUILD_SLOTS - 1)
@@ -579,50 +589,101 @@ func _on_lua_place_item(dx: int, dy: int) -> void:
 	if world == null or not world.has_method("world_to_cell"):
 		return
 	var robot_cell: Vector2i = world.call("world_to_cell", _robot.global_position)
-	_place_from_palette(world, robot_cell + Vector2i(dx, dy))
+	_enqueue_build(world, robot_cell + Vector2i(dx, dy), _selected_slot)
 
 # Absolute: place at tile (x, y).
 func _on_lua_place_at(x: int, y: int) -> void:
 	var world: Node = Global.world_node
 	if world == null or not world.has_method("can_place_at"):
 		return
-	_place_from_palette(world, Vector2i(x, y))
+	_enqueue_build(world, Vector2i(x, y), _selected_slot)
 
-# Shared: consume one from the selected slot and place it, if legal + in range.
-func _place_from_palette(world: Node, cell: Vector2i) -> bool:
-	var slot: Variant = _build_palette[_selected_slot] if _selected_slot < _build_palette.size() else null
+# Build-helper calls all arrive in one Lua frame. Queue them and play them out
+# sequentially so a loop cannot start dozens of concurrent placement
+# coroutines (which previously all read the same slot quantity and could place
+# more blocks than the robot actually carried). The slot index is captured at
+# call time so a later select_block() cannot retarget already-queued blocks.
+func _enqueue_build(world: Node, cell: Vector2i, slot_index: int) -> void:
+	if world == null or not is_instance_valid(world):
+		return
+	_build_queue.append({"world": world, "cell": cell, "slot": slot_index})
+	if not _build_queue_running:
+		_run_build_queue.call_deferred()
+
+func _run_build_queue() -> void:
+	if _build_queue_running:
+		return
+	_build_queue_running = true
+	_is_working = true
+	_set_status("Building")
+	while not _build_queue.is_empty():
+		if _stop_requested or not is_inside_tree():
+			break
+		var job: Dictionary = _build_queue.pop_front()
+		var world: Variant = job.get("world")
+		if world == null or not is_instance_valid(world):
+			continue
+		var cell: Vector2i = job["cell"]
+		await _place_from_palette(world as Node, cell,
+			int(job.get("slot", _selected_slot)))
+	_build_queue.clear()
+	_build_queue_running = false
+	_is_working = false
+	if _stop_requested or not is_inside_tree():
+		_abort_work()
+		return
+	await _return_and_idle()
+
+# Shared: consume one from the captured slot and place it, if legal + in range.
+func _place_from_palette(world: Node, cell: Vector2i, slot_index: int) -> bool:
+	if _stop_requested or not is_inside_tree():
+		return false
+	var idx: int = clampi(slot_index, 0, BUILD_SLOTS - 1)
+	var slot: Variant = _build_palette[idx] if idx < _build_palette.size() else null
 	if slot == null:
-		_build_warn("Build slot %d is empty — give the robot blocks first (drag them in, or withdraw(\"Wood\", n))." % [_selected_slot + 1])
+		_build_warn("Build slot %d is empty — give the robot blocks first (drag them in, or withdraw(\"Wood\", n))." % [idx + 1])
 		return false
 	var data: ItemData = (slot as Dictionary)["data"] as ItemData
 	if data == null or not data.is_placeable:
 		_build_warn("The selected build slot does not hold a placeable block.")
 		return false
 	# Reach: same radius the robot works within, measured from the STATION.
-	if cell_to_world_dist(world, cell, global_position) > CHOP_RADIUS_PX:
+	if cell_to_world_dist(world, cell, global_position) > _work_radius_px:
 		_build_warn("Placement out of range (further than the work radius).")
 		return false
 	if world.has_method("can_place_at") and not world.call("can_place_at", cell):
 		_build_warn("Cannot place there — the tile is blocked.")
 		return false
-	# Interaction beat: the swing plays, THEN the block appears (not instant).
+	# A short swing beat keeps a build loop visible without the 1.5s world-
+	# modification cooldown (which made a 40-block helper take a minute).
 	var cell_pos: Vector2 = Vector2.ZERO
 	if world.has_method("cell_to_world"):
 		cell_pos = world.call("cell_to_world", cell)
-	await _interact(cell_pos, 1.0, 5)
-	if not is_instance_valid(world):
+	_swing_at(cell_pos, 1.0, 3)
+	if is_inside_tree():
+		await get_tree().create_timer(BUILD_PLACE_SEC).timeout
+	if _stop_requested or not is_inside_tree() or not is_instance_valid(world):
+		return false
+	# Re-check: an earlier queued block may have occupied this cell.
+	if world.has_method("can_place_at") and not world.call("can_place_at", cell):
+		_build_warn("Cannot place there — the tile is blocked.")
+		return false
+	var current: Variant = _build_palette[idx] if idx < _build_palette.size() else null
+	if current == null or (current as Dictionary)["data"] != data:
+		_build_warn("Build slot %d changed while building." % [idx + 1])
 		return false
 	var obj: Node = null
 	if world.has_method("place_block_at"):
 		obj = world.call("place_block_at", cell, data)
 	if obj == null:
 		return false
-	# Consume one from the slot.
-	var qty: int = int((slot as Dictionary)["quantity"]) - 1
+	# Consume from the SAME captured slot; no other placement can race it now.
+	var qty: int = int((current as Dictionary)["quantity"]) - 1
 	if qty <= 0:
-		_build_palette[_selected_slot] = null
+		_build_palette[idx] = null
 	else:
-		(slot as Dictionary)["quantity"] = qty
+		(current as Dictionary)["quantity"] = qty
+	_last_modify_ms = Time.get_ticks_msec()
 	build_palette_changed.emit()
 	return true
 
@@ -1898,7 +1959,8 @@ func is_working() -> bool:
 # keeps STOP enabled only while this is true, so a script that has already
 # finished (and left nothing running) cannot offer a button that does nothing.
 func has_active_work() -> bool:
-	return _is_working or _robot_vel != Vector2.ZERO or not _station_queue.is_empty()
+	return _is_working or _robot_vel != Vector2.ZERO \
+		or not _station_queue.is_empty() or not _build_queue.is_empty()
 
 func stop_work() -> void:
 	# NOTE: STOP no longer terminates a combat LUA. Termination is a MENU action
@@ -1921,6 +1983,7 @@ func _abort_work() -> void:
 	_robot_vel      = Vector2.ZERO
 	_stop_requested = false
 	_is_working     = false
+	_build_queue.clear()
 	_set_status("Idle")
 	# A finished job may have queued station work behind it (e.g. chop_trees()
 	# then input_slot()/craft()) — kick that queue now that we're free.

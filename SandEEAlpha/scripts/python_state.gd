@@ -13,6 +13,26 @@ signal signal_create(object: String)
 # own base script that extends this one.
 const DEFAULT_BASE_PATH: String = "res://resources/godot_transpile_base.gd"
 
+# Python allows names such as `int` to be shadowed by a variable, but the
+# generated code is GDScript. GDScript treats these as built-in types/keywords,
+# so writing `int = 2026` makes script.reload() fail with a parse error inside
+# the running game. Reject those assignments before touching the GDScript
+# parser so the player gets a normal, actionable compiler error instead.
+const RESERVED_GDSCRIPT_NAMES: Array[String] = [
+	"int", "float", "bool", "String", "StringName", "Array", "Dictionary",
+	"Color", "Vector2", "Vector2i", "Vector3", "Vector3i", "Vector4",
+	"Vector4i", "Rect2", "Rect2i", "Transform2D", "Transform3D", "Basis",
+	"Quaternion", "NodePath", "RID", "Callable", "Signal", "AABB", "Plane",
+	"Projection", "PackedByteArray", "PackedInt32Array", "PackedInt64Array",
+	"PackedFloat32Array", "PackedFloat64Array", "PackedStringArray",
+	"PackedVector2Array", "PackedVector3Array", "PackedVector4Array",
+	"PackedColorArray", "Variant", "var", "func", "class", "extends", "is",
+	"in", "as", "self", "signal", "await", "breakpoint", "const", "enum",
+	"static", "super", "trait", "when", "match", "and", "or", "not", "if",
+	"elif", "else", "for", "while", "return", "break", "continue", "pass",
+	"true", "false", "null", "void", "namespace",
+]
+
 var transpiler: PythonTranspiler
 var code: String
 var base_path: String = DEFAULT_BASE_PATH
@@ -62,19 +82,49 @@ func _ensure_main(source: String) -> String:
 		out += "    pass\n"
 	return out
 
+func _reserved_assignment_name(source: String) -> String:
+	for raw in source.split("\n"):
+		var line: String = str(raw).strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		for name in RESERVED_GDSCRIPT_NAMES:
+			if not line.begins_with(name):
+				continue
+			var rest: String = line.substr(name.length()).strip_edges()
+			if rest.begins_with("=") and not rest.begins_with("=="):
+				return name
+			for op in ["+=", "-=", "*=", "/=", "%=", "**=", "//=", "&=", "|=", "^=", "<<=", ">>="]:
+				if rest.begins_with(op):
+					return name
+	return ""
+
+
+func _reserved_name_error(name: String) -> String:
+	return ("'%s' is reserved by the game's GDScript runtime. " % name) \
+		+ "Use a different variable name, for example: year = 2026"
+
+
 func run_code():
 	if not is_inside_tree():
 		return
 	var source: String = _ensure_main(code if code != null else "")
 	_code_log("RUN", "chars=%d\n%s" % [source.length(), source])
+	var reserved_name := _reserved_assignment_name(source)
+	if not reserved_name.is_empty():
+		var failure := _reserved_name_error(reserved_name)
+		_code_log("FAIL", failure)
+		code_failed.emit(failure)
+		return
 	var result = transpiler.transpile(source)
 	var is_ok = result[0]
 	var transpiled = result[1]
 	if is_ok:
+		_code_log("TRANSPILE", "ok")
 		var script: GDScript = GDScript.new()
 		script.source_code = _base + transpiled
 		var err: Error = script.reload(false)
 		if err == Error.OK:
+			_code_log("RELOAD", "ok")
 			var instance: Node = script.new()
 			add_child(instance)
 			var crash_logger: Node = get_node_or_null("/root/CrashLogger")

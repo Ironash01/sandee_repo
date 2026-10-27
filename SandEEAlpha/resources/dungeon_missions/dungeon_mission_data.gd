@@ -30,9 +30,10 @@ class_name DungeonMissionData
 @export_enum("64x64", "128x128", "256x256") var size_modifier: int = 1
 @export_range(1, 8, 1) var altar_amount: int = 1
 @export_range(0, 16, 1) var chest_amount: int = 2
-## Progression category. Main missions form the normal language tracks; the
-## boss is the single finale; extra dungeons unlock after the boss and replace
-## the Knowledge Altar with extra Quiz Altars.
+## Progression category. Main missions form the normal Lua and Python language
+## tracks (the Lua track includes 11 and 26-39; Python includes 1-10). The boss
+## is the shared finale. The optional "extra" category is still supported by
+## DungeonWorld as post-boss content, but no shipped mission currently uses it.
 @export_enum("main", "extra", "boss") var dungeon_category: String = "main"
 
 # Base file name used as the stable id.

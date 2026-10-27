@@ -17,6 +17,9 @@ func _gui_input(event: InputEvent) -> void:
 			and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		if slot_index >= 0 and slot_index < Global.hotbar_item_slots():
 			Global.set_hotbar_selection(slot_index)
+		# GUI and gameplay _input both see the raw event before GUI consumption;
+		# accept it here so a slot switch can never also swing the selected item.
+		accept_event()
 
 # ── Drag out of hotbar (only when inventory is open) ──────────────
 func _get_drag_data(_at_position: Vector2) -> Variant:

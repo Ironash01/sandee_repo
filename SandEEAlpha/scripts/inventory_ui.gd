@@ -15,6 +15,7 @@ const C_CAN_CRAFT := Color(0.15, 0.45, 0.20, 1.00)
 const C_NO_MAT   := Color(0.30, 0.20, 0.20, 1.00)
 const C_RED      := Color(1.00, 0.35, 0.35, 1.00)
 const C_SEL      := Color(0.25, 0.40, 0.75, 1.00)
+const C_ACCENT   := Color(0.49, 0.82, 0.94, 1.00)
 
 const COLS       := 5
 const SLOT_SCENE  := preload("res://scenes/ui/InventorySlot.tscn")
@@ -38,11 +39,18 @@ var _active_idx:    int     = -1
 var _inv_panel:    Control
 var _craft_panel:  Control
 var _enc_panel:    Control
+var _best_panel:   Control
 var _tab_inv_btn:  Button
 var _tab_craft_btn: Button
 var _tab_enc_btn:  Button
+var _tab_best_btn: Button
 # Rebuilt whenever knowledge is discovered (see _refresh_encyclopedia).
 var _enc_list:     VBoxContainer = null
+# Bestiary selection survives refreshes and UI-scale rebuilds.
+var _best_selected_id: String = ""
+var _best_list:    VBoxContainer = null
+var _best_detail:  VBoxContainer = null
+var _best_summary: Label = null
 # Section id -> expanded, kept across refreshes/rebuilds so a knowledge update
 # or a UI-scale change never collapses what the player opened.
 var _enc_open:     Dictionary = {}
@@ -72,6 +80,8 @@ func _ready() -> void:
 	Global.ui_scale_changed.connect(_on_ui_scale)
 	# Dungeon discoveries change which encyclopedia entries are visible.
 	Global.knowledge_updated.connect(_on_knowledge_updated)
+	# Bestiary sightings/kills update the tab live while the inventory is open.
+	Global.bestiary_updated.connect(_on_bestiary_updated)
 
 # Closing via the same "inventory" key is handled here rather than relying
 # on player.gd to see the press: once this panel's CanvasLayer is visible,
@@ -90,7 +100,6 @@ func _input(event: InputEvent) -> void:
 			and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		_close()
-		Global.inventory_toggled.emit(false)
 
 func _on_ui_scale(_s: float) -> void:
 	_rebuild()
@@ -118,7 +127,11 @@ func _rebuild() -> void:
 	_active_idx = -1; _selected_idx = -1
 	# The chest's data survives the rebuild; only its views are recreated below.
 	_chest_section = null; _chest_slots = []; _chest_title = null
+	_chest_icon = null; _chest_count = null
+	_inv_root = null; _inv_body = null; _inv_grid = null
+	_trash_row = null; _trash = null
 	_enc_list = null
+	_best_list = null; _best_detail = null; _best_summary = null
 	for child in get_children():
 		child.queue_free()
 	if not is_inside_tree():
@@ -147,6 +160,7 @@ func _build() -> void:
 	# trash row or the bottom of the storage section off-screen.
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode   = ScrollContainer.SCROLL_MODE_AUTO
 	add_child(scroll)
@@ -168,13 +182,20 @@ func _build() -> void:
 	_tab_inv_btn   = _make_tab("INVENTORY", true,  s, func(): _switch_tab("inventory"))
 	_tab_craft_btn = _make_tab("✦ CRAFT",  false, s, func(): _switch_tab("craft"))
 	# The Programming Encyclopedia: always available (no section unlock), but
-	# each entry inside it is revealed only by its dungeon.
-	_tab_enc_btn   = _make_tab("📖 PROGRAMMING ENCYCLOPEDIA", false, s,
+	# each entry inside it is revealed only by its dungeon. The tab label is
+	# shortened so the Bestiary tab fits on the same row at every UI scale.
+	_tab_enc_btn   = _make_tab("📖 ENCYCLOPEDIA", false, s,
 		func(): _switch_tab("encyclopedia"))
-	_tab_enc_btn.custom_minimum_size = Vector2(i(250, s), i(28, s))
+	_tab_enc_btn.custom_minimum_size = Vector2(i(160, s), i(28, s))
+	_tab_enc_btn.tooltip_text = "Programming Encyclopedia"
+	_tab_best_btn  = _make_tab("BESTIARY", false, s,
+		func(): _switch_tab("bestiary"))
+	_tab_best_btn.custom_minimum_size = Vector2(i(110, s), i(28, s))
+	_tab_best_btn.tooltip_text = "Creature sightings, health and drop tables"
 	tab_row.add_child(_tab_inv_btn)
 	tab_row.add_child(_tab_craft_btn)
 	tab_row.add_child(_tab_enc_btn)
+	tab_row.add_child(_tab_best_btn)
 
 	var ts := Control.new()
 	ts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -182,7 +203,7 @@ func _build() -> void:
 
 	var close := Button.new()
 	close.text = "✕"; close.flat = true
-	close.add_theme_font_size_override("font_size", i(13, s))
+	close.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	close.add_theme_color_override("font_color", C_MUTED)
 	close.custom_minimum_size = Vector2(i(28,s), i(28,s))
 	close.pressed.connect(_close)
@@ -202,9 +223,21 @@ func _build() -> void:
 	panel.add_theme_stylebox_override("panel", ps)
 	outer.add_child(panel)
 
+	var panel_vbox := VBoxContainer.new()
+	panel_vbox.add_theme_constant_override("separation", i(6, s))
+	panel.add_child(panel_vbox)
+
 	var stack := Control.new()
-	stack.custom_minimum_size = Vector2(i(620,s), i(460,s))
-	panel.add_child(stack)
+	# Fit the inventory to the live screen instead of forcing a 460*s-high
+	# canvas that pushed the tab row off the top and the trash row under the
+	# gameplay hotbar. The ScrollContainer still handles chest/encyclopedia
+	# content when a chest adds extra rows.
+	var content := Global.ui_content_rect().size
+	var available_h: float = content.y - i(120, s)
+	var stack_h: float = minf(i(460, s), maxf(i(280, s), available_h))
+	var stack_w: float = minf(i(620, s), maxf(i(500, s), content.x - i(20, s)))
+	stack.custom_minimum_size = Vector2(stack_w, stack_h)
+	panel_vbox.add_child(stack)
 
 	# ── Inventory tab content ─────────────────────────────────────
 	_inv_panel = _build_inv_content(s)
@@ -222,27 +255,33 @@ func _build() -> void:
 	stack.add_child(_enc_panel)
 	_enc_panel.visible = false
 
-	# ── Trash slot (bottom of UI) — drag an item here to delete it ──
-	var trash_spacer := Control.new()
-	trash_spacer.custom_minimum_size = Vector2(0, i(10, s))
-	outer.add_child(trash_spacer)
+	# ── Bestiary tab content ──────────────────────────────────────
+	_best_panel = _build_bestiary_content(s)
+	_best_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	stack.add_child(_best_panel)
+	_best_panel.visible = false
 
+	# Delete target: inside the inventory panel, bottom-right. Keeping it in the
+	# panel instead of a separate centred row makes it read as part of the same
+	# inventory and leaves the area beside the Chest drawer clear.
 	var trash_row := HBoxContainer.new()
-	trash_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	trash_row.alignment = BoxContainer.ALIGNMENT_END
 	trash_row.add_theme_constant_override("separation", i(8, s))
-	outer.add_child(trash_row)
+	panel_vbox.add_child(trash_row)
+	_trash_row = trash_row
 
-	var trash_lbl := _lbl("DRAG HERE TO DELETE", i(10, s), C_MUTED)
+	var trash_lbl := _lbl("DRAG HERE TO DELETE", Global.ui_font_size(10), C_MUTED)
 	trash_row.add_child(trash_lbl)
 
 	var trash: Control = TRASH_SCRIPT.new()
 	trash_row.add_child(trash)
+	_trash = trash
 
 func _make_tab(label: String, active: bool, s: float, cb: Callable) -> Button:
 	var btn := Button.new()
 	btn.text = label
-	btn.add_theme_font_size_override("font_size", i(12, s))
-	btn.custom_minimum_size = Vector2(i(100, s), i(28, s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	btn.custom_minimum_size = Vector2(i(100, s), maxi(44, i(28, s)))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color     = C_TAB_ACT if active else C_TAB_IDLE
 	ps.border_color = C_BORDER if active else Color(C_BORDER, 0.4)
@@ -264,13 +303,21 @@ func _switch_tab(which: String) -> void:
 	var inv_active   := which == "inventory"
 	var craft_active := which == "craft"
 	var enc_active   := which == "encyclopedia"
+	var best_active  := which == "bestiary"
 	_inv_panel.visible   = inv_active
 	_craft_panel.visible = craft_active
 	if _enc_panel != null:
 		_enc_panel.visible = enc_active
+	if _best_panel != null:
+		_best_panel.visible = best_active
+	if _trash_row != null:
+		# The trash control belongs to the inventory/chest surface. Showing it
+		# under the reference tabs made Bestiary look like it accepted drops.
+		_trash_row.visible = inv_active
 	_style_tab_btn(_tab_inv_btn,   inv_active)
 	_style_tab_btn(_tab_craft_btn, craft_active)
 	_style_tab_btn(_tab_enc_btn,   enc_active)
+	_style_tab_btn(_tab_best_btn,  best_active)
 	if craft_active:
 		_active_cat   = "Materials"
 		_selected_idx = -1
@@ -278,6 +325,8 @@ func _switch_tab(which: String) -> void:
 	if enc_active:
 		# Rebuild so anything discovered since the last look is present.
 		_refresh_encyclopedia()
+	if best_active:
+		_refresh_bestiary()
 
 func _style_tab_btn(btn: Button, active: bool) -> void:
 	if btn == null: return
@@ -310,11 +359,11 @@ func _build_encyclopedia_content(s: float) -> Control:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", i(8, s))
 	root.add_child(head)
-	var title := _lbl("PROGRAMMING ENCYCLOPEDIA", i(14, s), C_TITLE)
+	var title := _lbl("PROGRAMMING ENCYCLOPEDIA", Global.ui_font_size(14), C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
 	head.add_child(_lbl("Language entries unlock in dungeons — functions are always available.",
-		i(10, s), C_MUTED))
+		Global.ui_font_size(10), C_MUTED))
 	_div(root)
 
 	var scroll := ScrollContainer.new()
@@ -362,7 +411,7 @@ func _on_encyclopedia_section_expanded(id: String, on: bool) -> void:
 
 func _encyclopedia_empty(s: float) -> Control:
 	var none := _lbl("Nothing discovered yet — clear dungeons to reveal entries here.",
-		i(11, s), C_MUTED)
+		Global.ui_font_size(11), C_MUTED)
 	none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return none
 
@@ -370,6 +419,231 @@ func _encyclopedia_empty(s: float) -> Control:
 # so an entry learned while the panel is open appears immediately.
 func _on_knowledge_updated() -> void:
 	_refresh_encyclopedia()
+
+# ── Bestiary ───────────────────────────────────────────────────────
+# The catalog is data-driven (BestiaryCatalog scans MobCombatData resources).
+# A sighting reveals the creature's name and portrait; the first kill unlocks
+# the field description, maximum health and every roll in its drop table.
+func _build_bestiary_content(s: float) -> Control:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", i(8, s))
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", i(8, s))
+	root.add_child(head)
+	var title := _lbl("BESTIARY", Global.ui_font_size(14), C_TITLE)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	_best_summary = _lbl("", Global.ui_font_size(10), C_MUTED)
+	_best_summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	head.add_child(_best_summary)
+	_div(root)
+
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", i(12, s))
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(body)
+
+	var left_scroll := ScrollContainer.new()
+	left_scroll.custom_minimum_size = Vector2(i(190, s), 0)
+	left_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	left_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	left_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(left_scroll)
+	_best_list = VBoxContainer.new()
+	_best_list.add_theme_constant_override("separation", i(4, s))
+	_best_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_scroll.add_child(_best_list)
+
+	var right_scroll := ScrollContainer.new()
+	right_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	right_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(right_scroll)
+	_best_detail = VBoxContainer.new()
+	_best_detail.add_theme_constant_override("separation", i(7, s))
+	_best_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_scroll.add_child(_best_detail)
+
+	_refresh_bestiary()
+	return root
+
+func _on_bestiary_updated() -> void:
+	_refresh_bestiary()
+
+func _refresh_bestiary() -> void:
+	if _best_list == null or not is_instance_valid(_best_list):
+		return
+	for child in _best_list.get_children():
+		_best_list.remove_child(child)
+		child.queue_free()
+	var s: float = Global.ui_scale
+	var catalog: Array = BestiaryCatalog.entries()
+	var seen: Array = []
+	for value in catalog:
+		var data: MobCombatData = value as MobCombatData
+		if data != null and Global.bestiary_is_seen(data.bestiary_id):
+			seen.append(data)
+	if _best_summary != null:
+		_best_summary.text = "%d sighted  -  %d studied" % [
+			Global.bestiary_seen.size(), Global.bestiary_killed.size()]
+
+	if seen.is_empty():
+		_best_selected_id = ""
+		var hint := _lbl("No creatures sighted yet.\n\nExplore the overworld and dungeons. When a creature enters view, its name is added here automatically.",
+			Global.ui_font_size(11), C_MUTED)
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_best_list.add_child(hint)
+		_refresh_bestiary_detail()
+		return
+
+	var ids: Array = []
+	for value in seen:
+		ids.append((value as MobCombatData).bestiary_id)
+	if not ids.has(_best_selected_id):
+		_best_selected_id = str(ids[0])
+
+	for value in seen:
+		var data: MobCombatData = value as MobCombatData
+		var studied: bool = Global.bestiary_is_killed(data.bestiary_id)
+		var btn := Button.new()
+		btn.text = "%s  %s" % [data.mob_name, "[STUDIED]" if studied else "[SEEN]"]
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.clip_text = true
+		btn.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
+		btn.custom_minimum_size = Vector2(i(180, s), i(34, s))
+		btn.tooltip_text = data.bestiary_category
+		_style_bestiary_button(btn, data.bestiary_id == _best_selected_id)
+		btn.pressed.connect(_on_bestiary_entry_pressed.bind(data.bestiary_id))
+		_best_list.add_child(btn)
+
+	_refresh_bestiary_detail()
+
+func _style_bestiary_button(btn: Button, selected: bool) -> void:
+	var s: float = Global.ui_scale
+	var bg := Color(0.13, 0.21, 0.36, 1.0) if selected else C_TAB_IDLE
+	var border := C_ACCENT if selected else C_BORDER
+	var ps := _sb(bg, border, i(4, s), i(8, s), i(8, s), i(5, s), i(5, s))
+	btn.add_theme_stylebox_override("normal", ps)
+	btn.add_theme_stylebox_override("hover", ps)
+	btn.add_theme_stylebox_override("pressed", ps)
+	btn.add_theme_color_override("font_color", C_TITLE if selected else C_MUTED)
+
+func _on_bestiary_entry_pressed(id: String) -> void:
+	_best_selected_id = id
+	# Rebuild the left column too, so the selected border follows the clicked
+	# entry instead of staying on whichever row was selected previously.
+	_refresh_bestiary()
+
+func _refresh_bestiary_detail() -> void:
+	if _best_detail == null or not is_instance_valid(_best_detail):
+		return
+	for child in _best_detail.get_children():
+		_best_detail.remove_child(child)
+		child.queue_free()
+	var s: float = Global.ui_scale
+	if _best_selected_id.is_empty():
+		var none := _lbl("Sighted creatures appear in the list on the left.",
+			Global.ui_font_size(11), C_MUTED)
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_best_detail.add_child(none)
+		return
+	var data: MobCombatData = BestiaryCatalog.get_entry(_best_selected_id)
+	if data == null:
+		return
+	var studied: bool = Global.bestiary_is_killed(data.bestiary_id)
+
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", i(10, s))
+	_best_detail.add_child(top)
+	var icon_panel := PanelContainer.new()
+	icon_panel.custom_minimum_size = Vector2(i(112, s), i(112, s))
+	icon_panel.add_theme_stylebox_override("panel", _sb(C_TIP_BG, C_BORDER, i(4, s),
+		i(6, s), i(6, s), i(6, s), i(6, s)))
+	top.add_child(icon_panel)
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(i(96, s), i(96, s))
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if not data.bestiary_icon_path.is_empty():
+		icon.texture = load(data.bestiary_icon_path) as Texture2D
+	icon_panel.add_child(icon)
+
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", i(3, s))
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(info)
+	var name_lbl := _lbl(data.mob_name, Global.ui_font_size(17), C_TITLE)
+	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_child(name_lbl)
+	info.add_child(_lbl(data.bestiary_category, Global.ui_font_size(10), C_ACCENT))
+	var status := _lbl("STUDIED" if studied else "SEEN - defeat once to unlock details",
+		Global.ui_font_size(10), C_EFFECT if studied else C_MUTED)
+	info.add_child(status)
+
+	_div(_best_detail)
+	if not studied:
+		var sealed := _lbl("SIGHTING RECORDED", Global.ui_font_size(11), C_TITLE)
+		_best_detail.add_child(sealed)
+		var hint := _lbl("Defeat this creature once to reveal its field notes, maximum health and complete drop table.",
+			Global.ui_font_size(11), C_MUTED)
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_best_detail.add_child(hint)
+		_best_detail.add_child(_lbl("MAX HEALTH   ???", Global.ui_font_size(11), C_MUTED))
+		_best_detail.add_child(_lbl("DROPS        ???", Global.ui_font_size(11), C_MUTED))
+		return
+
+	var notes_title := _lbl("FIELD NOTES", Global.ui_font_size(11), C_ACCENT)
+	_best_detail.add_child(notes_title)
+	var desc := _lbl(data.bestiary_description, Global.ui_font_size(11), C_TITLE)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_best_detail.add_child(desc)
+	_best_detail.add_child(_lbl("MAX HEALTH   %d" % int(round(data.health)),
+		Global.ui_font_size(12), C_EFFECT))
+
+	_div(_best_detail)
+	_best_detail.add_child(_lbl("DROPS", Global.ui_font_size(11), C_ACCENT))
+	if data.drops.is_empty():
+		_best_detail.add_child(_lbl("No confirmed drops.", Global.ui_font_size(11), C_MUTED))
+		return
+	for drop_value in data.drops:
+		if not (drop_value is Dictionary):
+			continue
+		var drop: Dictionary = drop_value as Dictionary
+		var path: String = str(drop.get("item_path", ""))
+		var item: ItemData = load(path) as ItemData
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", i(7, s))
+		_best_detail.add_child(row)
+		var drop_icon := TextureRect.new()
+		drop_icon.custom_minimum_size = Vector2(i(22, s), i(22, s))
+		drop_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		drop_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		drop_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		drop_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if item != null:
+			drop_icon.texture = item.icon
+			drop_icon.tooltip_text = item.item_name
+		row.add_child(drop_icon)
+		var item_name := "Unknown item" if item == null else item.item_name
+		var name_l := _lbl(item_name, Global.ui_font_size(11), C_TITLE)
+		name_l.custom_minimum_size.x = i(120, s)
+		row.add_child(name_l)
+		var lo: int = int(drop.get("min", 1))
+		var hi: int = int(drop.get("max", lo))
+		var amount_text: String = "x%d" % lo if lo == hi else "x%d-%d" % [lo, hi]
+		row.add_child(_lbl(amount_text, Global.ui_font_size(10), C_MUTED))
+		var chance: float = clampf(float(drop.get("chance", 1.0)), 0.0, 1.0)
+		var chance_text: String = "Always" if chance >= 0.999 else "%d%%" % int(round(chance * 100.0))
+		var chance_l := _lbl(chance_text, Global.ui_font_size(10),
+			C_EFFECT if chance >= 0.999 else C_MUTED)
+		chance_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		chance_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(chance_l)
 
 # ── Inventory content ─────────────────────────────────────────────
 # ── Chest section (docked beneath the player inventory) ────────────
@@ -380,12 +654,22 @@ func _on_knowledge_updated() -> void:
 # re-implements them. The chest remains the only owner of its data
 # (`chest.slots`): nothing is copied into a temporary inventory, and closing
 # never rewrites it.
-const CHEST_COLS: int = 4
+const CHEST_COLS: int = COLS
 
 var _chest_section: VBoxContainer = null
 var _chest:         Node          = null
 var _chest_slots:   Array         = []
 var _chest_title:   Label         = null
+var _chest_icon:    TextureRect   = null
+var _chest_count:   Label         = null
+# Live layout refs for the player half of the inventory tab. When a chest is
+# attached the body stops expanding vertically and the grid spacing tightens,
+# which lifts the player slots and keeps the Chest drawer directly underneath.
+var _inv_root:      VBoxContainer = null
+var _inv_body:      HBoxContainer = null
+var _inv_grid:      GridContainer = null
+var _trash_row:     HBoxContainer = null
+var _trash:         Control       = null
 
 # Show `chest`'s storage in this panel. Safe to call repeatedly: a previous
 # chest's views are torn down first, so reopening never duplicates UI.
@@ -393,10 +677,11 @@ func attach_chest(chest: Node) -> void:
 	if _chest != null and _chest != chest:
 		detach_chest()
 	_chest = chest
-	# Player slots must accept stacks dragged out of the chest.
-	for slot in _slots:
-		if is_instance_valid(slot):
-			slot.set("chest_link", chest)
+	# Player slots must accept stacks dragged out of the chest. Re-applied here
+	# and after every rebuild, because an open chest can outlive a UI-scale
+	# rebuild that recreates the entire slot grid.
+	_bind_chest_to_player_slots()
+	_apply_chest_layout(true)
 	_rebuild_chest_slots()
 	# Storage is only visible on the inventory tab.
 	_switch_tab("inventory")
@@ -408,6 +693,27 @@ func detach_chest() -> void:
 		if is_instance_valid(slot):
 			slot.set("chest_link", null)
 	_clear_chest_slots()
+	_apply_chest_layout(false)
+
+
+func _bind_chest_to_player_slots() -> void:
+	for slot in _slots:
+		if is_instance_valid(slot):
+			slot.set("chest_link", _chest)
+
+
+# The normal inventory centres its grid in the available body. A chest drawer
+# needs the player half at the top so both grids are visible without scrolling
+# on common screens; tighten the gaps at the same time.
+func _apply_chest_layout(active: bool) -> void:
+	var s: float = Global.ui_scale
+	if _inv_body != null:
+		_inv_body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN if active \
+			else Control.SIZE_EXPAND_FILL
+	if _inv_root != null:
+		_inv_root.add_theme_constant_override("separation", i(6 if active else 10, s))
+	if _inv_grid != null:
+		_inv_grid.add_theme_constant_override("v_separation", i(6 if active else 10, s))
 
 func opened_chest() -> Node:
 	return _chest
@@ -423,6 +729,8 @@ func close_chest(chest: Node) -> void:
 func _clear_chest_slots() -> void:
 	_chest_slots.clear()
 	_chest_title = null
+	_chest_icon = null
+	_chest_count = null
 	if _chest_section == null:
 		return
 	for c in _chest_section.get_children():
@@ -436,6 +744,8 @@ func _rebuild_chest_slots() -> void:
 	_clear_chest_slots()
 	if _chest == null or not is_instance_valid(_chest):
 		return
+	_bind_chest_to_player_slots()
+	_apply_chest_layout(true)
 	var slots: Array = _chest.get("slots") as Array
 	if slots.is_empty():
 		return
@@ -446,16 +756,42 @@ func _rebuild_chest_slots() -> void:
 	header.add_theme_constant_override("separation", i(8, s))
 	_chest_section.add_child(header)
 
-	_chest_title = _lbl("CHEST", i(11, s), C_MUTED)
-	header.add_child(_chest_title)
+	# A small drawer tab, styled like the main tabs, identifies the storage and
+	# carries the chest's own item icon (ordinary or rare chest variants).
+	var tab := PanelContainer.new()
+	var tab_style := _sb(C_TAB_ACT, C_BORDER, 4, i(10, s), i(10, s), i(5, s), i(5, s))
+	tab_style.border_width_bottom = 0
+	tab_style.corner_radius_bottom_left = 0
+	tab_style.corner_radius_bottom_right = 0
+	tab.add_theme_stylebox_override("panel", tab_style)
+	header.add_child(tab)
 
-	var hint := _lbl("click to take • drag to move", i(10, s), Color(C_MUTED, 0.7))
+	var tab_box := HBoxContainer.new()
+	tab_box.add_theme_constant_override("separation", i(7, s))
+	tab.add_child(tab_box)
+
+	_chest_icon = TextureRect.new()
+	_chest_icon.custom_minimum_size = Vector2(i(22, s), i(22, s))
+	_chest_icon.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	_chest_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_chest_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var chest_data: Variant = _chest.get("item_data")
+	if chest_data is ItemData and (chest_data as ItemData).icon != null:
+		_chest_icon.texture = (chest_data as ItemData).icon
+	tab_box.add_child(_chest_icon)
+
+	_chest_title = _lbl("Chest", Global.ui_font_size(11), C_TITLE)
+	tab_box.add_child(_chest_title)
+	_chest_count = _lbl("%d slots" % slots.size(), Global.ui_font_size(9), C_MUTED)
+	tab_box.add_child(_chest_count)
+
+	var hint := _lbl("drag items in and out", Global.ui_font_size(10), Color(C_MUTED, 0.7))
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hint.horizontal_alignment  = HORIZONTAL_ALIGNMENT_RIGHT
 	header.add_child(hint)
 
 	# Cap the storage area's height so a chest with a large configured capacity
-	# can never push the player inventory or the panel off-screen — it scrolls.
+	# can never push the player inventory or the panel off-screen - it scrolls.
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode   = ScrollContainer.SCROLL_MODE_AUTO
@@ -482,7 +818,6 @@ func _rebuild_chest_slots() -> void:
 
 	refresh_chest_slots()
 
-# Redraws the chest views from the chest's authoritative slot array.
 func refresh_chest_slots() -> void:
 	if _chest == null or not is_instance_valid(_chest):
 		return
@@ -497,11 +832,15 @@ func refresh_chest_slots() -> void:
 		else:
 			slot.call("set_item", item_v)
 	if _chest_title != null:
-		var chest_name := "CHEST"
+		var chest_name := "Chest"
 		var chest_data: Variant = _chest.get("item_data")
 		if chest_data is ItemData and not (chest_data as ItemData).item_name.is_empty():
-			chest_name = (chest_data as ItemData).item_name.to_upper()
-		_chest_title.text = "%s  (%d)" % [chest_name, slots.size()]
+			chest_name = (chest_data as ItemData).item_name.capitalize()
+		_chest_title.text = chest_name
+		if _chest_count != null:
+			_chest_count.text = "%d slots" % slots.size()
+		if _chest_icon != null and chest_data is ItemData:
+			_chest_icon.texture = (chest_data as ItemData).icon
 
 # Clicking a chest slot takes that whole stack into the player inventory —
 # the same click convention the rest of the inventory uses.
@@ -521,11 +860,13 @@ func _on_chest_slot_clicked(idx: int) -> void:
 func _build_inv_content(s: float) -> Control:
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", i(10, s))
+	_inv_root = root
 
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", i(20, s))
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(body)
+	_inv_body = body
 
 	var grid_wrap := CenterContainer.new()
 	grid_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -537,11 +878,15 @@ func _build_inv_content(s: float) -> Control:
 	grid.add_theme_constant_override("h_separation", i(10, s))
 	grid.add_theme_constant_override("v_separation",  i(10, s))
 	grid_wrap.add_child(grid)
+	_inv_grid = grid
 
 	for idx in range(Global.INVENTORY_SIZE):
 		var slot = SLOT_SCENE.instantiate()
 		slot.slot_index = idx
+		slot.suppress_floating_tooltip = true
 		slot.slot_clicked.connect(_on_slot_clicked)
+		slot.mouse_entered.connect(_on_inventory_slot_hover.bind(idx))
+		slot.mouse_exited.connect(_on_inventory_slot_hover_end)
 		grid.add_child(slot)
 		_slots.append(slot)
 
@@ -555,6 +900,7 @@ func _build_inv_content(s: float) -> Control:
 	_chest_section.add_theme_constant_override("separation", i(6, s))
 	root.add_child(_chest_section)
 
+	_apply_chest_layout(_chest != null and is_instance_valid(_chest))
 	return root
 
 # Permanent sidebar — always visible, shows the selected item's info or a
@@ -575,14 +921,14 @@ func _build_tooltip(s: float) -> Control:
 	vbox.add_theme_constant_override("separation", i(5, s))
 	panel.add_child(vbox)
 
-	_tip_name = _lbl("", i(14,s), C_TITLE)
+	_tip_name = _lbl("", Global.ui_font_size(14), C_TITLE)
 	_tip_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_tip_name)
-	_tip_qty    = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_qty)
-	_tip_type   = _lbl("", i(11,s), C_MUTED);  vbox.add_child(_tip_type)
-	_tip_effect = _lbl("", i(11,s), C_EFFECT); vbox.add_child(_tip_effect)
+	_tip_qty    = _lbl("", Global.ui_font_size(11), C_MUTED);  vbox.add_child(_tip_qty)
+	_tip_type   = _lbl("", Global.ui_font_size(11), C_MUTED);  vbox.add_child(_tip_type)
+	_tip_effect = _lbl("", Global.ui_font_size(11), C_EFFECT); vbox.add_child(_tip_effect)
 	_div(vbox)
-	_tip_desc = _lbl("", i(11,s), C_MUTED)
+	_tip_desc = _lbl("", Global.ui_font_size(11), C_MUTED)
 	_tip_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_tip_desc)
 	_show_tip_empty()
@@ -610,7 +956,7 @@ func _build_craft_content(s: float) -> Control:
 		var btn := Button.new()
 		btn.text = cat
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", i(11, s))
+		btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 		btn.custom_minimum_size = Vector2(0, i(26, s))
 		var c: String = cat as String
 		btn.pressed.connect(func() -> void: _craft_on_cat(c))
@@ -656,13 +1002,13 @@ func _build_craft_detail(s: float) -> Control:
 	vbox.add_theme_constant_override("separation", i(6, s))
 	root.add_child(vbox)
 
-	_craft_name   = _lbl("", i(14,s), C_TITLE); vbox.add_child(_craft_name)
+	_craft_name   = _lbl("", Global.ui_font_size(14), C_TITLE); vbox.add_child(_craft_name)
 	_div(vbox)
-	vbox.add_child(_lbl("INGREDIENTS", i(10,s), C_MUTED))
+	vbox.add_child(_lbl("INGREDIENTS", Global.ui_font_size(10), C_MUTED))
 	_craft_ing1   = _build_craft_icon_row(s); vbox.add_child(_craft_ing1)
 	_craft_ing2   = _build_craft_icon_row(s); vbox.add_child(_craft_ing2)
 	_div(vbox)
-	vbox.add_child(_lbl("RESULT", i(10,s), C_MUTED))
+	vbox.add_child(_lbl("RESULT", Global.ui_font_size(10), C_MUTED))
 	_craft_result = _build_craft_icon_row(s); vbox.add_child(_craft_result)
 
 	var sp := Control.new(); sp.size_flags_vertical = Control.SIZE_EXPAND_FILL; vbox.add_child(sp)
@@ -670,7 +1016,7 @@ func _build_craft_detail(s: float) -> Control:
 	_craft_btn = Button.new()
 	_craft_btn.text = "CRAFT"
 	_craft_btn.custom_minimum_size = Vector2(0, i(36, s))
-	_craft_btn.add_theme_font_size_override("font_size", i(12, s))
+	_craft_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_craft_btn.pressed.connect(_on_craft)
 	vbox.add_child(_craft_btn)
 
@@ -688,7 +1034,7 @@ func _build_craft_icon_row(s: float) -> HBoxContainer:
 	icon.expand_mode          = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	row.add_child(icon)
 	var qty := Label.new()
-	qty.add_theme_font_size_override("font_size", i(12, s))
+	qty.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	row.add_child(qty)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.set_meta("icon", icon)
@@ -741,7 +1087,7 @@ func _craft_filter_refresh() -> void:
 	for child in _craft_list.get_children():
 		child.queue_free()
 	if _filtered.is_empty():
-		_craft_list.add_child(_lbl("No recipes.", 11, C_MUTED)); return
+		_craft_list.add_child(_lbl("No recipes.", Global.ui_font_size(11), C_MUTED)); return
 	var s: float = Global.ui_scale
 	for idx in range(_filtered.size()):
 		var r: CraftingRecipe = _filtered[idx] as CraftingRecipe
@@ -862,14 +1208,17 @@ func _refresh_inv() -> void:
 		var limit = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
 		_tip_qty.text = "Qty: %d / %d" % [active_item["quantity"], limit]
 
-func _on_slot_clicked(idx: int) -> void:
-	if _tip_root == null: return
-	var item = Global.Inventory[idx] if idx < Global.Inventory.size() else null
+func _show_inventory_item(idx: int, make_active: bool) -> void:
+	if _tip_root == null:
+		return
+	var item = Global.Inventory[idx] if idx >= 0 and idx < Global.Inventory.size() else null
 	if item == null:
-		_active_idx = -1
+		if make_active:
+			_active_idx = -1
 		_show_tip_empty()
 		return
-	_active_idx = idx
+	if make_active:
+		_active_idx = idx
 	var data: ItemData = item["data"] as ItemData
 	var limit = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
 	_tip_name.text   = data.item_name
@@ -878,16 +1227,24 @@ func _on_slot_clicked(idx: int) -> void:
 	_tip_effect.text = ("+ " + data.effect) if data.effect != "" else ""
 	_tip_desc.text   = data.description
 
+func _on_slot_clicked(idx: int) -> void:
+	_show_inventory_item(idx, true)
+
+func _on_inventory_slot_hover(idx: int) -> void:
+	_show_inventory_item(idx, false)
+
+func _on_inventory_slot_hover_end() -> void:
+	if _active_idx >= 0:
+		_show_inventory_item(_active_idx, false)
+	else:
+		_show_tip_empty()
+
 func dismiss_back() -> void:
-	var was_open: bool = false
-	var layer: Node = get_parent()
-	if layer != null:
-		was_open = bool(layer.get("visible"))
 	_close()
-	if was_open:
-		Global.inventory_toggled.emit(false)
 
 func _close() -> void:
+	var layer: Node = get_parent()
+	var was_open: bool = layer != null and bool(layer.get("visible"))
 	Global.unregister_ui_back(self)
 	# Idempotent: releasing the pause twice for one open would underflow the
 	# shared refcount and resume gameplay while another UI was still open.
@@ -905,14 +1262,20 @@ func _close() -> void:
 		if is_instance_valid(_chest) and _chest.has_method("on_inventory_ui_closed"):
 			_chest.call("on_inventory_ui_closed")
 		detach_chest()
-	var layer: Node = get_parent()
 	if layer == null:
 		Global.close_ui()
+		if was_open:
+			Global.inventory_toggled.emit(false)
 		return
-	if not bool(layer.get("visible")):
+	if not was_open:
 		return
 	layer.set("visible", false)
 	Global.close_ui()
+	# Every close path goes through here now (X button, Escape/back, the
+	# inventory key, a docked chest auto-closing when the player walks away or
+	# breaks it). Emitting from the individual callers missed the X/chest paths,
+	# leaving the HUD and hotbar hidden after the inventory was gone.
+	Global.inventory_toggled.emit(false)
 
 # ── Helpers ───────────────────────────────────────────────────────
 func i(base: int, s: float) -> int: return int(base * s)

@@ -53,16 +53,29 @@ func _ready() -> void:
 	_on_block_mode_changed(Global.block_mode)
 	Global.ui_scale_changed.connect(_on_ui_scale)
 	Global.point_and_click_changed.connect(_on_point_and_click_changed)
+	Global.gameplay_input_cancelled.connect(_reset_touch_state)
 
 func _exit_tree() -> void:
+	_release_bridged_touches()
 	Global.mobile_move   = Vector2.ZERO
 	Global.mobile_shift  = false
 	Global.clear_touch_mouse()
 
+# Android can suspend us with a finger down. Releases are then never delivered,
+# so clear every gesture on focus/pause and on resume before accepting new
+# touches. The joystick/button visuals are reset at the same time.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT \
+			or what == NOTIFICATION_APPLICATION_PAUSED \
+			or what == NOTIFICATION_APPLICATION_FOCUS_IN \
+			or what == NOTIFICATION_APPLICATION_RESUMED \
+			or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT \
+			or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
+		_reset_touch_state()
+
 func _on_ui_scale(_s: float) -> void:
 	# Rebuild at the new scale, preserving toggle state (the buttons carry it).
-	Global.mobile_move  = Vector2.ZERO
-	Global.mobile_shift = false
+	_reset_touch_state()
 	for c in _root.get_children():
 		c.queue_free()
 	_build_controls()
@@ -70,48 +83,43 @@ func _on_ui_scale(_s: float) -> void:
 
 func _build_controls() -> void:
 	var s: float = Global.ui_scale
-	var safe: Rect2i = DisplayServer.get_display_safe_area()
-	var vp: Vector2   = get_viewport().get_visible_rect().size
-	# DisplayServer reports the safe area in physical screen pixels, while all
-	# Control coordinates are in the stretched viewport. Convert through the
-	# viewport's screen transform before using the insets.
-	var screen_xf: Transform2D = get_viewport().get_screen_transform()
-	var safe_start: Vector2 = screen_xf.affine_inverse() * Vector2(safe.position)
-	var safe_end: Vector2 = screen_xf.affine_inverse() \
-		* Vector2(safe.position + safe.size)
-	var pad: float    = SAFE_PAD * s
-	var left_pad: float   = pad
-	var right_pad: float  = pad
-	var bottom_pad: float = pad
-	# Only applied when the converted rect is plausible for this viewport, so a
-	# desktop/odd report can never shove controls off-screen.
-	if safe.size.x > 0 and safe.size.y > 0 \
-			and safe_end.x > safe_start.x and safe_end.y > safe_start.y \
-			and safe_end.x <= vp.x + 2.0 and safe_end.y <= vp.y + 2.0:
-		left_pad   = maxf(pad, safe_start.x)
-		right_pad  = maxf(pad, vp.x - safe_end.x)
-		bottom_pad = maxf(pad, vp.y - safe_end.y)
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	# Safe insets are computed once by Global in viewport coordinates, so this
+	# HUD, the pause button, minimap and other edge UI all agree.
+	var insets: Vector4 = Global.ui_safe_insets
+	var pad: float = SAFE_PAD * s
+	var left_pad: float   = maxf(pad, insets.x)
+	var right_pad: float  = maxf(pad, insets.z)
+	var bottom_pad: float = maxf(pad, insets.w)
 
 	# ── Joystick ────────────────────────────────────────────────
+	# Keep both touch clusters clear of the hotbar. Slot width mirrors hotbar.gd;
+	# when safe insets shift the joystick inward, lift the clusters above it.
+	var hotbar := _hotbar_bounds(s, vp)
+	var btn_size: float = minf(BTN_MIN * s, maxf(54.0, vp.y * 0.15))
+	var gap: float = 10.0 * s
+	var stick_size: float = minf(236.0 * s, maxf(160.0, vp.y * 0.42))
+	var button_left: float = vp.x - right_pad - btn_size * 2.0 - gap
+	var controls_bottom: float = vp.y - bottom_pad
+	if left_pad + stick_size > hotbar.position.x \
+			or button_left < hotbar.end.x:
+		controls_bottom = minf(controls_bottom, hotbar.position.y - gap)
+
 	var stick := JOYSTICK_SCRIPT.new() as Control
 	stick.name = "Joystick"
-	var size_px: float = 236.0 * s
-	stick.size = Vector2(size_px, size_px)
-	stick.position = Vector2(left_pad, vp.y - bottom_pad - size_px)
+	stick.size = Vector2(stick_size, stick_size)
+	stick.position = Vector2(left_pad, controls_bottom - stick_size)
 	stick.connect("moved", _on_stick_moved)
 	stick.connect("released", _on_stick_released)
 	_root.add_child(stick)
 	_stick = stick
 
-	# ── Action buttons (lower-right cluster) ────────────────────
-	var btn_size: float = BTN_MIN * s
-	var gap: float = 10.0 * s
-	# BUILD + SPRINT on the bottom row, INTERACT above them.
-	var row2_y: float = vp.y - bottom_pad - btn_size
+	var row2_y: float = controls_bottom - btn_size
 	var row1_y: float = row2_y - btn_size - gap
 
 	_btn_build = _mk_button("BUILD", btn_size, s)
-	_btn_build.position = Vector2(vp.x - right_pad - btn_size * 2.0 - gap, row2_y)
+	_btn_build.position = Vector2(button_left, row2_y)
+
 	_btn_build.pressed.connect(_on_build_pressed)
 	_root.add_child(_btn_build)
 
@@ -132,7 +140,7 @@ func _build_controls() -> void:
 	# ── Keyboard dismiss (only while a text field is focused) ───
 	_btn_done = _mk_button("DONE", btn_size, s)
 	_btn_done.position = Vector2(vp.x - right_pad - btn_size, row1_y - btn_size - gap)
-	_btn_done.visible = false
+	_btn_done.visible = _text_focus
 	_btn_done.pressed.connect(_dismiss_keyboard)
 	_root.add_child(_btn_done)
 
@@ -140,13 +148,23 @@ func _build_controls() -> void:
 	# already ON when this HUD is built / rebuilt at a new UI scale).
 	_set_controls_enabled(not _text_focus)
 
+func _hotbar_bounds(s: float, vp: Vector2) -> Rect2:
+	var slot_px: float = maxf(36.0 * s, 44.0)
+	var gap_px: int = maxi(4, int(round(4.0 * s)))
+	var total: float = Global.HOTBAR_SIZE * slot_px \
+		+ maxi(0, Global.HOTBAR_SIZE - 1) * gap_px
+	var bottom_margin: float = 8.0 * s + Global.ui_safe_insets.w
+	return Rect2(
+		Vector2(vp.x * 0.5 - total * 0.5, vp.y - bottom_margin - slot_px),
+		Vector2(total, slot_px))
+
 func _mk_button(text: String, size_px: float, s: float) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(size_px, size_px)
 	b.size = Vector2(size_px, size_px)
 	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_size_override("font_size", int(13 * s))
+	b.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color     = C_PANEL
 	sb.border_color = C_BORDER
@@ -260,12 +278,12 @@ func _set_controls_enabled(on: bool) -> void:
 		_btn_interact.visible = on
 		if not on:
 			_interact_target = null
+	if not on:
+		_reset_touch_state()
 
 # Hidden joystick must not leave stale movement behind; restore on disable.
 func _on_point_and_click_changed(_enabled: bool) -> void:
-	Global.mobile_move = Vector2.ZERO
-	if _stick != null and _stick.has_method("reset_stick"):
-		_stick.call("reset_stick")
+	_reset_touch_state()
 	_set_controls_enabled(not _text_focus)
 
 # Godot emulates only the FIRST touch as a mouse. On Android that first touch
@@ -273,24 +291,97 @@ func _on_point_and_click_changed(_enabled: bool) -> void:
 # here so moving with the joystick while tapping the action button or a hotbar
 # slot keeps working.
 var _primary_touch: int = -1
+var _primary_world: bool = false
+var _primary_pos: Vector2 = Vector2.ZERO
+# Secondary touches bridged to mouse input, with the last screen position so a
+# modal opening mid-gesture can release every synthetic button it owns.
+var _bridged_touches: Dictionary = {}
+
+func _reset_touch_state() -> void:
+	_release_bridged_touches()
+	# The primary touch is normally released by Godot's emulated mouse, but a
+	# release swallowed by a freshly opened modal would leave the virtual left
+	# button latched. Send an explicit release at its last position.
+	if _primary_touch != -1:
+		_emit_mouse_button(_primary_pos, false)
+	_primary_touch = -1
+	_primary_world = false
+	Global.mobile_move = Vector2.ZERO
+	Global.mobile_shift = false
+	if _stick != null and is_instance_valid(_stick) and _stick.has_method("reset_stick"):
+		_stick.call("reset_stick")
+
+func _release_bridged_touches() -> void:
+	if _bridged_touches.is_empty():
+		return
+	for touch_id in _bridged_touches.keys():
+		var at: Vector2 = _bridged_touches[touch_id] as Vector2
+		_emit_mouse_button(at, false)
+	_bridged_touches.clear()
+
+func _over_stick(screen_pos: Vector2) -> bool:
+	return _stick != null and is_instance_valid(_stick) and _stick.visible \
+		and _stick.get_global_rect().has_point(screen_pos)
 
 func _input(event: InputEvent) -> void:
+	# Never bridge secondary touches into a paused/modal UI world. Primary touch
+	# still reaches the GUI through Godot's normal touch->mouse emulation, so
+	# buttons and text fields remain usable while the world is protected.
+	if Global.any_ui_open() or Global.pause_menu_open \
+			or Global.is_text_input_focused():
+		_reset_touch_state()
+		return
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
 		if t.pressed:
 			if _primary_touch == -1:
 				_primary_touch = t.index
+				_primary_pos = t.position
+				_primary_world = not _over_stick(t.position) \
+					and not Global.is_point_over_ui(t.position)
+				if _primary_world:
+					_set_world_pos(t.position)
 				return
+			# Secondary finger: the joystick owns its own touches. Let the real
+			# ScreenTouch reach the joystick instead of duplicating it as mouse.
+			if _over_stick(t.position):
+				return
+			# One synthetic left button can only represent one extra finger. A
+			# third finger must not press/release the same virtual mouse while the
+			# first secondary gesture is still down (its release would cancel the
+			# other gesture). Swallow it as UI-owned input.
+			if not _bridged_touches.is_empty():
+				get_viewport().set_input_as_handled()
+				return
+			if not Global.is_point_over_ui(t.position):
+				_set_world_pos(t.position)
+			_bridged_touches[t.index] = t.position
 			_emit_mouse_button(t.position, true)
+			get_viewport().set_input_as_handled()
 		else:
 			if t.index == _primary_touch:
 				_primary_touch = -1
+				_primary_world = false
 				return
-			_emit_mouse_button(t.position, false)
+			if _bridged_touches.has(t.index):
+				if not Global.is_point_over_ui(t.position):
+					_set_world_pos(t.position)
+				_bridged_touches.erase(t.index)
+				_emit_mouse_button(t.position, false)
+				get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
-		if d.index != _primary_touch:
+		if d.index == _primary_touch:
+			_primary_pos = d.position
+			if _primary_world and not Global.is_point_over_ui(d.position):
+				_set_world_pos(d.position)
+			return
+		if _bridged_touches.has(d.index):
+			_bridged_touches[d.index] = d.position
+			if not _over_stick(d.position) and not Global.is_point_over_ui(d.position):
+				_set_world_pos(d.position)
 			_emit_mouse_motion(d.position)
+			get_viewport().set_input_as_handled()
 
 func _emit_mouse_button(screen_pos: Vector2, pressed: bool) -> void:
 	var ev := InputEventMouseButton.new()
@@ -299,6 +390,7 @@ func _emit_mouse_button(screen_pos: Vector2, pressed: bool) -> void:
 	ev.position        = screen_pos
 	ev.global_position = screen_pos
 	ev.button_mask     = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+	ev.set_meta("mobile_touch_bridge", true)
 	Input.parse_input_event(ev)
 
 func _emit_mouse_motion(screen_pos: Vector2) -> void:
@@ -306,6 +398,7 @@ func _emit_mouse_motion(screen_pos: Vector2) -> void:
 	ev.position        = screen_pos
 	ev.global_position = screen_pos
 	ev.button_mask     = MOUSE_BUTTON_MASK_LEFT
+	ev.set_meta("mobile_touch_bridge", true)
 	Input.parse_input_event(ev)
 
 func _set_world_pos(screen_pos: Vector2) -> void:

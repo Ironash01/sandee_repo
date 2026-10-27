@@ -40,6 +40,11 @@ var _confirm_overlay:  Control = null
 var _rename_overlay:   Control = null
 var _rename_input:     LineEdit = null
 var _rename_slot:      int = -1
+var _worlds_outer:     MarginContainer = null
+var _rename_center:    CenterContainer = null
+var _rename_scroll:    ScrollContainer = null
+var _rename_panel:     Control = null
+var _keyboard_inset:   float = 0.0
 var _bg_holder:        Control = null
 var _panorama:         Node    = null
 var _worlds_list:      VBoxContainer = null
@@ -93,6 +98,8 @@ func _ready() -> void:
 		Global.online_state_changed.connect(_on_online_state_changed)
 	if not CloudSync.sync_completed.is_connected(_on_cloud_sync_completed):
 		CloudSync.sync_completed.connect(_on_cloud_sync_completed)
+	if not CloudSync.sync_progress_changed.is_connected(_on_cloud_sync_progress):
+		CloudSync.sync_progress_changed.connect(_on_cloud_sync_progress)
 	_refresh_status_label()
 	_refresh_online_visibility()
 	_start_net_timer()
@@ -114,9 +121,34 @@ func _build_all() -> void:
 	_build_confirm_overlay()
 	_build_rename_overlay()
 
-# Rebuild the whole menu at the new scale so a Small/Medium/Large change applies
+# Rebuild the whole menu at the new scale so a responsive scale change applies
 # live; open overlays keep their visibility.
+func _process(_delta: float) -> void:
+	if not Global.is_mobile():
+		return
+	var inset: float = Global.mobile_keyboard_height()
+	if is_equal_approx(inset, _keyboard_inset):
+		return
+	_keyboard_inset = inset
+	if _worlds_outer != null and is_instance_valid(_worlds_outer):
+		# Slide the whole panel up instead of shrinking it. The create-world
+		# field sits at the bottom of the panel; shrinking collapsed the fixed
+		# rows and could leave that field below the keyboard. Translating keeps
+		# the panel's height, so the list can still shrink around the field.
+		_worlds_outer.offset_top = Global.ui_safe_insets.y - inset
+		_worlds_outer.offset_bottom = -(Global.ui_safe_insets.w + inset)
+	if _rename_scroll != null and is_instance_valid(_rename_scroll):
+		_fit_rename_center()
+		if _rename_input != null and _rename_input.has_focus():
+			_rename_scroll.call_deferred("ensure_control_visible", _rename_input)
+
 func _on_ui_scale(_s: float) -> void:
+	# Force the next _process pass to re-apply the keyboard inset to the rebuilt
+	# worlds/rename surfaces.
+	_keyboard_inset = -1.0
+	if _account_panel != null and _account_panel.visible \
+			and bool(_account_panel.call("is_busy")):
+		return
 	var worlds_vis:  bool = _worlds_overlay != null and _worlds_overlay.visible
 	var set_vis:     bool = _settings_overlay != null and _settings_overlay.visible
 	var credits_vis: bool = _credits_overlay != null and _credits_overlay.visible
@@ -134,6 +166,9 @@ func _on_ui_scale(_s: float) -> void:
 	_confirm_overlay  = null
 	_rename_overlay   = null
 	_rename_input     = null
+	_rename_center    = null
+	_rename_scroll    = null
+	_rename_panel     = null
 	_bg_holder        = null
 	_bg_clip          = null
 	_bg_rect          = null
@@ -185,7 +220,7 @@ func _on_ui_scale(_s: float) -> void:
 # eases in/out at each end — a smooth reversal with no gaps or jumps. Only the
 # image moves; every UI element is a sibling of the clip container and stays put.
 # The Tween is engine-driven, so there is NO per-frame script cost, and it is
-# killed before a new one starts (no duplicate loops on rebuild).
+# killed before a new one starts (including when the panorama cycles/rebuilds).
 const PAN_SECONDS:  float = 46.0    # one traversal, left -> right
 const PAN_OVERSCAN: float = 1.30    # extra width available to pan across
 
@@ -314,7 +349,8 @@ func _stop_pan() -> void:
 func _on_resized() -> void:
 	_layout_background()
 	if _menu_center != null and is_instance_valid(_menu_center):
-		_menu_center.custom_minimum_size = Vector2(0, maxf(get_viewport_rect().size.y, 1.0))
+		_menu_center.custom_minimum_size = Vector2(0,
+			maxf(Global.ui_content_rect().size.y, 1.0))
 
 # ── Online / cloud status ─────────────────────────────────────────
 func _refresh_status_label() -> void:
@@ -397,16 +433,17 @@ func _on_panorama_ready(tex: Texture2D) -> void:
 func _build_main_ui() -> void:
 	var s: float = Global.ui_scale
 	# Scrollable + centred: the menu is fully reachable on short desktop windows
-	# and Android landscape even at the Large UI scale, and never clips.
+	# and Android landscape even at the large responsive UI, and never clips.
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(scroll)
 
 	_menu_center = CenterContainer.new()
 	_menu_center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_menu_center.custom_minimum_size = Vector2(0, get_viewport_rect().size.y)
+	_menu_center.custom_minimum_size = Vector2(0, Global.ui_content_rect().size.y)
 	scroll.add_child(_menu_center)
 
 	var vbox := VBoxContainer.new()
@@ -418,14 +455,18 @@ func _build_main_ui() -> void:
 	var title := Label.new()
 	title.text = "SandEE"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(72 * s))
+	# Cap the masthead on short windows so its ascenders never clip and the
+	# primary buttons stay on-screen; full desktop still gets the 72*s identity.
+	var title_px: int = int(minf(float(Global.ui_font_size(72)),
+		maxf(52.0, get_viewport_rect().size.y * 0.105)))
+	title.add_theme_font_size_override("font_size", title_px)
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
 	var sub := Label.new()
 	sub.text = "Alpha"
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", int(16 * s))
+	sub.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	sub.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(sub)
 
@@ -436,7 +477,7 @@ func _build_main_ui() -> void:
 	flavor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	flavor.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	flavor.custom_minimum_size = Vector2(int(300 * s), 0)
-	flavor.add_theme_font_size_override("font_size", int(12 * s))
+	flavor.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	flavor.add_theme_color_override("font_color", Color(0.95, 0.92, 0.55, 1.0))
 	flavor.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	flavor.add_theme_constant_override("outline_size", int(3 * s))
@@ -476,25 +517,25 @@ func _build_main_ui() -> void:
 	lb_btn.tooltip_text = "Blue and yellow star rankings (online)."
 	lb_btn.custom_minimum_size = Vector2(0, int(36 * s))
 	lb_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lb_btn.add_theme_font_size_override("font_size", int(11 * s))
+	lb_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	online_row.add_child(lb_btn)
 	var cloud_btn := _make_menu_btn("Cloud Saves", _on_cloud_saves)
 	cloud_btn.tooltip_text = "View uploaded cloud worlds and download a copy (online)."
 	cloud_btn.custom_minimum_size = Vector2(0, int(36 * s))
 	cloud_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cloud_btn.add_theme_font_size_override("font_size", int(11 * s))
+	cloud_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	online_row.add_child(cloud_btn)
 	var account_btn := _make_menu_btn("Account", _on_account)
 	account_btn.tooltip_text = "Online account and sign out."
 	account_btn.custom_minimum_size = Vector2(0, int(36 * s))
 	account_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	account_btn.add_theme_font_size_override("font_size", int(11 * s))
+	account_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	online_row.add_child(account_btn)
 	var offline_btn := _make_menu_btn("Play Offline", _on_play_offline)
 	offline_btn.tooltip_text = "Stop cloud syncing and play this device's local worlds. Sign-in is required again on the next launch."
 	offline_btn.custom_minimum_size = Vector2(0, int(36 * s))
 	offline_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	offline_btn.add_theme_font_size_override("font_size", int(11 * s))
+	offline_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	online_row.add_child(offline_btn)
 
 	_add_menu_btn(vbox, "Settings",   _on_settings,   "Graphics, audio and gameplay options.")
@@ -530,13 +571,13 @@ func _build_corner_labels() -> void:
 	# Bottom-left always shows the real build version. Online mode appends the
 	# ACTUAL cloud state; offline mode never claims a cloud connection.
 	_status_label = ver
-	ver.add_theme_font_size_override("font_size", int(12 * s))
+	ver.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	ver.add_theme_color_override("font_color", C_MUTED)
 	ver.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	ver.add_theme_constant_override("outline_size", int(3 * s))
 	ver.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	ver.offset_left   = m
-	ver.offset_bottom = -m
+	ver.offset_left   = int(Global.ui_safe_insets.x) + m
+	ver.offset_bottom = -int(Global.ui_safe_insets.w) - m
 	ver.grow_horizontal = Control.GROW_DIRECTION_END
 	ver.grow_vertical   = Control.GROW_DIRECTION_BEGIN
 	add_child(ver)
@@ -544,13 +585,13 @@ func _build_corner_labels() -> void:
 
 	var proj := Label.new()
 	proj.text = PROJECT_LABEL
-	proj.add_theme_font_size_override("font_size", int(12 * s))
+	proj.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	proj.add_theme_color_override("font_color", C_MUTED)
 	proj.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	proj.add_theme_constant_override("outline_size", int(3 * s))
 	proj.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	proj.offset_right  = -m
-	proj.offset_bottom = -m
+	proj.offset_right  = -int(Global.ui_safe_insets.z) - m
+	proj.offset_bottom = -int(Global.ui_safe_insets.w) - m
 	proj.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	proj.grow_vertical   = Control.GROW_DIRECTION_BEGIN
 	add_child(proj)
@@ -581,8 +622,10 @@ func _build_worlds_overlay() -> void:
 
 	var outer := MarginContainer.new()
 	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(outer)
 	for side in ["left", "right", "top", "bottom"]:
 		outer.add_theme_constant_override("margin_" + side, int(20 * s))
+	_worlds_outer = outer
 	_worlds_overlay.add_child(outer)
 
 	var panel := PanelContainer.new()
@@ -602,7 +645,7 @@ func _build_worlds_overlay() -> void:
 	var title := Label.new()
 	title.text = "Worlds"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(20 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
@@ -629,7 +672,7 @@ func _build_worlds_overlay() -> void:
 	# Create a world: a name field + validation feedback.
 	var create_lbl := Label.new()
 	create_lbl.text = "Create a new world"
-	create_lbl.add_theme_font_size_override("font_size", int(13 * s))
+	create_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	create_lbl.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(create_lbl)
 
@@ -642,7 +685,7 @@ func _build_worlds_overlay() -> void:
 	_create_name.max_length = 24
 	_create_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_create_name.custom_minimum_size = Vector2(0, int(34 * s))
-	_create_name.add_theme_font_size_override("font_size", int(13 * s))
+	_create_name.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	_create_name.text_changed.connect(func(_t: String) -> void: _update_create_state())
 	_create_name.text_submitted.connect(func(_t: String) -> void: _on_create_world())
 	row.add_child(_create_name)
@@ -652,7 +695,7 @@ func _build_worlds_overlay() -> void:
 	row.add_child(_create_btn)
 
 	_create_error = Label.new()
-	_create_error.add_theme_font_size_override("font_size", int(11 * s))
+	_create_error.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_create_error.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
 	_create_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_create_error)
@@ -670,6 +713,7 @@ func _build_credits_overlay() -> void:
 
 	var outer := MarginContainer.new()
 	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(outer)
 	for side in ["left", "right", "top", "bottom"]:
 		outer.add_theme_constant_override("margin_" + side, int(20 * s))
 	_credits_overlay.add_child(outer)
@@ -691,7 +735,7 @@ func _build_credits_overlay() -> void:
 	var title := Label.new()
 	title.text = "Credits"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(20 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
@@ -714,7 +758,7 @@ func _build_credits_overlay() -> void:
 		var name_lbl := Label.new()
 		name_lbl.text = str(entry[0])
 		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		name_lbl.add_theme_font_size_override("font_size", int(15 * s))
+		name_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(15))
 		name_lbl.add_theme_color_override("font_color", C_TITLE)
 		list.add_child(name_lbl)
 
@@ -722,7 +766,7 @@ func _build_credits_overlay() -> void:
 		role_lbl.text = str(entry[1])
 		role_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		role_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		role_lbl.add_theme_font_size_override("font_size", int(12 * s))
+		role_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		role_lbl.add_theme_color_override("font_color", C_MUTED)
 		list.add_child(role_lbl)
 
@@ -738,6 +782,7 @@ func _build_confirm_overlay() -> void:
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	_confirm_overlay.add_child(center)
 
 	var panel := PanelContainer.new()
@@ -758,7 +803,7 @@ func _build_confirm_overlay() -> void:
 	_confirm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_confirm_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_confirm_label.custom_minimum_size = Vector2(int(300 * s), 0)
-	_confirm_label.add_theme_font_size_override("font_size", int(14 * s))
+	_confirm_label.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	_confirm_label.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(_confirm_label)
 
@@ -807,14 +852,25 @@ func _build_rename_overlay() -> void:
 	_rename_overlay = _make_overlay()
 	add_child(_rename_overlay)
 
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_rename_overlay.add_child(scroll)
+	_rename_scroll = scroll
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_rename_overlay.add_child(center)
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	center.custom_minimum_size = Vector2(0, 1)
+	scroll.add_child(center)
+	_rename_center = center
 
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(int(380 * s), 0)
 	_style_panel(panel)
 	center.add_child(panel)
+	_rename_panel = panel
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
@@ -828,7 +884,7 @@ func _build_rename_overlay() -> void:
 	var title := Label.new()
 	title.text = "Rename world"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(15 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(15))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
@@ -836,8 +892,11 @@ func _build_rename_overlay() -> void:
 	_rename_input.max_length = 40
 	_rename_input.placeholder_text = "World name"
 	_rename_input.custom_minimum_size = Vector2(int(300 * s), int(34 * s))
-	_rename_input.add_theme_font_size_override("font_size", int(13 * s))
+	_rename_input.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	_rename_input.text_submitted.connect(func(_t: String) -> void: _on_rename_save())
+	_rename_input.focus_entered.connect(func() -> void:
+		if _rename_scroll != null and is_instance_valid(_rename_scroll):
+			_rename_scroll.call_deferred("ensure_control_visible", _rename_input))
 	vbox.add_child(_rename_input)
 
 	var row := HBoxContainer.new()
@@ -852,12 +911,27 @@ func _build_rename_overlay() -> void:
 	row.add_child(save)
 	_rename_overlay.visible = false
 
+func _fit_rename_center() -> void:
+	if _rename_center == null or not is_instance_valid(_rename_center):
+		return
+	var available_h: float = maxf(1.0,
+		Global.ui_content_rect().size.y - _keyboard_inset)
+	var panel_h: float = 0.0
+	if _rename_panel != null and is_instance_valid(_rename_panel):
+		panel_h = _rename_panel.get_combined_minimum_size().y
+	var pad: float = 16.0 * Global.ui_scale
+	_rename_center.custom_minimum_size = Vector2(0,
+		maxf(available_h, panel_h + pad))
+	if _rename_scroll != null and is_instance_valid(_rename_scroll):
+		_rename_scroll.offset_bottom = -(Global.ui_safe_insets.w + _keyboard_inset)
+
 func _open_rename_world(slot: int) -> void:
 	_rename_slot = slot
 	if _rename_input != null:
 		_rename_input.text = Global.world_name_of(slot)
 	if _rename_overlay != null:
 		_rename_overlay.visible = true
+	_fit_rename_center()
 	if _rename_input != null:
 		_rename_input.grab_focus()
 		_rename_input.select_all()
@@ -882,6 +956,7 @@ func _build_settings_overlay() -> void:
 	add_child(_settings_overlay)
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(center)
 	_settings_overlay.add_child(center)
 	var panel: Control = SETTINGS_PANEL_SCRIPT.new()
 	panel.name = "SettingsPanel"
@@ -897,6 +972,7 @@ func _build_leaderboard_overlay() -> void:
 
 	var outer := MarginContainer.new()
 	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(outer)
 	for side in ["left", "right", "top", "bottom"]:
 		outer.add_theme_constant_override("margin_" + side, int(20 * s))
 	_leaderboard_overlay.add_child(outer)
@@ -918,7 +994,7 @@ func _build_leaderboard_overlay() -> void:
 	var title := Label.new()
 	title.text = "Leaderboards"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(20 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
@@ -931,7 +1007,7 @@ func _build_leaderboard_overlay() -> void:
 		var tab := _make_menu_btn(str(entry[0]), _set_leaderboard_kind.bind(kind))
 		tab.custom_minimum_size = Vector2(0, int(34 * s))
 		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tab.add_theme_font_size_override("font_size", int(12 * s))
+		tab.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		tabs.add_child(tab)
 		_lb_tabs.append(tab)
 
@@ -944,7 +1020,7 @@ func _build_leaderboard_overlay() -> void:
 	_lb_status.text = ""
 	_lb_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lb_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lb_status.add_theme_font_size_override("font_size", int(12 * s))
+	_lb_status.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_lb_status.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(_lb_status)
 
@@ -963,12 +1039,12 @@ func _build_leaderboard_overlay() -> void:
 	var refresh := _make_menu_btn("Refresh", func() -> void: _load_leaderboard())
 	refresh.custom_minimum_size = Vector2(0, int(36 * s))
 	refresh.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	refresh.add_theme_font_size_override("font_size", int(12 * s))
+	refresh.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	footer.add_child(refresh)
 	var back := _make_menu_btn("< Back", func() -> void: _leaderboard_overlay.visible = false)
 	back.custom_minimum_size = Vector2(0, int(36 * s))
 	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	back.add_theme_font_size_override("font_size", int(12 * s))
+	back.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	footer.add_child(back)
 	_update_lb_tabs()
 
@@ -1056,7 +1132,7 @@ func _make_lb_row(rank: int, row: Dictionary) -> Control:
 	var rank_lbl := Label.new()
 	rank_lbl.text = "#%d" % rank
 	rank_lbl.custom_minimum_size = Vector2(int(42 * s), 0)
-	rank_lbl.add_theme_font_size_override("font_size", int(12 * s))
+	rank_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	rank_lbl.add_theme_color_override("font_color", C_MUTED)
 	h.add_child(rank_lbl)
 
@@ -1065,7 +1141,7 @@ func _make_lb_row(rank: int, row: Dictionary) -> Control:
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.clip_text = true
 	name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_lbl.add_theme_font_size_override("font_size", int(12 * s))
+	name_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	name_lbl.add_theme_color_override("font_color", C_TITLE)
 	h.add_child(name_lbl)
 
@@ -1076,7 +1152,7 @@ func _make_lb_row(rank: int, row: Dictionary) -> Control:
 	if _lb_kind == "total_stars":
 		var total := Label.new()
 		total.text = "(%d)" % int(row.get("total_stars", 0))
-		total.add_theme_font_size_override("font_size", int(11 * s))
+		total.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 		total.add_theme_color_override("font_color", C_MUTED)
 		h.add_child(total)
 	return h
@@ -1091,7 +1167,7 @@ func _star_stat(color: Color, value: int) -> Control:
 	icon.setup(color, 13.0 * s)
 	var label := Label.new()
 	label.text = str(value)
-	label.add_theme_font_size_override("font_size", int(12 * s))
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	label.add_theme_color_override("font_color", C_TITLE)
 	row.add_child(label)
 	return row
@@ -1105,6 +1181,7 @@ func _build_cloud_overlay() -> void:
 
 	var outer := MarginContainer.new()
 	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(outer)
 	for side in ["left", "right", "top", "bottom"]:
 		outer.add_theme_constant_override("margin_" + side, int(20 * s))
 	_cloud_overlay.add_child(outer)
@@ -1126,7 +1203,7 @@ func _build_cloud_overlay() -> void:
 	var title := Label.new()
 	title.text = "Cloud Saves"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(20 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
@@ -1134,7 +1211,7 @@ func _build_cloud_overlay() -> void:
 	_cloud_status.text = _cloud_status_text()
 	_cloud_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_cloud_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_cloud_status.add_theme_font_size_override("font_size", int(11 * s))
+	_cloud_status.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_cloud_status.add_theme_color_override("font_color", Global.cloud_status_color())
 	vbox.add_child(_cloud_status)
 
@@ -1142,7 +1219,7 @@ func _build_cloud_overlay() -> void:
 	_cloud_message.text = ""
 	_cloud_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_cloud_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_cloud_message.add_theme_font_size_override("font_size", int(11 * s))
+	_cloud_message.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_cloud_message.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(_cloud_message)
 
@@ -1170,12 +1247,12 @@ func _build_cloud_overlay() -> void:
 	var refresh := _make_menu_btn("Refresh", func() -> void: _refresh_cloud())
 	refresh.custom_minimum_size = Vector2(0, int(36 * s))
 	refresh.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	refresh.add_theme_font_size_override("font_size", int(12 * s))
+	refresh.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	footer.add_child(refresh)
 	var back := _make_menu_btn("< Back", func() -> void: _cloud_overlay.visible = false)
 	back.custom_minimum_size = Vector2(0, int(36 * s))
 	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	back.add_theme_font_size_override("font_size", int(12 * s))
+	back.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	footer.add_child(back)
 
 
@@ -1183,7 +1260,7 @@ func _section_label(text: String) -> Label:
 	var s: float = Global.ui_scale
 	var label := Label.new()
 	label.text = text
-	label.add_theme_font_size_override("font_size", int(13 * s))
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	label.add_theme_color_override("font_color", C_TITLE)
 	return label
 
@@ -1276,7 +1353,7 @@ func _build_remote_rows(rows: Array) -> void:
 		info.clip_text = true
 		info.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		info.tooltip_text = "Updated: %s" % _format_timestamp(str(meta.get("updated_at", "")))
-		info.add_theme_font_size_override("font_size", int(11 * s))
+		info.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 		info.add_theme_color_override("font_color", C_TITLE)
 		row.add_child(info)
 
@@ -1373,7 +1450,7 @@ func _small_btn(label: String, callback: Callable, width: int) -> Button:
 	var btn := Button.new()
 	btn.text = label
 	btn.custom_minimum_size = Vector2(width, int(32 * s))
-	btn.add_theme_font_size_override("font_size", int(11 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	btn.add_theme_color_override("font_color", C_TITLE)
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = C_PANEL
@@ -1396,7 +1473,7 @@ func _muted_label(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.add_theme_font_size_override("font_size", int(11 * Global.ui_scale))
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	label.add_theme_color_override("font_color", C_MUTED)
 	return label
 
@@ -1531,16 +1608,49 @@ func _on_account_cancelled() -> void:
 func _on_account_authenticated() -> void:
 	Global.set_online_mode(true)
 	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Initializing cloud saves…")
+	var panel_open: bool = _account_panel != null and _account_panel.visible
+	if _account_panel != null:
+		_account_panel.call("set_operation_progress", "Preparing cloud saves…", 5.0)
 	var saves := await Supabase.list_saves()
+	if not is_inside_tree():
+		return
 	if saves.ok:
 		Global.set_cloud_status(Global.CloudStatus.ACTIVE)
-		# Automatic sync immediately after signing in from the main menu.
-		CloudSync.sync_all()
+		if _account_panel != null:
+			_account_panel.call("set_operation_progress", "Syncing your worlds…", 5.0)
+		# Startup/online sign-in is a sync barrier. Do not let the world list
+		# become actionable until every local/cloud slot has been reconciled.
+		await CloudSync.sync_all()
+		if not is_inside_tree():
+			return
 	else:
 		Global.set_cloud_status(Global.CloudStatus.ERROR, "Cloud saves unavailable.")
-	_refresh_status_label()
 	if _account_panel != null:
+		_account_panel.call("set_operation_progress", "", 100.0, false)
+	_refresh_status_label()
+	_refresh_worlds()
+	if panel_open and _account_panel != null and _account_panel.visible:
 		_account_panel.open_account()
+
+
+func _on_cloud_sync_progress(info: Dictionary) -> void:
+	if _account_panel == null or not is_instance_valid(_account_panel):
+		return
+	if not _account_panel.visible or not bool(_account_panel.call("is_busy")):
+		return
+	var stage := str(info.get("stage", ""))
+	var done := maxi(0, int(info.get("done", 0)))
+	var total := maxi(0, int(info.get("total", 0)))
+	var value := 10.0
+	if stage == "listing":
+		value = 8.0
+	elif stage == "syncing":
+		value = 10.0 + 80.0 * (float(done) / float(maxi(1, total)))
+	elif stage == "progress" or stage == "done":
+		value = 92.0
+	elif stage == "error" or stage == "offline":
+		value = 100.0
+	_account_panel.call("set_operation_progress", str(info.get("message", "")), value)
 
 
 func _on_account_logged_out() -> void:
@@ -1590,7 +1700,7 @@ func _make_menu_btn(label: String, callback: Callable) -> Button:
 	btn.text = label
 	btn.custom_minimum_size = Vector2(int(280 * s), int(44 * s))
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", int(15 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
 	btn.add_theme_color_override("font_color",         C_TITLE)
 	btn.add_theme_color_override("font_hover_color",   C_TITLE)
 	btn.add_theme_color_override("font_pressed_color", C_MUTED)
@@ -1651,7 +1761,7 @@ func _make_world_row(slot: int) -> Control:
 	var name_lbl := Label.new()
 	name_lbl.text = Global.world_name_of(slot)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_lbl.add_theme_font_size_override("font_size", int(15 * s))
+	name_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(15))
 	name_lbl.add_theme_color_override("font_color", C_TITLE)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(name_lbl)
@@ -1661,7 +1771,7 @@ func _make_world_row(slot: int) -> Control:
 	var meta := Label.new()
 	meta.text = "v%s  ·  %s" % [Global.world_version_of(slot), _last_played_text(slot)]
 	meta.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	meta.add_theme_font_size_override("font_size", int(11 * s))
+	meta.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	meta.add_theme_color_override("font_color", C_MUTED)
 	meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(meta)
@@ -1674,7 +1784,7 @@ func _make_world_row(slot: int) -> Control:
 	ren.tooltip_text = "Rename this world."
 	ren.custom_minimum_size = Vector2(int(46 * s), int(62 * s))
 	ren.size_flags_horizontal = Control.SIZE_SHRINK_END
-	ren.add_theme_font_size_override("font_size", int(16 * s))
+	ren.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	var rs := StyleBoxFlat.new()
 	rs.bg_color     = C_PANEL
 	rs.border_color = C_BORDER
@@ -1694,7 +1804,7 @@ func _make_world_row(slot: int) -> Control:
 	del.text = "Delete"
 	del.custom_minimum_size = Vector2(int(78 * s), int(62 * s))
 	del.size_flags_horizontal = Control.SIZE_SHRINK_END
-	del.add_theme_font_size_override("font_size", int(12 * s))
+	del.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	var ds := StyleBoxFlat.new()
 	ds.bg_color     = Color(0.18, 0.06, 0.06, 0.97)
 	ds.border_color = Color(0.55, 0.22, 0.22, 1.0)
@@ -1738,7 +1848,7 @@ func _refresh_worlds() -> void:
 		empty.text = "No worlds yet — create one below to start playing."
 		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		empty.add_theme_font_size_override("font_size", int(13 * Global.ui_scale))
+		empty.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 		empty.add_theme_color_override("font_color", C_MUTED)
 		_worlds_list.add_child(empty)
 	else:
@@ -1857,6 +1967,9 @@ func _close_top_overlay() -> bool:
 		_on_rename_cancel()
 		return true
 	if _account_overlay != null and _account_overlay.visible:
+		if _account_panel != null and _account_panel.visible \
+				and bool(_account_panel.call("is_busy")):
+			return true
 		if _account_panel != null and _account_panel.visible:
 			_account_panel.call("close")
 		_account_overlay.visible = false

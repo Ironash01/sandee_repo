@@ -37,6 +37,10 @@ var entry_file: String = ""   # set by dungeon generator
 var _player_nearby:  bool   = false
 var _entry:          KnowledgeEntry = null
 var _panel:          Control = null
+var _panel_scroll:   ScrollContainer = null
+var _content_scroll:  ScrollContainer = null
+var _touch_scroll_active: bool = false
+var _touch_scroll_accum:  float = 0.0
 # True while this popup holds a Global.open_ui() reference. A dedicated flag is
 # required because _build_panel() leaves the panel visible by default, so
 # `_panel.visible` can't be used to tell whether we already registered.
@@ -91,7 +95,7 @@ func _ready() -> void:
 		Global.knowledge_updated.connect(_on_knowledge_updated)
 
 # The popup is built at the current UI scale and cached — rebuild it in place
-# (when open) so a Small/Medium/Large change applies live.
+# (when open) so a responsive scale change applies live.
 func _on_ui_scale(_s: float) -> void:
 	if _panel == null:
 		return
@@ -100,6 +104,8 @@ func _on_ui_scale(_s: float) -> void:
 	if canvas != null:
 		canvas.queue_free()
 	_panel = null
+	_panel_scroll = null
+	_content_scroll = null
 	_keyword_lbl = null
 	if was_visible:
 		_show()
@@ -164,6 +170,8 @@ func _exit_tree() -> void:
 # false directly (the old behaviour) resumed the game even when the pause menu
 # or another UI still required it to stay paused.
 func _release_pause() -> void:
+	_touch_scroll_active = false
+	_touch_scroll_accum = 0.0
 	if _panel != null:
 		Global.unregister_ui_back(_panel)
 	if _pause_registered:
@@ -178,6 +186,8 @@ func _dismiss_panel() -> void:
 
 func _input(event: InputEvent) -> void:
 	if _panel != null and _panel.visible:
+		if _handle_touch_scroll(event):
+			return
 		if event.is_action_pressed("escape"):
 			get_viewport().set_input_as_handled()
 			if not Global.request_ui_back(event) and not Global.is_ui_back_event_consumed(event):
@@ -197,6 +207,38 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_show()
+
+## Native ScrollContainer only reacts to the mouse wheel; on a phone a finger
+## drag over the body must scroll it. _input runs before GUI, so this works over
+## labels/panels without stealing the initial tap from buttons.
+func _handle_touch_scroll(event: InputEvent) -> bool:
+	if _content_scroll == null or not is_instance_valid(_content_scroll):
+		return false
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			_touch_scroll_active = _content_scroll.get_global_rect().has_point(t.position) \
+				and not _touch_over_button(t.position)
+			_touch_scroll_accum = 0.0
+		else:
+			_touch_scroll_active = false
+		return false
+	if event is InputEventScreenDrag and _touch_scroll_active:
+		var d := event as InputEventScreenDrag
+		_touch_scroll_accum -= d.relative.y
+		var step: int = int(_touch_scroll_accum)
+		if step != 0:
+			_content_scroll.scroll_vertical += step
+			_touch_scroll_accum -= float(step)
+		get_viewport().set_input_as_handled()
+		return true
+	return false
+
+func _touch_over_button(pos: Vector2) -> bool:
+	for b in _content_scroll.find_children("*", "Button", true, false):
+		if (b as Control).get_global_rect().has_point(pos):
+			return true
+	return false
 
 func _on_knowledge_updated() -> void:
 	if _panel != null and _panel.visible:
@@ -222,6 +264,10 @@ func _show() -> void:
 	_panel.visible = true
 	Global.register_ui_back(_panel, Callable(self, "_dismiss_panel"))
 	_refresh_archive()
+	if _content_scroll != null:
+		_content_scroll.scroll_vertical = 0
+	if _panel_scroll != null:
+		_panel_scroll.scroll_vertical = 0
 	if _is_first_time and _keyword_lbl != null:
 		# Defer one frame so the Label has its final laid-out size before the
 		# pop sets its centre pivot (otherwise the pivot is (0,0)).
@@ -231,7 +277,7 @@ func _make_page_button(text: String, s: float) -> Button:
 	var btn := Button.new()
 	btn.text = text
 	btn.custom_minimum_size = Vector2(int(76 * s), int(28 * s))
-	btn.add_theme_font_size_override("font_size", int(10 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_OK; sb.border_color = C_BORDER
 	sb.set_border_width_all(int(1 * s)); sb.set_corner_radius_all(int(4 * s))
@@ -262,8 +308,9 @@ func _refresh_archive() -> void:
 	if _archive_entries.is_empty():
 		var none := Label.new()
 		none.text = "No knowledge recorded yet."
-		none.add_theme_font_size_override("font_size", int(10 * s))
+		none.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 		none.add_theme_color_override("font_color", C_MUTED)
+		none.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_archive_box.add_child(none)
 		_archive_prev.visible = false
 		_archive_page_label.visible = false
@@ -278,16 +325,19 @@ func _refresh_archive() -> void:
 		var entry: KnowledgeEntry = _archive_entries[i]
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", int(6 * s))
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
 		var name_lbl := Label.new()
 		name_lbl.text = entry.entry_name
 		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		name_lbl.add_theme_font_size_override("font_size", int(11 * s))
+		name_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 		name_lbl.add_theme_color_override("font_color", C_TITLE)
+		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(name_lbl)
 		var lang_lbl := Label.new()
 		lang_lbl.text = entry.language.to_upper()
-		lang_lbl.add_theme_font_size_override("font_size", int(9 * s))
+		lang_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(9))
 		lang_lbl.add_theme_color_override("font_color", C_MUTED)
+		lang_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(lang_lbl)
 		_archive_box.add_child(row)
 	_archive_page_label.text = "Page %d / %d" % [_archive_page + 1, pages]
@@ -339,12 +389,30 @@ func _build_panel() -> Control:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(overlay)
 
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	root.add_child(scroll)
+	_panel_scroll = scroll
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_child(center)
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# Leave room for the vertical scrollbar; otherwise the ScrollContainer's
+	# minimum width becomes content + scrollbar and pushes the modal a few pixels
+	# past the right edge on phones.
+	var content_size: Vector2 = Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(
+		maxf(1.0, content_size.x - 16.0 * s), content_size.y)
+	scroll.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(int(480 * s), 0)
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(480, 380))
+	# Let touch drags that start on the panel padding reach the scroll roots;
+	# the panel itself has no click action.
+	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
@@ -355,6 +423,7 @@ func _build_panel() -> Control:
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", int(12 * s))
+	vbox.mouse_filter = Control.MOUSE_FILTER_PASS
 	panel.add_child(vbox)
 
 	var hdr := HBoxContainer.new()
@@ -362,18 +431,18 @@ func _build_panel() -> Control:
 	vbox.add_child(hdr)
 	var icon := Label.new()
 	icon.text = "📖"
-	icon.add_theme_font_size_override("font_size", int(22 * s))
+	icon.add_theme_font_size_override("font_size", Global.ui_font_size(22))
 	hdr.add_child(icon)
 	var title := Label.new()
 	var name_text: String = _entry.entry_name if _entry != null else "Knowledge"
 	title.text = name_text
-	title.add_theme_font_size_override("font_size", int(18 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(18))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.add_child(title)
 	var lang := Label.new()
 	lang.text = _entry.language.to_upper() if _entry != null else ""
-	lang.add_theme_font_size_override("font_size", int(11 * s))
+	lang.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	lang.add_theme_color_override("font_color", C_MUTED)
 	hdr.add_child(lang)
 
@@ -381,34 +450,56 @@ func _build_panel() -> Control:
 	div.color = Color(0.25, 0.35, 0.60, 1.0); div.custom_minimum_size = Vector2(0, int(1 * s))
 	vbox.add_child(div)
 
+	# The long encyclopedia body lives in its own scroll. The panel is capped to
+	# the usable viewport, so the title and Continue button stay on screen and
+	# only the body scrolls (mobile no longer shows a panel running off-screen).
+	var content_scroll := ScrollContainer.new()
+	content_scroll.name = "BodyScroll"
+	content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	content_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	content_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	vbox.add_child(content_scroll)
+	_content_scroll = content_scroll
+
+	var content_vbox := VBoxContainer.new()
+	content_vbox.add_theme_constant_override("separation", int(10 * s))
+	content_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
+	content_scroll.add_child(content_vbox)
+
 	var body := Label.new()
 	body.text = _entry.description if _entry != null else "This knowledge has been recorded."
-	body.add_theme_font_size_override("font_size", int(13 * s))
+	body.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	body.add_theme_color_override("font_color", Color(0.85, 0.90, 1.00, 1.0))
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vbox.add_child(body)
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content_vbox.add_child(body)
 
 	# Pageable archive of every knowledge entry already unlocked in this world.
 	# The current altar entry stays above; this list is read-only reference.
 	var archive_title := Label.new()
 	archive_title.text = "KNOWLEDGE ARCHIVE"
-	archive_title.add_theme_font_size_override("font_size", int(10 * s))
+	archive_title.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	archive_title.add_theme_color_override("font_color", C_MUTED)
-	vbox.add_child(archive_title)
+	archive_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content_vbox.add_child(archive_title)
 	_archive_box = VBoxContainer.new()
 	_archive_box.add_theme_constant_override("separation", int(3 * s))
-	vbox.add_child(_archive_box)
+	_archive_box.mouse_filter = Control.MOUSE_FILTER_PASS
+	content_vbox.add_child(_archive_box)
 	var page_row := HBoxContainer.new()
 	page_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	page_row.add_theme_constant_override("separation", int(8 * s))
-	vbox.add_child(page_row)
+	page_row.mouse_filter = Control.MOUSE_FILTER_PASS
+	content_vbox.add_child(page_row)
 	_archive_prev = _make_page_button("‹ Prev", s)
 	_archive_prev.pressed.connect(func() -> void: _change_archive_page(-1))
 	page_row.add_child(_archive_prev)
 	_archive_page_label = Label.new()
 	_archive_page_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_archive_page_label.add_theme_font_size_override("font_size", int(10 * s))
+	_archive_page_label.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	_archive_page_label.add_theme_color_override("font_color", C_MUTED)
+	_archive_page_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	page_row.add_child(_archive_page_label)
 	_archive_next = _make_page_button("Next ›", s)
 	_archive_next.pressed.connect(func() -> void: _change_archive_page(1))
@@ -421,33 +512,38 @@ func _build_panel() -> Control:
 	var recorded_row := HBoxContainer.new()
 	recorded_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	recorded_row.add_theme_constant_override("separation", int(4 * s))
-	vbox.add_child(recorded_row)
+	recorded_row.mouse_filter = Control.MOUSE_FILTER_PASS
+	content_vbox.add_child(recorded_row)
 
 	var lead := Label.new()
 	lead.text = "✔ Recorded in your Encyclopedia"
-	lead.add_theme_font_size_override("font_size", int(12 * s))
+	lead.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	lead.add_theme_color_override("font_color", Color(0.45, 0.90, 0.55, 1.0))
+	lead.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	recorded_row.add_child(lead)
 
 	if _entry != null and not _entry.keyword.is_empty():
 		var dash := Label.new()
 		dash.text = "—"
-		dash.add_theme_font_size_override("font_size", int(12 * s))
+		dash.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		dash.add_theme_color_override("font_color", Color(0.45, 0.90, 0.55, 1.0))
+		dash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		recorded_row.add_child(dash)
 
 		_keyword_lbl = Label.new()
 		_keyword_lbl.text = "“%s”" % _entry.keyword
-		_keyword_lbl.add_theme_font_size_override("font_size", int(14 * s))
+		_keyword_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 		# Base is a bright white-blue; the first-time emphasis flashes it gold
 		# and pops its scale (Global.emphasize_keyword).
 		_keyword_lbl.add_theme_color_override("font_color", Color(0.80, 0.95, 1.00, 1.0))
+		_keyword_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		recorded_row.add_child(_keyword_lbl)
 
 		var trail := Label.new()
 		trail.text = "unlocked"
-		trail.add_theme_font_size_override("font_size", int(12 * s))
+		trail.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		trail.add_theme_color_override("font_color", Color(0.45, 0.90, 0.55, 1.0))
+		trail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		recorded_row.add_child(trail)
 	else:
 		_keyword_lbl = null
@@ -456,7 +552,7 @@ func _build_panel() -> Control:
 	btn.text = "  Continue  "
 	btn.custom_minimum_size = Vector2(int(140 * s), int(38 * s))
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", int(13 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var es := StyleBoxFlat.new()
 	es.bg_color = C_OK; es.border_color = C_BORDER
 	es.set_border_width_all(int(1 * s)); es.set_corner_radius_all(int(4 * s))

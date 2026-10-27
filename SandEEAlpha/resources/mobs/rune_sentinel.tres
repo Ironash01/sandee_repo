@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="MobCombatData" format=3]
+
+[ext_resource type="Script" path="res://resources/mobs/combat.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+mob_name = "Rune Sentinel"
+behavior = 0
+ai_type = "PIXIE"
+damage = 18.0
+health = 180.0
+speed = 24.0
+spawn_during_day = true
+spawn_during_night = true
+spawn_plains = false
+spawn_weight = 0.0
+bestiary_id = "rune_sentinel"
+bestiary_category = "Lua Dungeon"
+bestiary_description = "A floating armour-shrine built around a diamond rune heart. Its pale mask and gold inlay remain immaculate despite the age of the sanctum."
+bestiary_icon_path = "res://sprites/mobs/bestiary/rune_sentinel_icon.png"
+drops = [{"chance": 1.0, "item_path": "res://resources/items/stone.tres", "max": 4, "min": 2}, {"chance": 0.65, "item_path": "res://resources/items/copper.tres", "max": 2, "min": 1}, {"chance": 0.25, "item_path": "res://resources/items/crystal_silicon_ore.tres", "max": 1, "min": 1}]

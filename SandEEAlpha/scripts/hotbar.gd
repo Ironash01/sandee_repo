@@ -2,6 +2,12 @@ extends Control
 
 var slots: Array = []
 var selected_index: int = 0
+var _hotbar_hbox: HBoxContainer = null
+var _stats_outer: HBoxContainer = null
+var _stat_labels: Array = []
+var _stat_bar_bgs: Array = []
+var _inventory_open: bool = false
+var _modal_hud_open: bool = false
 
 const C_SLOT_BG  := Color(0.11, 0.15, 0.26, 1.00)
 const C_SLOT_SEL := Color(0.25, 0.40, 0.75, 1.00)
@@ -49,6 +55,7 @@ const ITEM_NAME_SHOW_DURATION: float = 2.0
 
 func _ready() -> void:
 	var hbox: HBoxContainer = $CanvasLayer/HBoxContainer as HBoxContainer
+	_hotbar_hbox = hbox
 	hbox.add_theme_constant_override("separation", 4)
 
 	var slot_index: int = 0
@@ -83,7 +90,7 @@ func _ready() -> void:
 
 		var label := Label.new()
 		label.name = "Quantity"
-		label.add_theme_font_size_override("font_size", 10)
+		label.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 		label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 		label.offset_left  = -14
 		label.offset_top   = -14
@@ -184,10 +191,11 @@ func _ready() -> void:
 	break_hud.set("anchor_control", hbox)
 	canvas.add_child(break_hud)
 
-	Global.ui_scale_changed.connect(func(_s: float) -> void: _apply_label_scale())
+	Global.ui_scale_changed.connect(_on_ui_scale_changed)
 	Global.Hotbar_updated.connect(_refresh_hotbar)
 	Global.hotbar_selection_changed.connect(_on_selection_changed)
 	Global.inventory_toggled.connect(_on_inventory_toggled)
+	Global.modal_hud_changed.connect(_on_modal_hud_changed)
 	Global.block_mode_changed.connect(_on_build_mode_changed)
 	Global.item_picked_up.connect(_on_item_picked_up)
 	Global.lua_stuck_notice.connect(_on_lua_stuck_notice)
@@ -195,6 +203,7 @@ func _ready() -> void:
 	Global.health_changed.connect(_on_health_changed)
 	Global.stamina_changed.connect(_on_stamina_changed)
 
+	_apply_layout_scale()
 	_refresh_hotbar()
 	_highlight_slot(0)
 
@@ -213,8 +222,86 @@ func _style_slot(slot: TextureRect) -> void:
 	slot.add_child(bg)
 	slot.move_child(bg, 0)
 
-func _on_inventory_toggled(_is_open: bool) -> void:
-	pass  # hotbar stays fully visible when inventory is open
+func _on_ui_scale_changed(_s: float) -> void:
+	_apply_layout_scale()
+
+func _hotbar_slot_px() -> float:
+	var s: float = Global.ui_scale
+	var base: float = 36.0 if Global.is_mobile() else 40.0
+	return round(maxf(base * s, 44.0 if Global.is_mobile() else base * s))
+
+func _hotbar_gap_px() -> int:
+	return maxi(4, int(round(4.0 * Global.ui_scale)))
+
+func _hotbar_bottom_margin() -> float:
+	return 8.0 * Global.ui_scale + Global.ui_safe_insets.w
+
+func _hotbar_top_offset() -> float:
+	return _hotbar_slot_px() + _hotbar_bottom_margin()
+
+func _apply_layout_scale() -> void:
+	if _hotbar_hbox == null:
+		return
+	var s: float = Global.ui_scale
+	var slot_px: float = _hotbar_slot_px()
+	var gap: int = _hotbar_gap_px()
+	var visible_count: int = mini(Global.HOTBAR_SIZE, slots.size())
+	for i in range(slots.size()):
+		var slot := slots[i] as TextureRect
+		if slot == null:
+			continue
+		slot.visible = i < visible_count
+		slot.custom_minimum_size = Vector2(slot_px, slot_px)
+		var icon := slot.get_node_or_null("ItemIcon") as Control
+		if icon != null:
+			var inset: int = maxi(3, int(round(5.0 * s)))
+			icon.offset_left = inset
+			icon.offset_top = inset
+			icon.offset_right = -inset
+			icon.offset_bottom = -inset
+		var qty := slot.get_node_or_null("Quantity") as Label
+		if qty != null:
+			qty.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+			qty.offset_left = int(-18.0 * s)
+			qty.offset_top = int(-18.0 * s)
+		var inv_btn := slot.get_node_or_null("InventoryButton") as Button
+		if inv_btn != null:
+			inv_btn.add_theme_font_size_override("font_size",
+				Global.ui_type_size(Global.UI_TYPE_CAPTION))
+	_hotbar_hbox.add_theme_constant_override("separation", gap)
+	var total: float = visible_count * slot_px + (visible_count - 1) * gap
+	_hotbar_hbox.offset_left = -total * 0.5
+	_hotbar_hbox.offset_right = total * 0.5
+	_hotbar_hbox.offset_top = -_hotbar_top_offset()
+	_hotbar_hbox.offset_bottom = -_hotbar_bottom_margin()
+	if _stats_outer != null:
+		_stats_outer.custom_minimum_size = Vector2(total, 0)
+		_stats_outer.add_theme_constant_override("separation", int(8 * s))
+	for lbl in _stat_labels:
+		if is_instance_valid(lbl):
+			var compact_fs: int = Global.ui_type_size(Global.UI_TYPE_CAPTION)
+			(lbl as Label).add_theme_font_size_override("font_size", compact_fs)
+			(lbl as Label).custom_minimum_size.x = maxf(20.0, float(compact_fs) * 2.0)
+	_apply_label_scale()
+
+func _on_inventory_toggled(is_open: bool) -> void:
+	# Inventory is a modal screen and its selected-item panel + trash row use
+	# the bottom of the viewport. Hide the gameplay HUD so the hotbar, HP/SP
+	# bars and labels cannot overlap it; selection/state are preserved.
+	_inventory_open = is_open
+	_apply_hud_visibility()
+
+func _on_modal_hud_changed(open: bool) -> void:
+	# Full-screen station/editor UIs hide the rest of the game HUD too. The
+	# hotbar lives on its own nested CanvasLayer, so hiding the game's parent
+	# CanvasLayer does not hide this one; track the modal state explicitly.
+	_modal_hud_open = open
+	_apply_hud_visibility()
+
+func _apply_hud_visibility() -> void:
+	var canvas := get_node_or_null("CanvasLayer") as CanvasLayer
+	if canvas != null:
+		canvas.visible = not (_inventory_open or _modal_hud_open)
 
 # ── Mobile inventory button ───────────────────────────────────────
 # Android reserves the LAST visible hotbar slot (Minecraft-style). Any stack
@@ -245,7 +332,8 @@ func _setup_mobile_inventory_slot() -> void:
 	btn.set_anchors_preset(Control.PRESET_FULL_RECT)
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	btn.focus_mode   = Control.FOCUS_NONE
-	btn.add_theme_font_size_override("font_size", int(20 * maxf(1.0, Global.ui_scale)))
+	btn.add_theme_font_size_override("font_size",
+		Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	btn.add_theme_color_override("font_color", Color(0.80, 0.90, 1.0, 1.0))
 	btn.tooltip_text = "Inventory"
 	btn.pressed.connect(_on_mobile_inventory_pressed)
@@ -352,29 +440,29 @@ func _update_selected_name() -> void:
 
 func _apply_label_scale() -> void:
 	var s: float = Global.ui_scale
-	var fs_build: int = int(15 * s)
-	var fs_popup: int = int(15 * s)
-	var fs_hover: int = int(15 * s)
-	var fs_stuck: int = int(20 * s)
+	var fs_build: int = Global.ui_font_size(15)
+	var fs_popup: int = Global.ui_font_size(15)
+	var fs_hover: int = Global.ui_font_size(15)
+	var fs_stuck: int = Global.ui_font_size(20)
 	# The hotbar itself is fixed-size (40px slots, top at -48 from the screen
 	# bottom), so every label stacked above it is banded relative to that top
 	# and scaled by s. Each band is 20*s tall with a 2*s gap, bottom→top:
 	# stat bars, item name, build-mode, pickup popup. Previously the stat bars
 	# used FIXED offsets (-64/-44) while the name scaled, so on Small/Medium
 	# the name dropped down into the bars and overlapped them.
-	const TOP := 48.0
+	var top_offset: float = _hotbar_top_offset()
 	if _build_label != null:
 		_build_label.add_theme_font_size_override("font_size", fs_build)
-		_build_label.offset_top    = int(-(TOP + 70.0 * s))
-		_build_label.offset_bottom = int(-(TOP + 50.0 * s))
+		_build_label.offset_top    = int(-(top_offset + 70.0 * s))
+		_build_label.offset_bottom = int(-(top_offset + 50.0 * s))
 	if _popup_label != null:
 		_popup_label.add_theme_font_size_override("font_size", fs_popup)
-		_popup_label.offset_top    = int(-(TOP + 92.0 * s))
-		_popup_label.offset_bottom = int(-(TOP + 72.0 * s))
+		_popup_label.offset_top    = int(-(top_offset + 92.0 * s))
+		_popup_label.offset_bottom = int(-(top_offset + 72.0 * s))
 	if _selected_name_label != null:
-		_selected_name_label.add_theme_font_size_override("font_size", int(13 * s))
-		_selected_name_label.offset_top    = int(-(TOP + 48.0 * s))
-		_selected_name_label.offset_bottom = int(-(TOP + 28.0 * s))
+		_selected_name_label.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+		_selected_name_label.offset_top    = int(-(top_offset + 48.0 * s))
+		_selected_name_label.offset_bottom = int(-(top_offset + 28.0 * s))
 	if _hover_label != null:
 		_hover_label.add_theme_font_size_override("font_size", fs_hover)
 		_hover_label.offset_left   = int(14 * s)
@@ -382,7 +470,7 @@ func _apply_label_scale() -> void:
 		_hover_label.offset_right  = int(320 * s)
 		_hover_label.offset_bottom = int(-12 * s)
 	if _item_tip_label != null:
-		_item_tip_label.add_theme_font_size_override("font_size", int(12 * s))
+		_item_tip_label.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		_item_tip_label.offset_left   = int(14 * s)
 		_item_tip_label.offset_top    = int(-72 * s)
 		_item_tip_label.offset_right  = int(320 * s)
@@ -392,8 +480,8 @@ func _apply_label_scale() -> void:
 		_stuck_label.offset_top    = int(24 * s)
 		_stuck_label.offset_bottom = int(56 * s)
 	if _stat_container != null:
-		_stat_container.offset_top    = int(-(TOP + 26.0 * s))
-		_stat_container.offset_bottom = int(-(TOP + 2.0 * s))
+		_stat_container.offset_top    = int(-(top_offset + 26.0 * s))
+		_stat_container.offset_bottom = int(-(top_offset + 2.0 * s))
 
 func _on_hover_label_changed(text: String) -> void:
 	if _hover_label == null:
@@ -432,11 +520,11 @@ func _build_stat_bars(canvas: CanvasLayer) -> void:
 	_stat_container.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	canvas.add_child(_stat_container)
 
-	# Fixed width matches the hotbar exactly so bar edges align
+	# Width is matched to the live hotbar in _apply_layout_scale().
 	var outer := HBoxContainer.new()
-	outer.custom_minimum_size = Vector2(HOTBAR_PX, 0)
 	outer.add_theme_constant_override("separation", 8)
 	_stat_container.add_child(outer)
+	_stats_outer = outer
 
 	var hp_data := _make_stat_row("HP", C_HEALTH_BG, C_HEALTH_FILL)
 	_health_bg   = hp_data[0] as Control
@@ -455,7 +543,7 @@ func _make_stat_row(lbl_text: String, bg_col: Color, fill_col: Color) -> Array:
 
 	var lbl := Label.new()
 	lbl.text = lbl_text
-	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	lbl.add_theme_color_override("font_color", Color(0.80, 0.90, 1.00, 1.00))
 	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
 	lbl.add_theme_constant_override("shadow_offset_x", 1)
@@ -463,6 +551,7 @@ func _make_stat_row(lbl_text: String, bg_col: Color, fill_col: Color) -> Array:
 	lbl.custom_minimum_size = Vector2(20, 0)
 	lbl.vertical_alignment  = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(lbl)
+	_stat_labels.append(lbl)
 
 	# Expands to fill its share of HOTBAR_PX — no fixed width needed
 	var bar_bg := Control.new()

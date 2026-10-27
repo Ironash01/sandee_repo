@@ -71,7 +71,7 @@ func _ready() -> void:
 			t.add_child(icon)
 			var qty := Label.new()
 			qty.name = "Quantity"
-			qty.add_theme_font_size_override("font_size", int(10 * s))
+			qty.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 			qty.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 			qty.offset_left = -int(16 * s); qty.offset_top = -int(14 * s)
 			qty.offset_right = -int(2 * s); qty.offset_bottom = -int(2 * s)
@@ -95,7 +95,7 @@ const C_MUTED := Color(0.55, 0.65, 0.85, 1.00)
 func _mk_label(text: String, s: float, col: Color) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", int(10 * s))
+	l.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	l.add_theme_color_override("font_color", col)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l

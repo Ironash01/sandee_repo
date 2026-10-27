@@ -30,6 +30,7 @@ var _v: float = 0.78
 
 var _updating: bool = false
 var _root: Control = null
+var _panel_scroll: ScrollContainer = null
 var _sliders: Array = []      # [R, G, B] HSliders
 var _edits:   Array = []      # [R, G, B] LineEdits
 var _value_slider: HSlider = null
@@ -59,10 +60,27 @@ func _on_ui_scale(_s: float) -> void:
 	_rebuild()
 	visible = was
 
+func _process(_delta: float) -> void:
+	if not visible or _panel_scroll == null:
+		return
+	var want: float = -(Global.ui_safe_insets.w + Global.mobile_keyboard_height())
+	if not is_equal_approx(_panel_scroll.offset_bottom, want):
+		_panel_scroll.offset_bottom = want
+		var focused := get_viewport().gui_get_focus_owner()
+		if focused is LineEdit and _panel_scroll.is_ancestor_of(focused):
+			_panel_scroll.call_deferred("ensure_control_visible", focused)
+
+func _ensure_edit_visible(edit: Control) -> void:
+	if _panel_scroll == null or edit == null or not is_instance_valid(_panel_scroll):
+		return
+	_panel_scroll.call_deferred("ensure_control_visible", edit)
+
+
 func open() -> void:
 	visible = true
 	_fit()
 	Global.open_ui()
+	Global.modal_hud_changed.emit(true)
 	Global.register_ui_back(self, Callable(self, "hide_menu"))
 	_refresh_all()
 
@@ -72,6 +90,7 @@ func hide_menu() -> void:
 	visible = false
 	Global.unregister_ui_back(self)
 	Global.close_ui()
+	Global.modal_hud_changed.emit(false)
 
 func _input(event: InputEvent) -> void:
 	if not visible:
@@ -102,12 +121,22 @@ func _build() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(overlay)
 
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	root.add_child(scroll)
+	_panel_scroll = scroll
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_child(center)
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	center.custom_minimum_size = Global.ui_content_rect().size
+	scroll.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(int(440 * s), int(360 * s))
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(440, 360))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
@@ -123,7 +152,7 @@ func _build() -> void:
 	var title := Label.new()
 	title.text = "COLOR CRAFTER"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(16 * s))
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	title.add_theme_color_override("font_color", C_TITLE)
 	vbox.add_child(title)
 
@@ -144,7 +173,7 @@ func _build() -> void:
 	left.add_child(vrow)
 	var vl := Label.new()
 	vl.text = "Value"
-	vl.add_theme_font_size_override("font_size", int(11 * s))
+	vl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	vl.add_theme_color_override("font_color", C_MUTED)
 	vrow.add_child(vl)
 	_value_slider = HSlider.new()
@@ -165,7 +194,7 @@ func _build() -> void:
 		var lbl := Label.new()
 		lbl.text = ["R", "G", "B"][i]
 		lbl.custom_minimum_size = Vector2(int(16 * s), 0)
-		lbl.add_theme_font_size_override("font_size", int(12 * s))
+		lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		lbl.add_theme_color_override("font_color", C_MUTED)
 		row.add_child(lbl)
 		var sl := HSlider.new()
@@ -178,9 +207,10 @@ func _build() -> void:
 		ed.custom_minimum_size = Vector2(int(48 * s), 0)
 		ed.max_length = 3
 		ed.alignment = HORIZONTAL_ALIGNMENT_CENTER
-		ed.add_theme_font_size_override("font_size", int(12 * s))
+		ed.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 		ed.text_submitted.connect(_on_edit_submitted.bind(i))
 		ed.focus_exited.connect(_on_edit_committed.bind(i))
+		ed.focus_entered.connect(_ensure_edit_visible.bind(ed))
 		row.add_child(ed)
 		_edits.append(ed)
 
@@ -191,7 +221,7 @@ func _build() -> void:
 	_swatch.custom_minimum_size = Vector2(int(48 * s), int(48 * s))
 	swrow.add_child(_swatch)
 	_hint = Label.new()
-	_hint.add_theme_font_size_override("font_size", int(11 * s))
+	_hint.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_hint.add_theme_color_override("font_color", C_MUTED)
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -200,14 +230,14 @@ func _build() -> void:
 
 	_cactus_label = Label.new()
 	_cactus_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_cactus_label.add_theme_font_size_override("font_size", int(11 * s))
+	_cactus_label.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	_cactus_label.add_theme_color_override("font_color", C_MUTED)
 	vbox.add_child(_cactus_label)
 
 	var btn := Button.new()
 	btn.text = "Craft  (uses 1 Cactus)"
 	btn.custom_minimum_size = Vector2(0, int(36 * s))
-	btn.add_theme_font_size_override("font_size", int(13 * s))
+	btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	var bs := StyleBoxFlat.new()
 	bs.bg_color = C_OK; bs.border_color = C_BORDER
 	bs.set_border_width_all(int(1 * s)); bs.set_corner_radius_all(int(4 * s))

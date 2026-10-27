@@ -17,7 +17,7 @@ correct_index = 1
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
 type = 1
-question = "In this exercise you should declare the current year in the keyword int. Use the variable year to hold the current year."
+question = "Declare the current year as an integer in a variable named year, then print the variable."
 language = "python"
 starter_code = ""
 answer_output = "2026"

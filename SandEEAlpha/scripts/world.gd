@@ -8,11 +8,18 @@ const WOLF_SCENE:      PackedScene = preload("res://scenes/mobs/Wolf.tscn")
 const SHEEP_SCENE:     PackedScene = preload("res://scenes/mobs/Sheep.tscn")
 const WORM_SCENE:      PackedScene = preload("res://scenes/mobs/Worm.tscn")
 const HEADLESS_FISH_SCENE: PackedScene = preload("res://scenes/mobs/HeadlessFish.tscn")
+# Bestiary creatures. The ambient director uses the same cap/biome machinery
+# as the existing mobs; the resources' spawn_weight prevents overpopulation.
+const MOSSBACK_NIB_SCENE:      PackedScene = preload("res://scenes/mobs/MossbackNib.tscn")
+const EMBERFOX_KIT_SCENE:      PackedScene = preload("res://scenes/mobs/EmberfoxKit.tscn")
+const CINDER_OOZE_SCENE:       PackedScene = preload("res://scenes/mobs/CinderOoze.tscn")
+const GRAVEBELL_SHAMBLER_SCENE: PackedScene = preload("res://scenes/mobs/GravebellShambler.tscn")
 const PLAIN_TREE_TEX:  Texture2D   = preload("res://sprites/tree/tree.png")
 const SNOWY_TREE_TEX:  Texture2D   = preload("res://sprites/tree/snowy_tree.png")
 const BIRCH_TREE_TEX:  Texture2D   = preload("res://sprites/tree/birch_tree.png")
 const SHADOW_TEXTURE:  Texture2D   = preload("res://sprites/shadow/shadow_base.png")
 const SWORD_SWING_SCRIPT: GDScript = preload("res://scripts/sword_swing_effect.gd")
+const AMBIENT_BIRDS_SCRIPT: GDScript = preload("res://scripts/ambient_birds.gd")
 const GRASS_CUT_BURST_SCRIPT: GDScript = preload("res://scripts/grass_cut_burst.gd")
 const WHEAT_CROP_SCENE: PackedScene = preload("res://scenes/objects/WheatCrop.tscn")
 const WHEAT_SEEDS_ITEM: ItemData = preload("res://resources/items/wheat_seeds.tres")
@@ -232,6 +239,27 @@ const STRUCTURE_CHANCE:         float = 0.15   # per eligible chunk
 const STRUCTURE_MIN_SPAWN_DIST: float = 100.0  # no structures closer than this to world spawn
 const STRUCTURE_MIN_SEPARATION: float = 20.0   # no two structure anchors closer than this
 
+# Decorative block-built houses/pillars. These run at the end of the same
+# structure pass, after the existing sprite structures, and use a dedicated RNG
+# so the established world-gen sequence (and therefore existing worlds) is not
+# perturbed. Their definitions/removals are persisted in the world save.
+const DECOR_STRUCTURE_CHANCE:         float = 0.22
+const DECOR_STRUCTURE_MIN_SPAWN_DIST: float = 110.0
+const DECOR_STRUCTURE_MIN_SEPARATION: float = 18.0
+const DECOR_STRUCTURE_ATTEMPTS:       int   = 28
+const DECOR_LAYOUT_VERSION:           int   = 1
+const DECOR_PROTECT_MOB_RADIUS:       int   = 2
+const DECOR_PROTECT_DUNGEON_RADIUS:   int   = 4   # covers the native large-portal footprint
+const DECOR_PROTECT_PLAYER_RADIUS:    int   = 2
+
+var _decor_structures: Array = []          # persisted definitions
+var _decor_removed: Dictionary = {}        # Vector2i -> true (mined/gone cells)
+var _decor_pending_player_cells: Dictionary = {}  # loaded save's blocks to protect
+var _decor_pending_reserved_cells: Dictionary = {} # saved mobs/dungeon/player/cleared trees
+var _decor_item_cache: Dictionary = {}     # item path -> ItemData
+var _decor_templates: Array = []
+var _decor_rng: RandomNumberGenerator = null
+
 var _structure_claimed_chunks: Dictionary = {}   # chunk coord (Vector2i) -> true
 var _structure_anchor_tiles:   Array      = []   # top-left tiles, for the min-separation check
 var _located_structures:        Array      = []   # [{"name": String, "tile": Vector2i}, ...] — every placed structure/entrance, for /locate
@@ -247,15 +275,47 @@ var _structure_sources:        Dictionary = {}   # GeneratedStructure -> source 
 #   c. not the chunk the player is currently standing in
 #   d. not within DUNGEON_SPAWN_MIN_DIST_TILES tiles of world spawn
 const DUNGEON_PORTAL_SCENE: PackedScene = preload("res://scenes/objects/DungeonPortal.tscn")
-const DUNGEON_SPAWN_MIN_DIST_TILES: float = 200.0   # tiles (blocks) from world spawn
+const DUNGEON_WAYPOINT_SCRIPT: GDScript = preload("res://scripts/dungeon_waypoint.gd")
+const WORLD_WAYPOINT_TOWER_SCRIPT: GDScript = preload("res://scripts/world_waypoint_tower.gd")
+const WAYPOINT_RECALL_FX_SCRIPT: GDScript = preload("res://scripts/waypoint_recall_fx.gd")
+const WAYPOINT_RECALL_BEACON_SEC: float = 0.72
+const WAYPOINT_WHITE_FADE_IN_SEC: float = 0.30
+const WAYPOINT_WHITE_FADE_OUT_SEC: float = 0.55
+const DUNGEON_ENTRANCE_PYTHON_TEX: Texture2D = preload("res://sprites/waypoints/portal_python_stonegate_sheet.png")
+const DUNGEON_ENTRANCE_LUA_TEX: Texture2D = preload("res://sprites/waypoints/portal_lua_ancient_sheet.png")
+const DUNGEON_ENTRANCE_PYTHON_SIZE: Vector2i = Vector2i(5, 4)
+const DUNGEON_ENTRANCE_LUA_SIZE: Vector2i = Vector2i(6, 5)
+const DUNGEON_SPAWN_MIN_DIST_TILES: float = 40.0    # keep the immediate spawn area clear
+const DUNGEON_NEAR_CHUNK_RADIUS: int = 8            # prefer chunks near the player
 const DUNGEON_INVALID_TILE: Vector2i = Vector2i(1 << 20, 1 << 20)  # sentinel, outside any map bounds
+
+# World waypoint network. Towers are the approved animated Ruined Skyglass
+# sprite, placed by the same structure pass/validation as other overworld
+# landmarks, then persisted by definition so reloads cannot duplicate or move
+# them. A target density of eligible chunks spreads them across the map.
+const WORLD_WAYPOINT_SIZE: Vector2i = Vector2i(5, 7)
+const WORLD_WAYPOINT_DENSITY: float = 0.12
+const WORLD_WAYPOINT_MIN_SEPARATION: float = 34.0
+const WORLD_WAYPOINT_ATTEMPTS: int = 40
+
+var _world_waypoints: Array = []             # [{id,label,x,y}]
+var _world_waypoint_nodes: Dictionary = {}   # id -> WorldWaypointTower
+var _world_waypoint_cells: Dictionary = {}   # cell -> id
+var _world_waypoint_anchors: Array = []      # top-left anchors for spacing
+var _world_waypoint_rng: RandomNumberGenerator = null
+var _waypoint_teleporting: bool = false
+
+# Temporary one-way dungeon waypoints live near the player and target the
+# CURRENT dungeon for their language. They are deliberately separate from
+# permanent world waypoint towers.
+var _dungeon_waypoint_nodes: Dictionary = {}  # dungeon_index -> DungeonWaypoint
+var _dungeon_waypoint_cells: Dictionary = {}  # cell -> dungeon_index
 var _dungeon_entrance_tiles: Dictionary = {}  # dungeon_index -> Vector2i tile
 # Entrances may only spawn once world-gen has finished: mission_updated fires
 # for gameplay missions too (e.g. the "move" tutorial), which can land while
 # chunks/terrain/structure claims are still being built.
 var _dungeon_entrances_ready: bool = false
 var _dungeon_portal_nodes:   Dictionary = {}  # dungeon_index -> spawned DungeonPortal (so a cleared dungeon's entrance can be removed)
-var _dungeon_entrance_pool:   Array = []    # cached GeneratedStructure resources with type == "dungeon entrances"
 var _dungeon_entrance_structure_cells: Dictionary = {}  # dungeon_index -> Array[Vector2i] cells painted for the entrance
 var _dungeon_entrance_nodes:  Dictionary = {}   # dungeon_index -> Node2D root of the painted entrance sprite+collision
 var _dungeon_entrance_cells:  Dictionary = {}   # cell (Vector2i) -> true - every footprint cell of every live entrance
@@ -335,6 +395,10 @@ var MOB_SPAWN_POOL: Array = [
 	{"scene": SHEEP_SCENE, "data": preload("res://resources/mobs/sheep.tres")},
 	{"scene": WORM_SCENE, "data": preload("res://resources/mobs/worm.tres")},
 	{"scene": HEADLESS_FISH_SCENE, "data": preload("res://resources/mobs/headless_fish.tres")},
+	{"scene": MOSSBACK_NIB_SCENE, "data": preload("res://resources/mobs/mossback_nib.tres")},
+	{"scene": EMBERFOX_KIT_SCENE, "data": preload("res://resources/mobs/emberfox_kit.tres")},
+	{"scene": CINDER_OOZE_SCENE, "data": preload("res://resources/mobs/cinder_ooze.tres")},
+	{"scene": GRAVEBELL_SHAMBLER_SCENE, "data": preload("res://resources/mobs/gravebell_shambler.tres")},
 ]
 
 # The self-rescheduling ambient spawn timer; re-armed on each period flip so
@@ -412,7 +476,7 @@ var _grid_overlay:      Node2D = null
 var _cursor_highlight:  Node2D = null
 var _placed_blocks:     Dictionary = {}
 
-# Tiles blocked from placement because a tree's 3x3 footprint covers them.
+# Tiles blocked by a standing tree's actual canopy + trunk footprint.
 # Dictionary value is a reference count so overlapping tree footprints don't
 # unblock a tile just because ONE of several nearby trees was chopped down.
 var _tree_occupied_tiles: Dictionary = {}
@@ -429,7 +493,12 @@ var _water_margin2_ready: bool = false
 # so grass/foliage validation does not hit TileMapLayer for every tile.
 var _biome_grid: PackedByteArray = PackedByteArray()
 var _biome_grid_ready: bool = false
-const TREE_PLACE_BLOCK_RADIUS: int = 1  # 1 => 3x3 footprint around the tree's cell
+# The tree sprite is 96px = 3x3 tiles, with its origin at the trunk base.
+# Reserve the canopy rows above the trunk too; a trunk-centred 3x3 square left
+# the leafy half of the tree unprotected, so grass/blocks could spawn on it.
+const TREE_OCCUPY_X_RADIUS: int = 1   # 3 tiles wide
+const TREE_OCCUPY_NORTH:    int = 3   # canopy rises 3 tiles above the trunk cell
+const TREE_OCCUPY_SOUTH:    int = 1   # keep the old one-tile base clearance
 
 # ── Chunk border debug overlay (Ctrl+Shift+C) ────────────────────────
 var _chunk_border_overlay: Node2D = null
@@ -791,7 +860,7 @@ const GRASS_CUT_DIR_VECTORS: Dictionary = {
 var _crops: Dictionary = {}   # tile -> WheatCrop
 
 func _mouse_cell() -> Vector2i:
-	return editable_layer.local_to_map(editable_layer.get_local_mouse_position())
+	return editable_layer.local_to_map(editable_layer.to_local(Global.mouse_world(self)))
 
 # Hoe click: turn the grass tuft under the cursor into tilled soil.
 func till_grass_at_cursor() -> bool:
@@ -1161,8 +1230,13 @@ func _deferred_foliage() -> void:
 	# Coarse sand blocks follow the same rule (after foliage, before the save
 	# restore) but on DESERT tiles — they are the player's source of coarse sand.
 	_place_coarse_sand_patches()
-	if not Global.pending_world_data.is_empty():
-		apply_world_save_data(Global.pending_world_data)
+	var loading_existing_world := not Global.pending_world_data.is_empty()
+	var had_dungeon_waypoint_field := false
+	if loading_existing_world:
+		var pending_world: Dictionary = Global.pending_world_data
+		had_dungeon_waypoint_field = pending_world.has("dungeon_waypoints")
+		apply_world_save_data(pending_world)
+		_restore_dungeon_waypoints(pending_world.get("dungeon_waypoints", []))
 		Global.pending_world_data.clear()
 	# Keep one dungeon entrance alive for each language's current mission.
 	# Runs on world ready (including after apply_world_save_data above, which
@@ -1172,9 +1246,24 @@ func _deferred_foliage() -> void:
 	# spawn during world-gen (see the flag's declaration).
 	_dungeon_entrances_ready = true
 	_ensure_current_dungeon_entrances()
+	if loading_existing_world and not had_dungeon_waypoint_field:
+		# Pre-waypoint saves already have live current-dungeon entrances, so
+		# _ensure won't generate new ones. Seed the one-way waypoints for those
+		# current instances once; the field is present on every later save, so
+		# consumed waypoints can never be recreated.
+		for idx in Global.current_dungeon_indices():
+			var di := int(idx)
+			if _dungeon_entrance_tiles.has(di):
+				_create_dungeon_waypoint(di)
 	_start_interaction_updater()
 	_start_despawn_timer()
 	_start_ambient_spawn_timer()
+	# Decorative flyers (Sunshard Finch by day, Dusk Kite at night). They live
+	# under World, so cave/dungeon swaps pause them with the overworld.
+	var birds: Node2D = AMBIENT_BIRDS_SCRIPT.new() as Node2D
+	if birds != null:
+		birds.name = "AmbientBirds"
+		add_child(birds)
 	_start_grass_regrow_timer()
 	_start_cactus_spawn_timer()
 	# Fill EVERY grass tuft BEFORE generation_complete comes down, so the world
@@ -1757,8 +1846,9 @@ func _is_in_preserve_zone(pos: Vector2, player_pos: Vector2) -> bool:
 func _collect_preserved_mobs() -> Array:
 	var mobs_data: Array = []
 	# The world can be off-tree when this runs (saves triggered during cave/
-	# dungeon swaps remove World via remove_child) — get_tree() is null then.
-	if get_tree() == null:
+	# dungeon swaps remove World via remove_child) — checking get_tree() itself
+	# logs an engine error when data.tree is null, so test is_inside_tree().
+	if not is_inside_tree():
 		return mobs_data
 	var p := _get_player()
 	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
@@ -1773,7 +1863,8 @@ func _collect_preserved_mobs() -> Array:
 func _restore_mobs(mobs_data: Array) -> void:
 	# Same off-tree guard as _collect_preserved_mobs — restore runs while the
 	# world may still be mid swap (apply_world_save_data during cave entry).
-	if get_tree() == null:
+	# is_inside_tree() avoids the engine error that get_tree() logs off-tree.
+	if not is_inside_tree():
 		return
 	var p := _get_player()
 	var player_pos: Vector2 = p.global_position if p != null else Vector2.ZERO
@@ -1993,7 +2084,7 @@ func _update_cursor_highlight() -> void:
 		if _cursor_highlight != null:
 			_cursor_highlight.visible = false
 		return
-	var mouse_local: Vector2  = ground_layer.get_local_mouse_position()
+	var mouse_local: Vector2  = ground_layer.to_local(Global.mouse_world(self))
 	var cell:        Vector2i = ground_layer.local_to_map(mouse_local)
 	var snapped:     Vector2  = ground_layer.map_to_local(cell)
 	_cursor_highlight.global_position = ground_layer.to_global(snapped)
@@ -2055,6 +2146,8 @@ func can_place_at(cell: Vector2i) -> bool:
 		return false
 	if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
 		return false
+	if _world_waypoint_cells.has(cell) or _dungeon_waypoint_cells.has(cell):
+		return false
 	if water_layer.get_cell_source_id(cell) != -1:
 		return false
 	return true
@@ -2072,7 +2165,7 @@ func _lua_station_count() -> int:
 # node, or null when the cell is invalid or the scene can't load. Does NOT
 # touch any inventory — the CALLER decides what to consume. Shared by the
 # player's place_block() and the Lua robot so both obey identical rules.
-func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
+func place_block_at(cell: Vector2i, item_data: ItemData, count_mission: bool = true) -> Node:
 	if item_data == null or item_data.place_scene_path == "":
 		return null
 	if not can_place_at(cell):
@@ -2159,7 +2252,10 @@ func place_block_at(cell: Vector2i, item_data: ItemData) -> Node:
 	# One confirmed successful placement = one mission event. Counting the
 	# live _placed_blocks size also counted world-gen stone/charcoal, torches,
 	# and restored blocks, so the objective advanced by the wrong amount.
-	Global.record_block_placed(item_data)
+	# Tutorial camp props pass count_mission=false so onboarding setup cannot
+	# silently complete the player's real building missions.
+	if count_mission:
+		Global.record_block_placed(item_data)
 	Global.set_mission_progress("build_shelter", housing_valid_room_count())
 	CrashLogger.event("WORLD", "place %s cell=(%d, %d)" % [
 		item_data.item_name, cell.x, cell.y])
@@ -2177,7 +2273,7 @@ func _update_ghost() -> void:
 	if item_key != ghost_last_type:
 		ghost_last_type = item_key
 		_rebuild_ghost_sprite(item)
-	var mouse_local: Vector2  = editable_layer.get_local_mouse_position()
+	var mouse_local: Vector2  = editable_layer.to_local(Global.mouse_world(self))
 	var cell:        Vector2i = editable_layer.local_to_map(mouse_local)
 	var world_pos:   Vector2  = editable_layer.map_to_local(cell)
 	ghost.global_position = editable_layer.to_global(world_pos)
@@ -2218,7 +2314,7 @@ func place_block() -> void:
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		return
-	var mouse_pos := editable_layer.get_local_mouse_position()
+	var mouse_pos := editable_layer.to_local(Global.mouse_world(self))
 	var cell      := editable_layer.local_to_map(mouse_pos)
 	if not _is_cell_in_place_radius(cell):
 		return
@@ -2586,6 +2682,8 @@ func _is_open_for_player(cell: Vector2i, half_w: int, half_h: int) -> bool:
 	if structures_layer.get_cell_source_id(cell) != -1:
 		return false
 	if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
+		return false
+	if _world_waypoint_cells.has(cell) or _dungeon_waypoint_cells.has(cell):
 		return false
 	if _is_tree_occupied(cell):
 		return false
@@ -2968,14 +3066,14 @@ func _mark_tree_tile(tile: Vector2i, occupied: Dictionary) -> void:
 
 # ── Live tree occupancy (blocks placement near a standing tree) ─────
 func _mark_tree_occupied(cell: Vector2i) -> void:
-	for dx in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
-		for dy in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
+	for dx in range(-TREE_OCCUPY_X_RADIUS, TREE_OCCUPY_X_RADIUS + 1):
+		for dy in range(-TREE_OCCUPY_NORTH, TREE_OCCUPY_SOUTH + 1):
 			var t: Vector2i = cell + Vector2i(dx, dy)
 			_tree_occupied_tiles[t] = int(_tree_occupied_tiles.get(t, 0)) + 1
 
 func _unmark_tree_occupied(cell: Vector2i) -> void:
-	for dx in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
-		for dy in range(-TREE_PLACE_BLOCK_RADIUS, TREE_PLACE_BLOCK_RADIUS + 1):
+	for dx in range(-TREE_OCCUPY_X_RADIUS, TREE_OCCUPY_X_RADIUS + 1):
+		for dy in range(-TREE_OCCUPY_NORTH, TREE_OCCUPY_SOUTH + 1):
 			var t: Vector2i = cell + Vector2i(dx, dy)
 			if not _tree_occupied_tiles.has(t):
 				continue
@@ -2988,6 +3086,17 @@ func _unmark_tree_occupied(cell: Vector2i) -> void:
 func _is_tree_occupied(cell: Vector2i) -> bool:
 	return _tree_occupied_tiles.has(cell)
 
+# Dense forests intentionally have overlapping crowns. Scattered trees and
+# their 0-3 companions should not: a southern companion's canopy otherwise
+# erases the northern tree's trunk. Reject a scatter candidate if its own crown
+# would touch anything already occupied by a standing tree.
+func _scatter_canopy_blocked(tile: Vector2i) -> bool:
+	for dx in range(-TREE_OCCUPY_X_RADIUS, TREE_OCCUPY_X_RADIUS + 1):
+		for dy in range(-TREE_OCCUPY_NORTH, 1):
+			if _tree_occupied_tiles.has(tile + Vector2i(dx, dy)):
+				return true
+	return false
+
 # True when a foliage tree must NOT spawn on this tile: it already holds a
 # placed block (incl. the world-gen stone/charcoal patches), an editable or
 # structure tile, grass, an entrance, or another tree. Every foliage pass uses
@@ -2995,6 +3104,11 @@ func _is_tree_occupied(cell: Vector2i) -> bool:
 # regenerated world could drop a tree onto a saved player block.
 func _foliage_tile_blocked(tile: Vector2i) -> bool:
 	if _placed_blocks.has(tile):
+		return true
+	# Saved player blocks are applied after foliage, so their pending cells
+	# must veto trees explicitly or a regenerated world can grow one through a
+	# player's build.
+	if _decor_pending_player_cells.has(tile):
 		return true
 	if _is_tree_occupied(tile):
 		return true
@@ -3024,6 +3138,8 @@ func _is_valid_grass_tile(tile: Vector2i) -> bool:
 	if _is_tree_occupied(tile):
 		return false
 	if _placed_blocks.has(tile):
+		return false
+	if _world_waypoint_cells.has(tile) or _dungeon_waypoint_cells.has(tile):
 		return false
 	if editable_layer.get_cell_source_id(tile) != -1:
 		return false
@@ -3608,6 +3724,8 @@ func _place_foliage() -> void:
 			continue
 		if _foliage_tile_blocked(tile_coord):
 			continue
+		if _scatter_canopy_blocked(tile_coord):
+			continue
 		if tile_coord.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
 			continue
 		if _has_water_nearby(tile_coord, 3):
@@ -3864,8 +3982,8 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	tree.z_index = int(tree.global_position.y / TILE_SIZE)
 
 	# Block placement can't see trees (they're not on editable_layer or in
-	# _placed_blocks), so track a 3x3 footprint here to stop blocks being
-	# placed on top of / right next to a live tree.
+	# _placed_blocks), so track the canopy + trunk footprint here. This also
+	# keeps grass and world-gen patches off the leaves.
 	var tree_cell: Vector2i = editable_layer.local_to_map(editable_layer.to_local(world_pos))
 	_mark_tree_occupied(tree_cell)
 	tree.set_meta("spawn_cell", tree_cell)
@@ -3885,6 +4003,8 @@ func _spawn_scattered_group(origin: Vector2i, tree_type_val: int, extra: int, oc
 		if tile == origin or occupied_tiles.has(tile):
 			continue
 		if _foliage_tile_blocked(tile):
+			continue
+		if _scatter_canopy_blocked(tile):
 			continue
 		if tile.distance_to(Vector2i.ZERO) <= SPAWN_CLEAR_TILES:
 			continue
@@ -4264,8 +4384,7 @@ func _spawn_pixie_cave_entrance_at(tile: Vector2i) -> void:
 # ── Cave entrance structures ─────────────────────────────────────────
 # The overworld cave entrances are painted as per-cell Sprite2D nodes instead
 # of the Structures TileMapLayer — the layer is ONE canvas item pinned at
-# World's origin (y=0), so it can never y-sort against the player (same
-# reason the dungeon entrance uses _spawn_dungeon_entrance_nodes). Each cell
+# World's origin (y=0), so it can never y-sort against the player. Each cell
 # sprite anchors at its own tile center and gets the same quantized
 # z_index = int(y / TILE_SIZE) the player uses, so each row sorts correctly
 # (player walks behind the rock above, in front of the rock below).
@@ -4632,6 +4751,8 @@ static func _opaque_bbox_in_image(data: PackedByteArray, tex_w: int, region: Rec
 func _spawn_overworld_structures() -> void:
 	var structures: Array = _load_overworld_structures()
 	if structures.is_empty():
+		_spawn_decorative_structures()
+		_spawn_world_waypoints()
 		return
 	_prepare_structure_tileset(structures)
 	var half_w: int = width  / 2
@@ -4658,6 +4779,8 @@ func _spawn_overworld_structures() -> void:
 				spawned += 1
 				break
 	print("[STRUCTURES] placed %d overworld structures" % spawned)
+	_spawn_decorative_structures()
+	_spawn_world_waypoints()
 
 # Load every GeneratedStructure .tres in STRUCTURES_DIR flagged to spawn in
 # the overworld. Adding a new .tres to that folder is all it takes to put a
@@ -4670,20 +4793,9 @@ func _load_overworld_structures() -> Array:
 	var out: Array = []
 	for res in _scan_structure_dir():
 		var s := res as GeneratedStructure
-		if s.spawn_world == "overworld" and not _is_entrance_structure_type(s.type) \
+		if s.spawn_world == "overworld" and s.decor_kind == "sprite" \
+				and not _is_entrance_structure_type(s.type) \
 				and s.type != "dungeon entrances":
-			out.append(s)
-	return out
-
-# Every GeneratedStructure with type == "dungeon entrances" (and spawn_world
-# == "overworld") — the visual entrance used by EVERY dungeon mission. One
-# per mission is picked round-robin from this pool by dungeon_index, so
-# adding more .tres of this type gives later dungeons their own look.
-func _load_dungeon_entrance_structures() -> Array:
-	var out: Array = []
-	for res in _scan_structure_dir():
-		var s := res as GeneratedStructure
-		if s.spawn_world == "overworld" and s.type == "dungeon entrances":
 			out.append(s)
 	return out
 
@@ -4789,6 +4901,634 @@ func _spawn_structure(s: GeneratedStructure, anchor: Vector2i) -> void:
 	_structure_anchor_tiles.append(anchor)
 	_located_structures.append({"name": s.name, "tile": anchor})
 
+# --- Decorative block houses and pillars -----------------------------
+# These are generated after the existing sprite structures, inside the same
+# overworld structure pass, so cave/structure priority and chunk claims remain
+# authoritative. A separate RNG intentionally keeps the old shared world-gen
+# sequence untouched. Definitions and removed cells are persisted in the world
+# save; the individual block nodes are derived from the definitions.
+func _spawn_decorative_structures() -> void:
+	generation_status_changed.emit("Placing houses and pillars...")
+	var started_ms := Time.get_ticks_msec()
+	_decor_templates = _load_decorative_templates()
+	_decor_pending_player_cells = _pending_player_block_cells()
+	_decor_pending_reserved_cells = _pending_structure_reserved_cells()
+	_decor_removed.clear()
+	var pending: Dictionary = Global.pending_world_data
+	var initialized: bool = bool(pending.get("decor_initialized", false)) \
+		and pending.get("decor_structures", null) is Array
+	if initialized:
+		_decor_removed = _pending_decor_removed(pending)
+		var definitions: Array = pending.get("decor_structures", []) as Array
+		for def_value in definitions:
+			if def_value is Dictionary:
+				_restore_decor_structure(def_value as Dictionary)
+		print("[DECOR] restored %d houses/pillars in %dms" % [
+			_decor_structures.size(), Time.get_ticks_msec() - started_ms])
+		return
+	if _decor_templates.is_empty():
+		return
+	_decor_rng = RandomNumberGenerator.new()
+	_decor_rng.seed = int(random_seed) ^ 0x5EED1E55
+	_generate_decorative_structures(started_ms)
+
+
+func _load_decorative_templates() -> Array:
+	var out: Array = []
+	for res in _scan_structure_dir():
+		var s := res as GeneratedStructure
+		if s.spawn_world == "overworld" and s.type == "structures" \
+				and s.decor_kind != "sprite" and s.is_valid():
+			out.append(s)
+	return out
+
+
+func _generate_decorative_structures(started_ms: int) -> void:
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	var spawned: int = 0
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if _structure_claimed_chunks.has(chunk) or _cave_claimed_chunks.has(chunk):
+				continue
+			if not _is_chunk_valid_for_structure(chunk):
+				continue
+			if _decor_rng.randf() >= DECOR_STRUCTURE_CHANCE:
+				continue
+			var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w, chunk.y * CHUNK_SIZE - half_h)
+			for _attempt in range(DECOR_STRUCTURE_ATTEMPTS):
+				var anchor: Vector2i = tl + Vector2i(
+					_decor_rng.randi_range(0, CHUNK_SIZE - 1),
+					_decor_rng.randi_range(0, CHUNK_SIZE - 1))
+				var biome_code: int = _cell_biome_type(anchor)
+				if biome_code < 0:
+					continue
+				var template: GeneratedStructure = _pick_decor_template(biome_code)
+				if template == null:
+					continue
+				var layout_seed: int = _decor_rng.randi()
+				var layout: Dictionary = template.build_layout(layout_seed)
+				if layout.is_empty():
+					continue
+				var size: Vector2i = layout.get("size", Vector2i.ZERO) as Vector2i
+				if size.x <= 0 or size.y <= 0:
+					continue
+				if not _decor_footprint_valid(anchor, size, biome_code, false):
+					continue
+				var path := str(template.resource_path)
+				if path.is_empty():
+					continue
+				var index: int = _decor_structures.size()
+				if not _spawn_decor_layout(layout.get("cells", {}) as Dictionary,
+						anchor, index, false):
+					continue
+				_decor_structures.append({
+					"template_path": path,
+					"anchor_x": anchor.x,
+					"anchor_y": anchor.y,
+					"seed": layout_seed,
+					"biome": _biome_key(biome_code),
+					"layout_version": DECOR_LAYOUT_VERSION,
+				})
+				_claim_decor_chunks(anchor, size)
+				_structure_anchor_tiles.append(anchor)
+				_located_structures.append({"name": template.name, "tile": anchor})
+				spawned += 1
+				break
+	print("[DECOR] generated %d houses/pillars in %dms" % [
+		spawned, Time.get_ticks_msec() - started_ms])
+
+
+func _restore_decor_structure(def: Dictionary) -> void:
+	if int(def.get("layout_version", 0)) != DECOR_LAYOUT_VERSION:
+		return
+	var path := str(def.get("template_path", ""))
+	if path.is_empty():
+		return
+	var template := load(path) as GeneratedStructure
+	if template == null or not template.is_valid() or template.decor_kind == "sprite":
+		return
+	var anchor := Vector2i(int(def.get("anchor_x", 0)), int(def.get("anchor_y", 0)))
+	var biome_code := _decor_biome_code(str(def.get("biome", "")))
+	if biome_code < 0:
+		return
+	var layout: Dictionary = template.build_layout(int(def.get("seed", 0)))
+	if layout.is_empty():
+		return
+	var size: Vector2i = layout.get("size", Vector2i.ZERO) as Vector2i
+	if size.x <= 0 or size.y <= 0:
+		return
+	if not _decor_footprint_valid(anchor, size, biome_code, true):
+		return
+	var index: int = _decor_structures.size()
+	if not _spawn_decor_layout(layout.get("cells", {}) as Dictionary,
+			anchor, index, true):
+		return
+	_decor_structures.append(def.duplicate(true))
+	_claim_decor_chunks(anchor, size)
+	_structure_anchor_tiles.append(anchor)
+	_located_structures.append({"name": template.name, "tile": anchor})
+
+
+func _pending_player_block_cells() -> Dictionary:
+	var out: Dictionary = {}
+	var pending: Variant = Global.pending_world_data.get("placed_blocks", [])
+	if pending is Array:
+		for value in (pending as Array):
+			if value is Dictionary:
+				var bd: Dictionary = value as Dictionary
+				if bd.has("cell_x") and bd.has("cell_y"):
+					out[Vector2i(int(bd["cell_x"]), int(bd["cell_y"]))] = true
+	return out
+
+
+# Existing-world features restored later by apply_world_save_data() must veto
+# new decorative footprints. In particular: cleared trees, preserved mobs, the
+# saved dungeon entrance tile, and the saved player position. Small radii keep
+# a new house from boxing a returning player/mob in or crowding the entrance.
+func _pending_structure_reserved_cells() -> Dictionary:
+	var out: Dictionary = {}
+	_reserve_saved_world_positions(out, "removed_trees", 0)
+	_reserve_saved_world_positions(out, "mobs", DECOR_PROTECT_MOB_RADIUS)
+	_reserve_saved_tiles(out, "dungeon_entrances", DECOR_PROTECT_DUNGEON_RADIUS)
+	if Global.has_pending_pos:
+		_reserve_world_position(out, Global.pending_player_pos,
+			DECOR_PROTECT_PLAYER_RADIUS)
+	return out
+
+
+func _reserve_saved_world_positions(out: Dictionary, key: String, radius: int) -> void:
+	var rows: Variant = Global.pending_world_data.get(key, [])
+	if not rows is Array:
+		return
+	for value in (rows as Array):
+		if value is Dictionary:
+			var row: Dictionary = value as Dictionary
+			if row.has("x") and row.has("y"):
+				_reserve_world_position(out,
+					Vector2(float(row["x"]), float(row["y"])), radius)
+
+
+func _reserve_saved_tiles(out: Dictionary, key: String, radius: int) -> void:
+	var rows: Variant = Global.pending_world_data.get(key, [])
+	if not rows is Array:
+		return
+	for value in (rows as Array):
+		if value is Dictionary:
+			var row: Dictionary = value as Dictionary
+			if row.has("x") and row.has("y"):
+				_reserve_tile(out, Vector2i(int(row["x"]), int(row["y"])), radius)
+
+
+func _reserve_world_position(out: Dictionary, world_pos: Vector2, radius: int) -> void:
+	var local_pos: Vector2 = editable_layer.to_local(world_pos)
+	_reserve_tile(out, editable_layer.local_to_map(local_pos), radius)
+
+
+func _reserve_tile(out: Dictionary, center: Vector2i, radius: int) -> void:
+	for dx in range(-radius, radius + 1):
+		for dy in range(-radius, radius + 1):
+			out[center + Vector2i(dx, dy)] = true
+
+
+func _pending_decor_removed(pending: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	var rows: Variant = pending.get("decor_removed", [])
+	if rows is Array:
+		for value in (rows as Array):
+			if value is Dictionary:
+				var row: Dictionary = value as Dictionary
+				if row.has("x") and row.has("y"):
+					out[Vector2i(int(row["x"]), int(row["y"]))] = true
+			elif value is Array and (value as Array).size() >= 2:
+				out[Vector2i(int((value as Array)[0]), int((value as Array)[1]))] = true
+	return out
+
+
+func _pick_decor_template(biome_code: int) -> GeneratedStructure:
+	var key := _biome_key(biome_code)
+	var matching: Array = []
+	var total: float = 0.0
+	for template_value in _decor_templates:
+		var template := template_value as GeneratedStructure
+		if template == null:
+			continue
+		if template.biome != "any" and template.biome != key:
+			continue
+		var weight := maxf(0.05, template.decor_weight)
+		matching.append(template)
+		total += weight
+	if matching.is_empty():
+		return null
+	var roll := _decor_rng.randf() * total
+	for template_value in matching:
+		var template := template_value as GeneratedStructure
+		roll -= maxf(0.05, template.decor_weight)
+		if roll <= 0.0:
+			return template
+	return matching[matching.size() - 1] as GeneratedStructure
+
+
+func _biome_key(code: int) -> String:
+	match code:
+		0: return "plain"
+		1: return "desert"
+		2: return "snowy"
+	return ""
+
+
+func _decor_biome_code(key: String) -> int:
+	match key:
+		"plain": return 0
+		"desert": return 1
+		"snowy": return 2
+	return -1
+
+
+func _decor_footprint_valid(anchor: Vector2i, size: Vector2i, biome_code: int,
+		allow_player_cells: bool) -> bool:
+	if size.x <= 0 or size.y <= 0:
+		return false
+	if Vector2(anchor).distance_to(Vector2.ZERO) < DECOR_STRUCTURE_MIN_SPAWN_DIST:
+		return false
+	for placed in _structure_anchor_tiles:
+		if anchor.distance_to(placed as Vector2i) < DECOR_STRUCTURE_MIN_SEPARATION:
+			return false
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	# The candidate chunk was already ocean-gated by the generation loop. Here
+	# the full footprint + one-tile ring provide the local water/shore check.
+	for x in range(size.x):
+		for y in range(size.y):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			if absi(cell.x) >= half_w or absi(cell.y) >= half_h:
+				return false
+			if _cell_biome_type(cell) != biome_code:
+				return false
+			# Player-poured water is not reflected in the cached biome grid.
+			if not allow_player_cells and cell_is_water(cell):
+				return false
+			if _is_chunk_cave_claimed(cell) or _is_chunk_structure_claimed(cell):
+				return false
+			if _is_tree_occupied(cell) or _grass_occupied_tiles.has(cell):
+				return false
+			if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
+				return false
+			if _world_waypoint_cells.has(cell) or _dungeon_waypoint_cells.has(cell):
+				return false
+			if structures_layer.get_cell_source_id(cell) != -1:
+				return false
+			if not allow_player_cells and _decor_pending_reserved_cells.has(cell):
+				return false
+			if _decor_pending_player_cells.has(cell):
+				if not allow_player_cells:
+					return false
+				continue
+			if _placed_blocks.has(cell):
+				return false
+	# Keep a one-tile water/void margin around the full footprint.
+	for x in range(-1, size.x + 1):
+		for y in range(-1, size.y + 1):
+			if x >= 0 and y >= 0 and x < size.x and y < size.y:
+				continue
+			var fringe: Vector2i = anchor + Vector2i(x, y)
+			if absi(fringe.x) >= half_w or absi(fringe.y) >= half_h:
+				return false
+			if _cell_biome_type(fringe) == -1:
+				return false
+			if not allow_player_cells and cell_is_water(fringe):
+				return false
+	return true
+
+
+func _spawn_decor_layout(cells: Dictionary, anchor: Vector2i, index: int,
+		restore: bool) -> bool:
+	var plan: Array = []
+	for cell_value in cells.keys():
+		if not (cell_value is Vector2i):
+			continue
+		var target: Vector2i = anchor + (cell_value as Vector2i)
+		if restore and (_decor_removed.has(target) \
+				or _decor_pending_player_cells.has(target) \
+				or cell_is_water(target)):
+			continue
+		var idata := _decor_item_data(str(cells[cell_value]))
+		if idata == null:
+			return false
+		plan.append({"cell": target, "item": idata})
+	var spawned: Array = []
+	for entry in plan:
+		var target: Vector2i = (entry as Dictionary)["cell"] as Vector2i
+		var idata: ItemData = (entry as Dictionary)["item"] as ItemData
+		if not _spawn_decor_block(target, idata, index):
+			for spawned_cell in spawned:
+				var old_entry: Variant = _placed_blocks.get(spawned_cell)
+				if old_entry is Dictionary:
+					var old_node: Variant = (old_entry as Dictionary).get("node")
+					if is_instance_valid(old_node):
+						(old_node as Node).queue_free()
+				_placed_blocks.erase(spawned_cell)
+			return false
+		spawned.append(target)
+	return true
+
+
+func _decor_item_data(path: String) -> ItemData:
+	if path.is_empty():
+		return null
+	if _decor_item_cache.has(path):
+		return _decor_item_cache[path] as ItemData
+	if not ResourceLoader.exists(path):
+		_decor_item_cache[path] = null
+		return null
+	var data := load(path) as ItemData
+	if data == null or not data.is_placeable or data.place_scene_path.is_empty():
+		_decor_item_cache[path] = null
+		return null
+	_decor_item_cache[path] = data
+	return data
+
+
+func _spawn_decor_block(cell: Vector2i, idata: ItemData, index: int) -> bool:
+	if idata == null or not ResourceLoader.exists(idata.place_scene_path):
+		return false
+	var scene := load(idata.place_scene_path) as PackedScene
+	if scene == null:
+		return false
+	var obj := scene.instantiate()
+	if obj == null:
+		return false
+	if obj.has_method("setup"):
+		obj.call("setup", idata)
+	_placed_blocks[cell] = {
+		"node": obj,
+		"name": idata.item_name,
+		"decor_generated": true,
+		"decor_index": index,
+	}
+	if obj.has_method("set_world_cell"):
+		obj.call("set_world_cell", cell, self)
+	add_child(obj)
+	if not is_instance_valid(obj):
+		_placed_blocks.erase(cell)
+		return false
+	obj.position = editable_layer.map_to_local(cell)
+	obj.z_index = FLOOR_Z if idata.is_floor else int(obj.position.y / TILE_SIZE)
+	_fix_sprite_offset(obj)
+	_refresh_neighbor_u_collision(cell)
+	return true
+
+
+func _claim_decor_chunks(anchor: Vector2i, size: Vector2i) -> void:
+	_claim_structure_rect(anchor, size)
+
+
+func _claim_structure_rect(anchor: Vector2i, size: Vector2i) -> void:
+	var tl_chunk: Vector2i = _tile_to_chunk(anchor)
+	var br_chunk: Vector2i = _tile_to_chunk(anchor + size - Vector2i.ONE)
+	for cx in range(tl_chunk.x, br_chunk.x + 1):
+		for cy in range(tl_chunk.y, br_chunk.y + 1):
+			_structure_claimed_chunks[Vector2i(cx, cy)] = true
+
+
+func _decor_save_removed() -> Array:
+	var removed: Dictionary = {}
+	for index in range(_decor_structures.size()):
+		var def: Dictionary = _decor_structures[index] as Dictionary
+		var path := str(def.get("template_path", ""))
+		if path.is_empty() or not ResourceLoader.exists(path):
+			continue
+		var template := load(path) as GeneratedStructure
+		if template == null or not template.is_valid():
+			continue
+		var layout: Dictionary = template.build_layout(int(def.get("seed", 0)))
+		if layout.is_empty():
+			continue
+		var cells: Dictionary = layout.get("cells", {}) as Dictionary
+		var anchor := Vector2i(int(def.get("anchor_x", 0)), int(def.get("anchor_y", 0)))
+		for cell_value in cells.keys():
+			if not (cell_value is Vector2i):
+				continue
+			var target: Vector2i = anchor + (cell_value as Vector2i)
+			var entry: Variant = _placed_blocks.get(target)
+			var present: bool = entry is Dictionary \
+				and bool((entry as Dictionary).get("decor_generated", false)) \
+				and int((entry as Dictionary).get("decor_index", -1)) == index
+			if not present:
+				removed[target] = true
+	var out: Array = []
+	for cell_value in removed.keys():
+		var cell := cell_value as Vector2i
+		out.append({"x": cell.x, "y": cell.y})
+	return out
+
+
+# --- Persistent world waypoint towers ---------------------------------
+# The tower is a dedicated animated node (not a block), but it participates in
+# the same worldgen priority/validation as other landmarks: chunks are claimed,
+# the full 5x7 footprint + one-tile ring must be clear, and the positions are
+# persisted as compact definitions so reloads cannot duplicate or move them.
+func _spawn_world_waypoints() -> void:
+	# The title-screen preview is a SubViewport snapshot, not a playable world;
+	# keep its established look and skip gameplay waypoint towers.
+	if get_viewport() is SubViewport:
+		return
+	var started_ms := Time.get_ticks_msec()
+	var pending: Dictionary = Global.pending_world_data
+	var initialized: bool = bool(pending.get("world_waypoints_initialized", false)) \
+		and pending.get("world_waypoints", null) is Array
+	if initialized:
+		for def_value in (pending.get("world_waypoints", []) as Array):
+			if def_value is Dictionary:
+				_restore_world_waypoint(def_value as Dictionary)
+		print("[WAYPOINTS] restored %d world towers in %dms" % [
+			_world_waypoints.size(), Time.get_ticks_msec() - started_ms])
+		return
+	_generate_world_waypoints(started_ms)
+
+
+func _generate_world_waypoints(started_ms: int) -> void:
+	_world_waypoint_rng = RandomNumberGenerator.new()
+	_world_waypoint_rng.seed = int(random_seed) ^ 0x57A7C0DE
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	var eligible: Array[Vector2i] = []
+	for cx in range(_chunk_cols):
+		for cy in range(_chunk_rows):
+			var chunk := Vector2i(cx, cy)
+			if _structure_claimed_chunks.has(chunk) or _cave_claimed_chunks.has(chunk):
+				continue
+			if not _is_chunk_valid_for_structure(chunk):
+				continue
+			eligible.append(chunk)
+	# Shuffle every eligible chunk, then place toward a target density. Using a
+	# target count (instead of an independent chance roll) keeps the network
+	# reliably discoverable on every seed while still spreading it over the map.
+	for i in range(eligible.size() - 1, 0, -1):
+		var j: int = _world_waypoint_rng.randi_range(0, i)
+		var tmp: Vector2i = eligible[i]
+		eligible[i] = eligible[j]
+		eligible[j] = tmp
+	var target: int = clampi(roundi(float(eligible.size()) * WORLD_WAYPOINT_DENSITY), 12, 28)
+	var spawned := 0
+	for chunk in eligible:
+		if spawned >= target:
+			break
+		if _structure_claimed_chunks.has(chunk) or _cave_claimed_chunks.has(chunk):
+			continue
+		var tl := Vector2i(chunk.x * CHUNK_SIZE - half_w,
+			chunk.y * CHUNK_SIZE - half_h)
+		for _attempt in range(WORLD_WAYPOINT_ATTEMPTS):
+			var anchor: Vector2i = tl + Vector2i(
+				_world_waypoint_rng.randi_range(0, CHUNK_SIZE - 1),
+				_world_waypoint_rng.randi_range(0, CHUNK_SIZE - 1))
+			var biome_code := _cell_biome_type(anchor)
+			if biome_code < 0:
+				continue
+			if not _world_waypoint_spacing_ok(anchor):
+				continue
+			if not _decor_footprint_valid(anchor, WORLD_WAYPOINT_SIZE, biome_code, false):
+				continue
+			var label := "Skyglass Waypoint %02d" % (_world_waypoints.size() + 1)
+			var id := "ww_%d_%d" % [anchor.x, anchor.y]
+			var def := {
+				"id": id,
+				"label": label,
+				"x": anchor.x,
+				"y": anchor.y,
+			}
+			if not _spawn_world_waypoint_node(def):
+				continue
+			_claim_structure_rect(anchor, WORLD_WAYPOINT_SIZE)
+			_structure_anchor_tiles.append(anchor)
+			_located_structures.append({"name": label,
+				"tile": anchor + Vector2i(WORLD_WAYPOINT_SIZE.x / 2,
+					WORLD_WAYPOINT_SIZE.y - 1)})
+			spawned += 1
+			break
+	print("[WAYPOINTS] generated %d/%d world towers from %d eligible chunks in %dms" % [
+		spawned, target, eligible.size(), Time.get_ticks_msec() - started_ms])
+
+
+func _restore_world_waypoint(def: Dictionary) -> void:
+	var id := str(def.get("id", "")).strip_edges()
+	if id.is_empty() or _world_waypoint_nodes.has(id):
+		return
+	var anchor := Vector2i(int(def.get("x", 0)), int(def.get("y", 0)))
+	var label := str(def.get("label", "Skyglass Waypoint"))
+	if not _world_waypoint_anchor_clear(anchor):
+		return
+	var clean_def := {"id": id, "label": label,
+		"x": anchor.x, "y": anchor.y}
+	if not _spawn_world_waypoint_node(clean_def):
+		return
+	_claim_structure_rect(anchor, WORLD_WAYPOINT_SIZE)
+	_structure_anchor_tiles.append(anchor)
+	_located_structures.append({"name": label,
+		"tile": anchor + Vector2i(WORLD_WAYPOINT_SIZE.x / 2,
+			WORLD_WAYPOINT_SIZE.y - 1)})
+
+
+func _spawn_world_waypoint_node(def: Dictionary) -> bool:
+	var id := str(def.get("id", ""))
+	if id.is_empty():
+		return false
+	var anchor := Vector2i(int(def.get("x", 0)), int(def.get("y", 0)))
+	var tower := WORLD_WAYPOINT_TOWER_SCRIPT.new() as Node2D
+	if tower == null:
+		return false
+	tower.call("setup", id, str(def.get("label", "Skyglass Waypoint")), anchor)
+	add_child(tower)
+	var foot := anchor + Vector2i(WORLD_WAYPOINT_SIZE.x / 2,
+		WORLD_WAYPOINT_SIZE.y - 1)
+	tower.global_position = ground_layer.to_global(
+		ground_layer.map_to_local(foot)) + Vector2(0.0, TILE_SIZE * 0.5)
+	tower.z_index = int(tower.global_position.y / TILE_SIZE)
+	_world_waypoint_nodes[id] = tower
+	_world_waypoint_anchors.append(anchor)
+	for x in range(WORLD_WAYPOINT_SIZE.x):
+		for y in range(WORLD_WAYPOINT_SIZE.y):
+			_world_waypoint_cells[anchor + Vector2i(x, y)] = id
+	_world_waypoints.append(def.duplicate(true))
+	return true
+
+
+func _world_waypoint_spacing_ok(anchor: Vector2i) -> bool:
+	for other in _world_waypoint_anchors:
+		if anchor.distance_to(other as Vector2i) < WORLD_WAYPOINT_MIN_SEPARATION:
+			return false
+	return true
+
+
+func _world_waypoint_anchor_clear(anchor: Vector2i) -> bool:
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	for x in range(WORLD_WAYPOINT_SIZE.x):
+		for y in range(WORLD_WAYPOINT_SIZE.y):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			if absi(cell.x) >= half_w or absi(cell.y) >= half_h:
+				return false
+			if _cell_biome_type(cell) == -1:
+				return false
+			if water_layer.get_cell_source_id(cell) != -1:
+				return false
+			if _is_chunk_cave_claimed(cell) or _is_chunk_structure_claimed(cell):
+				return false
+			if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
+				return false
+			if structures_layer.get_cell_source_id(cell) != -1:
+				return false
+			if _placed_blocks.has(cell) or _decor_pending_player_cells.has(cell):
+				return false
+			if _world_waypoint_cells.has(cell) or _dungeon_waypoint_cells.has(cell):
+				return false
+	for x in range(-1, WORLD_WAYPOINT_SIZE.x + 1):
+		for y in range(-1, WORLD_WAYPOINT_SIZE.y + 1):
+			if x >= 0 and y >= 0 and x < WORLD_WAYPOINT_SIZE.x \
+					and y < WORLD_WAYPOINT_SIZE.y:
+				continue
+			var fringe: Vector2i = anchor + Vector2i(x, y)
+			if absi(fringe.x) >= half_w or absi(fringe.y) >= half_h:
+				return false
+			if _cell_biome_type(fringe) == -1:
+				return false
+			if water_layer.get_cell_source_id(fringe) != -1:
+				return false
+	return true
+
+
+func _world_waypoint_save_data() -> Array:
+	return _world_waypoints.duplicate(true)
+
+
+func build_waypoint_map_image(pixel_size: int = 256) -> ImageTexture:
+	var img := Image.create_empty(pixel_size, pixel_size, false, Image.FORMAT_RGBA8)
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	for py in range(pixel_size):
+		for px in range(pixel_size):
+			var tx: int = int((float(px) + 0.5) / float(pixel_size) * width) - half_w
+			var ty: int = int((float(py) + 0.5) / float(pixel_size) * height) - half_h
+			var code := _cell_biome_type(Vector2i(tx, ty))
+			var col: Color
+			match code:
+				0: col = Color(0.35, 0.56, 0.16, 1.0)
+				1: col = Color(0.76, 0.59, 0.31, 1.0)
+				2: col = Color(0.76, 0.82, 0.84, 1.0)
+				_: col = Color(0.10, 0.24, 0.36, 1.0)
+			if code != -1 and ((tx * 17 + ty * 31 + int(random_seed)) % 29 == 0):
+				col = col.lightened(0.06)
+			img.set_pixel(px, py, col)
+	return ImageTexture.create_from_image(img)
+
+
+func waypoint_world_rect() -> Rect2:
+	var half := Vector2i(width, height) / 2
+	return Rect2(Vector2(-half.x, -half.y) * TILE_SIZE,
+		Vector2(width, height) * TILE_SIZE)
+
+
 # Names of every structure resource in STRUCTURES_DIR (the /locate autocomplete
 # source) — ALL types, including cave/pixie/dungeon entrances.
 func get_available_structure_names() -> Array:
@@ -4850,6 +5590,8 @@ func _structure_footprint_valid(s: GeneratedStructure, anchor: Vector2i, skip_ce
 			# a player-placed block always vetoes.
 			if _placed_blocks.has(cell) and not (allow_natural and _is_natural_block(cell)):
 				return false
+			if _world_waypoint_cells.has(cell) or _dungeon_waypoint_cells.has(cell):
+				return false
 			if structures_layer.get_cell_source_id(cell) != -1:
 				return false
 	return true
@@ -4870,96 +5612,15 @@ func _paint_structure(s: GeneratedStructure, anchor: Vector2i, skip_cell: Vector
 
 # Claim every chunk a structure touches so no other pass spawns under it.
 func _claim_structure_chunks(s: GeneratedStructure, anchor: Vector2i) -> void:
-	var tl_chunk: Vector2i = _tile_to_chunk(anchor)
-	var br_chunk: Vector2i = _tile_to_chunk(anchor + Vector2i(s.tile_width - 1, s.tile_height - 1))
-	for cx in range(tl_chunk.x, br_chunk.x + 1):
-		for cy in range(tl_chunk.y, br_chunk.y + 1):
-			_structure_claimed_chunks[Vector2i(cx, cy)] = true
+	_claim_structure_rect(anchor, Vector2i(s.tile_width, s.tile_height))
 
 # ── Dungeon entrance structures ───────────────────────────────────────
-# Paints a dungeon entrance as per-cell Sprite2D nodes instead of the
-# Structures TileMapLayer. The layer is ONE canvas item pinned at World's
-# origin (y=0), so it can never y-sort against the player — the whole
-# sprite stayed stuck behind the player no matter which side they approach
-# from. Individual cell sprites anchor at their own tile center and get the
-# same quantized z_index = int(y / TILE_SIZE) that trees/grass/placed
-# blocks/player all use, so each cell sorts correctly against the player
-# (player walks behind the upper wall when north of it, in front of the
-# bottom wall when south of it). Every cell also gets a full-tile
-# StaticBody2D so the entrance is solid — previously the sprite had no
-# collision the player could actually hit.
-#
-# Returns the painted world cells (anchor + local cell offset).
-func _spawn_dungeon_entrance_nodes(s: GeneratedStructure, anchor: Vector2i, dungeon_index: int) -> Array:
-	var root := Node2D.new()
-	root.name = "DungeonEntrance%d" % dungeon_index
-	add_child(root)
-	# Track the root so remove_dungeon_entrance() can hand it to the portal's
-	# dissolve animation and then free it — without this the painted structure
-	# was never stored anywhere and lingered on the map forever after a clear.
-	_dungeon_entrance_nodes[dungeon_index] = root
-
-	# The structure sprite is an AtlasTexture region into a shared sheet; the
-	# per-cell AtlasTextures must unwrap it to the BASE texture + the region
-	# origin so each cell's region lands on the right pixels (see
-	# cave_world.gd's _add_icon_source for the same unwrap pattern).
-	var base_tex: Texture2D     = s.sprite
-	var base_origin: Vector2i   = Vector2i.ZERO
-	var sprite_atlas := s.sprite as AtlasTexture
-	if sprite_atlas != null:
-		base_tex    = sprite_atlas.atlas
-		base_origin = Vector2i(sprite_atlas.region.position.round())
-
-	var painted: Array = []
-	for x in range(s.tile_width):
-		for y in range(s.tile_height):
-			var cell: Vector2i = anchor + Vector2i(x, y)
-			var cell_tex := AtlasTexture.new()
-			cell_tex.atlas  = base_tex
-			cell_tex.region = Rect2(base_origin + Vector2i(x * TILE_SIZE, y * TILE_SIZE), Vector2(TILE_SIZE, TILE_SIZE))
-
-			var sprite := Sprite2D.new()
-			sprite.texture = cell_tex
-			root.add_child(sprite)
-			sprite.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
-			sprite.z_index         = int(sprite.global_position.y / TILE_SIZE)
-
-			# Door cells (the walkable opening — the portal's middle tile)
-			# get NO collision so the player can step into the entrance.
-			if not s.is_door_cell(x, y):
-				var body := StaticBody2D.new()
-				body.collision_layer = 1
-				body.collision_mask  = 1
-				var shape := CollisionShape2D.new()
-				var rect := RectangleShape2D.new()
-				rect.size = Vector2(TILE_SIZE, TILE_SIZE)
-				shape.shape = rect
-				body.add_child(shape)
-				root.add_child(body)
-				body.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
-
-			painted.append(cell)
-	return painted
-
-# Every dungeon mission's entrance uses a GeneratedStructure of type
-# "dungeon entrances" (see _load_dungeon_entrance_structures): the structure
-# is painted around the portal tile, one per dungeon picked round-robin by
-# dungeon_index. The FULL footprint is painted — there is no empty center
-# cell; the DungeonPortal node at the center is invisible (Sprite2D removed)
-# and only supplies the walk-in Area2D + confirm dialog.
-#
-# Returns the DOOR tile (anchor + center) — the cell the structure's doorway
-# actually landed on. The caller must put the portal there so the visible
-# entrance and the real entry trigger are always the same position: the 5x5
-# search below can shift the whole picture off the requested portal tile when
-# a tree/block occupies the ideal footprint.
-# Frees any world-gen natural block (stone/charcoal) sitting in a structure's
-# footprint so a dungeon entrance can replace the stone that happened to be
-# where it wants to sit (the requested "portals replace stone" mechanic).
-# Player-placed blocks are never cleared here — they still veto the footprint.
-func _clear_natural_in_footprint(s: GeneratedStructure, anchor: Vector2i) -> void:
-	for x in range(s.tile_width):
-		for y in range(s.tile_height):
+# Frees any world-gen natural block (stone/charcoal) sitting in the large
+# dungeon entrance footprint so the portal can replace the stone it landed on.
+# Player-placed blocks still veto placement and are never cleared here.
+func _clear_natural_in_footprint(anchor: Vector2i, size: Vector2i) -> void:
+	for x in range(size.x):
+		for y in range(size.y):
 			var cell: Vector2i = anchor + Vector2i(x, y)
 			if not _is_natural_block(cell):
 				continue
@@ -4969,46 +5630,75 @@ func _clear_natural_in_footprint(s: GeneratedStructure, anchor: Vector2i) -> voi
 			if is_instance_valid(node):
 				node.queue_free()
 
-func _place_dungeon_entrance_structure(portal_tile: Vector2i, dungeon_index: int) -> Vector2i:
-	if _dungeon_entrance_pool.is_empty():
-		_dungeon_entrance_pool = _load_dungeon_entrance_structures()
-	if _dungeon_entrance_pool.is_empty():
-		return DUNGEON_INVALID_TILE
-	var s := _dungeon_entrance_pool[(dungeon_index - 1) % _dungeon_entrance_pool.size()] as GeneratedStructure
-	# Paint EVERY footprint cell (the portal node is invisible, so there is
-	# no reason to keep a walkable hole in the middle of the sprite).
-	# The door cell (walkable opening) sits at the structure's door center —
-	# for the dungeon portal that's the glowing middle tile.
-	var center := s.door_center_cell()
-	# Anchor candidates walk a 5x5 search around the ideal anchor (portal dead
-	# center of the footprint) so a tree/block in the chunk can't veto the
-	# whole entrance. Offsets are tried nearest-first so the door lands as
-	# close to the requested portal tile as possible.
-	var offsets: Array[Vector2i] = []
-	for dy in range(-2, 3):
-		for dx in range(-2, 3):
-			offsets.append(Vector2i(dx, dy))
-	offsets.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
-		return a.length_squared() < b.length_squared())
-	for offset in offsets:
-		var anchor: Vector2i = portal_tile - center + offset
-		if not _structure_footprint_valid(s, anchor, Vector2i(-1, -1), true):
-			continue
-		# A dungeon entrance is allowed to REPLACE natural stone/charcoal that
-		# happens to sit in its footprint (requested mechanic) — player-placed
-		# blocks were already vetoed by _structure_footprint_valid above.
-		_clear_natural_in_footprint(s, anchor)
-		var painted := _spawn_dungeon_entrance_nodes(s, anchor, dungeon_index)
-		for cell in painted:
-			_dungeon_entrance_cells[cell as Vector2i] = true
-		_dungeon_entrance_structure_cells[dungeon_index] = painted
-		_claim_structure_chunks(s, anchor)
-		_located_structures.append({"name": s.name, "tile": anchor + center})
-		return anchor + center
-	push_warning("DungeonSpawner: no free footprint for dungeon %d entrance structure — portal still spawned" % dungeon_index)
-	return DUNGEON_INVALID_TILE
 
-# ── Debug: teleport to the nearest cave entrance (Ctrl+Shift+T) ────────
+# Builds the large animated entrance facade, its cell collision (except the
+# bottom-centre door), and returns every occupied cell. The DungeonPortal node
+# itself stays separate and keeps the existing walk-in/click confirmation role.
+func _spawn_large_dungeon_entrance_nodes(anchor: Vector2i, size: Vector2i,
+		dungeon_index: int) -> Array:
+	var root := Node2D.new()
+	root.name = "DungeonEntrance%d" % dungeon_index
+	add_child(root)
+	_dungeon_entrance_nodes[dungeon_index] = root
+	var center := _dungeon_entrance_center(size)
+	var base_cell := anchor + center
+	var foot := ground_layer.to_global(ground_layer.map_to_local(base_cell)) \
+		+ Vector2(0.0, TILE_SIZE * 0.5)
+	root.global_position = foot
+	root.z_index = int(foot.y / TILE_SIZE)
+
+	var frame_size := Vector2i(size.x * TILE_SIZE, size.y * TILE_SIZE)
+	var anim := AnimatedSprite2D.new()
+	anim.sprite_frames = WaypointAnim.build(_dungeon_entrance_sheet(dungeon_index), frame_size)
+	anim.animation = "idle"
+	anim.centered = true
+	anim.position = Vector2(0.0, -float(frame_size.y) * 0.5)
+	anim.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	anim.play("idle")
+	root.add_child(anim)
+
+	var door := base_cell
+	var painted: Array = []
+	for x in range(size.x):
+		for y in range(size.y):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			painted.append(cell)
+			if cell == door:
+				continue
+			var body := StaticBody2D.new()
+			body.collision_layer = 1
+			body.collision_mask = 1
+			var shape := CollisionShape2D.new()
+			var rect := RectangleShape2D.new()
+			rect.size = Vector2(TILE_SIZE, TILE_SIZE)
+			shape.shape = rect
+			body.add_child(shape)
+			root.add_child(body)
+			body.global_position = ground_layer.to_global(ground_layer.map_to_local(cell))
+	return painted
+
+
+func _place_dungeon_entrance_structure(portal_tile: Vector2i, dungeon_index: int) -> Vector2i:
+	var size := _dungeon_entrance_size(dungeon_index)
+	var center := _dungeon_entrance_center(size)
+	var anchor := _find_dungeon_entrance_anchor(portal_tile, dungeon_index)
+	if anchor == DUNGEON_INVALID_TILE:
+		push_warning("DungeonSpawner: no free footprint for dungeon %d entrance structure ? portal still spawned" % dungeon_index)
+		return DUNGEON_INVALID_TILE
+	_clear_natural_in_footprint(anchor, size)
+	var painted := _spawn_large_dungeon_entrance_nodes(anchor, size, dungeon_index)
+	for cell in painted:
+		_dungeon_entrance_cells[cell as Vector2i] = true
+	_dungeon_entrance_structure_cells[dungeon_index] = painted
+	_clear_grass_in_cells(painted)
+	_claim_structure_rect(anchor, size)
+	var lang := Global.dungeon_language(dungeon_index)
+	var label := "%s Dungeon Entrance" % lang.capitalize() if not lang.is_empty() \
+		else "Dungeon Entrance"
+	_located_structures.append({"name": label, "tile": anchor + center})
+	return anchor + center
+
+
 func teleport_to_nearest_cave() -> void:
 	var p: Node2D = _get_player()
 	if p == null or _cave_entrance_tiles.is_empty():
@@ -5036,12 +5726,23 @@ func teleport_to_nearest_cave() -> void:
 func _on_mission_updated() -> void:
 	_ensure_current_dungeon_entrances()
 
+# Public kick used by DungeonWorld immediately after a clear. Same idempotent
+# path as the mission_updated handler; keeps the next-dungeon handoff explicit.
+func ensure_current_dungeon_entrances() -> void:
+	_ensure_current_dungeon_entrances()
+
+
 # Keeps exactly one live entrance per language: spawns one for the current
 # mission of each track, and frees any entrance that is no longer current
 # (e.g. after a mission reset). Idempotent, so it is safe to call on every
 # mission update.
 func _ensure_current_dungeon_entrances() -> void:
 	if not _dungeon_entrances_ready:
+		return
+	# The title-screen panorama reuses this generator inside a SubViewport. It
+	# has no player and must never spawn live dungeon entrances / temporary
+	# waypoints (the old 200-tile minimum also kept them out of the preview).
+	if get_viewport() is SubViewport:
 		return
 	var wanted: Array = Global.current_dungeon_indices()
 	for idx in _dungeon_entrance_tiles.keys():
@@ -5058,21 +5759,21 @@ func _ensure_current_dungeon_entrances() -> void:
 func _spawn_dungeon_entrance(dungeon_index: int) -> void:
 	if _dungeon_entrance_tiles.has(dungeon_index):
 		return
-	var player: Node2D = _get_player()
-	var player_tile: Vector2i = ground_layer.local_to_map(ground_layer.to_local(player.global_position)) \
-		if player != null else Vector2i.ZERO
+	var reference_pos := _dungeon_spawn_reference_position()
+	var player_tile: Vector2i = ground_layer.local_to_map(
+		ground_layer.to_local(reference_pos))
 
-	# Collect every eligible chunk, then pick one at random — a fixed number
-	# of random attempts could keep missing valid chunks on tighter maps.
+	# Collect every eligible chunk, then prefer the chunks nearest the player.
+	# The old flow picked a random distant chunk; this keeps both language
+	# tracks close enough for the temporary one-way waypoint to be useful while
+	# preserving the existing terrain/claim/developed-chunk protections.
 	var developed_chunks: Dictionary = {}
 	for cell in _placed_blocks:
-		# Natural stone/charcoal doesn't make a chunk "developed" — a dungeon
-		# entrance is allowed to spawn where stone happens to be and will clear
-		# it (see _clear_natural_in_footprint).
 		if _is_natural_block(cell as Vector2i):
 			continue
 		developed_chunks[_tile_to_chunk(cell as Vector2i)] = true
 
+	var player_chunk: Vector2i = _tile_to_chunk(player_tile)
 	var valid: Array[Vector2i] = []
 	for cx in range(_chunk_cols):
 		for cy in range(_chunk_rows):
@@ -5083,14 +5784,29 @@ func _spawn_dungeon_entrance(dungeon_index: int) -> void:
 		push_warning("DungeonSpawner: no valid chunk found for dungeon %d" % dungeon_index)
 		return
 
-	# A single random pick can land on an all-ocean chunk (the corner chunks
-	# routinely are), and _random_land_tile_in_chunk then finds nothing — so
-	# walk the list from a random start until one chunk yields a usable tile.
-	var start: int = rng.randi_range(0, valid.size() - 1)
-	for i in range(valid.size()):
-		var chunk: Vector2i = valid[(start + i) % valid.size()]
-		var tile:  Vector2i = _random_land_tile_in_chunk(chunk)
+	var near: Array[Vector2i] = []
+	for chunk in valid:
+		if chunk.distance_to(player_chunk) <= DUNGEON_NEAR_CHUNK_RADIUS:
+			near.append(chunk)
+	near.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.distance_squared_to(player_chunk) < b.distance_squared_to(player_chunk))
+	var ordered: Array[Vector2i] = []
+	if not near.is_empty():
+		ordered = near
+	else:
+		# No candidate inside the preferred radius (cramped/edge map): still
+		# choose the nearest available chunk rather than a randomly distant one.
+		ordered = valid.duplicate()
+		ordered.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+			return a.distance_squared_to(player_chunk) < b.distance_squared_to(player_chunk))
+
+	for chunk in ordered:
+		var tile: Vector2i = _random_land_tile_in_chunk(chunk)
 		if tile == DUNGEON_INVALID_TILE:
+			continue
+		# Verify the full native large-portal footprint (and its south door
+		# approach) can sit here, not just the random portal tile.
+		if _find_dungeon_entrance_anchor(tile, dungeon_index) == DUNGEON_INVALID_TILE:
 			continue
 		_dungeon_entrance_tiles[dungeon_index] = tile
 		# The layout's seed is rolled HERE — the first time the entrance is
@@ -5098,9 +5814,25 @@ func _spawn_dungeon_entrance(dungeon_index: int) -> void:
 		# once and re-entering always reproduces the same layout.
 		Global.get_or_create_dungeon_seed(dungeon_index)
 		_spawn_dungeon_portal_at(tile, dungeon_index)
+		_create_dungeon_waypoint(dungeon_index)
 		return
 
-	push_warning("DungeonSpawner: no land tile found in any valid chunk for dungeon %d" % dungeon_index)
+	push_warning("DungeonSpawner: no usable nearby land tile for dungeon %d" % dungeon_index)
+
+
+# The player's effective overworld position, even while the overworld is
+# off-tree inside a cave/dungeon. New dungeon entrances and temporary waypoints
+# should appear near the surface position the player will return to.
+func _dungeon_spawn_reference_position() -> Vector2:
+	var p: Node2D = _get_player()
+	var current: Node = Global.world_node
+	if current != null and current != self:
+		var return_pos: Variant = current.get("overworld_return_position")
+		if return_pos is Vector2:
+			return return_pos as Vector2
+	if p != null:
+		return p.global_position
+	return _world_spawn_pos()
 
 # Every constraint of where a dungeon entrance may NOT occupy a chunk:
 #   a. no player-placed blocks anywhere in it
@@ -5154,6 +5886,86 @@ func _random_land_tile_in_chunk(chunk: Vector2i) -> Vector2i:
 		return DUNGEON_INVALID_TILE
 	return candidates[rng.randi_range(0, candidates.size() - 1)]
 
+# The persistent dungeon entrance is now the native large language portal.
+# Python uses the 5x4 Stonegate; Lua uses the 6x5 Ancient Rune Gate. The bottom
+# centre tile is the walk-in door, so the whole structure can be solid while
+# still allowing the player to step onto the DungeonPortal trigger.
+func _dungeon_entrance_size(dungeon_index: int) -> Vector2i:
+	return DUNGEON_ENTRANCE_LUA_SIZE if Global.dungeon_language(dungeon_index) == "lua" \
+		else DUNGEON_ENTRANCE_PYTHON_SIZE
+
+
+func _dungeon_entrance_sheet(dungeon_index: int) -> Texture2D:
+	return DUNGEON_ENTRANCE_LUA_TEX if Global.dungeon_language(dungeon_index) == "lua" \
+		else DUNGEON_ENTRANCE_PYTHON_TEX
+
+
+func _dungeon_entrance_center(size: Vector2i) -> Vector2i:
+	return Vector2i(size.x / 2, size.y - 1)
+
+
+func _find_dungeon_entrance_anchor(portal_tile: Vector2i, dungeon_index: int) -> Vector2i:
+	var size := _dungeon_entrance_size(dungeon_index)
+	var center := _dungeon_entrance_center(size)
+	var offsets: Array[Vector2i] = []
+	for dy in range(-2, 3):
+		for dx in range(-2, 3):
+			offsets.append(Vector2i(dx, dy))
+	offsets.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.length_squared() < b.length_squared())
+	for offset in offsets:
+		var anchor: Vector2i = portal_tile - center + offset
+		if _dungeon_entrance_footprint_valid(anchor, size):
+			return anchor
+	return DUNGEON_INVALID_TILE
+
+
+func _dungeon_entrance_footprint_valid(anchor: Vector2i, size: Vector2i) -> bool:
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	for x in range(size.x):
+		for y in range(size.y):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			if absi(cell.x) >= half_w or absi(cell.y) >= half_h:
+				return false
+			if _cell_biome_type(cell) == -1:
+				return false
+			if water_layer.get_cell_source_id(cell) != -1:
+				return false
+			if _is_tree_occupied(cell):
+				return false
+			if _placed_blocks.has(cell) and not _is_natural_block(cell):
+				return false
+			if _world_waypoint_cells.has(cell) or _dungeon_waypoint_cells.has(cell):
+				return false
+			if structures_layer.get_cell_source_id(cell) != -1:
+				return false
+			if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
+				return false
+			if _decor_pending_player_cells.has(cell):
+				return false
+	# The player enters from the south into the free bottom-centre door.
+	var door: Vector2i = anchor + _dungeon_entrance_center(size)
+	var approach: Vector2i = door + Vector2i(0, 1)
+	if absi(approach.x) >= half_w or absi(approach.y) >= half_h:
+		return false
+	if _cell_biome_type(approach) == -1:
+		return false
+	if water_layer.get_cell_source_id(approach) != -1:
+		return false
+	if _is_tree_occupied(approach):
+		return false
+	if _placed_blocks.has(approach):
+		return false
+	if structures_layer.get_cell_source_id(approach) != -1:
+		return false
+	if _cave_entrance_cells.has(approach) or _dungeon_entrance_cells.has(approach):
+		return false
+	if _world_waypoint_cells.has(approach) or _dungeon_waypoint_cells.has(approach):
+		return false
+	return true
+
+
 func _spawn_dungeon_portal_at(tile: Vector2i, dungeon_index: int) -> void:
 	var portal: Node2D = DUNGEON_PORTAL_SCENE.instantiate() as Node2D
 	if portal == null:
@@ -5176,7 +5988,368 @@ func _spawn_dungeon_portal_at(tile: Vector2i, dungeon_index: int) -> void:
 # "gone from the map": free the entrance portal and forget its tile. Safe to
 # call while the overworld is off-tree (in-dungeon): the portal is a child of
 # this node and queue_free() works on off-tree nodes.
+# --- Temporary dungeon waypoints (one-way) -----------------------------
+# Created after a new current-dungeon entrance is placed. The node is purely a
+# marker/interaction (no collision) and uses the approved language portal art.
+func _create_dungeon_waypoint(dungeon_index: int) -> void:
+	if _dungeon_waypoint_nodes.has(dungeon_index):
+		return
+	if Global.is_dungeon_cleared(dungeon_index):
+		return
+	if not Global.current_dungeon_indices().has(dungeon_index):
+		return
+	var lang := Global.dungeon_language(dungeon_index)
+	if lang != "lua" and lang != "python":
+		return
+	var reference_pos := _dungeon_spawn_reference_position()
+	var anchor := _find_dungeon_waypoint_anchor(reference_pos, lang)
+	if anchor == DUNGEON_INVALID_TILE:
+		Global.notify("No clear space near you for the %s dungeon waypoint." % lang.capitalize())
+		return
+	_spawn_dungeon_waypoint_at(dungeon_index, lang, anchor)
+
+
+func _dungeon_waypoint_size(_lang: String) -> Vector2i:
+	# Temporary waypoints now use the existing 3x3 dungeon-portal art. The real
+	# persistent entrance uses the larger language-specific portal instead.
+	return Vector2i(3, 3)
+
+
+func _find_dungeon_waypoint_anchor(reference_pos: Vector2, lang: String) -> Vector2i:
+	var size := _dungeon_waypoint_size(lang)
+	var base_center := _tile_at_world(reference_pos)
+	var center_offset := Vector2i(size.x / 2, size.y - 1)
+	# Put Lua on the left and Python on the right when space allows. The two
+	# tracks can generate entrances back-to-back, so this keeps their large
+	# portals and floating labels from stacking on top of each other.
+	var prefer_left := lang == "lua"
+	for side_pass in range(2):
+		# Keep the temporary dungeon waypoint out of the player's spawn/camp
+		# clearing. The old 3-tile minimum put two large portal pads and their
+		# labels directly around a new player, making the starting area cramped.
+		for radius in range(10, 22):
+			for dx in range(-radius, radius + 1):
+				for dy in range(-radius, radius + 1):
+					if maxi(absi(dx), absi(dy)) != radius:
+						continue
+					if side_pass == 0:
+						if prefer_left and dx > -2:
+							continue
+						if not prefer_left and dx < 2:
+							continue
+					var base_cell := base_center + Vector2i(dx, dy)
+					var anchor := base_cell - center_offset
+					if not _temp_waypoint_anchor_clear(anchor, size, base_center):
+						continue
+					if not _temp_waypoint_spacing_ok(anchor):
+						continue
+					return anchor
+	return DUNGEON_INVALID_TILE
+
+
+func _temp_waypoint_spacing_ok(anchor: Vector2i) -> bool:
+	for di in _dungeon_waypoint_nodes:
+		var other: Variant = _dungeon_waypoint_nodes[di]
+		if not is_instance_valid(other):
+			continue
+		var other_anchor: Variant = other.get("anchor_cell")
+		if other_anchor is Vector2i and anchor.distance_to(other_anchor as Vector2i) < 9.0:
+			return false
+	return true
+
+
+func _temp_waypoint_anchor_clear(anchor: Vector2i, size: Vector2i,
+		player_tile: Vector2i, allow_player_cell: bool = false) -> bool:
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	for x in range(size.x):
+		for y in range(size.y):
+			var cell: Vector2i = anchor + Vector2i(x, y)
+			if cell == player_tile and not allow_player_cell:
+				return false
+			if absi(cell.x) >= half_w or absi(cell.y) >= half_h:
+				return false
+			if _cell_biome_type(cell) == -1:
+				return false
+			if water_layer.get_cell_source_id(cell) != -1:
+				return false
+			if structures_layer.get_cell_source_id(cell) != -1:
+				return false
+			if _cave_entrance_cells.has(cell) or _dungeon_entrance_cells.has(cell):
+				return false
+			if _placed_blocks.has(cell) or _decor_pending_player_cells.has(cell):
+				return false
+			if _world_waypoint_cells.has(cell) or _dungeon_waypoint_cells.has(cell):
+				return false
+			if _is_tree_occupied(cell):
+				return false
+	for x in range(-1, size.x + 1):
+		for y in range(-1, size.y + 1):
+			if x >= 0 and y >= 0 and x < size.x and y < size.y:
+				continue
+			var fringe: Vector2i = anchor + Vector2i(x, y)
+			if absi(fringe.x) >= half_w or absi(fringe.y) >= half_h:
+				return false
+			if _cell_biome_type(fringe) == -1:
+				return false
+			if water_layer.get_cell_source_id(fringe) != -1:
+				return false
+	return true
+
+
+func _spawn_dungeon_waypoint_at(dungeon_index: int, lang: String,
+		anchor: Vector2i) -> void:
+	if _dungeon_waypoint_nodes.has(dungeon_index):
+		return
+	var node := DUNGEON_WAYPOINT_SCRIPT.new() as Node2D
+	if node == null:
+		return
+	node.call("setup", dungeon_index, lang, self, anchor)
+	add_child(node)
+	var size := _dungeon_waypoint_size(lang)
+	var base := anchor + Vector2i(size.x / 2, size.y - 1)
+	node.global_position = ground_layer.to_global(ground_layer.map_to_local(base)) \
+		+ Vector2(0.0, TILE_SIZE * 0.5)
+	node.z_index = int(node.global_position.y / TILE_SIZE)
+	_dungeon_waypoint_nodes[dungeon_index] = node
+	var cells: Array = []
+	for x in range(size.x):
+		for y in range(size.y):
+			var cell := anchor + Vector2i(x, y)
+			_dungeon_waypoint_cells[cell] = dungeon_index
+			cells.append(cell)
+	_clear_grass_in_cells(cells)
+
+
+func _remove_dungeon_waypoint(dungeon_index: int) -> void:
+	var node: Variant = _dungeon_waypoint_nodes.get(dungeon_index)
+	_dungeon_waypoint_nodes.erase(dungeon_index)
+	for cell in _dungeon_waypoint_cells.keys():
+		if int(_dungeon_waypoint_cells[cell]) == dungeon_index:
+			_dungeon_waypoint_cells.erase(cell)
+	if is_instance_valid(node):
+		(node as Node).queue_free()
+
+
+func _restore_dungeon_waypoints(rows: Variant) -> void:
+	if not (rows is Array):
+		return
+	var current: Array = Global.current_dungeon_indices()
+	for value in (rows as Array):
+		if not (value is Dictionary):
+			continue
+		var row: Dictionary = value as Dictionary
+		var di := int(row.get("index", 0))
+		var lang := str(row.get("language", ""))
+		if di <= 0 or not current.has(di) or Global.is_dungeon_cleared(di):
+			continue
+		if Global.dungeon_language(di) != lang or not _dungeon_entrance_tiles.has(di):
+			continue
+		var anchor := Vector2i(int(row.get("x", 0)), int(row.get("y", 0)))
+		var size := _dungeon_waypoint_size(lang)
+		var player_tile := _tile_at_world(_dungeon_spawn_reference_position())
+		# Older saves may contain a temporary waypoint inside the spawn clearing.
+		# Relocate those on load so the starting grounds become roomy without
+		# discarding the player's existing dungeon access.
+		var spawn_tile := _tile_at_world(_world_spawn_pos())
+		if anchor.distance_to(spawn_tile) < 10.0:
+			var relocated := _find_dungeon_waypoint_anchor(_dungeon_spawn_reference_position(), lang)
+			if relocated != DUNGEON_INVALID_TILE and relocated.distance_to(spawn_tile) >= 10.0:
+				anchor = relocated
+		if not _temp_waypoint_anchor_clear(anchor, size, player_tile, true):
+			continue
+		_spawn_dungeon_waypoint_at(di, lang, anchor)
+
+
+func _dungeon_waypoint_save_data() -> Array:
+	var out: Array = []
+	for di in _dungeon_waypoint_nodes:
+		var node: Variant = _dungeon_waypoint_nodes[di]
+		if not is_instance_valid(node):
+			continue
+		var anchor: Variant = node.get("anchor_cell")
+		if not (anchor is Vector2i):
+			continue
+		out.append({
+			"index": int(di),
+			"language": str(node.get("language")),
+			"x": (anchor as Vector2i).x,
+			"y": (anchor as Vector2i).y,
+		})
+	return out
+
+
+# Called by DungeonWaypoint after the player steps onto it. Return true ONLY after the player
+# has actually been moved; the caller then consumes/frees the waypoint.
+func use_dungeon_waypoint(dungeon_index: int, node: Node) -> bool:
+	if _dungeon_waypoint_nodes.get(dungeon_index) != node:
+		return false
+	if Global.is_dungeon_cleared(dungeon_index) \
+			or not Global.current_dungeon_indices().has(dungeon_index) \
+			or not _dungeon_entrance_tiles.has(dungeon_index):
+		_remove_dungeon_waypoint(dungeon_index)
+		Global.notify("That dungeon waypoint is no longer valid.")
+		return false
+	var dest := _safe_landing_near_tile(
+		_dungeon_entrance_tiles[dungeon_index] as Vector2i, 14)
+	if dest == Vector2.INF:
+		Global.notify("No safe landing spot near the dungeon entrance.")
+		return false
+	if not _teleport_player_to(dest):
+		Global.notify("Could not reach the dungeon entrance.")
+		return false
+	_remove_dungeon_waypoint(dungeon_index)
+	Global.notify("%s dungeon waypoint used ? this entrance is now one-way." %
+		Global.dungeon_language(dungeon_index).capitalize())
+	# Persist consumption immediately so a quit/crash before the next autosave
+	# cannot resurrect a one-way waypoint.
+	if Global.active_save_slot > 0 and Global.game_node != null:
+		Global.save_game(Global.active_save_slot)
+	return true
+
+
+func _tile_at_world(world_pos: Vector2) -> Vector2i:
+	return ground_layer.local_to_map(ground_layer.to_local(world_pos))
+
+
+func _safe_landing_near_tile(target_tile: Vector2i, max_radius: int) -> Vector2:
+	var half_w: int = width / 2
+	var half_h: int = height / 2
+	for radius in range(1, max_radius + 1):
+		for dx in range(-radius, radius + 1):
+			for dy in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius:
+					continue
+				var cell := target_tile + Vector2i(dx, dy)
+				if not _is_open_for_player(cell, half_w, half_h):
+					continue
+				var pos := ground_layer.to_global(ground_layer.map_to_local(cell))
+				if _is_hazardous_landing(pos):
+					continue
+				return pos
+	return Vector2.INF
+
+
+func _is_hazardous_landing(pos: Vector2) -> bool:
+	if not is_inside_tree():
+		return false
+	for mob in get_tree().get_nodes_in_group("Mob"):
+		if is_instance_valid(mob) and mob is Node2D:
+			if (mob as Node2D).global_position.distance_to(pos) < 64.0:
+				return true
+	for group in ["DungeonTrap", "DungeonFlare"]:
+		for hazard in get_tree().get_nodes_in_group(group):
+			if is_instance_valid(hazard) and hazard is Node2D:
+				if (hazard as Node2D).global_position.distance_to(pos) < 64.0:
+					return true
+	return false
+
+
+func _teleport_player_to(pos: Vector2) -> bool:
+	var p: Node2D = _get_player()
+	if p == null:
+		return false
+	if p.has_method("_pnc_cancel"):
+		p.call("_pnc_cancel")
+	if p is CharacterBody2D:
+		(p as CharacterBody2D).velocity = Vector2.ZERO
+	p.global_position = pos
+	return true
+
+
+# Called by the minimap's waypoint map. Validation and landing search happen
+# before the recall starts so a failed destination never plays the effect.
+func teleport_to_world_waypoint(waypoint_id: String) -> bool:
+	if _waypoint_teleporting:
+		return false
+	var node: Variant = _world_waypoint_nodes.get(waypoint_id)
+	if not is_instance_valid(node):
+		Global.notify("That world waypoint is no longer available.")
+		return false
+	var anchor: Variant = node.get("anchor_cell")
+	if not (anchor is Vector2i):
+		return false
+	var foot := (anchor as Vector2i) + Vector2i(
+		WORLD_WAYPOINT_SIZE.x / 2, WORLD_WAYPOINT_SIZE.y - 1)
+	var dest := _safe_landing_near_tile(foot, 14)
+	if dest == Vector2.INF:
+		Global.notify("No safe landing spot near that world waypoint.")
+		return false
+	_waypoint_teleporting = true
+	call_deferred("_run_waypoint_recall", dest)
+	return true
+
+
+func is_waypoint_teleporting() -> bool:
+	return _waypoint_teleporting
+
+
+func _run_waypoint_recall(dest: Vector2) -> void:
+	var p: Node2D = _get_player()
+	if p == null or not is_instance_valid(p):
+		_waypoint_teleporting = false
+		return
+	if p.has_method("_pnc_cancel"):
+		p.call("_pnc_cancel")
+	if p is CharacterBody2D:
+		(p as CharacterBody2D).velocity = Vector2.ZERO
+	var was_physics: bool = p.is_physics_processing()
+	var was_input: bool = p.is_processing_input()
+	p.set_physics_process(false)
+	p.set_process_input(false)
+
+	# The beacon is anchored at the player's feet, not the sprite origin.
+	var fx := WAYPOINT_RECALL_FX_SCRIPT.new() as Node2D
+	if fx != null:
+		fx.global_position = p.global_position + Vector2(0.0, 17.0)
+		add_child(fx)
+
+	await get_tree().create_timer(WAYPOINT_RECALL_BEACON_SEC).timeout
+	var host: Node = Global.game_node
+	if host == null or not is_instance_valid(host):
+		host = get_tree().current_scene
+	if host == null:
+		host = get_parent()
+	var overlay_layer := CanvasLayer.new()
+	overlay_layer.layer = 125
+	overlay_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	if host != null:
+		host.add_child(overlay_layer)
+	else:
+		add_child(overlay_layer)
+	var white := ColorRect.new()
+	white.color = Color(1.0, 1.0, 1.0, 0.0)
+	white.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay_layer.add_child(white)
+	# Anchor after entering the CanvasLayer so the fill resolves against the
+	# viewport; a ColorRect sized before parenting can stay at 0x0 on some
+	# renderers, making the white recall flash invisible.
+	white.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	white.position = Vector2.ZERO
+	white.size = get_viewport().get_visible_rect().size
+
+	var fade_in := create_tween()
+	fade_in.tween_property(white, "color:a", 1.0, WAYPOINT_WHITE_FADE_IN_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	await fade_in.finished
+	_teleport_player_to(dest)
+	await get_tree().create_timer(0.08).timeout
+	var fade_out := create_tween()
+	fade_out.tween_property(white, "color:a", 0.0, WAYPOINT_WHITE_FADE_OUT_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	await fade_out.finished
+
+	if is_instance_valid(overlay_layer):
+		overlay_layer.queue_free()
+	if is_instance_valid(p):
+		p.set_physics_process(was_physics)
+		p.set_process_input(was_input)
+	_waypoint_teleporting = false
+
+
 func remove_dungeon_entrance(dungeon_index: int) -> void:
+	# A temporary one-way waypoint only exists for this exact dungeon instance.
+	_remove_dungeon_waypoint(dungeon_index)
 	# Untyped: a freed portal/entrance assigned to a typed `Node` var throws
 	# "Trying to assign invalid previously freed instance".
 	var portal: Variant   = _dungeon_portal_nodes.get(dungeon_index)
@@ -5214,6 +6387,23 @@ func get_dungeon_entrance_target(lang: String) -> Vector2:
 		return Vector2.INF
 	var tile: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i
 	return ground_layer.to_global(ground_layer.map_to_local(tile))
+
+# Guided onboarding travel: validates the live entrance and uses the same
+# safe-landing + recall/white-fade path as the permanent waypoint network. The
+# player still has to click the real dungeon portal after arriving.
+func tutorial_teleport_near_dungeon(lang: String) -> bool:
+	if _waypoint_teleporting:
+		return false
+	var idx: int = Global.current_dungeon_index(lang)
+	if idx <= 0 or not _dungeon_entrance_tiles.has(idx) or Global.is_dungeon_cleared(idx):
+		return false
+	var tile: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i
+	var dest := _safe_landing_near_tile(tile, 14)
+	if dest == Vector2.INF:
+		return false
+	_waypoint_teleporting = true
+	call_deferred("_run_waypoint_recall", dest)
+	return true
 
 # World position the mission guide arrow points at: the NEAREST of the live
 # dungeon entrances (one per language). Vector2.INF means "no target" (the
@@ -5267,6 +6457,23 @@ func get_world_save_data() -> Dictionary:
 		# the age it had reached — including fully grown wheat.
 		"crops":         [],
 	}
+	# Procedural houses/pillars persist as small deterministic definitions plus
+	# a list of cells the player has removed. Individual generated blocks are
+	# excluded from placed_blocks below, so the save stays compact.
+	data["decor_structures"] = _decor_structures.duplicate(true)
+	data["decor_removed"] = _decor_save_removed()
+	# Empty is authoritative only when the save already told us this world was
+	# initialised (or we actually placed structures). This prevents a save made
+	# before world-gen finishes from permanently locking a legacy world out of
+	# the decorative pass.
+	data["decor_initialized"] = \
+		bool(Global.pending_world_data.get("decor_initialized", false)) \
+		or not _decor_structures.is_empty()
+	data["world_waypoints"] = _world_waypoint_save_data()
+	data["world_waypoints_initialized"] = \
+		bool(Global.pending_world_data.get("world_waypoints_initialized", false)) \
+		or not _world_waypoints.is_empty()
+	data["dungeon_waypoints"] = _dungeon_waypoint_save_data()
 	for ccell in _crops:
 		var crop_ref: Variant = _crops[ccell]
 		if not is_instance_valid(crop_ref):
@@ -5281,8 +6488,9 @@ func get_world_save_data() -> Dictionary:
 		var entry: Dictionary = _placed_blocks[cell] as Dictionary
 		# Natural world-gen patches (stone/charcoal) are NOT saved — they
 		# regenerate deterministically from the seed, and persisting thousands
-		# of them would bloat the save and slow loading.
-		if bool(entry.get("natural", false)):
+		# of them would bloat the save and slow loading. Procedural structure
+		# blocks are likewise rebuilt from decor_structures/decor_removed.
+		if bool(entry.get("natural", false)) or bool(entry.get("decor_generated", false)):
 			continue
 		var node_ref: Variant = entry["node"]
 		if not is_instance_valid(node_ref):
@@ -5337,8 +6545,9 @@ func get_world_save_data() -> Dictionary:
 
 func apply_world_save_data(data: Dictionary) -> void:
 	# The world may be mid-swap (off-tree) while save data is applied — a null
-	# get_tree() would crash the group scans below.
-	if get_tree() == null:
+	# get_tree() would crash the group scans below. is_inside_tree() avoids the
+	# engine error get_tree() itself logs while off-tree.
+	if not is_inside_tree():
 		return
 	if data.has("removed_trees"):
 		for entry in (data["removed_trees"] as Array):
