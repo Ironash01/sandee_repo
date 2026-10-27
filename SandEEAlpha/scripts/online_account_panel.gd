@@ -405,7 +405,7 @@ func _build_account() -> void:
 	_add_star_stat(stars, StarIcon.BLUE, int(Supabase.profile.get("blue_stars", 0)))
 	_add_star_stat(stars, StarIcon.YELLOW, int(Supabase.profile.get("yellow_stars", 0)))
 
-	_make_note("Signing out keeps every local world. Unsaved cloud changes stay pending until you sign in again.")
+	_make_note("Signing out hides this account's local worlds. They stay on this device and return when the same account signs in again. Pending cloud changes sync after that sign-in.")
 	_make_error_and_busy()
 	_make_button("Log Out", _submit_logout, true)
 	_make_link("< Back", _on_back)
@@ -504,7 +504,11 @@ func _submit_logout() -> void:
 	if _busy:
 		return
 	_set_busy(true, "Signing out…")
+	# Invalidate the active account context BEFORE the token is cleared, so no
+	# autosave/cloud callback can still treat the old account as current.
+	Global.begin_account_transition("sign_out")
 	await Supabase.sign_out()
+	Global.clear_active_account("sign_out")
 	_set_busy(false)
 	logged_out.emit()
 

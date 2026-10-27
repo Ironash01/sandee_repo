@@ -337,7 +337,9 @@ func get_profile(timeout: float = -1.0) -> Dictionary:
 ## Claims one or more whitelisted mission rewards. The server only accepts ids
 ## present in `mission_rewards`, awards a fixed amount and ignores repeats, so
 ## this is safe to call with the whole local mission list on every world load.
-func claim_missions(reward_ids: Array) -> Dictionary:
+func claim_missions(reward_ids: Array, expected_account_id: String = "") -> Dictionary:
+	if not expected_account_id.is_empty() and user_id() != expected_account_id:
+		return _error_result("account changed")
 	var ids: Array = []
 	for entry in reward_ids:
 		var rid := str(entry).strip_edges()
@@ -345,7 +347,12 @@ func claim_missions(reward_ids: Array) -> Dictionary:
 			ids.append(rid)
 	if ids.is_empty():
 		return {"ok": true, "status": 200, "data": [], "error": ""}
-	return await rpc_call("claim_missions", {"p_reward_ids": ids})
+	if not expected_account_id.is_empty() and user_id() != expected_account_id:
+		return _error_result("account changed")
+	var result := await rpc_call("claim_missions", {"p_reward_ids": ids})
+	if not expected_account_id.is_empty() and user_id() != expected_account_id:
+		return _error_result("account changed")
+	return result
 
 
 func get_my_rewards() -> Dictionary:
@@ -410,11 +417,16 @@ func upload_save(slot: int, data: PackedByteArray, world_name: String = "",
 		world_uid: String = "", revision: int = 0) -> Dictionary:
 	if not is_signed_in():
 		return _error_result("not signed in")
+	var account_id := user_id()
+	if account_id.is_empty():
+		return _error_result("not signed in")
 	if slot < 1 or slot > 10:
 		return _error_result("slot out of range")
 	# Cloud-save limit: 5 slots per account. Check before uploading to Storage
 	# so a rejected save never leaves an orphaned object behind.
 	var existing := await list_saves()
+	if user_id() != account_id or not is_signed_in():
+		return _error_result("account changed")
 	if not existing.ok:
 		return existing
 	var rows: Array = existing.data if existing.data is Array else []
@@ -431,7 +443,7 @@ func upload_save(slot: int, data: PackedByteArray, world_name: String = "",
 			"error": "cloud_limit",
 			"limit": true,
 		}
-	var object_path := "%s/%d.json" % [user_id(), slot]
+	var object_path := "%s/%d.json" % [account_id, slot]
 	var headers := _auth_headers()
 	headers.append("Content-Type: application/json")
 	headers.append("x-upsert: true")
@@ -441,11 +453,15 @@ func upload_save(slot: int, data: PackedByteArray, world_name: String = "",
 		headers,
 		data
 	)
+	if user_id() != account_id or not is_signed_in():
+		return _error_result("account changed")
+	if int(upload.status) == 401:
+		_clear_session()
 	if not upload.ok:
 		return _result_from_send(upload, "/storage upload")
 	var checksum := _sha256(data)
 	var meta := await _request("POST", "/rest/v1/cloud_saves", {
-		"user_id": user_id(),
+		"user_id": account_id,
 		"slot": slot,
 		"object_path": object_path,
 		"world_name": world_name.substr(0, 64),
@@ -458,7 +474,7 @@ func upload_save(slot: int, data: PackedByteArray, world_name: String = "",
 	# migration yet: keep cloud saves usable by storing the legacy columns.
 	if not meta.ok and _is_legacy_cloud_meta_error(str(meta.get("error", ""))):
 		meta = await _request("POST", "/rest/v1/cloud_saves", {
-			"user_id": user_id(),
+			"user_id": account_id,
 			"slot": slot,
 			"object_path": object_path,
 			"world_name": world_name.substr(0, 64),
@@ -480,15 +496,22 @@ func upload_save(slot: int, data: PackedByteArray, world_name: String = "",
 func download_save(slot: int) -> Dictionary:
 	if not is_signed_in():
 		return _error_result("not signed in")
+	var account_id := user_id()
+	if account_id.is_empty():
+		return _error_result("not signed in")
 	if slot < 1 or slot > 10:
 		return _error_result("slot out of range")
-	var object_path := "%s/%d.json" % [user_id(), slot]
+	var object_path := "%s/%d.json" % [account_id, slot]
 	var download := await _send(
 		"GET",
 		"%s/storage/v1/object/%s/%s" % [_CONFIG.PROJECT_URL, _CONFIG.CLOUD_SAVE_BUCKET, object_path],
 		_auth_headers(),
 		PackedByteArray()
 	)
+	if user_id() != account_id or not is_signed_in():
+		return _error_result("account changed")
+	if int(download.status) == 401:
+		_clear_session()
 	if not download.ok:
 		return _result_from_send(download, "/storage download")
 	return {
@@ -513,27 +536,50 @@ func download_save_json(slot: int) -> Dictionary:
 func list_saves() -> Dictionary:
 	if not is_signed_in():
 		return _error_result("not signed in")
-	return await select(
+	var account_id := user_id()
+	if account_id.is_empty():
+		return _error_result("not signed in")
+	var result := await select(
 		"cloud_saves",
-		"select=*&user_id=eq." + user_id() + "&order=slot.asc"
+		"select=*&user_id=eq." + account_id + "&order=slot.asc"
 	)
+	if user_id() != account_id or not is_signed_in():
+		return _error_result("account changed")
+	# Defense in depth: nothing in the UI or sync layer may consume a row that
+	# does not explicitly belong to the captured account, even if a filter was
+	# ignored or a proxy returned mixed data.
+	if result.ok and result.data is Array:
+		var owned_rows: Array = []
+		for row in (result.data as Array):
+			if typeof(row) == TYPE_DICTIONARY \
+					and str((row as Dictionary).get("user_id", "")) == account_id:
+				owned_rows.append(row)
+		result["data"] = owned_rows
+	return result
 
 
 func delete_save(slot: int) -> Dictionary:
 	if not is_signed_in():
 		return _error_result("not signed in")
+	var account_id := user_id()
+	if account_id.is_empty():
+		return _error_result("not signed in")
 	if slot < 1 or slot > 10:
 		return _error_result("slot out of range")
-	var object_path := "%s/%d.json" % [user_id(), slot]
+	var object_path := "%s/%d.json" % [account_id, slot]
 	var removed := await _send(
 		"DELETE",
 		"%s/storage/v1/object/%s/%s" % [_CONFIG.PROJECT_URL, _CONFIG.CLOUD_SAVE_BUCKET, object_path],
 		_auth_headers(),
 		PackedByteArray()
 	)
+	if user_id() != account_id or not is_signed_in():
+		return _error_result("account changed")
+	if int(removed.status) == 401:
+		_clear_session()
 	var meta := await _request(
 		"DELETE",
-		"/rest/v1/cloud_saves?user_id=eq.%s&slot=eq.%d" % [user_id(), slot],
+		"/rest/v1/cloud_saves?user_id=eq.%s&slot=eq.%d" % [account_id, slot],
 		null,
 		true,
 		{"Prefer": "return=minimal"}
@@ -599,6 +645,10 @@ func _request(
 	if not sent.ok:
 		var message := _send_error(sent, parsed)
 		request_failed.emit(path, message)
+		if requires_auth and sent.status == 401:
+			# An expired/revoked bearer token must revoke the local account
+			# context immediately, not just fail one request.
+			_clear_session()
 		return {"ok": false, "status": sent.status, "data": parsed, "error": message}
 	return {"ok": true, "status": sent.status, "data": parsed, "error": ""}
 

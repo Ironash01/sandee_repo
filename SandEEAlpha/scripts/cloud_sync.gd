@@ -28,6 +28,9 @@ var _syncing: Dictionary = {}   # slot -> true while a request is in flight
 var _dirty: Dictionary = {}     # slot -> true when a save arrived mid-sync
 var _batch_running := false
 var _last_progress: Dictionary = {}
+# Incremented on every account boundary. A coroutine captures this before its
+# first await and refuses to upload if the active account changed meanwhile.
+var _generation: int = 0
 
 
 func _ready() -> void:
@@ -40,14 +43,39 @@ func _ready() -> void:
 		Global.mission_star_earned.connect(_on_mission_star_earned)
 	if not Global.online_state_changed.is_connected(_on_online_state_changed):
 		Global.online_state_changed.connect(_on_online_state_changed)
+	if not Global.account_context_changed.is_connected(_on_account_context_changed):
+		Global.account_context_changed.connect(_on_account_context_changed)
 
 
 func is_enabled() -> bool:
-	return Global.online_mode and Supabase.is_signed_in()
+	if not Global.online_mode or not Global.account_online_verified:
+		return false
+	if Global.account_transitioning or not Global.is_valid_account_id(Global.current_account_id):
+		return false
+	if not Supabase.is_signed_in():
+		return false
+	return Supabase.user_id() == Global.current_account_id
+
+
+func _on_account_context_changed(_account_id: String) -> void:
+	# Account boundary: abandon queued/in-flight work. The coroutine checks its
+	# captured generation before every mutating request, so no old-account save
+	# can be uploaded under the next account.
+	_generation += 1
+	_syncing.clear()
+	_dirty.clear()
+	_batch_running = false
+
+
+func _account_is_current(account_id: String, generation: int) -> bool:
+	return generation == _generation and is_enabled() \
+		and Global.current_account_id == account_id \
+		and Supabase.user_id() == account_id
 
 
 func _on_online_state_changed() -> void:
 	if not Global.online_mode:
+		_generation += 1
 		_syncing.clear()
 		_dirty.clear()
 
@@ -76,6 +104,8 @@ func _on_mission_star_earned(reward_id: String) -> void:
 func sync_progress() -> void:
 	if not is_enabled():
 		return
+	var account_id := Global.current_account_id
+	var generation := _generation
 	if not Global.world_progress_eligible(Global.active_save_slot):
 		return
 	var ids: Array = []
@@ -104,8 +134,10 @@ func sync_progress() -> void:
 func sync_all_progress() -> void:
 	if not is_enabled():
 		return
+	var account_id := Global.current_account_id
+	var generation := _generation
 	var ids: Dictionary = {}
-	for slot in Global.list_worlds():
+	for slot in Global.owned_world_slots():
 		# Old worlds must never contribute to account/leaderboard stars.
 		if not Global.world_progress_eligible(int(slot)):
 			continue
@@ -142,6 +174,8 @@ func sync_all_progress() -> void:
 					ids["dungeon_clear_bonus:%d" % idx] = true
 	if ids.is_empty():
 		return
+	if not _account_is_current(account_id, generation):
+		return
 	await claim_reward_ids(ids.keys())
 
 
@@ -150,7 +184,13 @@ func sync_all_progress() -> void:
 func claim_reward_ids(ids: Array) -> void:
 	if ids.is_empty() or not is_enabled():
 		return
-	var result: Dictionary = await Supabase.claim_missions(ids)
+	var account_id := Global.current_account_id
+	var generation := _generation
+	if not _account_is_current(account_id, generation):
+		return
+	var result: Dictionary = await Supabase.claim_missions(ids, account_id)
+	if not _account_is_current(account_id, generation):
+		return
 	if not result.ok:
 		_apply_failure(result)
 		return
@@ -159,6 +199,8 @@ func claim_reward_ids(ids: Array) -> void:
 		claimed = int((result.data as Array)[0].get("claimed", 0))
 	# Refresh even when nothing was new, so the local display is not stale.
 	await Supabase.refresh_profile()
+	if not _account_is_current(account_id, generation):
+		return
 	Global.stars_updated.emit()
 	if claimed > 0:
 		Global.mission_updated.emit()
@@ -184,15 +226,17 @@ func sync_all() -> Dictionary:
 		if running_summary is Array and not (running_summary as Array).is_empty():
 			running_summary = (running_summary as Array)[0]
 		return running_summary if running_summary is Dictionary else _empty_sync_summary()
+	var account_id := Global.current_account_id
+	var generation := _generation
 	_batch_running = true
 	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Syncing worlds...")
 	_emit_sync_progress("listing", 0, 0, 0, "Contacting cloud saves...")
 
 	var cloud := await Supabase.list_saves()
-	if not is_enabled():
+	if not _account_is_current(account_id, generation):
 		_batch_running = false
 		Global.set_cloud_status(Global.CloudStatus.OFFLINE)
-		_emit_sync_progress("offline", 0, 0, 0, "Cloud sync stopped (offline).")
+		_emit_sync_progress("offline", 0, 0, 0, "Cloud sync stopped (account changed).")
 		sync_completed.emit(summary)
 		return summary
 	if not cloud.ok:
@@ -218,7 +262,7 @@ func sync_all() -> Dictionary:
 	var work_slots: Dictionary = {}
 	for slot_value in cloud_by_slot.keys():
 		work_slots[int(slot_value)] = true
-	for slot_value in Global.list_worlds():
+	for slot_value in Global.owned_world_slots():
 		work_slots[int(slot_value)] = true
 	var total_work: int = work_slots.size()
 	var done_work: int = 0
@@ -227,7 +271,7 @@ func sync_all() -> Dictionary:
 
 	var processed: Dictionary = {}
 	for slot_value in cloud_by_slot.keys():
-		if not is_enabled():
+		if not _account_is_current(account_id, generation):
 			_batch_running = false
 			Global.set_cloud_status(Global.CloudStatus.OFFLINE)
 			_emit_sync_progress("offline", done_work, total_work, 0,
@@ -249,8 +293,8 @@ func sync_all() -> Dictionary:
 			_sync_result_message(result, slot))
 
 	# Local worlds with no cloud row are uploaded automatically.
-	for slot_value in Global.list_worlds():
-		if not is_enabled():
+	for slot_value in Global.owned_world_slots():
+		if not _account_is_current(account_id, generation):
 			_batch_running = false
 			Global.set_cloud_status(Global.CloudStatus.OFFLINE)
 			_emit_sync_progress("offline", done_work, total_work, 0,
@@ -275,7 +319,7 @@ func sync_all() -> Dictionary:
 	# stranded until that world is opened again.
 	await sync_all_progress()
 	_batch_running = false
-	if not is_enabled():
+	if not _account_is_current(account_id, generation):
 		Global.set_cloud_status(Global.CloudStatus.OFFLINE)
 		_emit_sync_progress("offline", done_work, total_work, 0,
 			"Cloud sync stopped (offline).")
@@ -353,10 +397,16 @@ func _finish_sync_status(summary: Dictionary) -> void:
 
 
 func _reconcile_slot(slot: int, meta: Dictionary) -> String:
-	var path := "user://save_slot_%d.json" % slot
+	var account_id := Global.current_account_id
+	var generation := _generation
+	var path := Global.save_file_path(slot)
+	if path.is_empty():
+		return "error"
 	if not FileAccess.file_exists(path):
 		return await _install_cloud_save(slot, meta)
 	var info: Dictionary = Global.get_save_info(slot)
+	if info.is_empty():
+		return "error"
 	var local_uid := str(info.get("world_uid", "")).strip_edges()
 	var local_rev: int = maxi(0, int(info.get("save_revision", 0)))
 	if local_uid.is_empty() or local_rev <= 0:
@@ -376,6 +426,11 @@ func _reconcile_slot(slot: int, meta: Dictionary) -> String:
 	# values instead of treating every existing cloud row as a conflict.
 	if cloud_uid.is_empty() or cloud_rev <= 0:
 		var fetched: Dictionary = await _fetch_cloud_file(slot)
+		# The fetched bytes belong to the account captured at the start. If an
+		# account switch/expiry happened during the download, never install them
+		# into the next account's directory.
+		if not _account_is_current(account_id, generation):
+			return "skipped"
 		if not fetched.get("ok", false):
 			return "error"
 		if str(fetched.get("checksum", "")) == local_checksum:
@@ -427,10 +482,14 @@ func _install_cloud_save(slot: int, meta: Dictionary) -> String:
 ## Cloud Saves screen can use the same checksum validation and write path.
 func download_to_local(slot: int, expected_checksum: String = "",
 		preloaded: PackedByteArray = PackedByteArray()) -> Dictionary:
+	var account_id := Global.current_account_id
+	var generation := _generation
 	var data := preloaded
 	var status := 200
 	if data.is_empty():
 		var result := await Supabase.download_save(slot)
+		if not _account_is_current(account_id, generation):
+			return {"ok": false, "status": 0, "data": null, "error": "account changed"}
 		if not result.ok or not (result.data is PackedByteArray):
 			return result
 		data = result.data
@@ -443,6 +502,8 @@ func download_to_local(slot: int, expected_checksum: String = "",
 	if not (parsed is Dictionary):
 		return {"ok": false, "status": 0, "data": null,
 			"error": "invalid cloud save", "corrupt": true}
+	if not _account_is_current(account_id, generation):
+		return {"ok": false, "status": 0, "data": null, "error": "account changed"}
 	if not _write_local_save(slot, data):
 		return {"ok": false, "status": 0, "data": null,
 			"error": "local write failed"}
@@ -453,22 +514,7 @@ func download_to_local(slot: int, expected_checksum: String = "",
 
 
 func _write_local_save(slot: int, data: PackedByteArray) -> bool:
-	var path := "user://save_slot_%d.json" % slot
-	var tmp := path + ".tmp"
-	var file := FileAccess.open(tmp, FileAccess.WRITE)
-	if file == null:
-		return false
-	file.store_buffer(data)
-	file.close()
-	var abs_path := ProjectSettings.globalize_path(path)
-	var abs_tmp := ProjectSettings.globalize_path(tmp)
-	DirAccess.remove_absolute(abs_path + ".bak")
-	if FileAccess.file_exists(path):
-		DirAccess.rename_absolute(abs_path, abs_path + ".bak")
-	if DirAccess.rename_absolute(abs_tmp, abs_path) != OK:
-		DirAccess.rename_absolute(abs_path + ".bak", abs_path)
-		return false
-	return true
+	return Global.install_cloud_save_bytes(slot, data)
 
 
 ## Syncs one slot. Returns "uploaded", "synced", "pending", "error" or "skipped".
@@ -479,13 +525,19 @@ func sync_slot(slot: int, force_upload: bool = false) -> String:
 		# A save landed while this slot was uploading; re-run when it finishes.
 		_dirty[slot] = true
 		return "skipped"
-	var path := "user://save_slot_%d.json" % slot
-	if not FileAccess.file_exists(path):
+	var account_id := Global.current_account_id
+	var generation := _generation
+	var path := Global.save_file_path(slot)
+	if path.is_empty() or not FileAccess.file_exists(path):
 		return "skipped"
 
 	_syncing[slot] = true
 	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Syncing world…")
 	var local_info: Dictionary = Global.get_save_info(slot)
+	if local_info.is_empty():
+		_finish(slot)
+		Global.set_cloud_status(Global.CloudStatus.ERROR, "Local world owner check failed.")
+		return "error"
 	var local_uid := str(local_info.get("world_uid", "")).strip_edges()
 	var local_revision: int = maxi(0, int(local_info.get("save_revision", 0)))
 	if local_uid.is_empty() or local_revision <= 0:
@@ -495,6 +547,9 @@ func sync_slot(slot: int, force_upload: bool = false) -> String:
 	var checksum := FileAccess.get_sha256(path)
 
 	var cloud := await Supabase.list_saves()
+	if not _account_is_current(account_id, generation):
+		_finish(slot)
+		return "skipped"
 	if not cloud.ok:
 		_finish(slot)
 		_apply_failure(cloud)
@@ -516,9 +571,16 @@ func sync_slot(slot: int, force_upload: bool = false) -> String:
 		_finish(slot)
 		Global.set_cloud_status(Global.CloudStatus.ERROR, "Local save unreadable.")
 		return "error"
+	# The local file must still belong to the same captured account immediately
+	# before upload; this catches a mid-sync account switch.
+	if not _account_is_current(account_id, generation) or not Global.has_save(slot):
+		_finish(slot)
+		return "skipped"
 	var upload := await Supabase.upload_save(slot, data, Global.world_name_of(slot),
 		local_uid, local_revision)
 	_finish(slot)
+	if not _account_is_current(account_id, generation):
+		return "skipped"
 	if not upload.ok:
 		_apply_failure(upload)
 		return "error"

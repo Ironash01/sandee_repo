@@ -270,11 +270,11 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 • The main menu's [b]Worlds[/b] screen creates, loads, renames and deletes worlds; deletion is permanent for that device.
 
 [b]Cloud saves[/b]
-• Sign in from the main menu to enable automatic cloud sync. Worlds upload automatically after saves and download at startup.
+• Sign in from the startup screen or main menu. An online account is required before worlds can be created or opened. Worlds upload automatically after saves and download during the sign-in sync; each account sees only its own cloud-backed worlds.
 • Two devices sharing the same world: the newer save revision wins when the world UID matches.
 • A cloud save in a slot with a different world UID is treated as a conflict and needs attention in [b]Cloud Saves[/b]. Download a copy there to restore it locally.
-• [b]Play Offline[/b] stops cloud syncing and uses only local worlds. Cloud prompts and leaderboards require an online session.
-• Cloud saves are optional; all core gameplay works offline.""",
+• [b]Play Offline[/b] uses the previously verified local copies belonging to the currently signed-in account. Other accounts' worlds are never listed, and new worlds require an online session.
+• If an account switch or cleanup is interrupted, world access stays blocked until the account is verified again.""",
 	},
 	{
 		"id": "settings",

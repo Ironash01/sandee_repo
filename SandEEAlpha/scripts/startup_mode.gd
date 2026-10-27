@@ -227,7 +227,7 @@ func _build_ui() -> void:
 	inner.add_child(_progress_bar)
 
 	var footer := Label.new()
-	footer.text = "Sign-in is required. You can switch to offline play from the main menu."
+	footer.text = "Sign in to sync. A previously verified offline copy remains available."
 	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	footer.add_theme_font_size_override("font_size", Global.ui_font_size(10))
 	footer.add_theme_color_override("font_color", Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.8))
@@ -350,19 +350,33 @@ func _apply_connectivity() -> void:
 		return
 	if _busy or _leaving:
 		return
+	var offline_id := Global.offline_account_id()
+	var cached_id := Supabase.user_id()
+	var offline_available := not offline_id.is_empty() \
+		and (cached_id.is_empty() or cached_id == offline_id)
 	if _connectivity.get("backend", false):
 		_online_btn.disabled = false
+		_online_btn.text = "Sign In / Play Online"
 		_retry_btn.visible = false
 		_set_status("Online services available.", C_OK)
 		if not _auto_prompted:
 			_auto_prompted = true
 			call_deferred("_auto_prompt_login")
+	elif offline_available:
+		# A previously verified, account-bound local copy may still be played
+		# while the network/Supabase is unavailable. This is not guest mode.
+		_online_btn.disabled = false
+		_online_btn.text = "Play Offline Copy"
+		_retry_btn.visible = true
+		_set_status("No connection — verified local copy available.", C_WARN)
 	elif _connectivity.get("internet", false):
 		_online_btn.disabled = true
+		_online_btn.text = "Sign In / Play Online"
 		_retry_btn.visible = true
 		_set_status("Sandee online is unavailable right now. Try again later.", C_WARN)
 	else:
 		_online_btn.disabled = true
+		_online_btn.text = "Sign In / Play Online"
 		_retry_btn.visible = true
 		_set_status("Internet connection required.", C_MUTED)
 
@@ -386,7 +400,9 @@ func _set_mode_buttons_enabled(enabled: bool) -> void:
 func _on_retry() -> void:
 	if _checking or _busy or _leaving:
 		return
-	_check_connectivity()
+	if _online_btn != null:
+		_online_btn.disabled = false
+	_on_online()
 
 
 func _auto_prompt_login() -> void:
@@ -409,10 +425,31 @@ func _on_online() -> void:
 		return
 	if not connectivity.get("backend", false):
 		_connectivity = connectivity
+		var offline_id := Global.offline_account_id()
+		var cached_id := Supabase.user_id()
+		var cached_matches: bool = cached_id.is_empty() or cached_id == offline_id
+		if not offline_id.is_empty() and cached_matches \
+				and Global.restore_offline_account(offline_id):
+			_busy = false
+			_set_progress(true, 100.0, "Playing your verified offline copy...")
+			await _go_to_menu()
+			return
 		_busy = false
 		_set_progress(false)
 		_set_mode_buttons_enabled(true)
 		_apply_connectivity()
+		return
+
+	if Global.has_incomplete_account_transition():
+		# An interrupted sign-out/switch must never restore the previous
+		# session. Clear it and require a fresh sign-in.
+		await Supabase.sign_out()
+		if not is_inside_tree():
+			return
+		_busy = false
+		_set_progress(false)
+		_set_mode_buttons_enabled(true)
+		_show_login("Finish signing in to continue.")
 		return
 
 	if Supabase.has_stored_session():
@@ -476,16 +513,33 @@ func _enter_online() -> void:
 	if not profile_result.ok:
 		var auth_failed: bool = profile_result.status == 401 or profile_result.status == 403
 		if auth_failed:
+			Global.begin_account_transition("auth_failed")
 			await Supabase.sign_out()
 			Global.set_online_mode(false)
 			Global.set_cloud_status(Global.CloudStatus.OFFLINE)
 			_busy = false
+			_set_progress(false)
+			_set_mode_buttons_enabled(true)
 			_show_login("Your session expired. Sign in again.")
 			return
-		# Signed in, but the profile could not be fetched (service/network).
-		Global.set_cloud_status(Global.CloudStatus.ERROR, "Could not load your profile.")
-		_set_progress(true, 100.0, "Continuing without cloud saves...")
-		await _go_to_menu()
+		# Signed in, but identity could not be verified (service/network).
+		# Fail closed: do not publish a world list.
+		Global.clear_active_account("profile_unverified")
+		Global.set_online_mode(false)
+		Global.set_cloud_status(Global.CloudStatus.ERROR, "Could not verify your account.")
+		_busy = false
+		_set_progress(false)
+		_set_mode_buttons_enabled(true)
+		_set_status("Could not verify your account. Check your connection and retry.", C_WARN)
+		if _retry_btn != null:
+			_retry_btn.visible = true
+		return
+
+	if not Global.begin_account_session(Supabase.user_id()):
+		_busy = false
+		_set_progress(false)
+		_set_mode_buttons_enabled(true)
+		_show_login("Your account identity was invalid. Sign in again.")
 		return
 
 	# Initialize cloud-save metadata. A failure must not claim cloud saving works.
@@ -498,13 +552,40 @@ func _enter_online() -> void:
 		# Startup is a sync barrier: every local world is uploaded and every
 		# automatically-resolvable cloud world is downloaded before the menu.
 		_set_progress(true, 10.0, "Syncing your worlds...")
-		await CloudSync.sync_all()
+		var summary: Dictionary = await CloudSync.sync_all()
 		if not is_inside_tree():
 			return
+		if not Global.is_valid_account_id(Global.current_account_id) \
+				or not Supabase.is_signed_in() \
+				or Supabase.user_id() != Global.current_account_id:
+			_busy = false
+			_set_progress(false)
+			_set_mode_buttons_enabled(true)
+			_show_login("Your session expired. Sign in again.")
+			return
+		if int(summary.get("failed", 0)) > 0:
+			Global.mark_account_cloud_unverified("Some worlds could not be verified.")
+			Global.set_cloud_status(Global.CloudStatus.ERROR,
+				"Cloud worlds could not be verified.")
+			_busy = false
+			_set_progress(false)
+			_set_mode_buttons_enabled(true)
+			_set_status("Could not verify all cloud worlds. Retry to continue.", C_WARN)
+			if _retry_btn != null:
+				_retry_btn.visible = true
+			return
+		Global.mark_account_cloud_ready()
 		_set_progress(true, 90.0, "Finishing cloud sync...")
 	else:
+		Global.mark_account_cloud_unverified("Cloud saves unavailable.")
 		Global.set_cloud_status(Global.CloudStatus.ERROR, "Cloud saves could not be initialized.")
-		_set_progress(true, 90.0, "Continuing without cloud sync...")
+		_busy = false
+		_set_progress(false)
+		_set_mode_buttons_enabled(true)
+		_set_status("Cloud worlds could not be loaded. Check your connection and retry.", C_WARN)
+		if _retry_btn != null:
+			_retry_btn.visible = true
+		return
 
 	# Warm the leaderboard cache before the menu (the overlay reloads live data).
 	_set_progress(true, 95.0, "Preparing the main menu...")

@@ -157,6 +157,13 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * mobile altar modals: Knowledge and Quiz panels are capped to the usable
   viewport with an internal body/question scroll, responsive quiz editor/output
   and answer widths, and touch-scrollable panel surfaces
+* Lua/Python dungeon quiz audit: all 80 questions across both language tracks
+  open with readable question text at scroll top and a panel inside the mobile
+  viewport; the Lua File I/O compiler question now has a real expected output
+* account isolation: account UUID-scoped local world directories, encrypted
+  owner/world-uid sidecars, transition markers, verified-account offline
+  binding, cross-account load/list/upload guards, and Android backup/uninstall
+  settings that require a fresh sign-in after reinstall
 * automatic next-dungeon handoff after completion, Lua 11 -> 26 continuation,
   the 15-mission Lua / 10-mission Python main tracks, plus the two-room,
   enemy-free/hazard-free tutorial layout for the first Lua and Python dungeon
@@ -170,6 +177,10 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * crash-log capture and backtraces
 
 Notes:
+
+* Pre-account flat `user://save_slot_N.json` files are deliberately left intact
+  but are not listed or auto-imported: they have no verified owner and must not
+  be attached to whichever account signs in first.
 
 * Manual layout probes cover 800×600, 1024×768, 1152×648, 1280×720 and
   desktop 16:9; settings, pause menus, hotbar slots, the inventory modal

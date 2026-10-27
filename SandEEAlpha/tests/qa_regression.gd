@@ -12,6 +12,9 @@ extends Node
 var fails := 0
 var checks := 0
 
+const TEST_ACCOUNT_A := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+const TEST_ACCOUNT_B := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
 
 class SwingProbe:
 	extends CharacterBody2D
@@ -139,12 +142,20 @@ func check(ok: bool, label: String) -> void:
 
 
 func _run() -> void:
-	Global.set_online_mode(false)
+	Global.account_test_mode = true
+	_cleanup_test_account_dir(TEST_ACCOUNT_A)
+	_cleanup_test_account_dir(TEST_ACCOUNT_B)
+	Global.account_transitioning = false
+	Global.online_mode = true
+	Global.begin_account_session(TEST_ACCOUNT_A)
+	Global.mark_account_cloud_ready()
+	Global.set_online_mode(true)
 	Global.reset_pause_state()
 	_test_registry()
 	_test_friendly_mobs()
 	await _test_bestiary()
 	await _test_save_and_progress()
+	_test_account_isolation()
 	await _test_tutorial_state_and_dialogue()
 	await _test_triggers()
 	await _test_pause_and_build()
@@ -198,6 +209,22 @@ func _run() -> void:
 	_test_tree_canopy_occupancy()
 	_test_decorative_structures()
 	_test_waypoints()
+	_cleanup_test_account_dir(TEST_ACCOUNT_A)
+	_cleanup_test_account_dir(TEST_ACCOUNT_B)
+	Global.clear_active_account("qa_done")
+	Global.account_test_mode = false
+
+
+func _cleanup_test_account_dir(account_id: String) -> void:
+	var dir_path := "user://accounts/" + account_id
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		return
+	for f in dir.get_files():
+		dir.remove(f)
+	var root := DirAccess.open("user://accounts")
+	if root != null:
+		root.remove(account_id)
 
 
 func _test_registry() -> void:
@@ -418,7 +445,7 @@ func _test_save_and_progress() -> void:
 	if slot <= 0:
 		print("NOTE: no free save slot; save/load progress test skipped")
 		return
-	var path := "user://save_slot_%d.json" % slot
+	var path := Global.save_file_path(slot)
 
 	var moved := Global._find_mission("move")
 	moved["completed"] = true
@@ -491,6 +518,99 @@ func _test_save_and_progress() -> void:
 	Global.reset_bestiary_state()
 
 
+func _test_account_isolation() -> void:
+	var old_slot: int = Global.active_save_slot
+	var old_name: String = Global.world_name
+	# No account context: no file access at all.
+	Global.clear_active_account("qa_fresh")
+	check(not Global.can_access_worlds() and Global.list_worlds().is_empty()
+		and not Global.has_save(1),
+		"fresh/unauthenticated state exposes no local worlds")
+
+	# Account A creates and owns a world.
+	Global.set_online_mode(true)
+	check(Global.begin_account_session(TEST_ACCOUNT_A), "account A session starts")
+	# Cloud sync must be allowed to verify a newly authenticated account even
+	# though world access stays closed until the verification finishes.
+	var old_token := Supabase.access_token
+	var old_user: Dictionary = Supabase.user.duplicate(true)
+	Supabase.access_token = "qa-test-token"
+	Supabase.user = {"id": TEST_ACCOUNT_A}
+	check(CloudSync.is_enabled() and not Global.can_access_worlds(),
+		"cloud sync can verify a new account before its world list is published")
+	Supabase.access_token = old_token
+	Supabase.user = old_user
+	Global.mark_account_cloud_ready()
+	var slot: int = Global.next_free_slot()
+	Global.world_name = "A-only world"
+	Global.save_game(slot)
+	var a_path := Global.save_file_path(slot)
+	check(Global.has_save(slot) and Global.list_worlds().has(slot)
+		and a_path.contains(TEST_ACCOUNT_A),
+		"account A sees its own account-scoped world")
+
+	# Switch to B: A's file remains on disk but is outside B's boundary.
+	Global.begin_account_transition("qa_switch")
+	check(not Global.can_access_worlds() and Global.list_worlds().is_empty(),
+		"an account transition immediately hides all worlds")
+	check(Global.begin_account_session(TEST_ACCOUNT_B), "account B session starts")
+	Global.set_online_mode(true)
+	Global.mark_account_cloud_ready()
+	Global.active_save_slot = -1
+	Global.load_game(slot)
+	check(not Global.has_save(slot) and not Global.list_worlds().has(slot)
+		and Global.active_save_slot == -1 and FileAccess.file_exists(a_path),
+		"account B cannot list, load, or overwrite account A's world")
+
+	# Copying A's file into B's boundary without an owner sidecar does not grant
+	# access; B's session must not adopt it automatically.
+	var b_path := Global.save_file_path(slot)
+	if FileAccess.file_exists(a_path) and not b_path.is_empty():
+		DirAccess.copy_absolute(ProjectSettings.globalize_path(a_path),
+			ProjectSettings.globalize_path(b_path))
+		DirAccess.copy_absolute(ProjectSettings.globalize_path(a_path.get_basename() + ".account"),
+			ProjectSettings.globalize_path(b_path.get_basename() + ".account"))
+		check(not Global.has_save(slot),
+			"a copied world with another account's owner metadata is rejected")
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(b_path))
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(b_path.get_basename() + ".account"))
+
+	# A can still play offline from a previously verified binding. Offline mode
+	# cannot create a new world, but can save the existing account-owned copy.
+	Global.begin_account_transition("qa_offline")
+	Global.begin_account_session(TEST_ACCOUNT_A)
+	Global.mark_account_cloud_ready()
+	Global.last_verified_account_id = TEST_ACCOUNT_A
+	check(Global.enter_offline_mode() and Global.can_access_worlds(),
+		"verified account A can enter offline mode")
+	check(not Global.can_create_world(), "offline mode cannot create new worlds")
+	Global.world_name = "A-only world"
+	Global.save_game(slot)
+	check(Global.has_save(slot), "offline play can save its own existing world")
+
+	# A new account cannot reuse A's offline authorization.
+	Global.begin_account_transition("qa_offline_switch")
+	Global.begin_account_session(TEST_ACCOUNT_B)
+	Global.set_online_mode(true)
+	Global.mark_account_cloud_ready()
+	check(not Global.list_worlds().has(slot) and not Global.has_save(slot),
+		"offline authorization never carries across an account switch")
+
+	# Interrupted transition fails closed until a new verified session clears it.
+	Global.begin_account_transition("qa_interrupted")
+	check(Global.account_transitioning and not Global.can_access_worlds()
+		and Global.list_worlds().is_empty(),
+		"interrupted account transition blocks world access")
+	Global.begin_account_session(TEST_ACCOUNT_A)
+	Global.set_online_mode(true)
+	Global.mark_account_cloud_ready()
+	check(not Global.account_transitioning and Global.can_access_worlds(),
+		"a verified account clears an interrupted transition safely")
+
+	Global.active_save_slot = old_slot
+	Global.world_name = old_name
+
+
 func _test_tutorial_state_and_dialogue() -> void:
 	var old_version: int = Global.tutorial_version
 	var old_stage: int = Global.tutorial_stage
@@ -519,18 +639,18 @@ func _test_tutorial_state_and_dialogue() -> void:
 			and bool(Global.tutorial_flags.get("starter_kit", false))
 			and bool(Global.tutorial_flags.get("automatica_awarded", false)),
 			"guided tutorial version, step and one-time reward flags survive save/load")
-		check(FileAccess.get_file_as_string("user://save_slot_%d.json" % slot).contains("tutorial_flags"),
+		check(FileAccess.get_file_as_string(Global.save_file_path(slot)).contains("tutorial_flags"),
 			"tutorial reward flags are persisted in the world save")
 
 		# A pre-v2 save must not be ambushed by the new onboarding, even if the
 		# old six-line tutorial was left unfinished.
-		var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string("user://save_slot_%d.json" % slot))
+		var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(Global.save_file_path(slot)))
 		if raw is Dictionary:
 			(raw as Dictionary).erase("tutorial_version")
 			(raw as Dictionary).erase("tutorial_flags")
 			(raw as Dictionary)["tutorial_completed"] = false
 			(raw as Dictionary)["tutorial_stage"] = 4
-			var f := FileAccess.open("user://save_slot_%d.json" % slot, FileAccess.WRITE)
+			var f := FileAccess.open(Global.save_file_path(slot), FileAccess.WRITE)
 			f.store_string(JSON.stringify(raw))
 			f.close()
 			Global.load_game(slot)
@@ -3225,6 +3345,11 @@ func _test_android_config() -> void:
 	check(not bool(ProjectSettings.get_setting(
 		"application/config/quit_on_go_back", true)),
 		"Android Back does not quit without giving the player a pause menu")
+	var manifest := FileAccess.get_file_as_string("res://android/build/src/main/AndroidManifest.xml")
+	check(presets.contains("user_data_backup/allow=false")
+		and presets.contains("package/retain_data_on_uninstall=false")
+		and manifest.contains('android:allowBackup="false"'),
+		"Android backup/retain-data are disabled so a reinstall starts signed out")
 
 func _test_android_input_and_safe_area() -> void:
 	Global.reset_pause_state()
@@ -3806,6 +3931,11 @@ func _test_altar_mobile_layout() -> void:
 	var question_scroll := quiz.find_child("QuestionScroll", true, false) as ScrollContainer
 	check(question_scroll != null and qp != null and question_scroll.size.y < qp.size.y,
 		"quiz question and answers scroll inside the capped panel")
+	var qtext := quiz.get("_q_text") as Label
+	check(qtext != null and qtext.text.strip_edges() == q.question.strip_edges()
+		and qtext.size.x > 100.0 and question_scroll != null
+		and question_scroll.scroll_vertical == 0,
+		"quiz opens showing readable question text at the top of the scroll")
 	if question_scroll != null:
 		var q_rect: Rect2 = question_scroll.get_global_rect()
 		var q_touch_at := Vector2(q_rect.position.x + q_rect.size.x * 0.5,
@@ -5416,12 +5546,12 @@ func _saved_missions_version(path: String) -> int:
 
 
 func _write_world(slot: int, world_name: String, created_version: String) -> void:
-	var file := FileAccess.open("user://save_slot_%d.json" % slot, FileAccess.WRITE)
-	file.store_string(JSON.stringify({
+	var data := JSON.stringify({
 		"slot": slot,
 		"world_name": world_name,
 		"created_version": created_version,
 		"timestamp": int(Time.get_unix_time_from_system()),
 		"missions": [],
-	}))
-	file.close()
+	})
+	# Use the production install path so the encrypted owner sidecar is created.
+	Global.install_cloud_save_bytes(slot, data.to_utf8_buffer())

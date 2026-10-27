@@ -465,6 +465,10 @@ func _build_panel() -> Control:
 	var content_vbox := VBoxContainer.new()
 	content_vbox.add_theme_constant_override("separation", int(10 * s))
 	content_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
+	# ScrollContainer does not stretch its child to its own width. The body label
+	# autowraps (min width ~1), so without this the whole page collapses into a
+	# one-character-wide vertical strip inside every dungeon knowledge room.
+	content_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content_scroll.add_child(content_vbox)
 
 	var body := Label.new()

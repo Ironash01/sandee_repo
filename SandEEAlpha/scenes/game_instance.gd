@@ -62,6 +62,14 @@ var _cursor_manager: Node = null
 var _tutorial_guide: Node = null
 
 func _ready() -> void:
+	# Direct scene transitions must not bypass the account gate. The menu and
+	# startup already prevent this, but the world scene is also loadable by a
+	# stale path/deep transition.
+	if not Global.can_access_worlds():
+		_account_ejecting = true
+		CrashLogger.event("ACCOUNT", "game scene blocked: no verified account")
+		get_tree().change_scene_to_file("res://scenes/ui/main_menu_ver.tscn")
+		return
 	# Honour the player's saved window/fullscreen choice instead of forcing
 	# fullscreen (see Global.apply_display_mode — a no-op on mobile).
 	Global.apply_display_mode()
@@ -155,6 +163,20 @@ func _ready() -> void:
 	# so signals are safe to connect here before that deferred work fires.
 	_world.generation_status_changed.connect(_on_generation_status)
 	_world.generation_complete.connect(_on_generation_complete)
+	if not Global.account_context_changed.is_connected(_on_account_context_changed):
+		Global.account_context_changed.connect(_on_account_context_changed)
+
+var _account_ejecting: bool = false
+
+func _on_account_context_changed(account_id: String) -> void:
+	# A session loss or account transition while a world is open must not leave
+	# the previous account's world playable. Eject to the menu without saving
+	# under the now-unverified identity.
+	if not account_id.is_empty() or _account_ejecting:
+		return
+	_account_ejecting = true
+	CrashLogger.event("ACCOUNT", "world ejected after account access loss")
+	get_tree().change_scene_to_file("res://scenes/ui/main_menu_ver.tscn")
 
 # ── Death dim overlay ──────────────────────────────────────────────
 # A full-screen black overlay that fades in when the player dies (Global's

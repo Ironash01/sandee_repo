@@ -1056,6 +1056,159 @@ signal cloud_status_changed(status: int)
 ## react to autosaves, quit-to-menu saves and world joins exactly once.
 signal game_saved(slot: int)
 signal world_loaded(slot: int)
+## Emitted whenever the active account boundary changes. Cloud sync listens so
+## an in-flight upload can never finish under a different signed-in account.
+signal account_context_changed(account_id: String)
+
+# ── Account-bound local storage ───────────────────────────────────
+# Every world file lives under user://accounts/<auth.uid()>/ and has an
+# encrypted owner sidecar. The stable Supabase UUID (never a username/email) is
+# the account identity. A world can only be listed/loaded/saved when the active
+# account matches its sidecar; the old flat user://save_slot_N.json files are
+# deliberately not scanned (they have no verified owner).
+const ACCOUNT_ROOT: String = "user://accounts"
+const ACCOUNT_BINDING_PATH: String = "user://account_binding.bin"
+const ACCOUNT_TRANSITION_PATH: String = "user://account_transition.bin"
+const OWNER_SIDECAR_SUFFIX: String = ".account"
+var current_account_id: String = ""
+var last_verified_account_id: String = ""
+var account_online_verified: bool = false
+var account_offline_verified: bool = false
+var account_cloud_verified: bool = false
+var account_transitioning: bool = false
+## QA-only seam: suppresses account binding/transition file writes so the
+## headless suite can exercise isolation without touching a player's real
+## account state. Never set by gameplay code.
+var account_test_mode: bool = false
+
+func _account_device_pass() -> String:
+	var device_id := OS.get_unique_id().strip_edges()
+	if device_id.is_empty():
+		device_id = str(ProjectSettings.globalize_path("user://"))
+	return "SandEE|account-binding|v1|" + device_id + "|" + OS.get_processor_name()
+
+func is_valid_account_id(account_id: String) -> bool:
+	if account_id.length() != 36:
+		return false
+	for i in range(36):
+		var c := account_id[i]
+		if i == 8 or i == 13 or i == 18 or i == 23:
+			if c != "-":
+				return false
+			continue
+		var is_hex := (c >= "0" and c <= "9") or (c >= "a" and c <= "f") \
+			or (c >= "A" and c <= "F")
+		if not is_hex:
+			return false
+	return true
+
+func _account_dir(account_id: String) -> String:
+	if not is_valid_account_id(account_id):
+		return ""
+	return ACCOUNT_ROOT + "/" + account_id.to_lower() + "/"
+
+func _ensure_account_dir(account_id: String) -> bool:
+	var dir := _account_dir(account_id)
+	if dir.is_empty():
+		return false
+	var abs_dir := ProjectSettings.globalize_path(dir)
+	if DirAccess.dir_exists_absolute(abs_dir):
+		return true
+	return DirAccess.make_dir_recursive_absolute(abs_dir) == OK
+
+func _slot_path_for(account_id: String, slot: int) -> String:
+	var dir := _account_dir(account_id)
+	if dir.is_empty() or slot < 1 or slot > MAX_WORLDS:
+		return ""
+	return dir + "save_slot_%d.json" % slot
+
+func _owner_path_for(account_id: String, slot: int) -> String:
+	var dir := _account_dir(account_id)
+	if dir.is_empty() or slot < 1 or slot > MAX_WORLDS:
+		return ""
+	return dir + "save_slot_%d%s" % [slot, OWNER_SIDECAR_SUFFIX]
+
+## Public path helper for the cloud-sync layer. Empty means "no active account;
+## do not touch any local world file".
+func save_file_path(slot: int) -> String:
+	if account_transitioning or not is_valid_account_id(current_account_id):
+		return ""
+	return _slot_path_for(current_account_id, slot)
+
+func _read_owner_sidecar(account_id: String, slot: int) -> Dictionary:
+	var path := _owner_path_for(account_id, slot)
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return {}
+	var f := FileAccess.open_encrypted_with_pass(path, FileAccess.READ, _account_device_pass())
+	if f == null:
+		return {}
+	var text := f.get_as_text()
+	f.close()
+	var parsed: Variant = JSON.parse_string(text)
+	if not (parsed is Dictionary):
+		return {}
+	var owner := str((parsed as Dictionary).get("account_id", "")).to_lower()
+	if owner != account_id.to_lower() or not is_valid_account_id(owner):
+		return {}
+	return parsed
+
+func _write_owner_sidecar(account_id: String, slot: int, world_uid: String) -> bool:
+	var path := _owner_path_for(account_id, slot)
+	if path.is_empty():
+		return false
+	if not _ensure_account_dir(account_id):
+		return false
+	var tmp := path + ".tmp"
+	var f := FileAccess.open_encrypted_with_pass(tmp, FileAccess.WRITE, _account_device_pass())
+	if f == null:
+		return false
+	f.store_string(JSON.stringify({
+		"account_id": account_id.to_lower(),
+		"world_uid": world_uid,
+		"verified_at": Time.get_unix_time_from_system(),
+	}))
+	f.close()
+	var abs_path := ProjectSettings.globalize_path(path)
+	var abs_tmp := ProjectSettings.globalize_path(tmp)
+	DirAccess.remove_absolute(abs_path + ".bak")
+	if FileAccess.file_exists(path):
+		if DirAccess.rename_absolute(abs_path, abs_path + ".bak") != OK:
+			DirAccess.remove_absolute(abs_tmp)
+			return false
+	if DirAccess.rename_absolute(abs_tmp, abs_path) != OK:
+		if FileAccess.file_exists(path + ".bak"):
+			DirAccess.rename_absolute(abs_path + ".bak", abs_path)
+		DirAccess.remove_absolute(abs_tmp)
+		return false
+	DirAccess.remove_absolute(abs_path + ".bak")
+	return true
+
+func _remove_owner_sidecar(account_id: String, slot: int) -> void:
+	var path := _owner_path_for(account_id, slot)
+	if path.is_empty():
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".tmp"))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".bak"))
+
+func _save_owned_by_current(slot: int, info: Dictionary = {}) -> bool:
+	if account_transitioning or not is_valid_account_id(current_account_id):
+		return false
+	var sidecar := _read_owner_sidecar(current_account_id, slot)
+	if sidecar.is_empty():
+		return false
+	var uid := str(sidecar.get("world_uid", "")).strip_edges()
+	if uid.is_empty():
+		return false
+	# The encrypted sidecar is the ownership authority. A legacy/in-place save
+	# may have lost its JSON world_uid fields; ensure_save_identity() restores
+	# them from this sidecar. A non-empty JSON uid must still agree.
+	if not info.is_empty():
+		var file_uid := str(info.get("world_uid", "")).strip_edges()
+		if not file_uid.is_empty() and file_uid != uid:
+			return false
+	return true
+
 
 func set_online_mode(on: bool) -> void:
 	if online_mode == on:
@@ -1071,6 +1224,309 @@ func set_cloud_status(status: int, detail: String = "") -> void:
 	cloud_status = status
 	cloud_status_detail = detail
 	cloud_status_changed.emit(status)
+
+# ── Account lifecycle ─────────────────────────────────────────────
+
+func _write_account_binding(account_id: String) -> void:
+	if account_test_mode:
+		return
+	if not is_valid_account_id(account_id):
+		return
+	var f := FileAccess.open_encrypted_with_pass(
+		ACCOUNT_BINDING_PATH + ".tmp", FileAccess.WRITE, _account_device_pass())
+	if f == null:
+		return
+	f.store_string(JSON.stringify({
+		"account_id": account_id.to_lower(),
+		"verified_at": Time.get_unix_time_from_system(),
+	}))
+	f.close()
+	var abs_path := ProjectSettings.globalize_path(ACCOUNT_BINDING_PATH)
+	var abs_tmp := ProjectSettings.globalize_path(ACCOUNT_BINDING_PATH + ".tmp")
+	DirAccess.remove_absolute(abs_path)
+	if DirAccess.rename_absolute(abs_tmp, abs_path) != OK:
+		DirAccess.remove_absolute(abs_tmp)
+
+func _read_account_binding() -> String:
+	if account_test_mode:
+		return last_verified_account_id
+	if not FileAccess.file_exists(ACCOUNT_BINDING_PATH):
+		return ""
+	var f := FileAccess.open_encrypted_with_pass(
+		ACCOUNT_BINDING_PATH, FileAccess.READ, _account_device_pass())
+	if f == null:
+		return ""
+	var text := f.get_as_text()
+	f.close()
+	var parsed: Variant = JSON.parse_string(text)
+	if not (parsed is Dictionary):
+		return ""
+	var id := str((parsed as Dictionary).get("account_id", "")).to_lower()
+	return id if is_valid_account_id(id) else ""
+
+func _remove_account_binding() -> void:
+	if not account_test_mode:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(ACCOUNT_BINDING_PATH))
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(ACCOUNT_BINDING_PATH + ".tmp"))
+	last_verified_account_id = ""
+
+func has_incomplete_account_transition() -> bool:
+	return account_transitioning
+
+func _write_transition_marker(reason: String) -> void:
+	if account_test_mode:
+		return
+	var f := FileAccess.open_encrypted_with_pass(
+		ACCOUNT_TRANSITION_PATH + ".tmp", FileAccess.WRITE, _account_device_pass())
+	if f == null:
+		# Fail-closed fallback: a plain marker with no account metadata is enough
+		# for startup to refuse the previous session if encryption is unavailable.
+		var raw := FileAccess.open(ACCOUNT_TRANSITION_PATH, FileAccess.WRITE)
+		if raw != null:
+			raw.store_string("pending")
+			raw.close()
+		return
+	f.store_string(JSON.stringify({
+		"from": current_account_id,
+		"reason": reason,
+		"started_at": Time.get_unix_time_from_system(),
+	}))
+	f.close()
+	var abs_path := ProjectSettings.globalize_path(ACCOUNT_TRANSITION_PATH)
+	var abs_tmp := ProjectSettings.globalize_path(ACCOUNT_TRANSITION_PATH + ".tmp")
+	DirAccess.remove_absolute(abs_path)
+	if DirAccess.rename_absolute(abs_tmp, abs_path) != OK:
+		DirAccess.remove_absolute(abs_tmp)
+
+func _remove_transition_marker() -> void:
+	if account_test_mode:
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(ACCOUNT_TRANSITION_PATH))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(ACCOUNT_TRANSITION_PATH + ".tmp"))
+
+func _load_account_state() -> void:
+	last_verified_account_id = _read_account_binding()
+	if FileAccess.file_exists(ACCOUNT_TRANSITION_PATH):
+		# An interrupted switch/sign-out must fail closed. Do not let the old
+		# cached binding authorize offline play, and require a fresh sign-in.
+		account_transitioning = true
+		_remove_account_binding()
+		last_verified_account_id = ""
+
+## The account id that may be used for offline play, or "" when no trusted,
+## device-bound binding exists. The account must also have at least one local
+## world with a matching encrypted owner sidecar.
+func offline_account_id() -> String:
+	if account_transitioning:
+		return ""
+	if not account_test_mode and FileAccess.file_exists(ACCOUNT_TRANSITION_PATH):
+		return ""
+	var id := last_verified_account_id
+	if not is_valid_account_id(id) or _read_account_binding() != id:
+		return ""
+	return id if account_has_owned_worlds(id) else ""
+
+func account_has_owned_worlds(account_id: String) -> bool:
+	if not is_valid_account_id(account_id):
+		return false
+	for slot in range(1, MAX_WORLDS + 1):
+		var path := _slot_path_for(account_id, slot)
+		if path.is_empty() or not FileAccess.file_exists(path):
+			continue
+		var f := FileAccess.open(path, FileAccess.READ)
+		if f == null:
+			continue
+		var parsed: Variant = JSON.parse_string(f.get_as_text())
+		f.close()
+		if parsed is Dictionary and not _read_owner_sidecar(account_id, slot).is_empty():
+			return true
+	return false
+
+func can_access_worlds() -> bool:
+	if account_transitioning or not is_valid_account_id(current_account_id):
+		return false
+	if online_mode:
+		return account_online_verified and account_cloud_verified
+	return account_offline_verified
+
+func _identity_is_verified() -> bool:
+	return not account_transitioning and is_valid_account_id(current_account_id) \
+		and (account_online_verified or account_offline_verified)
+
+func _clear_active_world_state() -> void:
+	active_save_slot = -1
+	world_name = ""
+	has_pending_pos = false
+	pending_world_data.clear()
+	pending_world_seed = 0
+	pending_time_of_day = -1.0
+	tutorial_version = 2
+	tutorial_stage = 0
+	tutorial_completed = false
+	tutorial_flags.clear()
+	cave_states.clear()
+	explored_cave_tiles.clear()
+	explored_dungeon_tiles.clear()
+	dungeon_chest_states.clear()
+	cleared_dungeons.clear()
+	dungeon_stars.clear()
+	dungeon_seeds.clear()
+	learned_entries.clear()
+	learned_keywords.clear()
+	unseen_entries.clear()
+	Hotbar.fill(null)
+	Inventory.fill(null)
+	reset_missions()
+	reset_bestiary_state()
+	world_node = null
+	player_node = null
+
+## Begin an authenticated account session. `remember` writes the device-bound
+## offline binding; call only after the profile/identity has been verified.
+func begin_account_session(account_id: String, remember: bool = true) -> bool:
+	var id := account_id.strip_edges().to_lower()
+	if not is_valid_account_id(id):
+		clear_active_account("invalid_account")
+		return false
+	if is_valid_account_id(current_account_id) and current_account_id != id:
+		begin_account_transition("account_switch")
+	_clear_active_world_state()
+	if not _ensure_account_dir(id):
+		clear_active_account("storage_unavailable")
+		return false
+	current_account_id = id
+	account_online_verified = true
+	account_offline_verified = false
+	account_cloud_verified = false
+	# The persisted transition marker still exists until the cloud sync succeeds,
+	# but the in-memory flag must not block the sync itself. World access remains
+	# closed because account_cloud_verified is false.
+	account_transitioning = false
+	if remember:
+		last_verified_account_id = id
+		_write_account_binding(id)
+	account_context_changed.emit(current_account_id)
+	return true
+
+func mark_account_cloud_ready() -> void:
+	if not is_valid_account_id(current_account_id):
+		return
+	account_cloud_verified = true
+	account_transitioning = false
+	_remove_transition_marker()
+	account_context_changed.emit(current_account_id)
+
+func mark_account_cloud_unverified(detail: String = "") -> void:
+	account_cloud_verified = false
+	if not detail.is_empty():
+		cloud_status_detail = detail
+	account_context_changed.emit(current_account_id)
+
+func prepare_online_reverify() -> void:
+	online_mode = true
+	account_cloud_verified = false
+	account_offline_verified = false
+	account_context_changed.emit(current_account_id)
+
+## Start an account boundary transition. Files stay in their account directory;
+## only the active authorization and in-memory world state are cleared.
+func begin_account_transition(reason: String = "switch") -> void:
+	if is_valid_account_id(current_account_id):
+		_write_transition_marker(reason)
+	account_transitioning = true
+	_remove_account_binding()
+	clear_active_account(reason)
+
+func finish_account_transition() -> void:
+	account_transitioning = false
+	_remove_transition_marker()
+
+## Clears the active account and all world/UI state. Does not delete account
+## files and does not by itself clear the offline binding (begin_account_transition
+## does that for explicit sign-out/switch).
+func clear_active_account(reason: String = "cleared") -> void:
+	current_account_id = ""
+	account_online_verified = false
+	account_offline_verified = false
+	account_cloud_verified = false
+	_clear_active_world_state()
+	account_context_changed.emit("")
+	if reason != "":
+		CrashLogger.event("ACCOUNT", "active account cleared (%s)" % reason)
+
+## Switch from verified online play to the previously verified offline copy of
+## the SAME account. Returns false if the binding is missing or mismatched.
+func enter_offline_mode() -> bool:
+	if not _identity_is_verified() or not account_online_verified:
+		return false
+	if not account_test_mode and FileAccess.file_exists(ACCOUNT_TRANSITION_PATH):
+		return false
+	if not account_test_mode and Supabase.is_signed_in() \
+			and Supabase.user_id() != current_account_id:
+		return false
+	if last_verified_account_id != current_account_id:
+		return false
+	if _read_account_binding() != current_account_id:
+		return false
+	online_mode = false
+	cloud_status = CloudStatus.OFFLINE
+	cloud_status_detail = "Offline local copy - changes will sync after reconnecting."
+	account_offline_verified = true
+	account_cloud_verified = false
+	account_context_changed.emit(current_account_id)
+	online_state_changed.emit()
+	cloud_status_changed.emit(cloud_status)
+	return true
+
+## Startup-only offline restore. Uses a previously verified, device-bound
+## binding; network failure alone is never treated as authentication.
+func restore_offline_account(account_id: String) -> bool:
+	var id := account_id.strip_edges().to_lower()
+	if account_transitioning or not is_valid_account_id(id):
+		return false
+	if not account_test_mode and FileAccess.file_exists(ACCOUNT_TRANSITION_PATH):
+		return false
+	if not account_test_mode and Supabase.is_signed_in() and Supabase.user_id() != id:
+		return false
+	if _read_account_binding() != id or not account_has_owned_worlds(id):
+		return false
+	_clear_active_world_state()
+	if not _ensure_account_dir(id):
+		return false
+	current_account_id = id
+	last_verified_account_id = id
+	account_online_verified = false
+	account_offline_verified = true
+	account_cloud_verified = false
+	online_mode = false
+	cloud_status = CloudStatus.OFFLINE
+	cloud_status_detail = "Offline local copy - changes will sync after reconnecting."
+	account_context_changed.emit(current_account_id)
+	return true
+
+func _connect_auth_state_guard() -> void:
+	if not Supabase.auth_changed.is_connected(_on_supabase_auth_changed):
+		Supabase.auth_changed.connect(_on_supabase_auth_changed)
+
+func _on_supabase_auth_changed(signed_in: bool) -> void:
+	if signed_in:
+		var new_id := Supabase.user_id()
+		if is_valid_account_id(new_id):
+			var previous := current_account_id if is_valid_account_id(current_account_id) \
+				else last_verified_account_id
+			if is_valid_account_id(previous) and previous != new_id:
+				# A different authenticated identity is a boundary even if this
+				# is the first callback after a failed/partial account switch.
+				begin_account_transition("account_switch")
+		return
+	# Session expiry/sign-out must immediately revoke world access. Explicit
+	# sign-out also clears the binding via begin_account_transition().
+	if is_valid_account_id(current_account_id) or account_online_verified \
+			or account_offline_verified or account_cloud_verified:
+		clear_active_account("auth_changed")
+		set_online_mode(false)
+		set_cloud_status(CloudStatus.ERROR, "Session expired")
+
 
 func cloud_status_label() -> String:
 	match cloud_status:
@@ -1746,6 +2202,8 @@ func _ready() -> void:
 	load_knowledge_data()
 	_append_dungeon_missions()
 	_append_side_missions()
+	_load_account_state()
+	call_deferred("_connect_auth_state_guard")
 	# UI hit-testing walks only registered UI roots (see is_point_over_ui).
 	# Autoloads exist before the first scene, so scan them now, then pick up
 	# every later CanvasLayer/top-level Control as it enters the tree.
@@ -2931,37 +3389,108 @@ func game_version() -> String:
 	return v if not v.is_empty() else VERSION_FALLBACK
 
 func has_save(slot: int) -> bool:
-	return FileAccess.file_exists("user://save_slot_%d.json" % slot)
+	var path := save_file_path(slot)
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return false
+	var info := _read_save_info_path(path)
+	return not info.is_empty() and _save_owned_by_current(slot, info)
+
+func _read_save_info_path(path: String) -> Dictionary:
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return {}
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return {}
+	var data: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	return data if data is Dictionary else {}
 
 func get_last_slot() -> int:
+	if not can_access_worlds():
+		return -1
 	var newest_slot: int   = -1
 	var newest_time: float = 0.0
 	for s in range(1, MAX_WORLDS + 1):
-		if not has_save(s):
+		var data := get_save_info(s)
+		if data.is_empty() or not data.has("timestamp"):
 			continue
-		var f := FileAccess.open("user://save_slot_%d.json" % s, FileAccess.READ)
-		if f == null:
-			continue
-		var data = JSON.parse_string(f.get_as_text())
-		f.close()
-		if data is Dictionary and data.has("timestamp"):
-			var t: float = float(data["timestamp"])
-			if t > newest_time:
-				newest_time = t
-				newest_slot = s
+		var t: float = float(data["timestamp"])
+		if t > newest_time:
+			newest_time = t
+			newest_slot = s
 	return newest_slot
 
 func get_save_info(slot: int) -> Dictionary:
-	if not has_save(slot):
+	var path := save_file_path(slot)
+	var data := _read_save_info_path(path)
+	if data.is_empty():
 		return {}
-	var f := FileAccess.open("user://save_slot_%d.json" % slot, FileAccess.READ)
+	if not _save_owned_by_current(slot, data):
+		return {}
+	return data
+
+## Internal account-scoped slot list for synchronization. Unlike list_worlds(),
+## this is available while an initial cloud verification is still in progress.
+func owned_world_slots() -> Array:
+	var out: Array = []
+	if account_transitioning or not is_valid_account_id(current_account_id):
+		return out
+	for s in range(1, MAX_WORLDS + 1):
+		if has_save(s):
+			out.append(s)
+	return out
+
+## Installs downloaded cloud bytes into the CURRENT account's slot. Ownership
+## metadata is written first; a pre-existing unowned/mismatched file is never
+## overwritten. Legacy cloud JSON without world_uid/revision gets those fields
+## added locally (the cloud object itself is never modified).
+func install_cloud_save_bytes(slot: int, data: PackedByteArray) -> bool:
+	if not _identity_is_verified():
+		return false
+	var path := save_file_path(slot)
+	if path.is_empty() or data.is_empty():
+		return false
+	var parsed: Variant = JSON.parse_string(data.get_string_from_utf8())
+	if not (parsed is Dictionary):
+		return false
+	if FileAccess.file_exists(path):
+		var existing := _read_save_info_path(path)
+		if existing.is_empty() or not _save_owned_by_current(slot, existing):
+			CrashLogger.event("CLOUD", "refused to overwrite unowned slot=%d" % slot)
+			return false
+	var info: Dictionary = parsed
+	var uid := str(info.get("world_uid", "")).strip_edges()
+	if uid.is_empty():
+		uid = new_world_uid()
+		info["world_uid"] = uid
+	if int(info.get("save_revision", 0)) <= 0:
+		info["save_revision"] = 1
+	if not info.has("save_format"):
+		info["save_format"] = SAVE_FORMAT_VERSION
+	if uid != str((parsed as Dictionary).get("world_uid", "")).strip_edges():
+		data = JSON.stringify(info).to_utf8_buffer()
+	if not _write_owner_sidecar(current_account_id, slot, uid):
+		return false
+	var tmp := path + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
-		return {}
-	var data = JSON.parse_string(f.get_as_text())
+		return false
+	f.store_buffer(data)
 	f.close()
-	if data is Dictionary:
-		return data
-	return {}
+	var abs_path := ProjectSettings.globalize_path(path)
+	var abs_tmp := ProjectSettings.globalize_path(tmp)
+	DirAccess.remove_absolute(abs_path + ".bak")
+	if FileAccess.file_exists(path):
+		if DirAccess.rename_absolute(abs_path, abs_path + ".bak") != OK:
+			DirAccess.remove_absolute(abs_tmp)
+			return false
+	if DirAccess.rename_absolute(abs_tmp, abs_path) != OK:
+		if FileAccess.file_exists(path + ".bak"):
+			DirAccess.rename_absolute(abs_path + ".bak", abs_path)
+		DirAccess.remove_absolute(abs_tmp)
+		return false
+	DirAccess.remove_absolute(abs_path + ".bak")
+	return true
 
 # ── Worlds (save slots) ───────────────────────────────────────────
 # A "world" is one save slot file (user://save_slot_N.json). Slots are fully
@@ -2999,22 +3528,20 @@ func world_name_of(slot: int) -> String:
 # pencil button in the Worlds list. Writes atomically (same tmp/.bak scheme as
 # save_game) so a failed rename can never corrupt the save.
 func rename_world(slot: int, new_name: String) -> bool:
+	if not _identity_is_verified():
+		return false
 	var name: String = new_name.strip_edges()
 	if name.is_empty():
 		return false
 	if name.length() > 40:
 		name = name.substr(0, 40)
-	var path: String = "user://save_slot_%d.json" % slot
-	if not FileAccess.file_exists(path):
+	var path: String = save_file_path(slot)
+	if path.is_empty() or not has_save(slot):
 		return false
-	var f := FileAccess.open(path, FileAccess.READ)
-	if f == null:
+	var data: Dictionary = get_save_info(slot).duplicate(true)
+	if data.is_empty():
 		return false
-	var data: Variant = JSON.parse_string(f.get_as_text())
-	f.close()
-	if not (data is Dictionary):
-		return false
-	(data as Dictionary)["world_name"] = name
+	data["world_name"] = name
 
 	var tmp: String = path + ".tmp"
 	var out := FileAccess.open(tmp, FileAccess.WRITE)
@@ -3034,26 +3561,30 @@ func rename_world(slot: int, new_name: String) -> bool:
 		world_name = name
 	return true
 
-# Every existing world slot, oldest-first by slot number.
+# Every visible world slot for the active verified account, oldest-first.
 func list_worlds() -> Array:
-	var out: Array = []
-	for s in range(1, MAX_WORLDS + 1):
-		if has_save(s):
-			out.append(s)
-	return out
+	if not can_access_worlds():
+		return []
+	return owned_world_slots()
 
 func world_count() -> int:
 	return list_worlds().size()
 
+## New worlds may only be created while online and after the account's cloud
+## list has been verified. Offline play is for existing downloaded worlds only.
 func can_create_world() -> bool:
-	return world_count() < MAX_WORLDS
+	if not is_valid_account_id(current_account_id) or account_transitioning:
+		return false
+	if not online_mode or not account_online_verified or not account_cloud_verified:
+		return false
+	return owned_world_slots().size() < MAX_WORLDS
 
 # True when `name` is free (case-insensitive) across every existing world.
 func is_world_name_free(name: String) -> bool:
 	var want: String = name.strip_edges().to_lower()
 	if want.is_empty():
 		return false
-	for s in list_worlds():
+	for s in owned_world_slots():
 		if world_name_of(s).to_lower() == want:
 			return false
 	return true
@@ -3065,17 +3596,17 @@ func next_free_slot() -> int:
 			return s
 	return -1
 
-# Deletes a world. Callers MUST have confirmed with the player first — this
-# only ever removes the one slot file.
+# Deletes an OWNED world. Callers MUST have confirmed with the player first.
 func delete_world(slot: int) -> bool:
-	if not has_save(slot):
+	if not _identity_is_verified() or not has_save(slot):
 		return false
-	var dir := DirAccess.open("user://")
-	if dir == null:
+	var path := save_file_path(slot)
+	if path.is_empty():
 		return false
-	var err := dir.remove("save_slot_%d.json" % slot)
-	if err != OK:
-		return false
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".tmp"))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".bak"))
+	_remove_owner_sidecar(current_account_id, slot)
 	if active_save_slot == slot:
 		active_save_slot = -1
 	return true
@@ -3083,6 +3614,8 @@ func delete_world(slot: int) -> bool:
 # Starts a brand-new world in `slot` (name + empty inventory + reset missions),
 # leaving every other slot untouched.
 func begin_new_world(slot: int, name: String) -> void:
+	if not can_create_world() or slot < 1 or slot > MAX_WORLDS or has_save(slot):
+		return
 	active_save_slot    = slot
 	world_name          = name.strip_edges()
 	tutorial_version    = 2
@@ -3166,7 +3699,9 @@ func ensure_save_identity(slot: int) -> Dictionary:
 		return info
 	var changed := false
 	if str(info.get("world_uid", "")).strip_edges().is_empty():
-		info["world_uid"] = new_world_uid()
+		var sidecar := _read_owner_sidecar(current_account_id, slot)
+		var side_uid := str(sidecar.get("world_uid", "")).strip_edges()
+		info["world_uid"] = side_uid if not side_uid.is_empty() else new_world_uid()
 		changed = true
 	if int(info.get("save_revision", 0)) <= 0:
 		info["save_revision"] = 1
@@ -3176,7 +3711,9 @@ func ensure_save_identity(slot: int) -> Dictionary:
 		changed = true
 	if not changed:
 		return info
-	var path := "user://save_slot_%d.json" % slot
+	var path := save_file_path(slot)
+	if path.is_empty():
+		return info
 	var tmp := path + ".tmp"
 	var bak := path + ".bak"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
@@ -3200,6 +3737,19 @@ func ensure_save_identity(slot: int) -> Dictionary:
 	return get_save_info(slot)
 
 func save_game(slot: int) -> void:
+	if not _identity_is_verified():
+		CrashLogger.event("SAVE", "blocked: no verified account")
+		return
+	var path: String = save_file_path(slot)
+	if path.is_empty():
+		CrashLogger.event("SAVE", "blocked: no account path")
+		return
+	if not has_save(slot):
+		# Never overwrite an existing but unowned/tampered file. A brand-new
+		# slot is only legal while online, with the account's cloud list verified.
+		if FileAccess.file_exists(path) or not can_create_world():
+			CrashLogger.event("SAVE", "blocked: unowned or unverified new slot=%d" % slot)
+			return
 	active_save_slot = slot
 	CrashLogger.event("SAVE", "begin slot=%d world=%s" % [
 		slot, world_name if not world_name.is_empty() else "<unnamed>"])
@@ -3210,7 +3760,16 @@ func save_game(slot: int) -> void:
 	var existing: Dictionary = get_save_info(slot)
 	var uid: String = str(existing.get("world_uid", "")).strip_edges()
 	if uid.is_empty():
+		var sidecar := _read_owner_sidecar(current_account_id, slot)
+		uid = str(sidecar.get("world_uid", "")).strip_edges()
+	if uid.is_empty():
 		uid = new_world_uid()
+	# Encrypted owner sidecar is written BEFORE the world JSON. If the app dies
+	# between the two writes, the slot is simply not visible rather than
+	# becoming an unowned world another session could inherit.
+	if not _write_owner_sidecar(current_account_id, slot, uid):
+		CrashLogger.event("SAVE", "blocked: owner sidecar write failed slot=%d" % slot)
+		return
 	var save_data: Dictionary = {
 		"slot":         slot,
 		"timestamp":    Time.get_unix_time_from_system(),
@@ -3291,7 +3850,6 @@ func save_game(slot: int) -> void:
 	# previous one as .bak. A crash or power loss mid-write can therefore never
 	# truncate a good save — the worst case is a stale .tmp (ignored by
 	# has_save/load_game) plus the intact .bak.
-	var path: String = "user://save_slot_%d.json" % slot
 	var tmp: String = path + ".tmp"
 	var bak: String = path + ".bak"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
@@ -3324,12 +3882,14 @@ func save_game(slot: int) -> void:
 	game_saved.emit(slot)
 
 func load_game(slot: int) -> void:
-	active_save_slot = slot
 	CrashLogger.event("LOAD", "begin slot=%d" % slot)
-	if not has_save(slot):
-		CrashLogger.event("LOAD", "missing slot=%d" % slot)
+	if not can_access_worlds() or not has_save(slot):
+		CrashLogger.event("LOAD", "blocked/missing slot=%d" % slot)
 		return
-	var f := FileAccess.open("user://save_slot_%d.json" % slot, FileAccess.READ)
+	var path := save_file_path(slot)
+	if path.is_empty():
+		return
+	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		CrashLogger.event("LOAD", "cannot open slot=%d" % slot)
 		return
@@ -3338,6 +3898,10 @@ func load_game(slot: int) -> void:
 	if not (data is Dictionary):
 		CrashLogger.event("LOAD", "invalid JSON slot=%d" % slot)
 		return
+	if not _save_owned_by_current(slot, data as Dictionary):
+		CrashLogger.event("LOAD", "owner mismatch slot=%d" % slot)
+		return
+	active_save_slot = slot
 	Hotbar.fill(null)
 	Inventory.fill(null)
 	if data.has("cave_states") and data["cave_states"] is Dictionary:

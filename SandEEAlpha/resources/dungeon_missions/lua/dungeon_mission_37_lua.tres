@@ -6,10 +6,10 @@
 [sub_resource type="Resource" id="DungeonQuestion_1"]
 script = ExtResource("2_question")
 type = 1
-question = "Write a Lua program that opens a file called test.txt in write mode, writes \"Hello File\" to it, and closes the file."
+question = "Write a Lua program that opens a file called test.txt in write mode, writes \"Hello File\" to it, closes the file, then prints \"done\"."
 language = "lua"
 starter_code = ""
-answer_output = ""
+answer_output = "done"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")

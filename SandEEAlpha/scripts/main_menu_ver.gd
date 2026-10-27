@@ -40,6 +40,7 @@ var _confirm_overlay:  Control = null
 var _rename_overlay:   Control = null
 var _rename_input:     LineEdit = null
 var _rename_slot:      int = -1
+var _rename_account:   String = ""
 var _worlds_outer:     MarginContainer = null
 var _rename_center:    CenterContainer = null
 var _rename_scroll:    ScrollContainer = null
@@ -75,6 +76,7 @@ var _cloud_message:       Label          = null
 var _cloud_remote_list:   VBoxContainer  = null
 var _cloud_busy:          bool           = false
 var _cloud_remote_meta:   Dictionary     = {}
+var _cloud_generation:    int            = 0
 var _net_timer:           Timer          = null
 var _net_checking:        bool           = false
 
@@ -96,6 +98,8 @@ func _ready() -> void:
 		Global.cloud_status_changed.connect(_on_cloud_status_changed)
 	if not Global.online_state_changed.is_connected(_on_online_state_changed):
 		Global.online_state_changed.connect(_on_online_state_changed)
+	if not Global.account_context_changed.is_connected(_on_account_context_changed):
+		Global.account_context_changed.connect(_on_account_context_changed)
 	if not CloudSync.sync_completed.is_connected(_on_cloud_sync_completed):
 		CloudSync.sync_completed.connect(_on_cloud_sync_completed)
 	if not CloudSync.sync_progress_changed.is_connected(_on_cloud_sync_progress):
@@ -357,10 +361,15 @@ func _refresh_status_label() -> void:
 	if _status_label == null or not is_instance_valid(_status_label):
 		return
 	var text := "SandEE v%s" % Global.game_version()
-	if Global.online_mode:
+	var signed_in_account := Global.is_valid_account_id(Global.current_account_id)
+	if Global.online_mode and signed_in_account:
 		text += "  |  " + Global.cloud_status_label()
 		_status_label.add_theme_color_override("font_color", Global.cloud_status_color())
+	elif signed_in_account:
+		text += "  |  Offline Local Copy"
+		_status_label.add_theme_color_override("font_color", C_MUTED)
 	else:
+		text += "  |  Signed Out"
 		_status_label.add_theme_color_override("font_color", C_MUTED)
 	_status_label.text = text
 	_status_label.tooltip_text = Global.cloud_status_detail
@@ -376,14 +385,44 @@ func _on_cloud_status_changed(_status: int) -> void:
 func _on_online_state_changed() -> void:
 	_refresh_status_label()
 	_refresh_online_visibility()
+	_refresh_worlds()
+
+
+func _on_account_context_changed(_account_id: String) -> void:
+	# Never leave a previous account's world rows or selected references visible
+	# while the account boundary is changing.
+	_cloud_generation += 1
+	_cloud_busy = false
+	_cloud_remote_meta.clear()
+	if _create_name != null:
+		_create_name.text = ""
+	if _confirm_overlay != null and _confirm_overlay.visible:
+		_on_confirm_cancel()
+	if _rename_overlay != null and _rename_overlay.visible:
+		_on_rename_cancel()
+	if _cloud_remote_list != null and is_instance_valid(_cloud_remote_list):
+		for child in _cloud_remote_list.get_children():
+			_cloud_remote_list.remove_child(child)
+			child.queue_free()
+	if _cloud_overlay != null:
+		_cloud_overlay.visible = false
+	if _leaderboard_overlay != null:
+		_leaderboard_overlay.visible = false
+	_refresh_status_label()
+	_refresh_online_visibility()
+	_refresh_worlds()
 
 
 func _refresh_online_visibility() -> void:
+	var signed_in_account := Global.is_valid_account_id(Global.current_account_id)
 	if _online_row != null and is_instance_valid(_online_row):
-		_online_row.visible = Global.online_mode
+		_online_row.visible = Global.online_mode and signed_in_account
 	if _go_online_btn != null and is_instance_valid(_go_online_btn):
-		_go_online_btn.visible = not Global.online_mode
-		if not Global.online_mode:
+		_go_online_btn.visible = not Global.online_mode or not signed_in_account
+		if not _go_online_btn.visible:
+			_go_online_btn.disabled = false
+			_go_online_btn.text = "Go Online"
+		else:
 			_go_online_btn.disabled = _go_online_busy
 			_go_online_btn.text = "Connecting…" if _go_online_busy else "Go Online"
 
@@ -532,7 +571,7 @@ func _build_main_ui() -> void:
 	account_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	online_row.add_child(account_btn)
 	var offline_btn := _make_menu_btn("Play Offline", _on_play_offline)
-	offline_btn.tooltip_text = "Stop cloud syncing and play this device's local worlds. Sign-in is required again on the next launch."
+	offline_btn.tooltip_text = "Play the verified offline copy belonging to the signed-in account. Other accounts' worlds stay hidden."
 	offline_btn.custom_minimum_size = Vector2(0, int(36 * s))
 	offline_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	offline_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
@@ -925,8 +964,12 @@ func _fit_rename_center() -> void:
 	if _rename_scroll != null and is_instance_valid(_rename_scroll):
 		_rename_scroll.offset_bottom = -(Global.ui_safe_insets.w + _keyboard_inset)
 
-func _open_rename_world(slot: int) -> void:
+func _open_rename_world(slot: int, expected_account: String = "") -> void:
+	if not expected_account.is_empty() and Global.current_account_id != expected_account:
+		_refresh_worlds()
+		return
 	_rename_slot = slot
+	_rename_account = expected_account
 	if _rename_input != null:
 		_rename_input.text = Global.world_name_of(slot)
 	if _rename_overlay != null:
@@ -938,14 +981,20 @@ func _open_rename_world(slot: int) -> void:
 
 func _on_rename_cancel() -> void:
 	_rename_slot = -1
+	_rename_account = ""
 	if _rename_overlay != null:
 		_rename_overlay.visible = false
 
 func _on_rename_save() -> void:
 	if _rename_slot < 0 or _rename_input == null:
 		return
+	if not _rename_account.is_empty() and Global.current_account_id != _rename_account:
+		_on_rename_cancel()
+		_refresh_worlds()
+		return
 	if Global.rename_world(_rename_slot, _rename_input.text):
 		_rename_slot = -1
+		_rename_account = ""
 		if _rename_overlay != null:
 			_rename_overlay.visible = false
 		_refresh_worlds()
@@ -1268,6 +1317,12 @@ func _section_label(text: String) -> Label:
 func _on_cloud_saves() -> void:
 	if not _ensure_online("Cloud saves need an online session. Sign in to manage uploaded worlds."):
 		return
+	# Cloud rows are only actionable after this account's initial ownership
+	# verification/sync barrier succeeded. A failed sync must fail closed, not
+	# expose a half-verified list.
+	if not Global.account_cloud_verified:
+		_open_account_overlay("Cloud worlds are not verified yet. Retry sign-in to finish syncing.")
+		return
 	if _cloud_overlay != null:
 		_cloud_overlay.visible = true
 	_refresh_cloud()
@@ -1278,10 +1333,14 @@ func _on_cloud_saves() -> void:
 func _refresh_cloud(silent: bool = false) -> void:
 	if _cloud_busy:
 		return
+	var generation := _cloud_generation
 	_cloud_busy = true
 	if not silent:
 		_cloud_set_message("Refreshing…", C_MUTED)
 	var result := await Supabase.list_saves()
+	if generation != _cloud_generation:
+		_cloud_busy = false
+		return
 	if _cloud_remote_list == null or not is_instance_valid(_cloud_remote_list):
 		_cloud_busy = false
 		return
@@ -1479,8 +1538,8 @@ func _muted_label(text: String) -> Label:
 
 
 func _local_checksum(slot: int) -> String:
-	var path := "user://save_slot_%d.json" % slot
-	if not FileAccess.file_exists(path):
+	var path := Global.save_file_path(slot)
+	if path.is_empty() or not FileAccess.file_exists(path):
 		return ""
 	return FileAccess.get_sha256(path)
 
@@ -1526,7 +1585,9 @@ func _dim_ignore() -> Control:
 # screen: check connectivity, reuse a valid cached session when possible, or
 # show the username/password form. Offline play remains available throughout.
 func _on_go_online() -> void:
-	if Global.online_mode or _go_online_busy:
+	if _go_online_busy:
+		return
+	if Global.online_mode and Global.is_valid_account_id(Global.current_account_id):
 		return
 	_go_online_busy = true
 	if _go_online_btn != null and is_instance_valid(_go_online_btn):
@@ -1539,7 +1600,7 @@ func _on_go_online() -> void:
 	if not bool(connectivity.get("backend", false)):
 		_finish_go_online()
 		_open_account_overlay(
-			"Sandee online is unavailable right now. Offline play and local worlds stay available.")
+			"Sandee online is unavailable right now. Your verified offline copy is still available.")
 		return
 
 	if Supabase.has_stored_session():
@@ -1554,7 +1615,7 @@ func _on_go_online() -> void:
 
 	_finish_go_online()
 	_open_account_overlay(
-		"Sign in to switch to Online. Offline play and local worlds stay available.")
+		"Sign in to switch to Online. Your verified offline copy stays available.")
 
 
 func _finish_go_online() -> void:
@@ -1567,8 +1628,10 @@ func _finish_go_online() -> void:
 func _on_play_offline() -> void:
 	if not Global.online_mode:
 		return
-	Global.set_online_mode(false)
-	Global.set_cloud_status(Global.CloudStatus.OFFLINE)
+	if not Global.enter_offline_mode():
+		Global.set_cloud_status(Global.CloudStatus.ERROR, "Offline verification unavailable.")
+		_open_account_overlay("Sign in again before using an offline copy.")
+		return
 	CrashLogger.event("ONLINE", "Play Offline selected")
 	if _cloud_overlay != null:
 		_cloud_overlay.visible = false
@@ -1579,17 +1642,19 @@ func _on_play_offline() -> void:
 	_refresh_worlds()
 
 func _on_account() -> void:
-	if Global.online_mode and Supabase.is_signed_in():
+	if Global.online_mode and Global.is_valid_account_id(Global.current_account_id) \
+			and Supabase.is_signed_in():
 		_open_account_overlay("")
 	else:
-		_open_account_overlay("Sign in to use online features. Local worlds stay available offline.")
+		_open_account_overlay("Sign in to access your cloud worlds.")
 
 
 func _open_account_overlay(message: String) -> void:
 	if _account_overlay == null or _account_panel == null:
 		return
 	_account_overlay.visible = true
-	if Global.online_mode and Supabase.is_signed_in():
+	if Global.online_mode and Global.is_valid_account_id(Global.current_account_id) \
+			and Supabase.is_signed_in():
 		# Show the cached profile immediately, then refresh in the background so
 		# the overlay never sits blank while a request is in flight.
 		_account_panel.open_account()
@@ -1606,6 +1671,32 @@ func _on_account_cancelled() -> void:
 
 
 func _on_account_authenticated() -> void:
+	var account_id := Supabase.user_id()
+	if account_id.is_empty():
+		return
+	# A different authenticated user is an account boundary even before profile
+	# verification; clear the previous binding immediately so a failed
+	# verification cannot leave the old offline authorization reusable.
+	if Global.is_valid_account_id(Global.current_account_id) \
+			and Global.current_account_id != account_id:
+		Global.begin_account_transition("account_switch")
+	Global.prepare_online_reverify()
+	var profile := await Supabase.refresh_profile()
+	if not is_inside_tree():
+		return
+	if not profile.ok:
+		Global.mark_account_cloud_unverified("Account verification failed.")
+		if profile.status == 401 or profile.status == 403:
+			Global.begin_account_transition("auth_failed")
+			await Supabase.sign_out()
+			_refresh_worlds()
+			_open_account_overlay("Your session expired. Sign in again.")
+		else:
+			_refresh_worlds()
+			_open_account_overlay("Could not verify your account. Check your connection and try again.")
+		return
+	if not Global.begin_account_session(account_id):
+		return
 	Global.set_online_mode(true)
 	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Initializing cloud saves…")
 	var panel_open: bool = _account_panel != null and _account_panel.visible
@@ -1620,10 +1711,25 @@ func _on_account_authenticated() -> void:
 			_account_panel.call("set_operation_progress", "Syncing your worlds…", 5.0)
 		# Startup/online sign-in is a sync barrier. Do not let the world list
 		# become actionable until every local/cloud slot has been reconciled.
-		await CloudSync.sync_all()
+		var summary: Dictionary = await CloudSync.sync_all()
 		if not is_inside_tree():
 			return
+		if not Global.is_valid_account_id(Global.current_account_id) \
+				or not Supabase.is_signed_in() \
+				or Supabase.user_id() != Global.current_account_id:
+			Global.set_cloud_status(Global.CloudStatus.ERROR, "Session expired.")
+			_refresh_status_label()
+			_refresh_worlds()
+			_open_account_overlay("Your session expired. Sign in again.")
+			return
+		if int(summary.get("failed", 0)) == 0:
+			Global.mark_account_cloud_ready()
+		else:
+			Global.mark_account_cloud_unverified("Some worlds could not be verified.")
+			Global.set_cloud_status(Global.CloudStatus.ERROR,
+				"Cloud worlds could not be verified. Sign out and retry.")
 	else:
+		Global.mark_account_cloud_unverified("Cloud saves unavailable.")
 		Global.set_cloud_status(Global.CloudStatus.ERROR, "Cloud saves unavailable.")
 	if _account_panel != null:
 		_account_panel.call("set_operation_progress", "", 100.0, false)
@@ -1654,11 +1760,14 @@ func _on_cloud_sync_progress(info: Dictionary) -> void:
 
 
 func _on_account_logged_out() -> void:
+	Global.begin_account_transition("sign_out")
+	Global.clear_active_account("sign_out")
 	Global.set_online_mode(false)
 	Global.set_cloud_status(Global.CloudStatus.OFFLINE)
 	_refresh_status_label()
+	_refresh_worlds()
 	if _account_panel != null:
-		_account_panel.open_login("Signed out. Your local worlds were kept.")
+		_account_panel.open_login("Signed out. Sign in again to access your worlds.")
 
 
 func _on_cloud_sync_completed(_summary: Dictionary) -> void:
@@ -1667,7 +1776,8 @@ func _on_cloud_sync_completed(_summary: Dictionary) -> void:
 		_refresh_cloud(true)
 
 func _ensure_online(message: String) -> bool:
-	if Global.online_mode and Supabase.is_signed_in():
+	if Global.online_mode and Global.is_valid_account_id(Global.current_account_id) \
+			and Supabase.is_signed_in():
 		return true
 	_open_account_overlay(message)
 	return false
@@ -1732,6 +1842,7 @@ func _add_spacer(parent: Node, height: int) -> void:
 # through the confirmation dialog — it never touches the file directly.
 func _make_world_row(slot: int) -> Control:
 	var s: float = Global.ui_scale
+	var row_account := Global.current_account_id
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", int(6 * s))
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1750,7 +1861,7 @@ func _make_world_row(slot: int) -> Control:
 	btn.add_theme_stylebox_override("hover",   hover)
 	btn.add_theme_stylebox_override("pressed", normal)
 	btn.tooltip_text = "Load this world."
-	btn.pressed.connect(func() -> void: _load_world(slot))
+	btn.pressed.connect(func() -> void: _load_world(slot, row_account))
 
 	var content := VBoxContainer.new()
 	content.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1797,7 +1908,7 @@ func _make_world_row(slot: int) -> Control:
 	ren.add_theme_stylebox_override("hover",   rsh)
 	ren.add_theme_stylebox_override("pressed", rs)
 	ren.add_theme_color_override("font_color", C_TITLE)
-	ren.pressed.connect(func() -> void: _open_rename_world(slot))
+	ren.pressed.connect(func() -> void: _open_rename_world(slot, row_account))
 	row.add_child(ren)
 
 	var del := Button.new()
@@ -1819,7 +1930,7 @@ func _make_world_row(slot: int) -> Control:
 	del.add_theme_color_override("font_color",       Color(1.0, 0.55, 0.55, 1.0))
 	del.add_theme_color_override("font_hover_color", Color(1.0, 0.35, 0.35, 1.0))
 	del.tooltip_text = "Delete this world (asks first)."
-	del.pressed.connect(func() -> void: _ask_delete_world(slot))
+	del.pressed.connect(func() -> void: _ask_delete_world(slot, row_account))
 	row.add_child(del)
 
 	return row
@@ -1845,7 +1956,14 @@ func _refresh_worlds() -> void:
 	var slots: Array = Global.list_worlds()
 	if slots.is_empty():
 		var empty := Label.new()
-		empty.text = "No worlds yet — create one below to start playing."
+		if not Global.is_valid_account_id(Global.current_account_id):
+			empty.text = "Sign in to load your cloud-backed worlds."
+		elif not Global.can_access_worlds():
+			empty.text = "Cloud worlds are not verified yet. Retry sign-in to finish syncing."
+		elif not Global.online_mode:
+			empty.text = "No offline worlds for this account."
+		else:
+			empty.text = "No worlds yet - create one below to start playing."
 		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		empty.add_theme_font_size_override("font_size", Global.ui_font_size(13))
@@ -1861,6 +1979,16 @@ func _refresh_worlds() -> void:
 # Enables Create only for a valid, unused name and while under the 10-world cap.
 func _update_create_state() -> void:
 	if _create_btn == null or _create_name == null:
+		return
+	if not Global.can_access_worlds():
+		_create_name.editable = false
+		_create_btn.disabled = true
+		_create_error.text = "Sign in to create worlds."
+		return
+	if not Global.online_mode or not Global.account_cloud_verified:
+		_create_name.editable = false
+		_create_btn.disabled = true
+		_create_error.text = "Offline play cannot create new worlds. Reconnect to add a world."
 		return
 	if not Global.can_create_world():
 		_create_name.editable = false
@@ -1880,6 +2008,8 @@ func _update_create_state() -> void:
 	_create_error.text = msg
 
 func _on_continue() -> void:
+	if not Global.can_access_worlds():
+		return
 	var slot := Global.get_last_slot()
 	if slot == -1:
 		return
@@ -1896,8 +2026,11 @@ func _on_worlds() -> void:
 
 # Loads an existing world. Re-reads the slot first so a stale row can't load the
 # wrong world.
-func _load_world(slot: int) -> void:
-	if not Global.has_save(slot):
+func _load_world(slot: int, expected_account: String = "") -> void:
+	if not expected_account.is_empty() and Global.current_account_id != expected_account:
+		_refresh_worlds()
+		return
+	if not Global.can_access_worlds() or not Global.has_save(slot):
 		_refresh_worlds()
 		return
 	Global.load_game(slot)
@@ -1923,15 +2056,21 @@ func _on_create_world() -> void:
 # Deleting ALWAYS asks first, and only ever removes the ONE slot file. The slot's
 # name is re-checked at confirm time, so a stale row can't delete a world that
 # changed underneath it.
-func _ask_delete_world(slot: int) -> void:
+func _ask_delete_world(slot: int, expected_account: String = "") -> void:
+	if not expected_account.is_empty() and Global.current_account_id != expected_account:
+		_refresh_worlds()
+		return
 	if not Global.has_save(slot):
 		_refresh_worlds()
 		return
 	var name: String = Global.world_name_of(slot)
 	_ask_confirm("Delete \"%s\" permanently?\n\nThis cannot be undone." % name,
-		func() -> void: _do_delete_world(slot, name))
+		func() -> void: _do_delete_world(slot, name, expected_account))
 
-func _do_delete_world(slot: int, expected_name: String) -> void:
+func _do_delete_world(slot: int, expected_name: String, expected_account: String = "") -> void:
+	if not expected_account.is_empty() and Global.current_account_id != expected_account:
+		_refresh_worlds()
+		return
 	if not Global.has_save(slot) or Global.world_name_of(slot) != expected_name:
 		_refresh_worlds()
 		return

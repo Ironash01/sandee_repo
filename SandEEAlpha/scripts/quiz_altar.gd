@@ -158,7 +158,6 @@ func _process(delta: float) -> void:
 		var want: float = -(Global.ui_safe_insets.w + Global.mobile_keyboard_height())
 		if not is_equal_approx(_panel_scroll.offset_bottom, want):
 			_panel_scroll.offset_bottom = want
-			_ensure_code_visible()
 	if _glow != null:
 		_glow_time += delta
 		_glow.energy = GLOW_ENERGY_BASE + sin(_glow_time * GLOW_BLINK_SPEED) * GLOW_ENERGY_AMP
@@ -319,6 +318,7 @@ func _show_question() -> void:
 	_rebuild_controls()
 	if _content_scroll != null:
 		_content_scroll.scroll_vertical = 0
+	call_deferred("_scroll_content_top")
 
 func _rebuild_controls() -> void:
 	var q: DungeonQuestion = _questions[_index]
@@ -364,13 +364,9 @@ func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text
 	btn.pressed.connect(func() -> void: _grade(q, value))
 	return btn
 
-func _ensure_code_visible() -> void:
-	var target := _content_scroll if _content_scroll != null else _panel_scroll
-	if target == null or _code_entry == null:
-		return
-	if not is_instance_valid(target) or not is_instance_valid(_code_entry):
-		return
-	target.call_deferred("ensure_control_visible", _code_entry)
+func _scroll_content_top() -> void:
+	if _content_scroll != null and is_instance_valid(_content_scroll):
+		_content_scroll.scroll_vertical = 0
 
 
 ## 3 stars with no hints, 2 with exactly one, 1 with two or more.
@@ -451,7 +447,9 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	if spec != null:
 		entry.call("load_language_spec", spec)
 		entry.text_changed.connect(Callable(entry, "code_completion_request"))
-	entry.focus_entered.connect(_ensure_code_visible)
+	# Do not auto-scroll to the editor on focus: opening a compiler question
+	# must leave the question text visible. The keyboard-offset path scrolls to
+	# the editor only after the player has actually focused it.
 	_controls.add_child(entry)
 	_code_entry = entry
 
@@ -995,7 +993,8 @@ func _build_panel() -> Control:
 
 	# Question + answer controls scroll inside a viewport-capped panel, keeping
 	# the title, HINT and Close reachable on phones instead of a panel that runs
-	# off the bottom of the screen.
+	# off the bottom of the screen. The question starts at the top of the scroll;
+	# any compiler-editor auto-scroll below is reset when a question is shown.
 	var content_scroll := ScrollContainer.new()
 	content_scroll.name = "QuestionScroll"
 	content_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -1008,6 +1007,10 @@ func _build_panel() -> Control:
 	var content_vbox := VBoxContainer.new()
 	content_vbox.add_theme_constant_override("separation", int(10 * s))
 	content_vbox.mouse_filter = Control.MOUSE_FILTER_PASS
+	# The scroll's child does not inherit its width automatically. Without this,
+	# an autowrapped label (min width 1) collapses the whole VBox to ~2 px, so
+	# every question and answer button renders as a vertical sliver.
+	content_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content_scroll.add_child(content_vbox)
 
 	_q_text = Label.new()
