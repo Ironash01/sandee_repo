@@ -302,6 +302,7 @@ func _die() -> void:
 	# mission is separate and tracks real defeats only.
 	Global.add_mission_progress("side_wolf_slayer", 1)
 	_drop_dog_meat()
+	Global.spawn_mob_crystal_drop(get_parent(), global_position)
 	_spawn_death_burst()
 	queue_free()
 

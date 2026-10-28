@@ -25,6 +25,7 @@ enum Type { MCQ = 0, COMPILER = 1 }
 @export_enum("lua", "python") var language: String = "lua"
 @export_multiline var starter_code: String = ""
 @export_multiline var answer_output: String = ""
+@export_multiline var hint: String = ""
 
 func is_compiler() -> bool:
 	return type == Type.COMPILER

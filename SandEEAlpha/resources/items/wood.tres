@@ -22,4 +22,5 @@ placeable_sprite = SubResource("AtlasTexture_4004f")
 is_fuel = true
 block_level = 4
 wooden_block = true
+is_wood = true
 place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"

@@ -2142,11 +2142,20 @@ func _input(event: InputEvent) -> void:
 	# Optional point-and-click: a left click/tap first tries a move/chase order.
 	# Build mode, open panels and right-click are never intercepted; clicks that
 	# are already in interaction range fall through to the normal action below.
-	if Global.point_and_click and not _pnc_dispatching \
+	if Global.point_and_click and not Global.is_mobile() and not _pnc_dispatching \
 			and not event.has_meta("pnc_synthetic") \
 			and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
 			and event.pressed:
 		var click_world: Vector2 = _mouse_event_world(event as InputEventMouse)
+		# A usable held item wins over the PnC order: click to use/eat/drink/
+		# consume it instead of walking or interacting. One use per press; a
+		# held button does not repeat because this branch only runs on press.
+		if _held_item_is_usable():
+			_attack_held = false
+			_pnc_cancel()
+			_pnc_use_held_item(click_world)
+			get_viewport().set_input_as_handled()
+			return
 		if _pnc_handle_click(click_world):
 			get_viewport().set_input_as_handled()
 			return
@@ -2205,9 +2214,37 @@ func _try_use_held_item() -> bool:
 		return _try_fill_bucket()
 	if data.is_water_bucket:
 		return _try_place_water()
+	if data.max_health_bonus > 0.0 or data.max_stamina_bonus > 0.0:
+		return _try_use_stat_crystal(data)
 	if data.heal_amount > 0.0:
 		return _try_eat_food(data)
 	return false
+
+
+## True when the held item has a click-use path (food, crystals, rod, hoe or
+## bucket). Point-and-click uses this to let the item win over a move order.
+func _held_item_is_usable() -> bool:
+	var held: Variant = Global.get_hotbar_item()
+	if held == null:
+		return false
+	var data: ItemData = (held as Dictionary).get("data") as ItemData
+	if data == null:
+		return false
+	return data.is_fishing_rod or data.is_hoe or data.is_bucket \
+		or data.is_water_bucket or data.max_health_bonus > 0.0 \
+		or data.max_stamina_bonus > 0.0 or data.heal_amount > 0.0
+
+
+## Use the held item against the PnC click point. The mouse override lets
+## cursor-targeted uses (rod/hoe/bucket) resolve the tapped cell instead of a
+## stale cursor position, then restores the previous shared cursor.
+func _pnc_use_held_item(world_pos: Vector2) -> bool:
+	var prev_active: bool = Global.mouse_override_active()
+	var prev_pos: Vector2 = Global.mouse_override_pos()
+	Global.set_touch_mouse(world_pos)
+	var used: bool = _try_use_held_item()
+	Global.restore_mouse_override(prev_active, prev_pos)
+	return used
 
 # Hoe: click a grass tuft to till it into plantable soil.
 func _try_till_ground() -> bool:
@@ -2293,6 +2330,23 @@ func _try_eat_food(data: ItemData) -> bool:
 		return true
 	Global.remove_item(data)
 	Global.notify("[color=#9be89b]Ate a %s (+%d health).[/color]" % [data.item_name, int(healed)])
+	return true
+
+# Permanent Life/Stamina Crystals. Only consume the item when at least one
+# stat actually grew; at the cap the click is swallowed with a message.
+func _try_use_stat_crystal(data: ItemData) -> bool:
+	var hp_gain: float = Global.increase_max_health(data.max_health_bonus)
+	var sp_gain: float = Global.increase_max_stamina(data.max_stamina_bonus)
+	if hp_gain <= 0.0 and sp_gain <= 0.0:
+		Global.notify("[color=#ffaa66]%s is already at its maximum.[/color]" % data.item_name)
+		return true
+	Global.remove_item(data)
+	var parts: PackedStringArray = []
+	if hp_gain > 0.0:
+		parts.append("+%d max HP" % int(round(hp_gain)))
+	if sp_gain > 0.0:
+		parts.append("+%d max stamina" % int(round(sp_gain)))
+	Global.notify("[color=#9be89b]Used %s: %s.[/color]" % [data.item_name, ", ".join(parts)])
 	return true
 
 # True when the mouse is over a water cell of the active world.

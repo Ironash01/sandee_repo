@@ -10,11 +10,12 @@ region = Rect2(96, 96, 32, 32)
 [resource]
 script = ExtResource("1_e17m5")
 item_name = "Iron Sword"
+stackable = false
+max_stack_size = 1
 description = "Made of some very hard ores."
 item_type = "weapon"
 is_sword = true
 sword_level = 30
 icon = SubResource("AtlasTexture_1h3wg")
-stackable = false
 is_craftable = true
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

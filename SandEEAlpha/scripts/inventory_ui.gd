@@ -1172,7 +1172,15 @@ func _on_craft() -> void:
 	if r.ingredient_2 != null:
 		for _n in range(r.ingredient_2_quantity):
 			Global.remove_item(r.ingredient_2)
-	Global.add_item({"quantity": r.result_quantity, "data": r.result_item})
+	var added: bool = Global.add_item({"quantity": r.result_quantity, "data": r.result_item})
+	if added:
+		Global.item_crafted.emit(r.result_item.item_name, r.result_quantity)
+	else:
+		# Ingredients were consumed; never delete the crafted result if the
+		# inventory is full. Drop it at the player's feet instead.
+		var p := Global.player_node as Node2D
+		if p != null:
+			Global.drop_item({"quantity": r.result_quantity, "data": r.result_item}, p.global_position)
 	Global.complete_mission("craft_item")
 	_update_craft_btn(r)
 	_refresh_crafting()
@@ -1195,7 +1203,7 @@ func _refresh_inv() -> void:
 		_show_tip_empty()
 	elif _tip_qty != null:
 		var data = active_item["data"] as ItemData
-		var limit = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
+		var limit = data.stack_limit() if data != null else 1
 		_tip_qty.text = "Qty: %d / %d" % [active_item["quantity"], limit]
 
 func _show_inventory_item(idx: int, make_active: bool) -> void:
@@ -1210,7 +1218,7 @@ func _show_inventory_item(idx: int, make_active: bool) -> void:
 	if make_active:
 		_active_idx = idx
 	var data: ItemData = item["data"] as ItemData
-	var limit = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
+	var limit = data.stack_limit() if data != null else 1
 	_tip_name.text   = data.item_name
 	_tip_qty.text    = "Qty: %d / %d" % [item["quantity"], limit]
 	_tip_type.text   = data.item_type.capitalize()
@@ -1288,3 +1296,43 @@ func _div(parent: Node) -> void:
 	var d := ColorRect.new()
 	d.color = C_DIVIDER; d.custom_minimum_size = Vector2(0, 1)
 	parent.add_child(d)
+
+# ── Tutorial focus API ──────────────────────────────────────────────
+func tutorial_craft_open() -> bool:
+	return _craft_panel != null and _craft_panel.visible
+
+func tutorial_craft_tab() -> Control:
+	return _tab_craft_btn
+
+func tutorial_craft_category(name: String) -> Control:
+	return _craft_cat_btns.get(name) as Control
+
+func tutorial_craft_active_category() -> String:
+	return _active_cat
+
+func tutorial_recipe_button(item_name: String) -> Control:
+	for idx in range(mini(_filtered.size(), _craft_row_btns.size())):
+		var r := _filtered[idx] as CraftingRecipe
+		if r != null and r.result_item != null and r.result_item.item_name == item_name:
+			return _craft_row_btns[idx] as Control
+	return null
+
+func tutorial_ensure_recipe_visible(item_name: String) -> void:
+	var btn := tutorial_recipe_button(item_name) as Control
+	if btn == null or _craft_list == null:
+		return
+	var scroll := _craft_list.get_parent() as ScrollContainer
+	if scroll != null:
+		scroll.call_deferred("ensure_control_visible", btn)
+
+func tutorial_recipe_selected(item_name: String) -> bool:
+	if _selected_idx < 0 or _selected_idx >= _filtered.size():
+		return false
+	var r := _filtered[_selected_idx] as CraftingRecipe
+	return r != null and r.result_item != null and r.result_item.item_name == item_name
+
+func tutorial_craft_button() -> Control:
+	return _craft_btn
+
+func tutorial_craft_detail_visible() -> bool:
+	return _craft_detail != null and _craft_detail.visible

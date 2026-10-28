@@ -51,38 +51,66 @@ func set_world_cell(cell: Vector2i, world: Node) -> void:
 	_world_ref  = world
 
 # ── NPC interface ─────────────────────────────────────────────────
+func _stack_limit_for(data: ItemData) -> int:
+	return data.stack_limit() if data != null else 1
+
+func _deposit_capacity(data: ItemData) -> int:
+	if data == null:
+		return 0
+	var limit: int = _stack_limit_for(data)
+	var can_stack: bool = data.can_stack()
+	var total: int = 0
+	for slot in slots:
+		if slot == null:
+			total += limit
+		elif can_stack and (slot as Dictionary)["data"] == data:
+			total += maxi(0, limit - int((slot as Dictionary)["quantity"]))
+	return total
+
 func has_space() -> bool:
 	for slot in slots:
-		if slot == null: return true
+		if slot == null:
+			return true
 		var data: ItemData = (slot as Dictionary)["data"] as ItemData
-		var limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
-		if (slot as Dictionary)["quantity"] < limit: return true
+		if data != null and int((slot as Dictionary)["quantity"]) < data.stack_limit():
+			return true
 	return false
 
 func deposit_item(item: Dictionary) -> bool:
 	var data: ItemData = item["data"] as ItemData
-	var qty:  int      = item["quantity"]
-	var limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
-	# Stack onto existing slot
-	for i in range(MAX_SLOTS):
-		if slots[i] == null: continue
-		if (slots[i] as Dictionary)["data"] == data:
-			var space: int = limit - (slots[i] as Dictionary)["quantity"]
-			var add:   int = min(qty, space)
-			(slots[i] as Dictionary)["quantity"] += add
-			qty -= add
+	if data == null:
+		return false
+	var qty: int = int(item["quantity"])
+	if qty <= 0:
+		return true
+	if _deposit_capacity(data) < qty:
+		return false
+	var limit: int = _stack_limit_for(data)
+	var can_stack: bool = data.can_stack()
+	# Stack onto existing slots (never for tools).
+	if can_stack:
+		for i in range(MAX_SLOTS):
 			if qty <= 0:
-				_refresh_ui()
-				notify_contents_changed()
-				return true
-	# Empty slot
+				break
+			if slots[i] == null:
+				continue
+			if (slots[i] as Dictionary)["data"] == data:
+				var space: int = limit - int((slots[i] as Dictionary)["quantity"])
+				var add: int = mini(qty, space)
+				(slots[i] as Dictionary)["quantity"] = int((slots[i] as Dictionary)["quantity"]) + add
+				qty -= add
+	# Empty slots, one tool per slot or up to the real stack limit.
 	for i in range(MAX_SLOTS):
-		if slots[i] == null:
-			slots[i] = {"data": data, "quantity": qty}
-			_refresh_ui()
-			notify_contents_changed()
-			return true
-	return false  # full
+		if qty <= 0:
+			break
+		if slots[i] != null:
+			continue
+		var take: int = mini(qty, limit)
+		slots[i] = {"data": data, "quantity": take}
+		qty -= take
+	_refresh_ui()
+	notify_contents_changed()
+	return qty <= 0
 
 func get_items() -> Array:
 	return slots.duplicate()
@@ -290,11 +318,12 @@ func accept_drop(index: int, to_chest: bool, data: Variant) -> void:
 	var a: Variant = from_arr[from_idx]
 	var b: Variant = to_arr[index]
 
-	if a != null and b != null and (a as Dictionary)["data"] == (b as Dictionary)["data"]:
-		# Same item: merge up to the stack limit, leaving any remainder behind.
+	if a != null and b != null and (a as Dictionary)["data"] == (b as Dictionary)["data"] \
+			and ((a as Dictionary)["data"] as ItemData).can_stack():
+		# Same stackable item: merge up to the stack limit, leaving any
+		# remainder behind. Tools never take this path; they swap instead.
 		var data_i: ItemData = (b as Dictionary)["data"] as ItemData
-		var limit: int = data_i.max_stack_size \
-			if data_i != null and data_i.max_stack_size > 0 else Global.MAX_STACK
+		var limit: int = data_i.stack_limit()
 		var have: int = int((b as Dictionary)["quantity"])
 		var space: int = maxi(limit - have, 0)
 		if space <= 0:

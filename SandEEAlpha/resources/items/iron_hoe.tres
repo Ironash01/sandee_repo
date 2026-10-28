@@ -6,6 +6,8 @@
 [resource]
 script = ExtResource("1_item")
 item_name = "Iron Hoe"
+stackable = false
+max_stack_size = 1
 description = "A farming hoe with an iron blade. Nothing can be tilled yet."
 item_type = "weapon"
 icon = ExtResource("2_tex")

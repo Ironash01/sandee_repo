@@ -295,6 +295,7 @@ func _die() -> void:
 		Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 	pass  # sheep: no wolf mission
 	_drop_sheep_loot()
+	Global.spawn_mob_crystal_drop(get_parent(), global_position)
 	_spawn_death_burst()
 	queue_free()
 

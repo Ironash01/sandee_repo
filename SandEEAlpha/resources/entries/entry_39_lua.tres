@@ -4,22 +4,18 @@
 
 [resource]
 script = ExtResource("1_script")
-entry_name = "Lua Modules"
-description = "Lua organizes code into modules using require. A module is a file that returns a table.
+entry_name = "Lua Item Discovery"
+description = "Automatica sees the game's real item catalogue. list_items() returns a sorted list of every item name.
 
-Requiring a module:
+print(type(list_items))      -- function
+local items = list_items()   -- list of names
+print(#items > 0)            -- true
 
-local math = require(\"math\")\nprint(math.pi)
+Use an exact name from that list with withdraw() to pull items from the nearest chest into the robot's build palette:
 
-Creating a module (myfile.lua):
+withdraw(\"Wood\", 10)
 
-local M = {}\nfunction M.greet(name)\n    return \"Hello \" .. name\nend\nreturn M
-
-Requiring your module:
-
-local myfile = require(\"myfile\")\nprint(myfile.greet(\"World\"))
-
-The module system caches modules, so requiring the same module twice returns the same table."
-keyword = "require"
+The same names work with put_input(\"Wood\", 10) for station automation. Item names are case-insensitive in the game API, but exact names are easier to read."
+keyword = "list_items"
 language = "lua"
 category = "Medium"

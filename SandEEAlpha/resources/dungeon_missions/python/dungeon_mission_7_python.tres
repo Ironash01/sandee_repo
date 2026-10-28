@@ -6,7 +6,7 @@
 [sub_resource type="Resource" id="DungeonQuestion_1"]
 script = ExtResource("2_question")
 type = 1
-question = "Join the first and last name with a space and print the full name."
+question = "Create first = \"Juan\" and last = \"Dela Cruz\", join them with a space using +, and print the full name."
 language = "python"
 starter_code = ""
 answer_output = "Juan Dela Cruz"
@@ -14,11 +14,11 @@ answer_output = "Juan Dela Cruz"
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
 type = 0
-question = "What does input() return?"
-answer_a = "int"
-answer_b = "str"
-answer_c = "bool"
-answer_d = "None"
+question = "Which operator joins two Python strings?"
+answer_a = "&"
+answer_b = "+"
+answer_c = "."
+answer_d = ".."
 correct_index = 1
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
@@ -31,9 +31,10 @@ answer_output = "42"
 
 [resource]
 script = ExtResource("1_script")
-mission_name = "User Input"
-mission_description = "In this dungeon you will know how to get user inputs in Python."
+mission_name = "Joining Text"
+mission_description = "Join strings with + and convert values with int()/str(); the game runtime does not use console input()."
 entry_resource_file = "entry_7_python.tres"
+reward_item_path = "res://resources/items/cpu.tres"
 questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
 dungeon_index = 7
 metadata/_custom_type_script = "uid://by1htqkv82o6h"

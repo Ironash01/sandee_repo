@@ -3981,6 +3981,21 @@ func _spawn_tree(world_pos: Vector2, tree_type_val: int) -> void:
 	tree.global_position = world_pos + Vector2(0.0, TILE_SIZE * 0.5 + TREE_BASE_EXTRA_OFFSET_PX)
 	tree.z_index = int(tree.global_position.y / TILE_SIZE)
 
+	# A tree added AFTER the world's spatial cache was built (e.g. a runtime
+	# spawn) must be inserted into that cache immediately. Otherwise
+	# _update_tree_interactions() never sees it, its InteractArea stays
+	# monitoring=false and its collider stays disabled — the tree looks real but
+	# cannot be hovered or clicked.
+	if not _tree_spatial.is_empty():
+		var spatial_key := Vector2i(
+			floori(tree.global_position.x / TREE_SPATIAL_BUCKET),
+			floori(tree.global_position.y / TREE_SPATIAL_BUCKET))
+		if _tree_spatial.has(spatial_key):
+			(_tree_spatial[spatial_key] as Array).append(tree)
+		else:
+			_tree_spatial[spatial_key] = [tree]
+	_tree_cache_ms = -100000
+
 	# Block placement can't see trees (they're not on editable_layer or in
 	# _placed_blocks), so track the canopy + trunk footprint here. This also
 	# keeps grass and world-gen patches off the leaves.
@@ -6289,6 +6304,13 @@ func _run_waypoint_recall(dest: Vector2) -> void:
 	if p == null or not is_instance_valid(p):
 		_waypoint_teleporting = false
 		return
+	# The tutorial may defer this call, or the player may enter a cave/dungeon
+	# before it runs. The overworld is then OFF-TREE and get_tree() is null.
+	# Never call create_timer/get_viewport in that state.
+	var scene_tree := get_tree()
+	if scene_tree == null or not is_inside_tree():
+		_waypoint_teleporting = false
+		return
 	if p.has_method("_pnc_cancel"):
 		p.call("_pnc_cancel")
 	if p is CharacterBody2D:
@@ -6304,10 +6326,13 @@ func _run_waypoint_recall(dest: Vector2) -> void:
 		fx.global_position = p.global_position + Vector2(0.0, 17.0)
 		add_child(fx)
 
-	await get_tree().create_timer(WAYPOINT_RECALL_BEACON_SEC).timeout
+	await scene_tree.create_timer(WAYPOINT_RECALL_BEACON_SEC).timeout
+	if not is_inside_tree():
+		_abort_waypoint_recall(p, was_physics, was_input, null, fx)
+		return
 	var host: Node = Global.game_node
 	if host == null or not is_instance_valid(host):
-		host = get_tree().current_scene
+		host = scene_tree.current_scene
 	if host == null:
 		host = get_parent()
 	var overlay_layer := CanvasLayer.new()
@@ -6331,16 +6356,41 @@ func _run_waypoint_recall(dest: Vector2) -> void:
 	var fade_in := create_tween()
 	fade_in.tween_property(white, "color:a", 1.0, WAYPOINT_WHITE_FADE_IN_SEC) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	await fade_in.finished
+	# Await a SceneTree timer rather than the tween: if the overworld is swapped
+	# out mid-fade, a tween bound to this node can stall, while the timer always
+	# fires and lets us abort + restore the player.
+	await scene_tree.create_timer(WAYPOINT_WHITE_FADE_IN_SEC).timeout
+	if not is_inside_tree():
+		fade_in.kill()
+		_abort_waypoint_recall(p, was_physics, was_input, overlay_layer, fx)
+		return
 	_teleport_player_to(dest)
-	await get_tree().create_timer(0.08).timeout
+	await scene_tree.create_timer(0.08).timeout
+	if not is_inside_tree():
+		fade_in.kill()
+		_abort_waypoint_recall(p, was_physics, was_input, overlay_layer, fx)
+		return
 	var fade_out := create_tween()
 	fade_out.tween_property(white, "color:a", 0.0, WAYPOINT_WHITE_FADE_OUT_SEC) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	await fade_out.finished
+	await scene_tree.create_timer(WAYPOINT_WHITE_FADE_OUT_SEC).timeout
+	fade_out.kill()
 
 	if is_instance_valid(overlay_layer):
 		overlay_layer.queue_free()
+	if is_instance_valid(fx):
+		fx.queue_free()
+	if is_instance_valid(p):
+		p.set_physics_process(was_physics)
+		p.set_process_input(was_input)
+	_waypoint_teleporting = false
+
+func _abort_waypoint_recall(p: Node2D, was_physics: bool, was_input: bool,
+		overlay: Node, fx: Node) -> void:
+	if is_instance_valid(overlay):
+		overlay.queue_free()
+	if is_instance_valid(fx):
+		fx.queue_free()
 	if is_instance_valid(p):
 		p.set_physics_process(was_physics)
 		p.set_process_input(was_input)
@@ -6399,6 +6449,57 @@ func tutorial_teleport_near_dungeon(lang: String) -> bool:
 		return false
 	var tile: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i
 	var dest := _safe_landing_near_tile(tile, 14)
+	if dest == Vector2.INF:
+		return false
+	_waypoint_teleporting = true
+	call_deferred("_run_waypoint_recall", dest)
+	return true
+
+# Guided onboarding exploration travel: safely recall the player near the
+# nearest live cave entrance of the requested type. Uses the same validated
+# landing + white-fade path as dungeons/waypoints; the player still enters via
+# the real CavePortal. Covers both regular caves and Pixie Caves.
+func tutorial_teleport_near_cave(pixie: bool) -> bool:
+	if _waypoint_teleporting:
+		return false
+	var want := "pixie" if pixie else "cave"
+	var p := _get_player()
+	if p == null or not is_instance_valid(p):
+		return false
+	var best: Node2D = null
+	var best_d := INF
+	for node in get_tree().get_nodes_in_group("CavePortal"):
+		if not is_instance_valid(node) or not node is Node2D:
+			continue
+		if not is_ancestor_of(node):
+			continue
+		if int(node.get("mode")) != CavePortal.Mode.ENTER:
+			continue
+		if str(node.get("cave_type")) != want:
+			continue
+		var n := node as Node2D
+		var d := p.global_position.distance_to(n.global_position)
+		if d < best_d:
+			best_d = d
+			best = n
+	if best == null:
+		return false
+	var tile := world_to_cell(best.global_position)
+	var dest := _safe_landing_near_tile(tile, 16)
+	if dest == Vector2.INF:
+		return false
+	_waypoint_teleporting = true
+	call_deferred("_run_waypoint_recall", dest)
+	return true
+
+# Guided onboarding: bring the player back to the starter camp after the first
+# dungeon so the Automatica/Algorithmica lessons use the real camp interfaces.
+# Reuses the validated landing + recall path; never invents coordinates.
+func tutorial_return_to_camp(camp_world_pos: Vector2) -> bool:
+	if _waypoint_teleporting:
+		return false
+	var tile := world_to_cell(camp_world_pos)
+	var dest := _safe_landing_near_tile(tile, 16)
 	if dest == Vector2.INF:
 		return false
 	_waypoint_teleporting = true

@@ -1,4 +1,5 @@
 *.zip
+!website/downloads/*.zip
 _thrash/
 old_sandee/
 SandEEAlpha/inventory_trash/
@@ -10,3 +11,4 @@ Godot
 .opencode/
 
 /release/
+website/

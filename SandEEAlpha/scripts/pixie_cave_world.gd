@@ -24,6 +24,10 @@ const TILE_SIZE:           int   = 32
 const INTERACT_RADIUS_PX:  float = 64.0
 const ITEM_DROP_SCENE:     PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 const SURROUND_BAND_TILES: int   = 128  # solid pixie-stone band around the grid (matches cave/dungeon)
+# Camera bounds extend into the surrounding wall band so the camera can centre
+# the player near the edge of the smaller Pixie Cave grids. The 128-tile band
+# guarantees the padding never exposes void.
+const CAMERA_WALL_PADDING_TILES: int = 20
 # Rare single chest in an empty pixie-cave room, using the same deterministic
 # low-roll convention as the regular cave and dungeon bonus rooms.
 const RARE_CHEST_CHANCE: float = 0.15
@@ -109,16 +113,17 @@ const PIXIE_SCENE:       PackedScene = preload("res://scenes/mobs/Pixie.tscn")
 const PIXIE_SPAWN_COUNT: int = 4  # spawned near crystal ores, any time (cave has no day/night)
 
 var _seed: int = 0  # stored so pixie placement can be deterministic per cave
+var _spawn_pixies_enabled: bool = true  # false for the first, safe Pixie Cave
 var _rare_chest_cell: Vector2i = Vector2i(-2147483648, -2147483648)
 var _rare_chest_spawned: bool = false
 var _rare_chest_removed: bool = false
 
 # ── Mystical darkness / player light ────────────────────────────────────
-# A purple-violet ambient instead of CaveWorld's near-black blue — the start
-# of the "mystical" pixie-cave mood (full glow/fireflies are wired in a later
-# task). Same CanvasModulate + glow WorldEnvironment + player PointLight2D
-# recipe CaveWorld uses, so torches/ore glow slot in for free later.
-const PIXIE_AMBIENT_COLOR:     Color = Color(0.08, 0.05, 0.13, 1.0)  # dim mystical violet
+# A purple-violet ambient instead of CaveWorld's near-black blue — the
+# mystical pixie-cave mood. Raised from the old near-black value so terrain and
+# ore silhouettes read without flattening the mood; still well below CaveWorld's
+# 0.33 ambient.
+const PIXIE_AMBIENT_COLOR:     Color = Color(0.16, 0.11, 0.23, 1.0)  # dim mystical violet
 const LIGHT_TEXTURE_SIZE:      int   = 512
 
 static var _shared_tile_set: TileSet = null
@@ -140,9 +145,10 @@ func _exit_tree() -> void:
 	if Global.gameplay_input_cancelled.is_connected(_cancel_mining):
 		Global.gameplay_input_cancelled.disconnect(_cancel_mining)
 
-func setup(seed_value: int, return_position: Vector2) -> void:
+func setup(seed_value: int, return_position: Vector2, spawn_pixies: bool = true) -> void:
 	overworld_return_position = return_position
 	_seed = seed_value
+	_spawn_pixies_enabled = spawn_pixies
 	generator = PixieCaveGenerator.new()
 	generator.generate(seed_value)
 	_base_grid = generator.grid.duplicate(true)
@@ -943,8 +949,9 @@ func camera_bounds() -> Rect2:
 	if generator == null:
 		return Rect2()
 	var half := Vector2i(generator.width / 2, generator.height / 2)
-	return Rect2(-Vector2(half) * float(TILE_SIZE),
+	var base := Rect2(-Vector2(half) * float(TILE_SIZE),
 		Vector2(generator.width, generator.height) * float(TILE_SIZE))
+	return base.grow(float(CAMERA_WALL_PADDING_TILES) * float(TILE_SIZE))
 
 func _grid_to_cell(tile: Vector2i) -> Vector2i:
 	return tile - Vector2i(generator.width / 2, generator.height / 2)
@@ -1288,6 +1295,8 @@ func _floor_variant_index(grid_pos: Vector2i) -> int:
 # Placement is deterministic per cave (seeded from _seed) and picks distinct
 # floor cells so pixies never start inside the ore walls.
 func _spawn_pixies() -> void:
+	if not _spawn_pixies_enabled:
+		return
 	var path_cells: Array = []
 	for x in range(generator.width):
 		for y in range(generator.height):

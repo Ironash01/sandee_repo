@@ -6,33 +6,35 @@
 [sub_resource type="Resource" id="DungeonQuestion_1"]
 script = ExtResource("2_question")
 type = 1
-question = "Write a Lua program that opens a file called test.txt in write mode, writes \"Hello File\" to it, closes the file, then prints \"done\"."
+question = "Write a Lua program that prints the type of the game API function set_recipe."
 language = "lua"
 starter_code = ""
-answer_output = "done"
+answer_output = "function"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
 type = 0
-question = "Which function opens a file in Lua?"
-answer_a = "file.open"
-answer_b = "io.open"
-answer_c = "fs.open"
-answer_d = "open.file"
+question = "Which Automatica call selects the Planks recipe on a nearby Crafting Station?"
+answer_a = "craft(\"Planks\")"
+answer_b = "set_recipe(\"Planks\")"
+answer_c = "take_output(\"Planks\")"
+answer_d = "put_input(\"Planks\")"
 correct_index = 1
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
 script = ExtResource("2_question")
-type = 1
-question = "Write a Lua program that opens a file called test.txt in read mode, reads its entire contents, prints it, and closes the file."
-language = "lua"
-starter_code = ""
-answer_output = "Hello File"
+type = 0
+question = "After craft(2) finishes, which call collects the finished items from the station?"
+answer_a = "set_recipe()"
+answer_b = "put_input()"
+answer_c = "take_output()"
+answer_d = "list_items()"
+correct_index = 2
 
 [resource]
 script = ExtResource("1_script")
-mission_name = "Lua File I/O"
-mission_description = "Learn how to read and write files in Lua using io.open, read, write, and close."
+mission_name = "Lua Station Crafting"
+mission_description = "Learn the real Automatica station calls: set_recipe(), put_input(), craft() and take_output()."
 entry_resource_file = "entry_37_lua.tres"
 questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
 dungeon_category = "main"

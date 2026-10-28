@@ -56,6 +56,7 @@ var _inv_slots:    Array    = []  # InventorySlot instances for the bottom grid
 # its _input_item/_fuel_item/_output_item are a cache synced from the object.
 var furnace: Node = null
 var _panel:  Control = null
+var _prog_btn: Button = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -192,6 +193,7 @@ func _build_ui() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	var prog_btn := Button.new()
+	_prog_btn = prog_btn
 	prog_btn.text = "🐍 ALGORITHMICA"
 	prog_btn.tooltip_text = "Algorithmica — write Python that automates this furnace and imbues regular items with automation."
 	prog_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
@@ -571,6 +573,13 @@ func _build_programming_panel() -> void:
 func _open_programming() -> void:
 	if _panel != null:
 		_panel.call("open", furnace)
+
+# ── Tutorial focus API ──────────────────────────────────────────────
+func tutorial_program_button() -> Control:
+	return _prog_btn
+
+func tutorial_program_panel() -> Control:
+	return _panel
 
 func _close() -> void:
 	hide_menu()

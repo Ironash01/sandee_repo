@@ -6,9 +6,10 @@
 [resource]
 script = ExtResource("1_item")
 item_name = "Fishing Rod"
+stackable = false
+max_stack_size = 1
 description = "Cast it into a body of water to catch fish."
 item_type = "weapon"
 is_fishing_rod = true
 icon = ExtResource("2_tex")
-stackable = false
 is_craftable = true

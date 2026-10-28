@@ -20,6 +20,15 @@ const C_ERR     := Color(0.45, 0.20, 0.20, 1.00)
 # global is registered by the editor.
 const NameComplete: GDScript = preload("res://scripts/lua_name_complete.gd")
 const PYTHON_SPEC: LanguageSpecification = preload("res://resources/python_language_spec.tres")
+const DEFAULT_FURNACE_HINT: String = "# item ids: iron_ore, charcoal\n# feed(\"iron_ore\", 5)\n# fuel(\"charcoal\", 3)\n# smelt(5)\n# take_output()\n"
+const FURNACE_TEMPLATE: String = """# Algorithmica furnace template
+# Change the item ids and amounts to match the furnace's contents.
+feed("iron_ore", 5)
+fuel("charcoal", 3)
+smelt(5)
+take_output()
+"""
+const TUTORIAL_TEMPLATE: String = "print(\"Algorithmica ready\")\n"
 
 var furnace: Node = null
 
@@ -28,6 +37,8 @@ var _panel_center: CenterContainer = null   # keyboard-aware centring area
 var _code:   CodeEdit = null
 var _output: RichTextLabel = null
 var _hint:   Label = null
+var _run_btn: Button = null
+var _last_run_ok: bool = false
 var _name_popup: PopupPanel = null
 var _name_list:  ItemList = null
 
@@ -60,12 +71,22 @@ func _on_ui_scale(_s: float) -> void:
 
 func open(furnace_node: Node) -> void:
 	furnace = furnace_node
+	_last_run_ok = false
 	_fit()
 	visible = true
 	if _code != null and furnace != null:
 		var saved: String = str(furnace.get("program_code"))
-		if saved.strip_edges().is_empty():
-			_code.text = "# item ids: iron_ore, charcoal\n# feed(\"iron_ore\", 5)\n# fuel(\"charcoal\", 3)\n# smelt(5)\n# take_output()\n"
+		var stripped: String = saved.strip_edges()
+		var tutorial_ready: bool = bool(
+			Global.tutorial_flags.get("algorithmica_template_ready", false))
+		if tutorial_ready and (stripped.is_empty()
+				or stripped == FURNACE_TEMPLATE.strip_edges()
+				or stripped == DEFAULT_FURNACE_HINT.strip_edges()):
+			# Tutorial run: open with ready-to-run code instead of a commented
+			# example, so the lesson is just "press RUN".
+			_code.text = TUTORIAL_TEMPLATE
+		elif stripped.is_empty():
+			_code.text = DEFAULT_FURNACE_HINT
 		else:
 			_code.text = saved
 	_connect_host()
@@ -131,9 +152,22 @@ func _connect_host() -> void:
 	if not host.is_connected("code_executed", _on_executed):
 		host.connect("code_executed", _on_executed)
 
+func _load_template() -> void:
+	if _code == null:
+		return
+	_code.text = FURNACE_TEMPLATE
+	if furnace != null:
+		furnace.set("program_code", FURNACE_TEMPLATE)
+	_code.grab_focus()
+	if _output != null:
+		_output.clear()
+		_output.append_text(
+			"[color=#aaddff]Loaded the furnace template. Press RUN when ready.[/color]\n")
+
 func _run() -> void:
 	if furnace == null or _code == null:
 		return
+	_last_run_ok = false
 	# A furnace program may only use furnace functions (the host enforces this
 	# too). Check here so the error lands in the visible output panel.
 	var foreign := AlgorithmicaAPI.foreign_calls(_code.text, AlgorithmicaAPI.FURNACE)
@@ -195,10 +229,12 @@ func _on_print(s: String) -> void:
 		_output.append_text(s + "\n")
 
 func _on_failed(e: String) -> void:
+	_last_run_ok = false
 	if _output != null:
 		_output.append_text("[color=#ff8888]Error: %s[/color]\n" % e)
 
 func _on_executed() -> void:
+	_last_run_ok = true
 	if _output != null:
 		_output.append_text("[color=#88ffaa]✓ Finished running[/color]\n")
 
@@ -320,6 +356,7 @@ func _build() -> void:
 	btn_row.add_theme_constant_override("separation", int(6 * s))
 	vbox.add_child(btn_row)
 	var run_btn := Button.new()
+	_run_btn = run_btn
 	run_btn.text = "▶  RUN"
 	run_btn.tooltip_text = "Run the program now."
 	run_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -332,6 +369,19 @@ func _build() -> void:
 	run_btn.add_theme_color_override("font_color", Color(0.8, 1.0, 0.8))
 	run_btn.pressed.connect(_run)
 	btn_row.add_child(run_btn)
+	var template_btn := Button.new()
+	template_btn.text = "TEMPLATE"
+	template_btn.tooltip_text = "Load a ready-to-run furnace example into the editor."
+	template_btn.custom_minimum_size = Vector2(0, int(32 * s))
+	template_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	var ts := StyleBoxFlat.new(); ts.bg_color = Color(0.20, 0.30, 0.48, 1.0)
+	ts.border_color = C_BORDER
+	ts.set_border_width_all(int(1 * s)); ts.set_corner_radius_all(int(4 * s))
+	template_btn.add_theme_stylebox_override("normal", ts)
+	template_btn.add_theme_stylebox_override("hover", ts)
+	template_btn.add_theme_color_override("font_color", C_TITLE)
+	template_btn.pressed.connect(_load_template)
+	btn_row.add_child(template_btn)
 	var clr_btn := Button.new()
 	clr_btn.text = "✕ CLEAR"
 	clr_btn.tooltip_text = "Clear the editor and the output."
@@ -365,3 +415,19 @@ func _build() -> void:
 	_output.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_output.add_theme_color_override("default_color", C_TITLE)
 	scroll.add_child(_output)
+
+# ── Tutorial focus API ──────────────────────────────────────────────
+func tutorial_code_editor() -> Control:
+	return _code
+
+func tutorial_run_button() -> Control:
+	return _run_btn
+
+func tutorial_run_succeeded() -> bool:
+	return _last_run_ok
+
+func tutorial_code_text() -> String:
+	return _code.text if _code != null else ""
+
+func tutorial_output_text() -> String:
+	return _output.get_parsed_text() if _output != null else ""

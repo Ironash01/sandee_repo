@@ -86,7 +86,7 @@ func _build() -> void:
 	_panel.add_child(vbox)
 
 	var title := Label.new()
-	title.text = "AUTOMATICA STATUS  (click for all)"
+	title.text = "AUTOMATICA STATUS"
 	title.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE

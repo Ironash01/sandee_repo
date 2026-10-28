@@ -22,9 +22,16 @@ const CAVE_SIZES: Array = [
 const ROOM_MIN: int = 5
 const ROOM_MAX: int = 8
 const ROOM_PLACE_ATTEMPTS: int = 200
-const ROOM_BORDER_MARGIN: int = 2   # keep rooms off the map edge
+# Solid pixie-stone layers kept around the generated grid. The camera pads into
+# the surrounding band, so the inner edge must read as a thick rock wall.
+const BORDER_WALL_TILES: int = 4
+const ROOM_BORDER_MARGIN: int = BORDER_WALL_TILES
 const ROOM_GAP: int = 1             # min wall tiles separating two rooms
 const CORRIDOR_THICKNESS: int = 2   # 2-wide so the 33px-tall player fits
+# A Pixie Cave must never be a single-room cave. If random placement fails to
+# produce a second room (small map + unlucky large first room), rebuild with two
+# guaranteed 5x5 rooms on opposite sides.
+const MIN_ROOMS: int = 2
 
 const ORES_PER_ROOM_MIN: int = 1
 const ORES_PER_ROOM_MAX: int = 3
@@ -78,6 +85,23 @@ func _place_rooms(rng: RandomNumberGenerator) -> void:
 			continue
 		if _overlaps_any(room, ROOM_GAP):
 			continue
+		_carve_room(room)
+		rooms.append(room)
+	if rooms.size() < MIN_ROOMS:
+		_build_two_room_fallback()
+
+# Deterministic rescue for the rare one-room layout. Resetting the grid here is
+# safe because rooms are placed before corridors, the entrance and ores; the
+# two 5x5 rooms fit side by side even in the smallest 20x16 cave.
+func _build_two_room_fallback() -> void:
+	_init_walls()
+	rooms = []
+	var room_size := Vector2i(ROOM_MIN, ROOM_MIN)
+	var y: int = (height - room_size.y) / 2
+	var left := {"pos": Vector2i(ROOM_BORDER_MARGIN, y), "size": room_size}
+	var right := {"pos": Vector2i(width - ROOM_BORDER_MARGIN - room_size.x, y),
+		"size": room_size}
+	for room in [left, right]:
 		_carve_room(room)
 		rooms.append(room)
 
@@ -204,8 +228,8 @@ const VARIANT_VEINS: int = 3
 func _place_stone_variants(rng: RandomNumberGenerator) -> void:
 	for _i in range(VARIANT_VEINS):
 		var walls: Array = []
-		for x in range(1, width - 1):
-			for y in range(1, height - 1):
+		for x in range(BORDER_WALL_TILES, width - BORDER_WALL_TILES):
+			for y in range(BORDER_WALL_TILES, height - BORDER_WALL_TILES):
 				if grid[x][y] == Tile.WALL:
 					walls.append(Vector2i(x, y))
 		if walls.is_empty():
@@ -232,7 +256,9 @@ func _place_stone_variants(rng: RandomNumberGenerator) -> void:
 				dirs[j] = tmp
 			for d in dirs:
 				var n: Vector2i = cur + d
-				if n.x < 1 or n.y < 1 or n.x >= width - 1 or n.y >= height - 1 or seen.has(n):
+				if n.x < BORDER_WALL_TILES or n.y < BORDER_WALL_TILES \
+						or n.x >= width - BORDER_WALL_TILES \
+						or n.y >= height - BORDER_WALL_TILES or seen.has(n):
 					continue
 				seen[n] = true
 				frontier.append(n)
@@ -268,4 +294,5 @@ func _adjacent_to_floor(c: Vector2i) -> bool:
 	return false
 
 func _in_bounds(c: Vector2i) -> bool:
-	return c.x >= 1 and c.y >= 1 and c.x < width - 1 and c.y < height - 1
+	return c.x >= BORDER_WALL_TILES and c.y >= BORDER_WALL_TILES \
+		and c.x < width - BORDER_WALL_TILES and c.y < height - BORDER_WALL_TILES

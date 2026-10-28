@@ -32,6 +32,22 @@ class CancelProbe:
 		cancelled += 1
 
 
+class FurnaceTemplateProbe:
+	extends Node
+	var program_code: String = ""
+
+	func get_program_host() -> Node:
+		return null
+
+	func run_program(_code: String) -> void:
+		pass
+
+
+class SettingsTourGameProbe:
+	extends Node
+	var pause_menu: Control = null
+
+
 class CursorProbe:
 	extends Node2D
 	var item_data: ItemData = null
@@ -157,6 +173,7 @@ func _run() -> void:
 	await _test_save_and_progress()
 	_test_account_isolation()
 	await _test_tutorial_state_and_dialogue()
+	await _test_guided_tutorial_v3()
 	await _test_triggers()
 	await _test_pause_and_build()
 	await _test_pause_menu_short_layout()
@@ -172,6 +189,8 @@ func _run() -> void:
 	await _test_grass_clearance()
 	await _test_cave_persistence()
 	await _test_cave_cache_lifecycle()
+	await _test_cave_generation_edges()
+	await _test_wisp_companion()
 	await _test_torches()
 	await _test_algorithmica_color()
 	await _test_cactus_and_worm()
@@ -181,11 +200,15 @@ func _run() -> void:
 	_test_minimap_lua_legend()
 	await _test_knowledge_altar_pages()
 	await _test_mission_events()
+	_test_tool_stacking_and_wood_mission()
+	await _test_stat_hud_layout()
+	_test_stat_crystals()
 	await _test_smelting_recipes()
 	await _test_held_damage_display()
 	await _test_mining_tool_switch()
 	await _test_pickaxe_blockers()
 	await _test_cave_pickup()
+	await _test_pixie_loot()
 	await _test_worm_water_guard()
 	await _test_escape()
 	await _test_ui_back_stack()
@@ -199,10 +222,14 @@ func _run() -> void:
 	_test_removed_debug_surfaces()
 	_test_ui_scaling()
 	await _test_android_input_and_safe_area()
+	await _test_pc_controls_overlay()
+	await _test_settings_tour()
+	await _test_android_tooltip_suppression()
 	await _test_android_keyboard_layout()
 	await _test_ambient_birds()
 	await _test_automatica_api()
 	await _test_automatica_build_queue()
+	await _test_algorithmica_templates()
 	await _test_quiz_reward_ui()
 	await _test_quiz_compiler_layout()
 	await _test_altar_mobile_layout()
@@ -498,6 +525,8 @@ func _test_save_and_progress() -> void:
 	wood["progress"] = 7
 	Global.cleared_dungeons[77] = true
 	Global.dungeon_stars[77] = 2
+	Global.dungeon_quiz_hints[77] = 4
+	Global.dungeon_quiz_penalties[77] = 2
 	Global.save_game(slot)
 	Global.reset_missions()
 	Global.load_game(slot)
@@ -505,6 +534,9 @@ func _test_save_and_progress() -> void:
 	check(bool(moved.get("completed", false)), "completion survives save/load")
 	check(Global.dungeon_stars_for(77) == 2,
 		"per-dungeon blue-star awards survive save/load")
+	check(Global.dungeon_quiz_hints_for(77) == 4
+		and Global.dungeon_quiz_penalties_for(77) == 2,
+		"quiz hint and penalty counts survive save/load")
 	check(Global.bestiary_is_seen("cinder_ooze")
 		and Global.bestiary_is_killed("rune_sentinel")
 		and Global.bestiary_is_seen("rune_sentinel"),
@@ -527,6 +559,10 @@ func _test_save_and_progress() -> void:
 		(legacy as Dictionary).erase("world_uid")
 		(legacy as Dictionary).erase("save_revision")
 		(legacy as Dictionary).erase("save_format")
+		(legacy as Dictionary).erase("max_health")
+		(legacy as Dictionary).erase("health")
+		(legacy as Dictionary).erase("max_stamina")
+		(legacy as Dictionary).erase("stamina")
 		var lf := FileAccess.open(path, FileAccess.WRITE)
 		lf.store_string(JSON.stringify(legacy))
 		lf.close()
@@ -537,6 +573,11 @@ func _test_save_and_progress() -> void:
 			"legacy saves migrate to portable identity/revision metadata")
 		check(int(Global._find_mission("collect_wood").get("progress", 0)) >= 0,
 			"legacy-save identity migration preserves gameplay data")
+		check(is_equal_approx(Global.max_health, Global.BASE_MAX_HEALTH)
+			and is_equal_approx(Global.health, Global.BASE_MAX_HEALTH)
+			and is_equal_approx(Global.max_stamina, Global.BASE_MAX_STAMINA)
+			and is_equal_approx(Global.stamina, Global.BASE_MAX_STAMINA),
+			"legacy saves without crystal fields start at base stats")
 
 	# Old save containing the retired wolf mission must load safely.
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
@@ -549,6 +590,29 @@ func _test_save_and_progress() -> void:
 		check(Global._find_mission("defeat_wolves").is_empty(),
 			"old save with the retired mission loads safely")
 
+	# Permanent crystal growth is per-world: both the raised maximum and the
+	# current value must survive a save/load round trip.
+	Global.max_health = 240.0
+	Global.health = 205.0
+	Global.max_stamina = 340.0
+	Global.stamina = 315.0
+	Global.save_game(slot)
+	var stat_save: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	check(stat_save is Dictionary
+		and is_equal_approx(float((stat_save as Dictionary).get("max_health", 0.0)), 240.0)
+		and is_equal_approx(float((stat_save as Dictionary).get("max_stamina", 0.0)), 340.0),
+		"crystal-raised maximums are stored in the world save")
+	Global.reset_player_stats()
+	check(is_equal_approx(Global.max_health, Global.BASE_MAX_HEALTH),
+		"reset_player_stats restores the base maximums")
+	Global.load_game(slot)
+	check(is_equal_approx(Global.max_health, 240.0)
+		and is_equal_approx(Global.health, 205.0)
+		and is_equal_approx(Global.max_stamina, 340.0)
+		and is_equal_approx(Global.stamina, 315.0),
+		"save/load preserves crystal-raised maximums and current stats")
+	Global.reset_player_stats()
+
 	# At-goal progress completes even if `completed` was false.
 	Global.reset_missions()
 	var shelter := Global._find_mission("build_shelter")
@@ -559,6 +623,8 @@ func _test_save_and_progress() -> void:
 
 	Global.cleared_dungeons.erase(77)
 	Global.dungeon_stars.erase(77)
+	Global.dungeon_quiz_hints.erase(77)
+	Global.dungeon_quiz_penalties.erase(77)
 	Global.delete_world(slot)
 	Global.reset_bestiary_state()
 
@@ -666,26 +732,38 @@ func _test_tutorial_state_and_dialogue() -> void:
 
 	var slot: int = Global.next_free_slot()
 	if slot > 0:
-		Global.tutorial_version = 2
-		Global.tutorial_stage = 7
+		Global.tutorial_version = 3
+		Global.tutorial_stage = 8
 		Global.tutorial_completed = false
 		Global.tutorial_flags = {
-			"starter_kit": true,
+			"starter_kit_v3": true,
 			"automatica_awarded": true,
-			"camp_cells": {"build": [3, 4]},
+			"camp_cells_v3": {"furnace": [3, 4]},
 		}
 		Global.save_game(slot)
 		Global.tutorial_stage = 0
 		Global.tutorial_completed = true
 		Global.tutorial_flags.clear()
 		Global.load_game(slot)
-		check(Global.tutorial_version == 2 and Global.tutorial_stage == 7
+		check(Global.tutorial_version == 3 and Global.tutorial_stage == 8
 			and not Global.tutorial_completed
-			and bool(Global.tutorial_flags.get("starter_kit", false))
+			and bool(Global.tutorial_flags.get("starter_kit_v3", false))
 			and bool(Global.tutorial_flags.get("automatica_awarded", false)),
 			"guided tutorial version, step and one-time reward flags survive save/load")
 		check(FileAccess.get_file_as_string(Global.save_file_path(slot)).contains("tutorial_flags"),
 			"tutorial reward flags are persisted in the world save")
+
+		# A previous guided-tutorial generation must not be replayed inside the
+		# v3 flow. Existing items, missions and dungeon progress stay untouched.
+		Global.tutorial_version = 2
+		Global.tutorial_stage = 5
+		Global.tutorial_completed = false
+		Global.tutorial_flags = {"starter_kit": true}
+		Global.save_game(slot)
+		Global.load_game(slot)
+		check(Global.tutorial_version == 3 and Global.tutorial_completed
+			and Global.tutorial_stage == 0,
+			"unfinished v2 tutorials migrate to completed v3 onboarding")
 
 		# A pre-v2 save must not be ambushed by the new onboarding, even if the
 		# old six-line tutorial was left unfinished.
@@ -751,6 +829,569 @@ func _test_tutorial_state_and_dialogue() -> void:
 	Global.reset_pause_state()
 
 
+func _test_guided_tutorial_v3() -> void:
+	# The lesson order is intentional: onboarding -> first dungeon -> both
+	# programming systems -> exploration (caves, Pixie Caves, waypoints).
+	var guide_script: Script = load("res://scripts/tutorial_guide.gd")
+	var steps: Array = guide_script.get_script_constant_map().get("STEPS", []) as Array
+	var order_ok := steps.find("dungeon_quiz") < steps.find("automatica") \
+		and steps.find("automatica") < steps.find("automatica_combat") \
+		and steps.find("automatica_combat") < steps.find("algorithmica") \
+		and steps.find("algorithmica") < steps.find("cave_regular") \
+		and steps.find("cave_regular") < steps.find("cave_pixie") \
+		and steps.find("cave_pixie") < steps.find("waypoint") \
+		and steps.has("move_one") and steps.has("move_two") and steps.has("tree_chop") \
+		and steps.has("craft_station") and steps.has("dungeon_knowledge")
+	check(order_ok, "guided tutorial v3 orders dungeon, Automatica build/combat, programming and exploration")
+
+	# Starting kit: all three wooden tools and exactly 10 bread, granted once.
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_inventory: Array = Global.Inventory.duplicate(true)
+	var old_flags: Dictionary = Global.tutorial_flags.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+	var old_slot: int = Global.active_save_slot
+	Global.active_save_slot = -1
+	Global.tutorial_flags.clear()
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	var guide: Node = guide_script.new()
+	add_child(guide)
+	guide.set("_finished", true)
+	guide.call("_ensure_starter_kit")
+	var axe := load("res://resources/items/woodenaxe.tres") as ItemData
+	var pick := load("res://resources/items/wooden_pickaxe.tres") as ItemData
+	var sword := load("res://resources/items/woodensword.tres") as ItemData
+	var bread := load("res://resources/items/bread.tres") as ItemData
+	check(Global.count_item(axe) == 1 and Global.count_item(pick) == 1
+		and Global.count_item(sword) == 1 and Global.count_item(bread) == 10,
+		"new-world starter kit grants three wooden tools and exactly 10 bread")
+	var held_before: String = Global.held_tool_id()
+	guide.call("_ensure_starter_kit")
+	check(Global.count_item(axe) == 1 and Global.count_item(pick) == 1
+		and Global.count_item(sword) == 1 and Global.count_item(bread) == 10
+		and Global.held_tool_id() == held_before,
+		"starter kit is idempotent and does not reset the selected slot")
+	check(held_before != "res://resources/items/woodenaxe.tres",
+		"starter kit leaves the axe unselected so the axe lesson requires an action")
+	guide.queue_free()
+	await get_tree().process_frame
+	Global.Hotbar = old_hotbar
+	Global.Inventory = old_inventory
+	Global.tutorial_flags = old_flags
+	Global.set_hotbar_selection(old_selected)
+	Global.active_save_slot = old_slot
+
+	# The first Automatica lesson gives the robot an exact 32-Wood stack in
+	# BUILD SLOT 1 instead of asking the player to spend inventory wood.
+	var old_auto_stage: int = Global.tutorial_stage
+	var auto_guide: Node = guide_script.new()
+	add_child(auto_guide)
+	auto_guide.set("_finished", true)
+	var auto_npc: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	add_child(auto_npc)
+	await get_tree().process_frame
+	auto_guide.set("_automatica_station", auto_npc)
+	auto_guide.call("_give_automatica_line_blocks")
+	var wood_item := load("res://resources/items/wood.tres") as ItemData
+	var auto_palette: Array = auto_npc.call("get_build_palette") as Array
+	var auto_slot: Variant = auto_palette[0] if auto_palette.size() > 0 else null
+	check(auto_slot is Dictionary
+		and (auto_slot as Dictionary).get("data") == wood_item
+		and int((auto_slot as Dictionary).get("quantity", 0)) == 32,
+		"the first Automatica lesson loads exactly 32 Wood into BUILD SLOT 1")
+	auto_npc.call("set_tool", wood_item, 1)
+	var wrong_tool := bool(auto_guide.call("_station_has_sword", auto_npc))
+	auto_npc.call("set_tool", sword, 1)
+	var right_tool := bool(auto_guide.call("_station_has_sword", auto_npc))
+	check(not wrong_tool and right_tool,
+		"the combat lesson only accepts the Wooden Sword in the robot's TOOL slot")
+	auto_guide.queue_free()
+	auto_npc.queue_free()
+	await get_tree().process_frame
+
+	# The combat lesson grants a SECOND Automatica and a SECOND Wooden Sword
+	# even though the starter kit already contains a sword, and only once.
+	var lua_item := load("res://resources/items/lua.tres") as ItemData
+	var kit_guide: Node = guide_script.new()
+	add_child(kit_guide)
+	kit_guide.set("_finished", true)
+	Global.active_save_slot = -1
+	Global.tutorial_flags.clear()
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	Global.tutorial_stage = 0
+	Global.add_item({"data": sword, "quantity": 1})
+	var kit_granted: bool = bool(kit_guide.call("_grant_automatica_combat_kit"))
+	var kit_lua: int = Global.count_item(lua_item)
+	var kit_swords: int = Global.count_item(sword)
+	kit_guide.call("_grant_automatica_combat_kit")
+	check(kit_granted and kit_lua == 1 and kit_swords == 2
+		and Global.count_item(lua_item) == 1 and Global.count_item(sword) == 2,
+		"combat lesson grants one more Automatica and Wooden Sword exactly once")
+	kit_guide.queue_free()
+	await get_tree().process_frame
+	Global.Hotbar = old_hotbar
+	Global.Inventory = old_inventory
+	Global.tutorial_flags = old_flags
+	Global.set_hotbar_selection(old_selected)
+	Global.active_save_slot = old_slot
+	Global.tutorial_stage = old_auto_stage
+
+	# The Crafting Station lesson must be satisfied by the real inventory craft
+	# action, not by a station found in a chest.
+	var craft_guide: Node = guide_script.new()
+	add_child(craft_guide)
+	craft_guide.set("_finished", false)
+	craft_guide.set("_current_step", steps.find("craft_station"))
+	var old_craft_flags: Dictionary = Global.tutorial_flags.duplicate(true)
+	var old_craft_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_craft_inventory: Array = Global.Inventory.duplicate(true)
+	Global.active_save_slot = -1
+	Global.tutorial_flags.clear()
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	var station_item := load("res://resources/items/crafting_station.tres") as ItemData
+	Global.add_item({"quantity": 1, "data": station_item})
+	check(not bool(craft_guide.call("_tick_craft_station")),
+		"a found Crafting Station does not satisfy the craft lesson")
+	craft_guide.call("_on_item_crafted", "Crafting Station", 1)
+	check(bool(Global.tutorial_flags.get("crafted_station_v3", false))
+		and bool(craft_guide.call("_tick_craft_station")),
+		"the real craft action verifies and completes the station lesson")
+	var inv_src := FileAccess.get_file_as_string("res://scripts/inventory_ui.gd")
+	var craft_guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(inv_src.contains("Global.item_crafted.emit") 
+		and craft_guide_src.contains("Global.item_crafted"),
+		"craft verification is wired through the real inventory craft path")
+	craft_guide.set("_finished", true)
+	craft_guide.queue_free()
+	Global.tutorial_flags = old_craft_flags
+	Global.Hotbar = old_craft_hotbar
+	Global.Inventory = old_craft_inventory
+	Global.set_hotbar_selection(old_selected)
+	await get_tree().process_frame
+
+	# UI focus follows a real target, never captures input, and hides with it.
+	var target_root := Control.new()
+	add_child(target_root)
+	var btn := Button.new()
+	btn.text = "CRAFT"
+	btn.position = Vector2(80, 90)
+	btn.size = Vector2(120, 40)
+	target_root.add_child(btn)
+	var ui_focus: Control = load("res://scripts/tutorial_ui_target.gd").new() as Control
+	target_root.add_child(ui_focus)
+	ui_focus.call("set_target", btn, "Tap here to craft.")
+	await get_tree().process_frame
+	var target_rect: Rect2 = ui_focus.call("_current_rect") as Rect2
+	check(ui_focus.visible and ui_focus.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and target_rect == btn.get_global_rect(),
+		"tutorial UI highlight follows its target without intercepting input")
+	btn.position = Vector2(210, 140)
+	await get_tree().process_frame
+	check((ui_focus.call("_current_rect") as Rect2) == btn.get_global_rect(),
+		"tutorial UI highlight follows a target that moves or reflows")
+	btn.visible = false
+	await get_tree().process_frame
+	check(not ui_focus.visible,
+		"tutorial UI highlight hides when its target is no longer visible")
+	# A temporarily hidden target must light up again when it returns, even
+	# though the guide caches the target across 0.2s verifier ticks.
+	var focus_guide: Node = guide_script.new()
+	add_child(focus_guide)
+	focus_guide.set("_finished", false)
+	focus_guide.set("_ui_focus", ui_focus)
+	btn.visible = true
+	focus_guide.call("_focus_ui", btn, "Tap here to craft.")
+	await get_tree().process_frame
+	check(ui_focus.visible,
+		"tutorial UI highlight returns after a hidden target becomes visible again")
+	focus_guide.set("_finished", true)
+	focus_guide.queue_free()
+	target_root.queue_free()
+	await get_tree().process_frame
+
+	# Dungeon route discs must end at the real Quiz Altar and stay on floor.
+	var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(
+		Global.first_main_dungeon_index("python"))
+	if mission != null:
+		var overworld := AutoNextOverworld.new()
+		add_child(overworld)
+		var dun := DungeonWorld.new()
+		add_child(dun)
+		dun.setup(mission.dungeon_index, mission, 24680 + mission.dungeon_index,
+			overworld, Vector2.ZERO)
+		await get_tree().process_frame
+		var old_player: Node = Global.player_node
+		var old_world: Node = Global.world_node
+		var p := CharacterBody2D.new()
+		p.add_to_group("Player")
+		add_child(p)
+		p.global_position = dun.call("get_player_spawn_pos") as Vector2
+		Global.player_node = p
+		Global.world_node = dun
+		var route_guide: Node = guide_script.new()
+		add_child(route_guide)
+		route_guide.set("_finished", true)
+		route_guide.set("_world", dun)
+		var quiz_world: Vector2 = dun.call("grid_to_world", dun.generator.quiz_altar_pos) as Vector2
+		var points: Array = route_guide.call("_build_route_points", quiz_world) as Array
+		var endpoint_ok := not points.is_empty() \
+			and (points[points.size() - 1] as Vector2).distance_to(quiz_world) < 1.0
+		var floor_ok := true
+		for point in points:
+			var cell: Vector2i = dun.call("world_to_grid", point as Vector2) as Vector2i
+			if not bool(dun.call("grid_cell_is_floor", cell)):
+				floor_ok = false
+		check(endpoint_ok and floor_ok and points.size() > 1,
+			"dungeon route markers stay on floor and end at the actual Quiz Altar")
+		var route_src := FileAccess.get_file_as_string("res://scripts/tutorial_route_guide.gd")
+		check(not route_src.contains("draw_string")
+			and not route_src.contains("str(i + 1)"),
+			"dungeon route guide uses plain dots without numbers or text")
+		route_guide.queue_free()
+		p.queue_free()
+		Global.player_node = old_player
+		Global.world_node = old_world
+		dun.queue_free()
+		overworld.queue_free()
+		await get_tree().process_frame
+
+	# Cave entry/exit and waypoint relocation are driven by verified signals /
+	# persisted one-time flags, not timers.
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	var guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(game_src.contains("Global.cave_entered.emit") 
+		and game_src.contains("Global.cave_exited.emit")
+		and game_src.contains("Global.dungeon_exited.emit"),
+		"cave and dungeon transitions emit verified tutorial signals")
+	check(guide_src.contains("waypoint_relocated") and guide_src.contains("teleport_to_world_waypoint")
+		and guide_src.contains("waypoint_lesson_done") and guide_src.contains("cave_%s_entered"),
+		"cave and waypoint lessons persist one-time progress and use the real systems")
+	check(guide_src.contains("var inspected := bool(Global.tutorial_flags.get(\"cave_%s_inspected\"")
+		and guide_src.contains("if not inspected:"),
+		"cave lessons run exactly one verified ore interaction before the exit objective")
+	var tree_world_src := FileAccess.get_file_as_string("res://scripts/world.gd")
+	check(guide_src.contains("_begin_cave_travel")
+		and guide_src.contains("cave_regular_relocated")
+		and guide_src.contains("cave_pixie_relocated")
+		and tree_world_src.contains("tutorial_teleport_near_cave"),
+		"cave and Pixie lessons relocate safely to their entrance once")
+	check(not guide_src.contains("_spawn_tutorial_tree")
+		and not guide_src.contains("_world.call(\"_spawn_tree\"")
+		and guide_src.contains("var best_plain")
+		and guide_src.contains("Walk to the tree.")
+		and tree_world_src.contains("(_tree_spatial[spatial_key] as Array).append(tree)"),
+		"tree lesson points at existing trees and runtime trees join the interaction cache")
+	check(tree_world_src.contains("var scene_tree := get_tree()")
+		and tree_world_src.contains("if scene_tree == null or not is_inside_tree()")
+		and tree_world_src.contains("_abort_waypoint_recall"),
+		"waypoint recall aborts safely while the overworld is off-tree")
+	check(guide_src.contains("_world.call(\"placed_node\"")
+		and guide_src.contains("Making room to rebuild it"),
+		"camp furnace recovery re-adopts restored stations before reporting failure")
+
+	# Calling the deferred recall on an off-tree overworld must not reach
+	# get_tree().create_timer() (the null-tree crash reported in world.gd).
+	var off_world: Node2D = load("res://scripts/world.gd").new() as Node2D
+	var old_off_player: Node = Global.player_node
+	var dummy_player := CharacterBody2D.new()
+	add_child(dummy_player)
+	Global.player_node = dummy_player
+	off_world.set("_waypoint_teleporting", true)
+	off_world.call("_run_waypoint_recall", Vector2.ZERO)
+	await get_tree().process_frame
+	check(not bool(off_world.get("_waypoint_teleporting")),
+		"off-tree waypoint recall exits before using a null SceneTree")
+	off_world.free()
+	dummy_player.queue_free()
+	Global.player_node = old_off_player
+	await get_tree().process_frame
+
+	# An open hint must keep the quiz tutorial on NEXT; only after the hint is
+	# dismissed may it advance to RUN / answer selection.
+	var hint_branch := guide_src.find("if hint_open:")
+	var demo_branch := guide_src.find(
+		"var demo_done := bool(Global.tutorial_flags.get(\"quiz_hint_demo\"")
+	check(hint_branch >= 0 and demo_branch > hint_branch
+		and guide_src.contains("Tap NEXT to hide the hint.")
+		and guide_src.contains("Tap RUN to check the hinted code.")
+		and guide_src.contains("tutorial_hint_run_failed")
+		and guide_src.contains("tutorial_code_text")
+		and guide_src.contains("Tap HINT to prepare the code."),
+		"dungeon quiz tutorial hints then runs; NEXT follows a failed hinted run")
+
+	# Leaving a cave before the interaction must not complete the lesson, and
+	# the verified interaction unlocks the normal exit completion.
+	var cave_req: Node = guide_script.new()
+	add_child(cave_req)
+	cave_req.set("_finished", false)
+	cave_req.set("_step_complete", false)
+	cave_req.set("_current_step", steps.find("cave_regular"))
+	var old_cave_flags: Dictionary = Global.tutorial_flags.duplicate(true)
+	var old_cave_stage: int = Global.tutorial_stage
+	var old_cave_slot: int = Global.active_save_slot
+	Global.active_save_slot = -1
+	Global.tutorial_flags.clear()
+	Global.tutorial_stage = steps.find("cave_regular")
+	cave_req.call("_on_cave_exited", "cave")
+	check(int(cave_req.get("_current_step")) == steps.find("cave_regular")
+		and not bool(Global.tutorial_flags.get("cave_cave_done", false)),
+		"leaving a cave before its interaction does not falsely complete the lesson")
+	Global.tutorial_flags["cave_cave_inspected"] = true
+	cave_req.call("_on_cave_exited", "cave")
+	check(int(cave_req.get("_current_step")) == steps.find("cave_pixie")
+		and bool(Global.tutorial_flags.get("cave_cave_done", false))
+		and int(Global.tutorial_stage) == steps.find("cave_pixie"),
+		"a verified cave interaction lets the real exit complete the lesson")
+	cave_req.set("_finished", true)
+	cave_req.queue_free()
+	Global.tutorial_flags = old_cave_flags
+	Global.tutorial_stage = old_cave_stage
+	Global.active_save_slot = old_cave_slot
+	await get_tree().process_frame
+
+	# Programming lessons require the real run result, not just opening a
+	# panel. RichTextLabel output is read with get_parsed_text() because
+	# append_text() does not populate the .text getter.
+	var lua_editor_src := FileAccess.get_file_as_string("res://scripts/lua_editor_ui.gd")
+	var furnace_panel_src := FileAccess.get_file_as_string(
+		"res://scripts/furnace_programming_panel.gd")
+	check(lua_editor_src.contains("get_parsed_text")
+		and furnace_panel_src.contains("get_parsed_text")
+		and guide_src.contains("build_line")
+		and guide_src.contains("combat_mode(true)")
+		and guide_src.contains("output.contains(\"Algorithmica ready\")"),
+		"Automatica lessons verify the real build, combat and Algorithmica run results")
+	check(lua_editor_src.contains("build_line(-15, -8, 16, -8)")
+		and guide_src.contains("Automatica can do tasks for you")
+		and guide_src.contains("automatica_combat_kit"),
+		"the tutorial demonstrates a 32-block Automatica task and explains what it can do")
+	check(guide_src.contains("_tick_automatica_combat")
+		and guide_src.contains("_grant_automatica_combat_kit")
+		and guide_src.contains("tutorial_tool_slot")
+		and guide_src.contains("is_combat")
+		and guide_src.contains("_find_second_automatica"),
+		"the combat lesson guides the player through tool assignment and combat_mode(true)")
+
+
+func _test_stat_hud_layout() -> void:
+	var old_scale: float = Global.ui_scale
+	var old_viewport: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	Global.ui_scale = 1.0
+	Global.ui_viewport_size = Vector2(1152, 648)
+	Global.ui_safe_insets = Vector4.ZERO
+
+	var pause := Button.new()
+	pause.position = Vector2(300, 20)
+	pause.size = Vector2(96, 40)
+	add_child(pause)
+	await get_tree().process_frame
+	var summary: Control = load("res://scripts/star_summary_ui.gd").new()
+	add_child(summary)
+	summary.call("setup", pause)
+	await get_tree().process_frame
+	var panel: PanelContainer = summary.get("_panel") as PanelContainer
+	var row: HBoxContainer = summary.get("_row") as HBoxContainer
+	var one_line := row != null and row.get_child_count() == 3
+	if one_line:
+		for i in range(2):
+			var chip := row.get_child(i)
+			one_line = chip is HBoxContainer \
+				and (chip as HBoxContainer).get_child_count() == 2
+	check(one_line,
+		"star totals sit on one line as blue + yellow chips plus a suffix")
+	# Put PAUSE far enough right that the summary has room, then verify it is
+	# directly to its left and vertically centred rather than stacked below.
+	var panel_size := panel.get_combined_minimum_size()
+	pause.position = Vector2(panel_size.x + 40.0, 20.0)
+	summary.call("_refit")
+	var pause_rect: Rect2 = pause.get_global_rect()
+	var summary_rect: Rect2 = panel.get_global_rect()
+	check(summary_rect.end.x <= pause_rect.position.x
+		and absf(summary_rect.get_center().y - pause_rect.get_center().y) < 2.0,
+		"star summary sits directly left of PAUSE and vertically centred")
+	summary.queue_free()
+	pause.queue_free()
+	await get_tree().process_frame
+
+	var mission_src := FileAccess.get_file_as_string("res://scripts/mission_ui.gd")
+	check(not mission_src.contains("_refresh_star_header")
+		and not mission_src.contains("_stars_row")
+		and mission_src.contains("const TOP_OFFSET    := 30.0"),
+		"the mission tracker is raised and no longer duplicates the star header")
+
+	var hotbar_consts: Dictionary = load("res://scripts/hotbar.gd").get_script_constant_map()
+	var hotbar_src := FileAccess.get_file_as_string("res://scripts/hotbar.gd")
+	check(float(hotbar_consts.get("HP_BAR_H", 0.0)) >= 20.0
+		and float(hotbar_consts.get("SP_BAR_H", 0.0)) >= 16.0
+		and hotbar_src.contains("HP  %d / %d")
+		and hotbar_src.contains("STAMINA  %d / %d"),
+		"HP/stamina bars are thicker and show current / max values")
+
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_viewport
+	Global.ui_safe_insets = old_insets
+
+
+func _test_stat_crystals() -> void:
+	var life := load("res://resources/items/life_crystal.tres") as ItemData
+	var stamina := load("res://resources/items/stamina_crystal.tres") as ItemData
+	check(life != null and stamina != null
+		and life.item_type == "consumable" and stamina.item_type == "consumable"
+		and is_equal_approx(life.max_health_bonus, 10.0)
+		and is_equal_approx(stamina.max_stamina_bonus, 10.0)
+		and is_zero_approx(life.heal_amount) and is_zero_approx(stamina.heal_amount)
+		and life.icon != null and stamina.icon != null,
+		"Life/Stamina Crystals are hotbar consumables worth +10 permanent stats")
+
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_inventory: Array = Global.Inventory.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+	var old_health: float = Global.health
+	var old_max_health: float = Global.max_health
+	var old_stamina: float = Global.stamina
+	var old_max_stamina: float = Global.max_stamina
+	var old_missions: Array = Global.missions.duplicate(true)
+	var old_cleared: Dictionary = Global.cleared_dungeons.duplicate(true)
+	var old_stars: Dictionary = Global.dungeon_stars.duplicate(true)
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	Global.hotbar_selected = 0
+
+	# Base values, then the +10/+10 rule (maximum and current rise together).
+	Global.reset_player_stats()
+	check(is_equal_approx(Global.max_health, Global.BASE_MAX_HEALTH)
+		and is_equal_approx(Global.health, Global.BASE_MAX_HEALTH)
+		and is_equal_approx(Global.max_stamina, Global.BASE_MAX_STAMINA)
+		and is_equal_approx(Global.stamina, Global.BASE_MAX_STAMINA),
+		"new worlds start at 100 HP / 50 stamina")
+	Global.health = 90.0
+	check(is_equal_approx(Global.increase_max_health(10.0), 10.0)
+		and is_equal_approx(Global.max_health, 110.0)
+		and is_equal_approx(Global.health, 100.0),
+		"a Life Crystal raises max and current health by 10")
+	Global.stamina = 40.0
+	check(is_equal_approx(Global.increase_max_stamina(10.0), 10.0)
+		and is_equal_approx(Global.max_stamina, 60.0)
+		and is_equal_approx(Global.stamina, 50.0),
+		"a Stamina Crystal raises max and current stamina by 10")
+
+	# Caps: partial gain at the boundary, none beyond it.
+	Global.max_health = 495.0
+	Global.health = 495.0
+	check(is_equal_approx(Global.increase_max_health(10.0), 5.0)
+		and is_equal_approx(Global.max_health, Global.MAX_HEALTH_CAP)
+		and is_equal_approx(Global.health, Global.MAX_HEALTH_CAP)
+		and is_zero_approx(Global.increase_max_health(10.0))
+		and is_equal_approx(Global.max_health, 500.0),
+		"health growth clamps at the 500 maximum")
+	Global.max_stamina = 995.0
+	Global.stamina = 995.0
+	check(is_equal_approx(Global.increase_max_stamina(10.0), 5.0)
+		and is_equal_approx(Global.max_stamina, Global.MAX_STAMINA_CAP)
+		and is_equal_approx(Global.stamina, Global.MAX_STAMINA_CAP)
+		and is_zero_approx(Global.increase_max_stamina(10.0))
+		and is_equal_approx(Global.max_stamina, 1000.0),
+		"stamina growth clamps at the 1000 maximum")
+
+	# Using the crystal from the hotbar consumes exactly one item. At the cap
+	# the click is swallowed and the crystal stays in the slot.
+	Global.reset_player_stats()
+	var player: Node = load("res://scripts/player.gd").new()
+	Global.Hotbar[0] = {"data": life, "quantity": 1}
+	player.call("_try_use_stat_crystal", life)
+	check(Global.count_item(life) == 0
+		and is_equal_approx(Global.max_health, 110.0)
+		and is_equal_approx(Global.health, 110.0),
+		"using a hotbar Life Crystal consumes it and applies +10")
+	Global.Hotbar[0] = {"data": stamina, "quantity": 1}
+	player.call("_try_use_stat_crystal", stamina)
+	check(Global.count_item(stamina) == 0
+		and is_equal_approx(Global.max_stamina, 60.0)
+		and is_equal_approx(Global.stamina, 60.0),
+		"using a hotbar Stamina Crystal consumes it and applies +10")
+	Global.max_health = Global.MAX_HEALTH_CAP
+	Global.health = Global.MAX_HEALTH_CAP
+	Global.Hotbar[0] = {"data": life, "quantity": 1}
+	player.call("_try_use_stat_crystal", life)
+	check(Global.count_item(life) == 1
+		and is_equal_approx(Global.max_health, Global.MAX_HEALTH_CAP),
+		"a crystal at the stat cap is not consumed")
+
+	# Point-and-click click routing: a usable held item is consumed/used
+	# instead of starting a move or interaction order.
+	Global.reset_player_stats()
+	Global.Hotbar[0] = {"data": life, "quantity": 1}
+	Global.hotbar_selected = 0
+	check(bool(player.call("_held_item_is_usable")),
+		"a Life Crystal reports as a usable PnC click item")
+	player.call("_pnc_use_held_item", Vector2.ZERO)
+	check(Global.count_item(life) == 0
+		and is_equal_approx(Global.max_health, 110.0),
+		"PnC use path consumes the held crystal instead of issuing an order")
+	var wood_data: ItemData = load("res://resources/items/wood.tres")
+	Global.Hotbar[0] = {"data": wood_data, "quantity": 1}
+	check(not bool(player.call("_held_item_is_usable")),
+		"non-usable held items keep the normal PnC movement order")
+	var player_src := FileAccess.get_file_as_string("res://scripts/player.gd")
+	check(player_src.contains("if _held_item_is_usable():")
+		and player_src.contains("_pnc_use_held_item"),
+		"the PnC input branch tries usable items before move/interact")
+	player.free()
+
+	# One 10% total roll per mob, then a 50/50 Life/Stamina pick. Forced values
+	# make both branches deterministic without relying on RNG.
+	var drop_parent := Node2D.new()
+	add_child(drop_parent)
+	check(Global.spawn_mob_crystal_drop(drop_parent, Vector2.ZERO, 0.11, 0.0) == null,
+		"a mob crystal roll above 10% drops nothing")
+	var life_drop: Node = Global.spawn_mob_crystal_drop(
+		drop_parent, Vector2.ZERO, 0.10, 0.25)
+	var stamina_drop: Node = Global.spawn_mob_crystal_drop(
+		drop_parent, Vector2.ZERO, 0.10, 0.75)
+	check(life_drop != null and life_drop.get("item_data") == life
+		and stamina_drop != null and stamina_drop.get("item_data") == stamina,
+		"the 10% mob roll picks one crystal with a 50/50 Life/Stamina choice")
+	drop_parent.queue_free()
+
+	# First dungeon completion grants one of each; a repeat clear grants none.
+	Global.reset_player_stats()
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	var dungeon_index: int = 987
+	Global.cleared_dungeons.erase(dungeon_index)
+	Global.dungeon_stars.erase(dungeon_index)
+	Global.record_dungeon_clear(dungeon_index, 3)
+	check(Global.count_item(life) == 1 and Global.count_item(stamina) == 1,
+		"the first dungeon clear rewards one Life and one Stamina Crystal")
+	Global.record_dungeon_clear(dungeon_index, 3)
+	check(Global.count_item(life) == 1 and Global.count_item(stamina) == 1,
+		"re-clearing a dungeon does not duplicate crystal rewards")
+	Global.cleared_dungeons.erase(dungeon_index)
+	Global.dungeon_stars.erase(dungeon_index)
+
+	# Restore every piece of shared state this test touched.
+	Global.reset_player_stats()
+	Global.health = old_health
+	Global.max_health = old_max_health
+	Global.stamina = old_stamina
+	Global.max_stamina = old_max_stamina
+	Global.missions = old_missions
+	Global.cleared_dungeons = old_cleared
+	Global.dungeon_stars = old_stars
+	Global.hotbar_selected = old_selected
+	Global.Hotbar.fill(null)
+	for i in range(mini(old_hotbar.size(), Global.Hotbar.size())):
+		Global.Hotbar[i] = old_hotbar[i]
+	Global.Inventory.fill(null)
+	for i in range(mini(old_inventory.size(), Global.Inventory.size())):
+		Global.Inventory[i] = old_inventory[i]
+	Global.Hotbar_updated.emit()
+	Global.Inventory_updated.emit()
+
+
 func _test_triggers() -> void:
 	Global.reset_missions()
 	var star_ids: Array = []
@@ -770,10 +1411,42 @@ func _test_triggers() -> void:
 	Global.dungeon_stars[51] = 2
 	Global.cleared_dungeons[52] = true
 	Global.dungeon_stars[52] = 1
+	Global.cleared_dungeons[53] = true
+	Global.dungeon_stars[53] = 0
 	check(Global.dungeon_stars_for(51) == 2
 		and Global.dungeon_stars_for(52) == 1
+		and Global.dungeon_stars_for(53) == 0
 		and Global.local_blue_stars() == 6,
-		"hint penalties award two stars for one hint and one for more")
+		"penalties award 2 / 1 / 0 blue stars while zero-star clears still complete")
+	Global.cleared_dungeons.erase(53)
+	Global.dungeon_stars.erase(53)
+	# First-dungeon hints are free; later hints and wrong runs each charge once.
+	var first_idx: int = Global.first_main_dungeon_index("python")
+	var other_idx: int = Global.first_main_dungeon_index("lua")
+	var old_hints := Global.dungeon_quiz_hints.duplicate(true)
+	var old_penalties := Global.dungeon_quiz_penalties.duplicate(true)
+	var old_cleared := Global.cleared_dungeons.duplicate(true)
+	var old_stars := Global.dungeon_stars.duplicate(true)
+	Global.dungeon_quiz_hints.clear()
+	Global.dungeon_quiz_penalties.clear()
+	Global.cleared_dungeons.clear()
+	Global.dungeon_stars.clear()
+	check(Global.record_quiz_hint(first_idx) == 0
+		and Global.dungeon_quiz_hints_for(first_idx) == 1
+		and Global.dungeon_quiz_penalties_for(first_idx) == 0,
+		"first-dungeon hints are free")
+	Global.cleared_dungeons[first_idx] = true
+	Global.dungeon_stars[first_idx] = 3
+	check(Global.record_quiz_hint(other_idx) == 1
+		and Global.dungeon_quiz_penalties_for(other_idx) == 1,
+		"later-dungeon hints charge one blue star")
+	check(Global.record_quiz_mistake(other_idx) == 1
+		and Global.dungeon_quiz_penalties_for(other_idx) == 2,
+		"wrong code submissions charge one blue star")
+	Global.dungeon_quiz_hints = old_hints
+	Global.dungeon_quiz_penalties = old_penalties
+	Global.cleared_dungeons = old_cleared
+	Global.dungeon_stars = old_stars
 	Global.cleared_dungeons.erase(51)
 	Global.dungeon_stars.erase(51)
 	Global.cleared_dungeons.erase(52)
@@ -1042,6 +1715,33 @@ func _test_first_dungeon_tutorial() -> void:
 	var lua_first: int = Global.first_main_dungeon_index("lua")
 	check(py_first == 1 and lua_first == 11,
 		"the first main dungeon is identified per language")
+	var py_first_mission: DungeonMissionData = Global.get_dungeon_mission_for_index(py_first)
+	var py_all_compiler := py_first_mission != null and py_first_mission.questions.size() == 2
+	if py_first_mission != null:
+		for q in py_first_mission.questions:
+			if q == null or q.type != DungeonQuestion.Type.COMPILER:
+				py_all_compiler = false
+	check(py_all_compiler,
+		"the first Python dungeon has two compiler questions and no multiple-choice question")
+	var quiz_guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(quiz_guide_src.contains("_focus_ui(answers, \"\")")
+		and quiz_guide_src.contains("_focus_ui(answers_hint, \"\")")
+		and not quiz_guide_src.contains("Choose the correct answer."),
+		"quiz tutorial highlights the answers without a label over the question")
+	var py_rewards_ok := true
+	for idx in range(1, 11):
+		var pm := Global.get_dungeon_mission_for_index(idx)
+		if pm == null or pm.reward_item_path != "res://resources/items/cpu.tres":
+			py_rewards_ok = false
+	check(py_rewards_ok,
+		"Python dungeon rewards use the Algorithmica CPU instead of the Lua station item")
+	var lua_station_entry := Global.get_knowledge_entry_file("entry_37_lua.tres")
+	var lua_items_entry := Global.get_knowledge_entry_file("entry_39_lua.tres")
+	var python_join_entry := Global.get_knowledge_entry_file("entry_7_python.tres")
+	check(lua_station_entry != null and lua_station_entry.keyword == "set_recipe"
+		and lua_items_entry != null and lua_items_entry.keyword == "list_items"
+		and python_join_entry != null and python_join_entry.keyword == "join",
+		"lesson entries teach supported Lua station/item APIs and Python string joining")
 	check(Global.is_first_main_dungeon(py_first)
 		and Global.is_first_main_dungeon(lua_first)
 		and not Global.is_first_main_dungeon(py_first + 1),
@@ -1514,6 +2214,7 @@ func _test_grass_clearance() -> void:
 
 
 func _test_cave_persistence() -> void:
+	var old_first_pixie: bool = Global.first_pixie_cave_entered
 	# ── Portal re-arm + stable per-type identity ──
 	var portal := CavePortal.new()
 	portal.mode = CavePortal.Mode.ENTER
@@ -1668,16 +2369,118 @@ func _test_cave_persistence() -> void:
 			"cave:424242:0:0": {"version": 1, "tiles": [[1, 2, 0]], "blocks": [],
 				"explored": [[10, 20]]},
 		}
+		Global.first_pixie_cave_entered = true
 		Global.save_game(slot)
 		Global.cave_states.clear()
+		Global.first_pixie_cave_entered = false
 		Global.load_game(slot)
 		check(Global.cave_states.has("cave:424242:0:0"),
 			"cave/pixie states survive world save/load")
+		check(Global.first_pixie_cave_entered,
+			"the first-Pixie-Cave safety flag survives world save/load")
 		Global.delete_world(slot)
 		Global.cave_states.clear()
+		Global.first_pixie_cave_entered = false
 	else:
 		print("NOTE: no free save slot; cave-state save/load test skipped")
+	Global.first_pixie_cave_entered = old_first_pixie
 
+
+func _test_cave_generation_edges() -> void:
+	# Both generators keep several solid border layers, and a Pixie Cave must
+	# never collapse to a single room. The border keeps the padded camera view
+	# reading as rock instead of exposing the generated-grid edge.
+	var pixie_rooms_ok := true
+	var pixie_border_ok := true
+	var pixie_border: int = PixieCaveGenerator.BORDER_WALL_TILES
+	for seed_value in range(0, 200):
+		var gen := PixieCaveGenerator.new()
+		gen.generate(seed_value)
+		if gen.rooms.size() < PixieCaveGenerator.MIN_ROOMS:
+			pixie_rooms_ok = false
+		for x in range(gen.width):
+			for layer in range(pixie_border):
+				if int(gen.grid[x][layer]) == PixieCaveGenerator.Tile.FLOOR \
+						or int(gen.grid[x][gen.height - 1 - layer]) == PixieCaveGenerator.Tile.FLOOR:
+					pixie_border_ok = false
+		for y in range(gen.height):
+			for layer in range(pixie_border):
+				if int(gen.grid[layer][y]) == PixieCaveGenerator.Tile.FLOOR \
+						or int(gen.grid[gen.width - 1 - layer][y]) == PixieCaveGenerator.Tile.FLOOR:
+					pixie_border_ok = false
+	check(pixie_rooms_ok,
+		"every Pixie Cave generates at least two rooms")
+	check(pixie_border_ok,
+		"Pixie Caves keep four solid border layers")
+
+	var cave_border_ok := true
+	var cave_border: int = CaveGenerator.BORDER_WALL_TILES
+	for seed_value in range(0, 24):
+		var gen := CaveGenerator.new()
+		gen.generate(seed_value)
+		for x in range(gen.size):
+			for layer in range(cave_border):
+				if int(gen.grid[x][layer]) == CaveGenerator.Tile.FLOOR \
+						or int(gen.grid[x][gen.size - 1 - layer]) == CaveGenerator.Tile.FLOOR:
+					cave_border_ok = false
+		for y in range(gen.size):
+			for layer in range(cave_border):
+				if int(gen.grid[layer][y]) == CaveGenerator.Tile.FLOOR \
+						or int(gen.grid[gen.size - 1 - layer][y]) == CaveGenerator.Tile.FLOOR:
+					cave_border_ok = false
+	check(cave_border_ok,
+		"regular caves keep four solid border layers")
+
+	# Camera bounds extend into the surrounding wall band, like dungeons, so the
+	# camera can centre the player near the generated edge.
+	var cave_world := CaveWorld.new()
+	add_child(cave_world)
+	cave_world.setup(424242, Vector2.ZERO)
+	var cave_bounds: Rect2 = cave_world.call("camera_bounds")
+	var cave_span: float = float(cave_world.generator.size * CaveWorld.TILE_SIZE)
+	var cave_pad: float = float(CaveWorld.CAMERA_WALL_PADDING_TILES * CaveWorld.TILE_SIZE)
+	check(is_equal_approx(cave_bounds.size.x, cave_span + 2.0 * cave_pad)
+		and is_equal_approx(cave_bounds.size.y, cave_span + 2.0 * cave_pad),
+		"cave camera bounds include the wall padding")
+	cave_world.queue_free()
+	await get_tree().process_frame
+
+	var pixie_safe := PixieCaveWorld.new()
+	add_child(pixie_safe)
+	pixie_safe.setup(828282, Vector2.ZERO, false)
+	var pixie_bounds: Rect2 = pixie_safe.call("camera_bounds")
+	var pixie_span_x: float = float(pixie_safe.generator.width * PixieCaveWorld.TILE_SIZE)
+	var pixie_span_y: float = float(pixie_safe.generator.height * PixieCaveWorld.TILE_SIZE)
+	var pixie_pad: float = float(PixieCaveWorld.CAMERA_WALL_PADDING_TILES * PixieCaveWorld.TILE_SIZE)
+	var safe_pixies := 0
+	for child in pixie_safe.get_children():
+		if child.is_in_group("Pixie"):
+			safe_pixies += 1
+	check(safe_pixies == 0,
+		"a Pixie Cave can generate without pixies for the safe first visit")
+	check(is_equal_approx(pixie_bounds.size.x, pixie_span_x + 2.0 * pixie_pad)
+		and is_equal_approx(pixie_bounds.size.y, pixie_span_y + 2.0 * pixie_pad),
+		"Pixie Cave camera bounds include the wall padding")
+	pixie_safe.queue_free()
+	await get_tree().process_frame
+
+	var pixie_populated := PixieCaveWorld.new()
+	add_child(pixie_populated)
+	pixie_populated.setup(828282, Vector2.ZERO, true)
+	var populated_pixies := 0
+	for child in pixie_populated.get_children():
+		if child.is_in_group("Pixie"):
+			populated_pixies += 1
+	check(populated_pixies > 0,
+		"later Pixie Caves still spawn their pixie population")
+	pixie_populated.queue_free()
+	await get_tree().process_frame
+
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	check(game_src.contains("first_pixie_entry")
+		and game_src.contains("not first_pixie_entry")
+		and game_src.contains("Global.first_pixie_cave_entered = true"),
+		"the game suppresses pixies on the first Pixie Cave entry only")
 
 func _test_cave_cache_lifecycle() -> void:
 	# Drive the real Game enter/exit functions off-tree: the cave instance must
@@ -1686,6 +2489,7 @@ func _test_cave_cache_lifecycle() -> void:
 	var old_slot := Global.active_save_slot
 	var old_game := Global.game_node
 	var old_player := Global.player_node
+	var old_first_pixie := Global.first_pixie_cave_entered
 	Global.active_save_slot = -1
 
 	var game: Node = load("res://scenes/game_instance.gd").new()
@@ -1707,6 +2511,11 @@ func _test_cave_cache_lifecycle() -> void:
 	var first: Variant = game.get("_cave_world")
 	var grid_pos := Vector2i(-1, -1)
 	check(first is CaveWorld, "cave entry creates a cave world")
+	var active_key := portal.state_key()
+	var live_states: Dictionary = game.call("get_cave_states") as Dictionary
+	check(live_states.has(active_key)
+		and (Global.cave_states as Dictionary).has(active_key),
+		"saving inside a cave syncs the active snapshot into the live cave cache")
 	if first is CaveWorld:
 		var cave := first as CaveWorld
 		var cell := Vector2i(-1, -1)
@@ -1758,7 +2567,9 @@ func _test_cave_cache_lifecycle() -> void:
 			"cave A state is independent from cave B")
 	game.call("_do_exit_cave")
 
-	# Pixie branch: same cache contract, separate state key/type.
+	# Pixie branch: same cache contract, separate state key/type. The first
+	# Pixie Cave in a world must be the safe, pixie-free introduction.
+	Global.first_pixie_cave_entered = false
 	var pixie_portal := CavePortal.new()
 	pixie_portal.mode = CavePortal.Mode.ENTER
 	pixie_portal.cave_type = "pixie"
@@ -1766,7 +2577,14 @@ func _test_cave_cache_lifecycle() -> void:
 	pixie_portal.global_position = Vector2(200, 200)
 	game.call("_do_enter_cave", pixie_portal)
 	var pixie_first: Variant = game.get("_pixie_cave_world")
+	var first_pixie_count := 0
+	if pixie_first is Node:
+		for child in (pixie_first as Node).get_children():
+			if child.is_in_group("Pixie"):
+				first_pixie_count += 1
 	check(pixie_first is PixieCaveWorld, "pixie entry creates a pixie cave world")
+	check(Global.first_pixie_cave_entered and first_pixie_count == 0,
+		"the first Pixie Cave entered through the game is pixie-free")
 	game.call("_do_exit_cave")
 	var pixie_key := pixie_portal.state_key()
 	var pixie_cache: Dictionary = game.get("_cave_instances") as Dictionary
@@ -1774,6 +2592,23 @@ func _test_cave_cache_lifecycle() -> void:
 	game.call("_do_enter_cave", pixie_portal)
 	check(game.get("_pixie_cave_world") == pixie_first,
 		"pixie re-entry reuses its cached instance")
+	game.call("_do_exit_cave")
+
+	# A later Pixie Cave still gets its normal pixie population.
+	var pixie_portal_b := CavePortal.new()
+	pixie_portal_b.mode = CavePortal.Mode.ENTER
+	pixie_portal_b.cave_type = "pixie"
+	pixie_portal_b.cave_seed = 636363
+	pixie_portal_b.global_position = Vector2(400, 400)
+	game.call("_do_enter_cave", pixie_portal_b)
+	var pixie_later: Variant = game.get("_pixie_cave_world")
+	var later_pixie_count := 0
+	if pixie_later is Node:
+		for child in (pixie_later as Node).get_children():
+			if child.is_in_group("Pixie"):
+				later_pixie_count += 1
+	check(pixie_later is PixieCaveWorld and later_pixie_count > 0,
+		"later Pixie Caves entered through the game still spawn pixies")
 	game.call("_do_exit_cave")
 
 	for key in (game.get("_cave_instances") as Dictionary).keys():
@@ -1784,9 +2619,11 @@ func _test_cave_cache_lifecycle() -> void:
 	portal.free()
 	portal_b.free()
 	pixie_portal.free()
+	pixie_portal_b.free()
 	Global.game_node = old_game
 	Global.player_node = old_player
 	Global.active_save_slot = old_slot
+	Global.first_pixie_cave_entered = old_first_pixie
 	Global.explored_cave_tiles.clear()
 
 
@@ -1823,6 +2660,32 @@ func _find_floor_cell(world: Node, pixie: bool, left_mode: String, right_mode: S
 				if not (world.get("_placed_blocks") as Dictionary).has(cell):
 					return cell
 	return Vector2i(-99999, -99999)
+
+# Three adjacent, clear floor tiles in a row. Used by torch tests that need a
+# deterministic horizontal wall/ore neighbour instead of relying on where the
+# seeded ore pass happened to embed an ore.
+func _find_horizontal_floor_run(world: Node, pixie: bool) -> Dictionary:
+	var gen = world.get("generator")
+	var w: int = int(gen.get("width")) if pixie else int(gen.get("size"))
+	var h: int = int(gen.get("height")) if pixie else int(gen.get("size"))
+	var blocks: Dictionary = world.get("_placed_blocks") as Dictionary
+	var entrance: Vector2i = gen.get("entrance_tile") as Vector2i
+	for x in range(2, w - 1):
+		for y in range(1, h - 1):
+			var run: Array = [Vector2i(x - 1, y), Vector2i(x, y), Vector2i(x + 1, y)]
+			var ok := true
+			for gp in run:
+				if gp == entrance or not _tile_matches(
+						int(gen.get("grid")[gp.x][gp.y]), "floor", pixie):
+					ok = false
+					break
+				var cell: Vector2i = world.call("_grid_to_cell", gp) as Vector2i
+				if blocks.has(cell):
+					ok = false
+					break
+			if ok:
+				return {"left": run[0], "mid": run[1], "right": run[2]}
+	return {}
 
 func _find_clear_floor_cell(world: Node, pixie: bool) -> Vector2i:
 	var gen = world.get("generator")
@@ -1892,6 +2755,129 @@ func _pickup_torch(drop: Node, expected: ItemData) -> bool:
 		if slot != null and (slot as Dictionary).get("data") == expected:
 			return true
 	return false
+
+# A Wisp is a Game-owned companion, not a Mob. Verify the safety flags, the
+# single cached light, smooth follow, transition/death snapping, duplicate
+# cleanup, and the Game lifecycle hook.
+func _test_wisp_companion() -> void:
+	var old_player: Node = Global.player_node
+	var old_game: Node = Global.game_node
+	var old_dead: bool = Global.player_is_dead
+	for node in get_tree().get_nodes_in_group("WispCompanion"):
+		if is_instance_valid(node):
+			node.queue_free()
+	await get_tree().process_frame
+
+	var player := CharacterBody2D.new()
+	player.add_to_group("Player")
+	player.collision_layer = 4
+	player.collision_mask = 1
+	player.position = Vector2(100, 100)
+	add_child(player)
+	Global.player_node = player
+	var wisp: Node2D = load("res://scenes/companions/Wisp.tscn").instantiate()
+	add_child(wisp)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var light := wisp.get_node_or_null("WispLight") as PointLight2D
+	check(wisp.is_in_group("WispCompanion") and not wisp.is_in_group("Mob")
+		and wisp.collision_layer == 0 and wisp.collision_mask == 1
+		and not wisp.has_method("take_hit"),
+		"Wisp is a non-blocking, non-hostile companion ignored by mob combat")
+	check(light != null and light.enabled and light.energy > 0.0
+		and light.texture is GradientTexture2D
+		and wisp.get_node_or_null("WispSprite") is Sprite2D
+		and wisp.find_children("*", "GPUParticles2D", true, false).is_empty(),
+		"Wisp owns one working cached-texture light and a pixel-art sprite")
+
+	# Move the player and let the follow steering catch up without snap-jumps.
+	player.global_position += Vector2(180, 0)
+	var max_step := 0.0
+	var previous := wisp.global_position
+	for i in range(100):
+		await get_tree().physics_frame
+		max_step = maxf(max_step, wisp.global_position.distance_to(previous))
+		previous = wisp.global_position
+	check(wisp.global_position.distance_to(player.global_position) < 100.0
+		and max_step < 8.0
+		and light.global_position.distance_to(wisp.global_position) < 12.0,
+		"Wisp follows smoothly and its light stays attached")
+
+	# All four world-transition signals are connected and snap to a safe spot.
+	check(Global.cave_entered.is_connected(Callable(wisp, "_on_cave_entered"))
+		and Global.cave_exited.is_connected(Callable(wisp, "_on_cave_exited"))
+		and Global.dungeon_entered.is_connected(Callable(wisp, "_on_dungeon_entered"))
+		and Global.dungeon_exited.is_connected(Callable(wisp, "_on_dungeon_exited"))
+		and Global.player_spawned.is_connected(Callable(wisp, "_on_player_spawned")),
+		"Wisp listens to every cave, dungeon and respawn transition")
+	player.global_position = Vector2(900, 700)
+	wisp.call("_on_cave_entered", "cave")
+	await get_tree().process_frame
+	check(wisp.global_position.distance_to(player.global_position) < 90.0
+		and light.enabled and light.energy > 1.6 and light.texture_scale > 0.65,
+		"cave transition boosts the Wisp light so it actually lights the cave")
+	player.global_position = Vector2(-400, 500)
+	wisp.call("_on_cave_entered", "pixie")
+	await get_tree().process_frame
+	check(wisp.global_position.distance_to(player.global_position) < 90.0
+		and light.enabled and light.energy > 1.4 and light.texture_scale > 0.58,
+		"Pixie Cave transition uses its own boosted Wisp light profile")
+	player.global_position = Vector2(-500, 400)
+	wisp.call("_on_dungeon_entered", 1)
+	await get_tree().process_frame
+	check(wisp.global_position.distance_to(player.global_position) < 90.0
+		and not light.enabled,
+		"dungeon transition recovers the Wisp with its light switched off")
+	wisp.call("_on_dungeon_exited", 1)
+	await get_tree().process_frame
+	check(light.enabled and light.energy > 0.9,
+		"leaving the dungeon restores the overworld Wisp light")
+
+	# Death hides the light; respawn restores it beside the player.
+	wisp.call("_on_player_died", player.global_position)
+	check(not wisp.visible,
+		"Wisp hides while the player is dead")
+	player.global_position = Vector2.ZERO
+	Global.player_is_dead = false
+	wisp.call("_on_player_spawned", Vector2.ZERO)
+	await get_tree().process_frame
+	check(wisp.visible
+		and wisp.global_position.distance_to(player.global_position) < 90.0,
+		"respawn restores the Wisp beside the player")
+
+	# A waypoint recall has no transition signal; the distance leash still
+	# recovers it instead of letting it fly across the whole map.
+	player.global_position = Vector2(3000, 2000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	check(wisp.global_position.distance_to(player.global_position) < 90.0,
+		"distance leash safely recovers the Wisp after a long teleport")
+
+	# Creating a stale duplicate must leave exactly one companion.
+	var second: Node2D = load("res://scenes/companions/Wisp.tscn").instantiate()
+	add_child(second)
+	await get_tree().process_frame
+	var live_wisps := 0
+	for node in get_tree().get_nodes_in_group("WispCompanion"):
+		if is_instance_valid(node) and not node.is_queued_for_deletion():
+			live_wisps += 1
+	check(live_wisps == 1,
+		"duplicate Wisp instances collapse to one companion")
+
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	check(game_src.contains("_setup_wisp")
+		and game_src.contains("WispCompanion")
+		and game_src.contains("WISP_SCENE"),
+		"Game owns the Wisp lifecycle and singleton guard")
+
+	for node in get_tree().get_nodes_in_group("WispCompanion"):
+		if is_instance_valid(node):
+			node.queue_free()
+	player.queue_free()
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	Global.game_node = old_game if is_instance_valid(old_game) else null
+	Global.player_is_dead = old_dead
+	await get_tree().process_frame
 
 func _test_torches() -> void:
 	var old_world := Global.world_node
@@ -2135,13 +3121,22 @@ func _test_torches() -> void:
 	else:
 		check(false, "pixie generated a wall-adjacent torch cell")
 
-	var ore_cell := _find_floor_cell(pixie, true, "ore", "floor")
-	if ore_cell.x != -99999:
+	var ore_run := _find_horizontal_floor_run(pixie, true)
+	if not ore_run.is_empty():
+		# Make the left floor tile a crystal ore so the middle torch has a
+		# guaranteed horizontal ore neighbour; the right tile stays floor for
+		# the isolated-torch drop check.
+		var ore_grid: Vector2i = ore_run["left"] as Vector2i
+		pixie.generator.grid[ore_grid.x][ore_grid.y] = PixieCaveGenerator.Tile.CRYSTAL_COPPER
+		var ore_neighbor: Vector2i = pixie.call("_grid_to_cell", ore_grid) as Vector2i
+		pixie.call("_paint_cell", ore_neighbor,
+			PixieCaveGenerator.Tile.CRYSTAL_COPPER, ore_grid)
+		var ore_cell: Vector2i = pixie.call("_grid_to_cell", ore_run["mid"]) as Vector2i
+		var isolated_cell: Vector2i = pixie.call("_grid_to_cell", ore_run["right"]) as Vector2i
 		var ore_torch := _restore_torch(pixie, ore_cell)
 		await get_tree().process_frame
 		check(bool(ore_torch.get("_torch_connected")),
 			"pixie torch beside crystal ore connects")
-		var ore_neighbor := ore_cell + Vector2i(-1, 0)
 		pixie.call("_break_tile", ore_neighbor)
 		await get_tree().process_frame
 		check(not bool(ore_torch.get("_torch_connected")),
@@ -2152,7 +3147,7 @@ func _test_torches() -> void:
 		check(bool(ore_torch.get("_torch_connected")),
 			"pixie torch reconnects when the ore regenerates")
 		# The ore regen above may have restored the torch; mine it with a pick.
-		var pixie_mine := _restore_torch(pixie, ore_cell + Vector2i(1, 0))
+		var pixie_mine := _restore_torch(pixie, isolated_cell)
 		var pixie_result: Dictionary = await _mine_torch(pixie, pixie_mine, WOODEN_PICK_PATH)
 		check(int(pixie_result["new_drops"]) == 1,
 			"pixie isolated torch drops once with a pickaxe")
@@ -2161,7 +3156,7 @@ func _test_torches() -> void:
 			check(_pickup_torch(pixie_drops.back() as Node, torch_data),
 				"pixie dropped torch is collectible")
 	else:
-		check(false, "pixie generated an ore-adjacent torch cell")
+		check(false, "pixie generated a horizontal floor run for the torch test")
 
 	var pixie_state_cell := _find_clear_floor_cell(pixie, true)
 	if pixie_state_cell.x != -99999:
@@ -2709,6 +3704,159 @@ func _test_mission_events() -> void:
 	Global.mission_updated.emit()
 
 
+# Tools are ordinary inventory data, so verify the shared ItemData helpers from
+# every direction: resource flags, add_item splitting, migration, ordinary
+# stacking, and the wood mission's shared log classification.
+func _test_tool_stacking_and_wood_mission() -> void:
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_inventory: Array = Global.Inventory.duplicate(true)
+	var old_pending: Array = Global.pending_overflow_items.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+	var collect: Dictionary = Global._find_mission("collect_wood")
+	var side: Dictionary = Global._find_mission("side_woodcutter")
+	var old_collect: Dictionary = collect.duplicate(true)
+	var old_side: Dictionary = side.duplicate(true)
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	Global.pending_overflow_items.clear()
+	Global.hotbar_selected = 0
+
+	var tool_paths: Array = [
+		"woodenaxe.tres", "wooden_pickaxe.tres", "woodensword.tres",
+		"ironaxe.tres", "iron_pickaxe.tres", "iron_sword.tres",
+		"diamond_axe.tres", "diamond_pickaxe.tres", "diamond_sword.tres",
+		"iron_hoe.tres", "fishing_rod.tres", "bucket.tres", "water_bucket.tres",
+	]
+	var tools_ok := true
+	for fname in tool_paths:
+		var data := load("res://resources/items/" + str(fname)) as ItemData
+		if data == null or not data.is_tool() or data.stack_limit() != 1 \
+				or data.can_stack() or data.stackable or data.max_stack_size != 1:
+			tools_ok = false
+	check(tools_ok,
+		"all axe/pickaxe/sword/hoe/rod/bucket tools are authored unstackable with limit 1")
+
+	var axe: ItemData = load("res://resources/items/woodenaxe.tres")
+	var wood: ItemData = load("res://resources/items/wood.tres")
+	var birch: ItemData = load("res://resources/items/birch_wood.tres")
+	var snowy: ItemData = load("res://resources/items/snowy_wood.tres")
+	var bread: ItemData = load("res://resources/items/bread.tres")
+	check(wood.can_stack() and wood.stack_limit() == 32 \
+		and bread.can_stack() and bread.stack_limit() == 32,
+		"ordinary resources and food remain stackable")
+
+	check(Global.add_item({"data": axe, "quantity": 3}),
+		"three collected tools fit into empty inventory slots")
+	var axe_slots := 0
+	var separate := true
+	for arr in [Global.Hotbar, Global.Inventory]:
+		for slot in arr:
+			if slot is Dictionary and (slot as Dictionary)["data"] == axe:
+				axe_slots += 1
+				if int((slot as Dictionary)["quantity"]) != 1:
+					separate = false
+	check(axe_slots == 3 and separate and Global.count_item(axe) == 3,
+		"each collected tool occupies its own slot with quantity 1")
+
+	# Full inventory: an all-or-nothing tool add must not create a partial stack.
+	for i in range(Global.Hotbar.size()):
+		Global.Hotbar[i] = {"data": wood, "quantity": 1}
+	for i in range(Global.Inventory.size()):
+		Global.Inventory[i] = {"data": wood, "quantity": 1}
+	check(not Global.add_item({"data": axe, "quantity": 1})
+		and Global.count_item(axe) == 0 and Global.space_for_item(axe) == 0,
+		"a full inventory rejects a tool add without changing item counts")
+
+	# Simulate an old save that stored three axes in one slot.
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	Global.Hotbar[0] = {"data": axe, "quantity": 3}
+	Global._migrate_loaded_inventory_stacks()
+	axe_slots = 0
+	separate = true
+	for arr in [Global.Hotbar, Global.Inventory]:
+		for slot in arr:
+			if slot is Dictionary and (slot as Dictionary)["data"] == axe:
+				axe_slots += 1
+				if int((slot as Dictionary)["quantity"]) != 1:
+					separate = false
+	check(axe_slots == 3 and separate and Global.count_item(axe) == 3,
+		"loaded stacked tools split into individual slots without loss")
+
+	# No free slot: keep one tool and queue the rest for overflow recovery.
+	for i in range(Global.Hotbar.size()):
+		Global.Hotbar[i] = {"data": wood, "quantity": 1}
+	for i in range(Global.Inventory.size()):
+		Global.Inventory[i] = {"data": wood, "quantity": 1}
+	Global.Hotbar[0] = {"data": axe, "quantity": 3}
+	Global._migrate_loaded_inventory_stacks()
+	var queued_axes := 0
+	for entry in Global.pending_overflow_items:
+		if (entry as Dictionary).get("data") == axe:
+			queued_axes += int((entry as Dictionary).get("quantity", 0))
+	check(Global.count_item(axe) == 1 and queued_axes == 2,
+		"tool-stack migration queues overflow instead of deleting it")
+	Global.pending_overflow_items.clear()
+
+	# Ordinary stackable material still merges in normal play.
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	check(Global.add_item({"data": wood, "quantity": 5})
+		and Global.Hotbar[0] != null
+		and int((Global.Hotbar[0] as Dictionary)["quantity"]) == 5,
+		"ordinary wood still stacks into one slot")
+
+	# Birch/snowy logs are wood by shared ItemData metadata, not by name.
+	collect["completed"] = false
+	collect["progress"] = 0
+	side["completed"] = false
+	side["progress"] = 0
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	Global.add_item({"data": birch, "quantity": 4})
+	var after_birch: int = int(collect.get("progress", 0))
+	Global.add_item({"data": snowy, "quantity": 3})
+	var after_snowy: int = int(collect.get("progress", 0))
+	Global.add_item({"data": wood, "quantity": 13})
+	check(after_birch == 4 and after_snowy == 7
+		and int(collect.get("progress", 0)) == 20
+		and bool(collect.get("completed", false))
+		and Global.wood_in_inventory() == 20,
+		"birch/snowy/plain logs all count toward Collect 20 Wood")
+	# Transfer/reload-style duplicate tracking must not add progress again.
+	Global._track_craft_missions(birch, 4)
+	Global._track_craft_missions(birch, 4)
+	check(int(collect.get("progress", 0)) == 20,
+		"wood mission progress is idempotent across repeated transfer tracking")
+
+	# Container transfer: a chest deposit must also split tools.
+	var chest: Node = load("res://scenes/objects/ChestBlock.tscn").instantiate()
+	add_child(chest)
+	chest.call("setup", load("res://resources/items/chest.tres") as ItemData)
+	var chest_slots: Array = chest.get("slots") as Array
+	var deposit_ok: bool = bool(chest.call("deposit_item", {"data": axe, "quantity": 2}))
+	var chest_axes := 0
+	var chest_separate := true
+	for slot in chest_slots:
+		if slot is Dictionary and (slot as Dictionary)["data"] == axe:
+			chest_axes += 1
+			if int((slot as Dictionary)["quantity"]) != 1:
+				chest_separate = false
+	check(deposit_ok and chest_axes == 2 and chest_separate,
+		"container deposits keep each tool in its own slot")
+	chest.queue_free()
+
+	Global.Hotbar = old_hotbar
+	Global.Inventory = old_inventory
+	Global.pending_overflow_items = old_pending
+	Global.hotbar_selected = old_selected
+	collect["completed"] = bool(old_collect.get("completed", false))
+	collect["progress"] = int(old_collect.get("progress", 0))
+	side["completed"] = bool(old_side.get("completed", false))
+	side["progress"] = int(old_side.get("progress", 0))
+	Global.mission_updated.emit()
+
+
 # Every ore that the world/ores expose must be accepted by the real furnace
 # path and produce the intended refined item. This intentionally exercises
 # smelt_request(), not just the .tres files, so a broken input/output reference
@@ -3145,6 +4293,44 @@ func _test_cave_pickup() -> void:
 	player.queue_free()
 	await get_tree().process_frame
 
+
+# Pixies use their own script (not BestiaryMob), so verify both the shared loot
+# table and the actual world-drop path produce the Pixie Stone pick-up.
+func _test_pixie_loot() -> void:
+	var old_player: Node = Global.player_node
+	Global.player_node = null
+	var table := load("res://resources/mobs/pixie.tres") as MobCombatData
+	var has_entry := false
+	for entry_value in table.drops:
+		if entry_value is Dictionary:
+			var entry: Dictionary = entry_value as Dictionary
+			if str(entry.get("item_path", "")).ends_with("pixie_cave_stone.tres"):
+				has_entry = true
+	check(has_entry,
+		"Pixie loot table includes the Pixie Cave Stone")
+
+	var pixie: Node2D = load("res://scenes/mobs/Pixie.tscn").instantiate()
+	add_child(pixie)
+	pixie.set_physics_process(false)
+	pixie.global_position = Vector2(40000, 40000)
+	await get_tree().process_frame
+	pixie.call("_drop_loot")
+	await get_tree().process_frame
+	var dropped := 0
+	var drop_nodes: Array = []
+	for child in get_children():
+		var item: Variant = child.get("item_data")
+		if item is ItemData and (item as ItemData).item_name == "Pixie Stone":
+			dropped += int(child.get("quantity"))
+			drop_nodes.append(child)
+	check(dropped == 1,
+		"Pixie death loot spawns one Pixie Cave Stone pickup")
+	for child in drop_nodes:
+		if is_instance_valid(child):
+			child.queue_free()
+	pixie.queue_free()
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	await get_tree().process_frame
 
 func _test_worm_water_guard() -> void:
 	var layer := TileMapLayer.new()
@@ -3760,8 +4946,10 @@ func _test_cloud_save_identity() -> void:
 
 func _test_android_config() -> void:
 	var presets := FileAccess.get_file_as_string("res://export_presets.cfg")
+	var project_version := str(ProjectSettings.get_setting("application/config/version", ""))
 	check(presets.contains('package/unique_name="com.sandee.alpha"')
-		and presets.contains('version/name="0.9.3.2"')
+		and not project_version.is_empty()
+		and presets.contains('version/name="%s"' % project_version)
 		and presets.contains("architectures/arm64-v8a=true")
 		and presets.contains("permissions/internet=true"),
 		"Android release preset has a stable package id, version and INTERNET")
@@ -3899,6 +5087,13 @@ func _test_android_input_and_safe_area() -> void:
 	Global.ui_safe_insets = old_insets
 	Global.ui_scale = old_scale
 
+	# Control-scheme state must not depend on the workstation's saved settings
+	# (a developer with auto-sprint on must still run the same matrix).
+	var old_pnc_scheme: bool = Global.point_and_click
+	var old_auto_sprint: bool = Global.point_and_click_auto_sprint
+	Global.point_and_click = false
+	Global.point_and_click_auto_sprint = false
+
 	# Touch-ID bridge: primary touch remains Godot-emulated; secondary touches
 	# are explicitly tracked and released on modal open. Hide the HUD root so
 	# this test exercises state without relying on the tiny headless viewport
@@ -3906,15 +5101,105 @@ func _test_android_input_and_safe_area() -> void:
 	var mobile: Node = load("res://scripts/mobile_ui.gd").new()
 	add_child(mobile)
 	await get_tree().process_frame
+	mobile.call("_set_controls_enabled", true)
 	var build_btn: Button = mobile.get("_btn_build") as Button
 	var interact_btn: Button = mobile.get("_btn_interact") as Button
 	var sprint_btn: Button = mobile.get("_btn_shift") as Button
+	var stick: Control = mobile.get("_stick") as Control
+	# Approved circular action cluster: INTERACT is the large bottom-right
+	# circle, SPRINT sits left of it, and BUILD sits above INTERACT.
 	check(build_btn != null and interact_btn != null and sprint_btn != null
-		and is_equal_approx(interact_btn.position.x, build_btn.position.x)
-		and interact_btn.position.y > build_btn.position.y
-		and is_equal_approx(interact_btn.position.y, sprint_btn.position.y)
-		and interact_btn.position.x + interact_btn.size.x <= sprint_btn.position.x,
-		"Android INTERACT sits directly below BUILD on SPRINT's bottom row")
+		and interact_btn.size.x > sprint_btn.size.x
+		and interact_btn.position.x > sprint_btn.position.x
+		and is_equal_approx(interact_btn.position.y + interact_btn.size.y * 0.5,
+			sprint_btn.position.y + sprint_btn.size.y * 0.5)
+		and is_equal_approx(build_btn.position.x + build_btn.size.x * 0.5,
+			interact_btn.position.x + interact_btn.size.x * 0.5)
+		and build_btn.position.y < interact_btn.position.y,
+		"Android action buttons use the circular INTERACT/SPRINT/BUILD layout")
+	var action_hits := true
+	for key in ["_btn_build", "_btn_shift", "_btn_interact"]:
+		var action := mobile.get(key) as Control
+		if action == null or not Global.is_point_over_ui(
+				action.get_global_rect().get_center()):
+			action_hits = false
+	check(action_hits,
+		"Android BUILD/SPRINT/INTERACT are recognised as UI hit targets")
+	# The explicit HUD registry must work even if the generic CanvasLayer root
+	# cache has not picked up MobileUI yet (the original leak path).
+	var roots: Array = Global.get("_ui_roots")
+	var mobile_root_index: int = roots.find(mobile)
+	if mobile_root_index >= 0:
+		roots.remove_at(mobile_root_index)
+	var explicit_mobile_hit := Global.is_point_over_ui(
+		build_btn.get_global_rect().get_center())
+	if mobile_root_index >= 0:
+		roots.insert(mobile_root_index, mobile)
+	check(explicit_mobile_hit and Global.is_point_over_mobile_hud(
+		build_btn.get_global_rect().get_center()),
+		"explicit mobile HUD registry catches action-button touches")
+	Global.guard_mobile_ui_touch()
+	var world_press := InputEventMouseButton.new()
+	world_press.button_index = MOUSE_BUTTON_LEFT
+	world_press.pressed = true
+	world_press.position = Vector2(9999, 9999)
+	check(Global.is_mouse_event_over_ui(world_press),
+		"a UI touch briefly suppresses a mismapped world mouse press")
+	Global.set("_mobile_ui_touch_guard_until_ms", 0)
+	var tagged_press := InputEventMouseButton.new()
+	tagged_press.button_index = MOUSE_BUTTON_LEFT
+	tagged_press.pressed = true
+	tagged_press.position = Vector2(9999, 9999)
+	tagged_press.set_meta("mobile_ui_touch", true)
+	check(Global.is_mouse_event_over_ui(tagged_press),
+		"secondary UI bridge presses are always treated as UI")
+
+	# A: PnC off, auto-sprint off — stick visible, BUILD right, SPRINT shown.
+	var metrics: Dictionary = mobile.call("_layout_metrics", Global.ui_scale)
+	var left_pad: float = metrics["left_pad"]
+	var right_pad: float = metrics["right_pad"]
+	var vp_width: float = (metrics["vp"] as Vector2).x
+	var interact_size: float = metrics["interact_size"]
+	var stick_size: float = metrics["stick_size"]
+	var right_build_center: float = vp_width - right_pad - interact_size * 0.5
+	var left_build_center: float = left_pad + stick_size * 0.5
+	check(stick != null and stick.visible and build_btn.visible
+		and sprint_btn.visible
+		and absf(build_btn.get_global_rect().get_center().x
+			- right_build_center) < 1.0,
+		"Android A: joystick on, BUILD right, SPRINT visible")
+	# B: PnC off, auto-sprint on — stick visible, BUILD right, SPRINT hidden.
+	Global.point_and_click_auto_sprint = true
+	mobile.call("_set_controls_enabled", true)
+	check(stick.visible and build_btn.visible and not sprint_btn.visible
+		and absf(build_btn.get_global_rect().get_center().x
+			- right_build_center) < 1.0,
+		"Android B: auto-sprint hides SPRINT and keeps BUILD right")
+	# C: PnC on, auto-sprint off — stick hidden, BUILD takes the left slot,
+	# SPRINT shown again.
+	Global.point_and_click = true
+	Global.point_and_click_auto_sprint = false
+	mobile.call("_set_controls_enabled", true)
+	check(not stick.visible and build_btn.visible and sprint_btn.visible
+		and absf(build_btn.get_global_rect().get_center().x
+			- left_build_center) < 1.0,
+		"Android C: point-and-click hides the stick and moves BUILD left")
+	# D: PnC on, auto-sprint on — stick and SPRINT hidden, BUILD still left.
+	Global.point_and_click_auto_sprint = true
+	mobile.call("_set_controls_enabled", true)
+	check(not stick.visible and build_btn.visible and not sprint_btn.visible
+		and absf(build_btn.get_global_rect().get_center().x
+			- left_build_center) < 1.0,
+		"Android D: PnC + auto-sprint hide stick and SPRINT")
+	# Returning to manual joystick control restores the stick immediately.
+	Global.point_and_click = false
+	Global.point_and_click_auto_sprint = false
+	mobile.call("_set_controls_enabled", true)
+	check(stick.visible and sprint_btn.visible,
+		"Android shows the joystick and SPRINT again in manual mode")
+	Global.point_and_click = old_pnc_scheme
+	Global.point_and_click_auto_sprint = old_auto_sprint
+	mobile.call("_set_controls_enabled", true)
 	var mobile_root: Control = mobile.get("_root") as Control
 	if mobile_root != null:
 		mobile_root.visible = false
@@ -3952,10 +5237,366 @@ func _test_android_input_and_safe_area() -> void:
 		"mobile touch bridge is disabled/reset while a modal owns the screen")
 	Global.close_ui()
 	Global.reset_pause_state()
+
+	# A secondary-finger hotbar tap must switch the held slot directly. It must
+	# never become a synthetic mouse press (the joystick's active mouse focus can
+	# swallow it) and must not clear the primary joystick touch.
+	var old_selected: int = Global.hotbar_selected
+	var old_move_for_hotbar: Vector2 = Global.mobile_move
+	var hotbar_probe := TextureRect.new()
+	hotbar_probe.set_script(load("res://scripts/hotbar_slot.gd"))
+	hotbar_probe.position = Vector2(320, 220)
+	hotbar_probe.size = Vector2(56, 56)
+	hotbar_probe.mouse_filter = Control.MOUSE_FILTER_STOP
+	hotbar_probe.add_to_group("hotbar_slot")
+	hotbar_probe.set("slot_index", 3)
+	add_child(hotbar_probe)
+	await get_tree().process_frame
+	Global.mobile_move = Vector2(0.8, 0.1)
+	primary = InputEventScreenTouch.new()
+	primary.index = 21
+	primary.position = Vector2(20, 20)
+	primary.pressed = true
+	mobile.call("_input", primary)
+	secondary = InputEventScreenTouch.new()
+	secondary.index = 22
+	secondary.position = hotbar_probe.get_global_rect().get_center()
+	secondary.pressed = true
+	mobile.call("_input", secondary)
+	check(Global.hotbar_selected == 3
+		and Global.mobile_move == Vector2(0.8, 0.1)
+		and int(mobile.get("_primary_touch")) == 21
+		and (mobile.get("_bridged_touches") as Dictionary).is_empty(),
+		"secondary hotbar taps switch items without stopping joystick movement")
+	var bridge_release := InputEventMouseButton.new()
+	bridge_release.button_index = MOUSE_BUTTON_LEFT
+	bridge_release.pressed = false
+	bridge_release.set_meta("mobile_touch_bridge", true)
+	stick.set("_touch_id", 0)
+	stick.call("_gui_input", bridge_release)
+	check(int(stick.get("_touch_id")) == 0,
+		"joystick ignores synthetic secondary-touch bridge releases")
+	stick.call("reset_stick")
+	secondary_up = InputEventScreenTouch.new()
+	secondary_up.index = 22
+	secondary_up.position = hotbar_probe.get_global_rect().get_center()
+	secondary_up.pressed = false
+	mobile.call("_input", secondary_up)
+	primary = InputEventScreenTouch.new()
+	primary.index = 21
+	primary.position = Vector2(20, 20)
+	primary.pressed = false
+	mobile.call("_input", primary)
+	hotbar_probe.queue_free()
+	Global.hotbar_selected = old_selected
+	Global.mobile_move = old_move_for_hotbar
+	Global.hotbar_selection_changed.emit(Global.hotbar_selected)
 	mobile.queue_free()
 	await get_tree().process_frame
 	Global.reset_pause_state()
 
+
+# Android touch play has no tooltip popups. Verify both the floating item
+# tooltip and the tap-tooltip node are suppressed while desktop hover still
+# creates the normal item tooltip.
+func _test_pc_controls_overlay() -> void:
+	Global.reset_pause_state()
+	get_viewport().gui_release_focus()
+	var old_scale: float = Global.ui_scale
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_pnc: bool = Global.point_and_click
+	var old_dead: bool = Global.player_is_dead
+	Global.ui_scale = 1.25
+	Global.ui_safe_insets = Vector4.ZERO
+	Global.point_and_click = false
+	Global.player_is_dead = false
+
+	var sv := SubViewport.new()
+	sv.size = Vector2i(1152, 648)
+	sv.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(sv)
+	var overlay: Node = load("res://scripts/controls_overlay.gd").new()
+	sv.add_child(overlay)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check(bool(overlay.call("is_open")) and overlay.visible,
+		"PC controls guide is on by default")
+	check(overlay.visible, "PC controls guide is visible when the world starts")
+
+	overlay.call("set_open", true)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var movement := overlay.get("_movement_cluster") as Control
+	var action := overlay.get("_action_cluster") as Control
+	check(overlay.visible and movement != null and action != null
+		and movement.position.x < float(sv.size.x) * 0.5
+		and action.position.x > float(sv.size.x) * 0.5
+		and movement.position.y > float(sv.size.y) * 0.6
+		and action.position.y > float(sv.size.y) * 0.6
+		and movement.position.x + movement.size.x < action.position.x,
+		"PC controls cluster along the bottom left/right, clear of the hotbar")
+	check(movement.size.x <= 240.0 and action.size.x <= 360.0
+		and movement.size.y <= 180.0 and action.size.y <= 200.0,
+		"the bottom control clusters are compact and panel-free")
+	var off_labels := _overlay_chip_labels(overlay)
+	check(off_labels.has("USE") and off_labels.has("BUILD"),
+		"the standard action cluster shows a contextual LMB chip and build")
+	var lmb_label := overlay.get("_lmb_label") as Label
+	var lmb_shift := overlay.get("_lmb_shift_cap") as Control
+	var lmb_sep := overlay.get("_lmb_sep") as Control
+	check(lmb_label != null and lmb_label.text == "USE"
+		and lmb_shift != null and not lmb_shift.visible,
+		"one merged LMB chip starts with the contextual USE label")
+	var lmb_caps := 0
+	for entry in (overlay.get("_caps") as Array):
+		var spec: Dictionary = entry.get("spec", {}) as Dictionary
+		if int(spec.get("mouse", -1)) == MOUSE_BUTTON_LEFT:
+			lmb_caps += 1
+	check(lmb_caps == 1, "similar LMB actions share one keycap")
+	overlay.call("_apply_context", "CHASE", false)
+	check(lmb_label.text == "CHASE", "the LMB label follows an enemy hover")
+	overlay.call("_apply_context", "DESTROY", true)
+	check(lmb_label.text == "DESTROY" and lmb_shift.visible and lmb_sep.visible,
+		"Shift attaches to the same LMB chip for destroy")
+	overlay.call("_apply_context", "USE", false)
+	check(lmb_label.text == "USE" and not lmb_shift.visible,
+		"the merged LMB chip returns to its plain context")
+
+	var move_cap: Control = null
+	var move_code: int = 0
+	for entry in (overlay.get("_caps") as Array):
+		var spec: Dictionary = entry.get("spec", {}) as Dictionary
+		for binding in spec.get("bindings", []):
+			var code: int = int((binding as Dictionary).get("physical", 0))
+			if code != 0 and code != KEY_SHIFT:
+				move_cap = entry.get("cap") as Control
+				move_code = code
+				break
+		if move_cap != null:
+			break
+	var key_down := InputEventKey.new()
+	key_down.physical_keycode = move_code
+	key_down.keycode = move_code
+	key_down.pressed = true
+	Input.parse_input_event(key_down)
+	Input.flush_buffered_events()
+	await get_tree().process_frame
+	overlay.call("_update_caps")
+	check(move_cap != null and bool(move_cap.get("pressed")),
+		"holding a movement key highlights its floating keycap")
+	overlay.notification(Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	overlay.call("_update_caps")
+	check(move_cap != null and not bool(move_cap.get("pressed")),
+		"window focus loss clears a held key highlight")
+	overlay.notification(Node.NOTIFICATION_APPLICATION_FOCUS_IN)
+	var key_up := InputEventKey.new()
+	key_up.physical_keycode = move_code
+	key_up.keycode = move_code
+	key_up.pressed = false
+	Input.parse_input_event(key_up)
+	Input.flush_buffered_events()
+	await get_tree().process_frame
+	overlay.call("_update_caps")
+	check(move_cap != null and not bool(move_cap.get("pressed")),
+		"releasing a movement key clears the floating highlight")
+
+	var ctrl_cap: Control = _overlay_cap_with_physical(overlay, KEY_CTRL)
+	var ctrl_down := InputEventKey.new()
+	ctrl_down.physical_keycode = KEY_CTRL
+	ctrl_down.keycode = KEY_CTRL
+	ctrl_down.pressed = true
+	Input.parse_input_event(ctrl_down)
+	Input.flush_buffered_events()
+	await get_tree().process_frame
+	overlay.call("_update_caps")
+	check(ctrl_cap != null and bool(ctrl_cap.get("pressed")),
+		"pressing the build key highlights the action keycap")
+	var ctrl_up := InputEventKey.new()
+	ctrl_up.physical_keycode = KEY_CTRL
+	ctrl_up.keycode = KEY_CTRL
+	ctrl_up.pressed = false
+	Input.parse_input_event(ctrl_up)
+	Input.flush_buffered_events()
+	await get_tree().process_frame
+	overlay.call("_update_caps")
+	check(ctrl_cap != null and not bool(ctrl_cap.get("pressed")),
+		"releasing the build key clears the action highlight")
+
+	Global.point_and_click = true
+	overlay.call("_rebuild")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var on_labels := _overlay_chip_labels(overlay)
+	check(on_labels.has("MOVE") and on_labels.has("BUILD"),
+		"switching point-and-click on rebuilds the LMB chip for click movement")
+	var on_movement := overlay.get("_movement_cluster") as Control
+	check(on_movement != null and on_movement.get_child_count() <= 2,
+		"point-and-click mode hides the WASD overlay and keeps only Shift")
+	Global.point_and_click = old_pnc
+
+	overlay.call("set_open", false)
+	var f1 := InputEventKey.new()
+	f1.physical_keycode = KEY_F1
+	f1.keycode = KEY_F1
+	f1.pressed = true
+	overlay.call("_input", f1)
+	check(bool(overlay.call("is_open")) and overlay.visible,
+		"F1 opens the PC controls overlay")
+	overlay.call("set_open", false)
+	check(not bool(overlay.call("is_open")) and not overlay.visible,
+		"toggling F1 again hides the PC controls overlay")
+
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	var help_src := FileAccess.get_file_as_string("res://scripts/help_panel.gd")
+	check(game_src.contains("CONTROLS_OVERLAY_SCRIPT")
+		and game_src.contains("if not Global.is_mobile():")
+		and game_src.contains("set_hud_suppressed"),
+		"Game creates the PC overlay only on desktop and suppresses it with the HUD")
+	check(help_src.contains("on-screen control hints"),
+		"Help & Documentation advertises the F1 overlay")
+
+	sv.queue_free()
+	await get_tree().process_frame
+	Global.ui_scale = old_scale
+	Global.ui_safe_insets = old_insets
+	Global.point_and_click = old_pnc
+	Global.player_is_dead = old_dead
+	Global.reset_pause_state()
+
+
+func _overlay_chip_labels(overlay: Node) -> PackedStringArray:
+	var labels := PackedStringArray()
+	for entry in (overlay.get("_chips") as Array):
+		var lbl := entry.get("label") as Label
+		if lbl != null and is_instance_valid(lbl) and not lbl.text.is_empty():
+			labels.append(lbl.text)
+	return labels
+
+
+func _overlay_cap_with_physical(overlay: Node, code: int) -> Control:
+	for entry in (overlay.get("_caps") as Array):
+		var spec: Dictionary = entry.get("spec", {}) as Dictionary
+		for binding in spec.get("bindings", []):
+			if int((binding as Dictionary).get("physical", 0)) == code:
+				return entry.get("cap") as Control
+	return null
+
+
+func _test_settings_tour() -> void:
+	var guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	var tour_src := FileAccess.get_file_as_string("res://scripts/settings_tour.gd")
+	check(guide_src.contains("SETTINGS_TOUR_SCRIPT")
+		and guide_src.contains("settings_tour_done")
+		and tour_src.contains("tutorial_show_category")
+		and tour_src.contains("set_target"),
+		"the tutorial starts a settings tour after onboarding")
+	check(tour_src.contains("NEXT") and tour_src.contains("SKIP")
+		and tour_src.contains("__category__")
+		and tour_src.contains("__back__"),
+		"the settings tour walks category, setting and back controls")
+
+	var target: Control = load("res://scripts/tutorial_ui_target.gd").new() as Control
+	add_child(target)
+	var probe_btn := Button.new()
+	probe_btn.text = "Probe"
+	add_child(probe_btn)
+	target.call("set_target", probe_btn, "No arrow", false)
+	check(not bool(target.get("_show_arrow")),
+		"settings highlights omit the pointing arrow")
+	target.call("set_target", probe_btn, "Normal")
+	check(bool(target.get("_show_arrow")),
+		"normal tutorial highlights keep their arrow")
+	target.queue_free()
+	probe_btn.queue_free()
+	await get_tree().process_frame
+
+	var panel: Control = load("res://scripts/settings_panel.gd").new() as Control
+	add_child(panel)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	panel.call("tutorial_show_category", "Audio")
+	check(panel.call("tutorial_find_control", "Master Volume") != null
+		and panel.call("tutorial_category_button", "Audio") != null
+		and panel.call("tutorial_back_button") != null,
+		"the settings panel exposes tour targets for categories and rows")
+	panel.call("tutorial_show_category", "Display")
+	check(panel.call("tutorial_find_control", "Camera Zoom") != null,
+		"the settings tour resolves display rows")
+	panel.call("tutorial_show_category", "Controls")
+	check(panel.call("tutorial_find_control", "Point-and-Click Movement") != null,
+		"the settings tour resolves control rows")
+	panel.queue_free()
+	await get_tree().process_frame
+
+	var old_game: Node = Global.game_node
+	var fake := SettingsTourGameProbe.new()
+	add_child(fake)
+	var pause: Control = load("res://scripts/pause_menu.gd").new() as Control
+	pause.name = "PauseMenu"
+	add_child(pause)
+	fake.pause_menu = pause
+	Global.game_node = fake
+	var tour: Node = load("res://scripts/settings_tour.gd").new()
+	add_child(tour)
+	tour.call("start")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check(bool(tour.get("_active")) and bool(tour.get("_started"))
+		and tour.get("_settings") != null,
+		"the settings tour opens the real settings panel after onboarding")
+	var focus: Control = tour.get("_focus") as Control
+	check(focus != null and not bool(focus.get("_show_arrow")),
+		"the active settings tour uses highlight-only targets")
+	var first_progress := (tour.get("_progress") as Label).text
+	tour.call("_on_next")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check((tour.get("_progress") as Label).text != first_progress,
+		"settings tour NEXT advances to another setting")
+	tour.call("_finish", true)
+	await get_tree().process_frame
+	Global.game_node = old_game
+	Global.reset_pause_state()
+	pause.queue_free()
+	fake.queue_free()
+	await get_tree().process_frame
+
+
+func _test_android_tooltip_suppression() -> void:
+	var old_override: int = Global.mobile_platform_override
+	var old_tip: Variant = Global.get("_item_tooltip")
+	if old_tip is Node and is_instance_valid(old_tip):
+		(old_tip as Node).queue_free()
+	Global.set("_item_tooltip", null)
+	var wood := load("res://resources/items/wood.tres") as ItemData
+
+	Global.mobile_platform_override = 1
+	Global.show_item_tooltip({"data": wood, "quantity": 1})
+	check(Global.get("_item_tooltip") == null,
+		"Android suppresses the floating item tooltip")
+	Global.item_hold_start({"data": wood, "quantity": 1})
+	check((Global.get("_hold_item") as Dictionary).is_empty(),
+		"Android suppresses the press-and-hold item tooltip")
+	Global.item_hold_end()
+	var tap_tip: Node = load("res://scripts/tooltip_tap.gd").new()
+	add_child(tap_tip)
+	await get_tree().process_frame
+	check(not is_instance_valid(tap_tip) or tap_tip.is_queued_for_deletion(),
+		"Android removes the tap-tooltip popup node")
+
+	Global.mobile_platform_override = 0
+	Global.show_item_tooltip({"data": wood, "quantity": 1})
+	var desktop_tip: Variant = Global.get("_item_tooltip")
+	check(desktop_tip is Node and is_instance_valid(desktop_tip),
+		"desktop still creates the normal item tooltip")
+	Global.hide_item_tooltip()
+	if desktop_tip is Node and is_instance_valid(desktop_tip):
+		(desktop_tip as Node).queue_free()
+	Global.set("_item_tooltip", null)
+	Global.mobile_platform_override = old_override
+	await get_tree().process_frame
 
 func _test_android_keyboard_layout() -> void:
 	# Regression: the Android keyboard is reported in physical pixels. A
@@ -4202,12 +5843,80 @@ func _test_automatica_build_queue() -> void:
 	await get_tree().process_frame
 
 
+func _test_algorithmica_templates() -> void:
+	var craft_script: GDScript = load("res://scripts/crafting_menu.gd")
+	var furnace_script: GDScript = load("res://scripts/furnace_programming_panel.gd")
+	var craft_consts: Dictionary = craft_script.get_script_constant_map()
+	var furnace_consts: Dictionary = furnace_script.get_script_constant_map()
+	var station_template: String = str(craft_consts.get("STATION_TEMPLATE", ""))
+	var furnace_template: String = str(furnace_consts.get("FURNACE_TEMPLATE", ""))
+	var tutorial_template: String = str(furnace_consts.get("TUTORIAL_TEMPLATE", ""))
+	check(station_template.contains('set_recipe("Planks")')
+		and station_template.contains("craft(1)")
+		and station_template.contains("take_output()"),
+		"the Algorithmica station template is a complete craft program")
+	check(furnace_template.contains('feed("iron_ore"')
+		and furnace_template.contains('fuel("charcoal"')
+		and furnace_template.contains("smelt(5)")
+		and furnace_template.contains("take_output()"),
+		"the Algorithmica furnace template is a complete smelt program")
+	check(tutorial_template.strip_edges() == 'print("Algorithmica ready")',
+		"the tutorial starter is ready-to-run code, not a commented example")
+
+	var craft_src := FileAccess.get_file_as_string("res://scripts/crafting_menu.gd")
+	var furnace_src := FileAccess.get_file_as_string(
+		"res://scripts/furnace_programming_panel.gd")
+	var tutorial_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(craft_src.contains('_make_action_btn("TEMPLATE"')
+		and craft_src.contains("_on_load_template")
+		and furnace_src.contains('template_btn.text = "TEMPLATE"')
+		and furnace_src.contains("_load_template"),
+		"both Algorithmica editors expose a TEMPLATE example button")
+	check(tutorial_src.contains("algorithmica_template_ready")
+		and furnace_src.contains("algorithmica_template_ready"),
+		"the tutorial marks the furnace editor for the ready-to-run starter")
+
+	var had_flag: bool = Global.tutorial_flags.has("algorithmica_template_ready")
+	var old_flag: Variant = Global.tutorial_flags.get("algorithmica_template_ready", null)
+	Global.tutorial_flags["algorithmica_template_ready"] = true
+	var probe := FurnaceTemplateProbe.new()
+	add_child(probe)
+	var panel: Control = load("res://scripts/furnace_programming_panel.gd").new() as Control
+	add_child(panel)
+	await get_tree().process_frame
+	panel.call("open", probe)
+	await get_tree().process_frame
+	check(str(panel.call("tutorial_code_text")).strip_edges()
+		== 'print("Algorithmica ready")',
+		"the tutorial furnace opens with ready-to-run print code")
+	panel.call("_load_template")
+	var loaded: String = str(panel.call("tutorial_code_text"))
+	check(loaded.contains('feed("iron_ore"') and loaded.contains("smelt(5)"),
+		"the furnace TEMPLATE button loads the smelting example")
+	panel.call("close")
+	probe.program_code = 'print("custom")'
+	panel.call("open", probe)
+	await get_tree().process_frame
+	check(str(panel.call("tutorial_code_text")).contains('print("custom")'),
+		"the tutorial starter never overwrites custom furnace code")
+	panel.call("close")
+	panel.queue_free()
+	probe.queue_free()
+	if had_flag:
+		Global.tutorial_flags["algorithmica_template_ready"] = old_flag
+	else:
+		Global.tutorial_flags.erase("algorithmica_template_ready")
+	Global.reset_pause_state()
+	await get_tree().process_frame
+
+
 func _test_quiz_reward_ui() -> void:
-	check(QuizAltar.stars_for_hints(0) == 3
-		and QuizAltar.stars_for_hints(1) == 2
-		and QuizAltar.stars_for_hints(2) == 1
-		and QuizAltar.stars_for_hints(9) == 1,
-		"quiz hints award 3 / 2 / 1 blue stars")
+	check(QuizAltar.stars_for_penalties(0) == 3
+		and QuizAltar.stars_for_penalties(1) == 2
+		and QuizAltar.stars_for_penalties(2) == 1
+		and QuizAltar.stars_for_penalties(3) == 0
+		and QuizAltar.stars_for_penalties(9) == 0,
+		"quiz penalties award 3 / 2 / 1 / 0 blue stars and never go negative")
 
 	var mission: DungeonMissionData = null
 	for m in Global.dungeon_missions.values():
@@ -4245,14 +5954,17 @@ func _test_quiz_reward_ui() -> void:
 	check(hint_code.contains("print(") and hint_code.contains("hint"),
 		"compiler hints generate a print of the expected output")
 
-	# HINT auto-completes the current MCQ and advances exactly one question.
+	# HINT reveals the current question without answering/advancing it; the
+	# same button becomes NEXT and only NEXT dismisses the hint.
 	var q1 := DungeonQuestion.new()
 	q1.type = DungeonQuestion.Type.MCQ
+	q1.question = "Pick A"
 	q1.answer_a = "A"
 	q1.answer_b = "B"
 	q1.correct_index = 0
 	var q2 := DungeonQuestion.new()
 	q2.type = DungeonQuestion.Type.MCQ
+	q2.question = "Pick C"
 	q2.answer_a = "C"
 	q2.answer_b = "D"
 	q2.correct_index = 0
@@ -4260,15 +5972,94 @@ func _test_quiz_reward_ui() -> void:
 	altar.set("_questions", mc_questions)
 	altar.set("_index", 0)
 	altar.set("_hints_used", 0)
+	altar.set("_penalties", 0)
 	altar.set("_answered", 0)
 	altar.call("_show_question")
 	await get_tree().process_frame
-	altar.call("_use_hint")
-	await get_tree().create_timer(0.8).timeout
+	altar.call("_on_hint_button_pressed")
+	var hint_btn := altar.get("_hint_btn") as Button
+	var hint_panel := altar.get("_hint_panel") as Control
 	check(int(altar.get("_hints_used")) == 1
-		and int(altar.get("_index")) == 1
-		and int(altar.get("_answered")) == 1,
-		"HINT auto-completes one question and counts one usage")
+		and bool(altar.get("_hint_open")) and bool(hint_panel.visible)
+		and hint_btn.text == "NEXT" and int(altar.get("_index")) == 0
+		and int(altar.get("_answered")) == 0,
+		"HINT reveals a hint on the same question and becomes NEXT")
+	var mc_highlighted := false
+	for b in (altar.get("_answer_buttons") as Array):
+		if not (b is Button):
+			continue
+		if str((b as Button).get_meta("answer_value", "")) != str(q1.correct_option_index()):
+			continue
+		var hsb := (b as Button).get_theme_stylebox("normal") as StyleBoxFlat
+		mc_highlighted = hsb != null and hsb.border_color == Color(1.0, 0.84, 0.30, 1.0)
+	check(mc_highlighted and int(altar.get("_answered")) == 0,
+		"HINT highlights the correct MCQ answer without submitting it")
+	# Rapid duplicate presses are debounced and cannot create another hint event.
+	altar.call("_on_hint_button_pressed")
+	check(int(altar.get("_hints_used")) == 1 and bool(altar.get("_hint_open")),
+		"rapid HINT presses cannot duplicate a single hint reveal")
+	await get_tree().create_timer(0.3).timeout
+	altar.call("_on_hint_button_pressed")
+	check(not bool(altar.get("_hint_open")) and not hint_panel.visible
+		and hint_btn.text == "HINT" and int(altar.get("_index")) == 0
+		and int(altar.get("_answered")) == 0,
+		"NEXT dismisses the hint without advancing or answering the question")
+	var mc_cleared := true
+	for b in (altar.get("_answer_buttons") as Array):
+		if b is Button:
+			var csb := (b as Button).get_theme_stylebox("normal") as StyleBoxFlat
+			if csb != null and csb.border_color == Color(1.0, 0.84, 0.30, 1.0):
+				mc_cleared = false
+	check(mc_cleared, "NEXT clears the MCQ answer highlight")
+
+	# The hint cycle must also preserve compiler code and allow a second reveal.
+	var keep_q := DungeonQuestion.new()
+	keep_q.type = DungeonQuestion.Type.COMPILER
+	keep_q.language = "lua"
+	keep_q.answer_output = "kept"
+	var keep_questions: Array[DungeonQuestion] = [keep_q]
+	altar.set("_questions", keep_questions)
+	altar.set("_index", 0)
+	altar.set("_hints_used", 0)
+	altar.set("_hint_open", false)
+	altar.call("_show_question")
+	await get_tree().process_frame
+	await get_tree().create_timer(0.3).timeout
+	var code_entry := altar.get("_code_entry") as CodeEdit
+	code_entry.text = "print(\"wrong\")"
+	altar.call("_on_hint_button_pressed")
+	var code_filled: bool = code_entry.text == "print(\"kept\")" \
+		and str(altar.call("tutorial_code_text")) == "print(\"kept\")" \
+		and not bool(altar.get("_running"))
+	altar.set("_captured_output", "wrong")
+	altar.call("_grade_compiler", keep_q)
+	check(bool(altar.call("tutorial_hint_run_failed")),
+		"a failed hinted run flags the NEXT hint step")
+	await get_tree().create_timer(0.3).timeout
+	altar.call("_on_hint_button_pressed")
+	await get_tree().create_timer(0.3).timeout
+	var code_kept: bool = code_entry.text == "print(\"kept\")"
+	altar.call("_on_hint_button_pressed")
+	await get_tree().create_timer(0.3).timeout
+	altar.call("_on_hint_button_pressed")
+	await get_tree().create_timer(0.3).timeout
+	check(code_filled and code_kept and code_entry.text == "print(\"kept\")"
+		and int(altar.get("_hints_used")) == 2
+		and not bool(altar.get("_hint_open")),
+		"Hint/Next fills and preserves compiler code without auto-running it")
+
+	# A wrong submission records exactly one penalty per call and can drive the
+	# score to zero without blocking completion.
+	Global.dungeon_quiz_penalties.clear()
+	altar.set("_penalties", 0)
+	altar.call("_record_incorrect_submission")
+	var one_penalty := int(altar.get("_penalties"))
+	altar.call("_record_incorrect_submission")
+	altar.call("_record_incorrect_submission")
+	check(one_penalty == 1 and int(altar.get("_penalties")) == 3
+		and Global.dungeon_quiz_penalties_for(mission.dungeon_index) == 3,
+		"each wrong code submission records one star penalty")
+	Global.dungeon_quiz_penalties.erase(mission.dungeon_index)
 
 	# Results screen: achievements, 3-star layout and Done returns to world.
 	altar.set("_answered", 2)
@@ -4285,6 +6076,12 @@ func _test_quiz_reward_ui() -> void:
 		and int(altar.get("_reward_stars")) == 2
 		and scroll != null and not scroll.visible and done_found,
 		"quiz results screen shows achievements and a Done/return button")
+	altar.call("_show_reward_screen", 0)
+	await get_tree().process_frame
+	check(int(altar.get("_reward_stars")) == 0,
+		"a three-penalty dungeon shows zero blue stars but still reaches the reward screen")
+	altar.call("_show_reward_screen", 2)
+	await get_tree().process_frame
 
 	var old_game: Node = Global.game_node
 	var probe := ExitGameProbe.new()
@@ -5526,14 +7323,14 @@ func _test_tutorial_help_and_cursors() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	check(welcome_open and int(guide.get("_current_step")) == 1
-		and Global.tutorial_stage == 1 and bool(guide.call("_step_id") == "movement")
-		and bool(skip_dlg.call("is_active")),
-		"dialogue skip advances one lesson and opens the next lesson's dialogue")
-	skip_dlg.call("dismiss")
+		and Global.tutorial_stage == 1 and bool(guide.call("_step_id") == "move_one")
+		and not bool(skip_dlg.call("is_active")),
+		"dialogue skip advances exactly one lesson and dismisses the skipped dialogue")
+	if skip_dlg.call("is_active"):
+		skip_dlg.call("dismiss")
 	await get_tree().process_frame
 
-	# Skipping the travel lesson must never start its automatic teleport just
-	# because the dialogue's dismissed handler ran.
+	# Skipping the travel lesson must never start its automatic teleport.
 	var step_ids: Array = guide.get_script().get_script_constant_map().get("STEPS", []) as Array
 	var travel_idx: int = step_ids.find("dungeon_travel")
 	if travel_idx >= 0:
@@ -5541,19 +7338,12 @@ func _test_tutorial_help_and_cursors() -> void:
 		guide.set("_step_complete", false)
 		guide.set("_finished", false)
 		guide.set("_travel_started", false)
-		var skip_travel_open := bool(skip_dlg.call("show_conversation", [
-			{"speaker": "Py-San", "portrait": "res://sprites/char/pysan.png", "text": "Travel lesson."},
-		]))
 		guide.call("_on_dialogue_skip_requested")
 		await get_tree().process_frame
 		await get_tree().process_frame
-		check(skip_travel_open and not bool(guide.get("_travel_started"))
-			and int(guide.get("_current_step")) == step_ids.size() - 1
-			and str(guide.call("_step_id")) == "finish"
-			and bool(skip_dlg.call("is_active")),
-			"skipping the dungeon-travel lesson does not start its teleport")
-		skip_dlg.call("dismiss")
-		await get_tree().process_frame
+		check(not bool(guide.get("_travel_started"))
+			and int(guide.get("_current_step")) == step_ids.find("automatica"),
+			"skipping the dungeon lesson does not start its teleport")
 	guide.queue_free()
 	skip_dlg.queue_free()
 	await get_tree().process_frame

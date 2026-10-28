@@ -19,21 +19,11 @@ language = "python"
 starter_code = ""
 answer_output = "Hello"
 
-[sub_resource type="Resource" id="DungeonQuestion_3"]
-script = ExtResource("2_question")
-question = "What would be the output of this code.
-
-print(\"This is my first python code\")"
-answer_a = "print(\"This is my first python code\")"
-answer_b = "\"This is my first python code\""
-answer_c = "This is my first python code"
-answer_d = "Error"
-correct_index = 2
-
 [resource]
 script = ExtResource("1_script")
 mission_name = "The Python print room"
-mission_description = "Learn what print() does, then prove it at the quiz altar to claim your Lua core."
+mission_description = "Learn what print() does, then prove it at the quiz altar to claim a CPU for Algorithmica."
 entry_resource_file = "entry_1_python.tres"
-questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
+reward_item_path = "res://resources/items/cpu.tres"
+questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2")])
 size_modifier = 0

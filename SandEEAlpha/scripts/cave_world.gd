@@ -39,6 +39,10 @@ const ITEM_DROP_SCENE:          PackedScene = preload("res://scenes/ui/Inventory
 # Thickness (in tiles) of the solid stone band painted around the generated
 # cave grid — matches dungeon_world.gd's SURROUND_BAND_TILES.
 const SURROUND_BAND_TILES: int = 128
+# Camera bounds extend this many tiles into the surrounding wall band so the
+# camera can still centre the player near the outer edge of the generated grid.
+# The 128-tile band behind it guarantees this padding never exposes void.
+const CAMERA_WALL_PADDING_TILES: int = 20
 
 # Wall/ore tile type -> the ItemData that renders it, drops when mined, and
 # supplies block_level/min_pickaxe_level for the mining duration formula
@@ -930,7 +934,8 @@ func camera_bounds() -> Rect2:
 		return Rect2()
 	var half: int = generator.size / 2
 	var span: float = float(generator.size * TILE_SIZE)
-	return Rect2(Vector2(-half * TILE_SIZE, -half * TILE_SIZE), Vector2(span, span))
+	var base := Rect2(Vector2(-half * TILE_SIZE, -half * TILE_SIZE), Vector2(span, span))
+	return base.grow(float(CAMERA_WALL_PADDING_TILES) * float(TILE_SIZE))
 
 func _grid_to_cell(tile: Vector2i) -> Vector2i:
 	var half: int = generator.size / 2

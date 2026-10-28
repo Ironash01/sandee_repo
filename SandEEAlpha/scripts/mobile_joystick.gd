@@ -2,11 +2,11 @@ extends Control
 class_name MobileJoystick
 
 # ── Touch joystick (Android) ──────────────────────────────────────
-# A fixed base in the lower-left with a floating thumb: touching anywhere inside
-# the control's generous hit area re-centres the stick under the finger, which
-# makes it usable on small phones without looking. Emits a normalized direction
-# with magnitude 0..1; the player blends it with the keyboard vector, so all
-# movement speed / collision / animation rules stay in player.gd.
+# A fixed base in the lower-left with a thumb that follows the finger. The
+# ring never re-centres under the touch; it stays anchored so the control is
+# predictable during movement. Emits a normalized direction with magnitude
+# 0..1; the player blends it with the keyboard vector, so all movement speed /
+# collision / animation rules stay in player.gd.
 #
 # Drawn with simple shapes (base ring + knob) in the HUD palette — no new art
 # asset needed, and it scales with Global.ui_scale.
@@ -47,19 +47,21 @@ func reset_stick() -> void:
 	released.emit()
 
 func _gui_input(event: InputEvent) -> void:
+	# Secondary-finger bridge events are synthetic mouse input for other UI
+	# (hotbar/buttons). Never let them drive this stick: a bridged release would
+	# otherwise look like the joystick finger lifting and reset movement.
+	if event.has_meta("mobile_touch_bridge"):
+		return
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
 		if t.pressed:
 			if _touch_id != -1:
 				return
 			_touch_id = t.index
-			# Floating behaviour: centre on the touch, but keep the drawn base
-			# inside this Control so it cannot paint over the hotbar.
-			var r: float = _base_radius_px()
-			_center = Vector2(clampf(t.position.x, r, size.x - r),
-				clampf(t.position.y, r, size.y - r))
-			_knob   = _center
-			_update_value(_center)
+			# Fixed base: the ring stays anchored. Only the thumb follows the
+			# finger, so the control cannot drift around the screen.
+			_knob = t.position
+			_update_value(t.position)
 		elif t.index == _touch_id:
 			reset_stick()
 		get_viewport().set_input_as_handled()
@@ -76,11 +78,8 @@ func _gui_input(event: InputEvent) -> void:
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed and _touch_id == -1:
 				_touch_id = 0
-				var r: float = _base_radius_px()
-				_center = Vector2(clampf(mb.position.x, r, size.x - r),
-					clampf(mb.position.y, r, size.y - r))
-				_knob   = _center
-				_update_value(_center)
+				_knob = mb.position
+				_update_value(mb.position)
 			elif not mb.pressed and _touch_id == 0:
 				reset_stick()
 			get_viewport().set_input_as_handled()

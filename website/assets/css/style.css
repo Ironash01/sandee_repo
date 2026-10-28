@@ -55,9 +55,15 @@ body {
   letter-spacing: .3px;
   background-color: var(--bg);
   background-image:
-    radial-gradient(1100px 620px at 50% -12%, #16224a 0%, rgba(10,14,28,0) 62%),
-    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
-  background-attachment: fixed;
+    linear-gradient(180deg,
+      rgba(10, 14, 28, .30) 0%,
+      rgba(10, 14, 28, .62) 40%,
+      rgba(10, 14, 28, .92) 100%),
+    url("../img/panorama-sandee-dark.png");
+  background-position: center top, 12% top;
+  background-repeat: no-repeat, no-repeat;
+  background-size: cover, cover;
+  background-attachment: fixed, fixed;
   image-rendering: pixelated;
   -webkit-font-smoothing: none;
 }
@@ -90,6 +96,19 @@ h1, h2, h3, h4, .display {
 h1 { font-size: clamp(28px, 5vw, 52px); }
 h2 { font-size: clamp(18px, 3vw, 26px); color: var(--brand-2); }
 h3 { font-size: 13px; color: var(--ink); }
+
+/* Dungeon portal medallion beside every section heading. */
+.section__head h2::before {
+  content: "";
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  margin-right: 14px;
+  vertical-align: -7px;
+  background: url("../img/dungeon/portal.png") center / contain no-repeat;
+  image-rendering: pixelated;
+  filter: brightness(1.18) drop-shadow(0 0 7px rgba(99, 200, 240, .45)) drop-shadow(2px 2px 0 var(--shadow));
+}
 
 p { margin: 0 0 1em; color: var(--ink); }
 p.lead { font-size: 26px; color: var(--brand-2); }
@@ -243,9 +262,29 @@ img, svg { image-rendering: pixelated; }
 
 .platforms { font-size: 20px; color: var(--dim); }
 
-.hero__art { position: relative; }
+.hero__art { position: relative; padding: 0 26px; }
 .hero__art img { display: block; width: 100%; height: auto; }
 .hero__art .panel { padding: 10px; }
+
+/* Dungeon pillars frame the key art like a portal chamber. */
+.hero__art::before,
+.hero__art::after {
+  content: "";
+  position: absolute;
+  bottom: -18px;
+  width: 64px;
+  height: 192px;
+  background: url("../img/dungeon/pillar-lua.png") center bottom / contain no-repeat;
+  image-rendering: pixelated;
+  filter: drop-shadow(4px 4px 0 var(--shadow));
+  pointer-events: none;
+  z-index: 2;
+}
+.hero__art::before { left: -8px; }
+.hero__art::after {
+  right: -8px;
+  background-image: url("../img/dungeon/pillar-python.png");
+}
 
 /* ------------------------------------------------------------------ ribbon */
 .ribbon {
@@ -257,7 +296,8 @@ img, svg { image-rendering: pixelated; }
 }
 .ribbon ul {
   list-style: none;
-  margin: 0; padding: 0;
+  margin: 0;
+  padding: 0 18px;
   display: flex; flex-wrap: wrap; gap: 12px 34px;
   justify-content: center;
   font-family: var(--font-display);
@@ -266,9 +306,62 @@ img, svg { image-rendering: pixelated; }
 }
 .ribbon li::before { content: "\25B8 "; color: var(--accent); }
 
+/* --------------------------------------------------------- dungeon divider */
+.dungeon-divider {
+  position: relative;
+  height: 48px;
+  background-color: var(--bg-2);
+  background-image: url("../img/dungeon/masonry-lua.png");
+  background-position: center;
+  background-repeat: repeat-x;
+  background-size: 96px 48px;
+  border-top: var(--frame) solid var(--border);
+  border-bottom: var(--frame) solid var(--border);
+  box-shadow: inset 0 0 0 2px rgba(5, 7, 15, .55);
+  image-rendering: pixelated;
+  overflow: hidden;
+}
+.dungeon-divider--python { background-image: url("../img/dungeon/masonry-python.png"); }
+.dungeon-divider::before,
+.dungeon-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 42px;
+  height: 42px;
+  margin-top: -21px;
+  background: url("../img/dungeon/portal.png") center / contain no-repeat;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 10px rgba(99, 200, 240, .38)) drop-shadow(2px 2px 0 var(--shadow));
+}
+.dungeon-divider::before { left: 18px; }
+.dungeon-divider::after { right: 18px; }
+
 /* ---------------------------------------------------------------- sections */
 .section { padding: 62px 0; }
-.section--tint { background: rgba(20, 26, 51, .55); border-top: var(--frame) solid var(--border); border-bottom: var(--frame) solid var(--border); }
+
+/* Keep anchor targets clear of the sticky header. */
+main[id],
+section[id] { scroll-margin-top: 84px; }
+.section--tint {
+  position: relative;
+  overflow: hidden;
+  background: rgba(20, 26, 51, .58);
+  border-top: var(--frame) solid var(--border);
+  border-bottom: var(--frame) solid var(--border);
+}
+.section--tint > .wrap { position: relative; z-index: 1; }
+.section--tint::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("../img/dungeon/masonry-lua.png") center / 128px 64px repeat;
+  image-rendering: pixelated;
+  opacity: .06;
+  pointer-events: none;
+}
+#screens::before,
+#share::before { background-image: url("../img/dungeon/masonry-python.png"); }
 
 .section__head { max-width: 70ch; margin-bottom: 34px; }
 .section__head p { color: var(--muted); font-size: 23px; }
@@ -292,9 +385,24 @@ img, svg { image-rendering: pixelated; }
 }
 
 /* -------------------------------------------------------------- screenshots */
-.shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-.shot { padding: 10px; }
-.shot img { display: block; width: 100%; height: auto; border: 2px solid var(--border); }
+.shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+.shot:first-child { grid-column: span 2; }
+.shot { position: relative; padding: 10px; }
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 2px solid var(--border-bright);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 2px var(--shadow);
+}
+.shot::after {
+  content: "";
+  position: absolute;
+  inset: 22px 22px 70px;
+  border: 2px solid rgba(99, 200, 240, .16);
+  pointer-events: none;
+}
 .shot figcaption {
   font-family: var(--font-display);
   font-size: 9px;
@@ -377,7 +485,16 @@ ul.ticks li::before { content: "\25AA"; position: absolute; left: 6px; color: va
 }
 
 /* ------------------------------------------------------------------- footer */
-.footer { border-top: var(--frame) solid var(--border); background: var(--bg-2); padding: 40px 0 26px; }
+.footer {
+  border-top: var(--frame) solid var(--border);
+  background-color: var(--bg-2);
+  background-image:
+    linear-gradient(rgba(10, 14, 28, .90), rgba(10, 14, 28, .97)),
+    url("../img/dungeon/masonry-lua.png");
+  background-size: cover, 128px 64px;
+  background-repeat: no-repeat, repeat;
+  padding: 40px 0 26px;
+}
 .footer__grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 26px; }
 .footer h4 { font-size: 10px; color: var(--brand-2); margin-bottom: 14px; }
 .footer ul { list-style: none; margin: 0; padding: 0; }
@@ -485,7 +602,13 @@ ul.ticks li::before { content: "\25AA"; position: absolute; left: 6px; color: va
 }
 
 @media (max-width: 900px) {
-  body { font-size: 21px; }
+  body {
+    font-size: 21px;
+    background-attachment: scroll, scroll;
+  }
+  .hero__art { padding: 0; }
+  .hero__art::before,
+  .hero__art::after { display: none; }
   .hero__grid,
   .about-grid { grid-template-columns: 1fr; }
   .grid--3,
@@ -503,7 +626,44 @@ ul.ticks li::before { content: "\25AA"; position: absolute; left: 6px; color: va
   .shots,
   .dev-grid,
   .dl-grid { grid-template-columns: 1fr; }
+  .shot:first-child { grid-column: auto; }
+  .section__head h2::before {
+    width: 30px;
+    height: 30px;
+    margin-right: 10px;
+    vertical-align: -5px;
+  }
   .section { padding: 46px 0; }
+  .ribbon ul {
+    gap: 10px 18px;
+    padding: 0 14px;
+  }
+  .dl-card .btn {
+    gap: 6px;
+    padding: 14px 10px;
+    font-size: 10px;
+  }
+  .reqs { padding: 18px; }
+  .reqs table,
+  .reqs tbody,
+  .reqs tr,
+  .reqs td { display: block; width: 100%; }
+  .reqs tr {
+    padding: 9px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .reqs tr:last-child { border-bottom: 0; }
+  .reqs td { border: 0; padding: 0; }
+  .reqs td:first-child {
+    width: auto;
+    white-space: normal;
+    font-size: 18px;
+  }
+  .reqs td:last-child { margin-top: 2px; }
+  .footer__grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

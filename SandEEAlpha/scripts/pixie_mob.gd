@@ -22,6 +22,7 @@ const SHADOW_TEXTURE:  Texture2D = preload("res://sprites/shadow/shadow_base.png
 const DAMAGE_NUMBER_SCRIPT: GDScript = preload("res://scripts/damage_number.gd")
 const MELLOW_BURST_SCRIPT: GDScript = preload("res://scripts/mellow_burst.gd")
 const MOB_NAME_LABEL_SCRIPT: GDScript = preload("res://scripts/mob_name_label.gd")
+const DROP_ITEM_SCENE: PackedScene = preload("res://scenes/ui/InventoryItem.tscn")
 
 const PIXIE_TEX:    Texture2D = preload("res://sprites/mobs/pixie/pixie.png")
 const FRAME_COUNT:  int = 7
@@ -42,6 +43,7 @@ var _glow_time: float        = 0.0
 
 # ── Combat (sword hits) ────────────────────────────────────────────
 var _mob_health:   float  = 0.0
+var _dead:         bool   = false
 var _knockback:    Vector2 = Vector2.ZERO
 const KNOCKBACK_DECAY: float = 900.0   # px/s of knockback velocity lost per second
 
@@ -295,14 +297,53 @@ func _draw() -> void:
 	draw_rect(Rect2(-w * 0.5, HP_BAR_Y, w * frac, h), Color(0.85, 0.25, 0.25, 1.0))
 
 func _die() -> void:
+	if _dead:
+		return
+	_dead = true
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)
 	if not COMBAT_DATA.bestiary_id.is_empty():
 		Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 	Global.add_mission_progress("side_pixie_slayer", 1)
+	_drop_loot()
+	Global.spawn_mob_crystal_drop(get_parent(), global_position)
 	_spawn_death_burst()
 	queue_free()
+
+# Roll the same data-driven MobCombatData.drops table the Bestiary uses, so the
+# Pixie Stone entry shown in the Bestiary is exactly what can drop. Keep this in
+# sync with BestiaryMob._drop_loot; Pixie is a dedicated script, not a
+# BestiaryMob instance.
+func _drop_loot() -> void:
+	var parent: Node = get_parent()
+	if parent == null or not is_instance_valid(parent):
+		return
+	for entry_value in COMBAT_DATA.drops:
+		if not (entry_value is Dictionary):
+			continue
+		var entry: Dictionary = entry_value as Dictionary
+		var chance: float = clampf(float(entry.get("chance", 1.0)), 0.0, 1.0)
+		if chance < 1.0 and randf() > chance:
+			continue
+		var path: String = str(entry.get("item_path", "")).strip_edges()
+		if path.is_empty():
+			continue
+		var item: ItemData = load(path) as ItemData
+		if item == null:
+			continue
+		var qty: int = randi_range(int(entry.get("min", 1)), int(entry.get("max", 1)))
+		if qty <= 0:
+			continue
+		var drop: Node = DROP_ITEM_SCENE.instantiate()
+		if drop == null:
+			continue
+		drop.set("item_data", item)
+		drop.set("quantity", qty)
+		parent.add_child(drop)
+		if drop is Node2D:
+			(drop as Node2D).global_position = global_position + Vector2(
+				randf_range(-12.0, 12.0), randf_range(-9.0, 3.0))
 
 # Minecraft-style death poof: a burst of mellow puffs at the body's location,
 # spawned as a sibling so it survives this mob's free.

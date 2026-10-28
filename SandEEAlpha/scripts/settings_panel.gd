@@ -34,6 +34,7 @@ var _val_labels: Dictionary = {}
 var _rebind_action: String = ""
 var _rebind_buttons: Dictionary = {}
 var _rebind_warning: Label = null
+var _back_btn: Button = null
 
 func _ready() -> void:
 	_build()
@@ -126,12 +127,48 @@ func _build() -> void:
 		footer.add_child(credits)
 	var back := _footer_btn("< Back", _on_back)
 	footer.add_child(back)
+	_back_btn = back
 
 	_show_settings_category(_settings_category)
 
 func _on_back() -> void:
 	_cancel_rebind()
 	close_requested.emit()
+
+# ── Post-tutorial settings tour helpers ────────────────────────────────
+func tutorial_show_category(cat: String) -> void:
+	if CATEGORIES.has(cat):
+		_show_settings_category(cat)
+
+func tutorial_category_button(cat: String) -> Control:
+	return _category_btns.get(cat) as Control
+
+func tutorial_back_button() -> Control:
+	return _back_btn
+
+## Returns the row containing a setting with this label, so the highlight can
+## wrap the label and its control together. Returns null when the current
+## category does not contain that setting.
+func tutorial_find_control(label_text: String) -> Control:
+	if _settings_content == null:
+		return null
+	for child in _settings_content.get_children():
+		var row := _tutorial_match_row(child, label_text)
+		if row != null:
+			return row
+	return null
+
+func _tutorial_match_row(node: Node, label_text: String) -> Control:
+	if node is Label and (node as Label).text == label_text:
+		var parent := node.get_parent()
+		if parent is HBoxContainer:
+			return parent as Control
+		return node as Control
+	for child in node.get_children():
+		var found := _tutorial_match_row(child, label_text)
+		if found != null:
+			return found
+	return null
 
 func _footer_btn(text: String, callback: Callable) -> Button:
 	var s: float = Global.ui_scale

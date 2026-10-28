@@ -318,6 +318,7 @@ func _die() -> void:
 	if not COMBAT_DATA.bestiary_id.is_empty():
 		Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 	_drop_loot()
+	Global.spawn_mob_crystal_drop(get_parent(), global_position)
 	_spawn_death_burst()
 	died.emit()
 	queue_free()

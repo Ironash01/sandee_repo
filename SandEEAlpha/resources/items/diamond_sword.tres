@@ -10,6 +10,8 @@ region = Rect2(192, 96, 32, 32)
 [resource]
 script = ExtResource("1_tm2ew")
 item_name = "Diamond Sword"
+stackable = false
+max_stack_size = 1
 description = "The prodigal weapon of murdering."
 item_type = "weapon"
 is_sword = true

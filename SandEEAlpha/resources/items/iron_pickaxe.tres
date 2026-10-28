@@ -10,6 +10,8 @@ region = Rect2(160, 96, 32, 32)
 [resource]
 script = ExtResource("1_5gi6a")
 item_name = "Iron Pickaxe"
+stackable = false
+max_stack_size = 1
 description = "A good pick for almost about anything."
 item_type = "block"
 icon = SubResource("AtlasTexture_f30i1")

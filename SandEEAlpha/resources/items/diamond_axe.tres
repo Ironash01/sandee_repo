@@ -10,6 +10,8 @@ region = Rect2(224, 96, 32, 32)
 [resource]
 script = ExtResource("1_bq7mt")
 item_name = "Diamond Axe"
+stackable = false
+max_stack_size = 1
 description = "The ultimate chopper."
 icon = SubResource("AtlasTexture_daxe1")
 is_craftable = true

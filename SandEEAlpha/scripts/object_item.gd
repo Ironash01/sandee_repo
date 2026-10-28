@@ -332,9 +332,9 @@ func smelting_recipe_for(item: ItemData) -> SmeltingRecipe:
 	return null
 
 func _stack_limit(data: ItemData) -> int:
-	if data == null or not data.stackable:
+	if data == null:
 		return 1
-	return data.max_stack_size if data.max_stack_size > 0 else Global.MAX_STACK
+	return data.stack_limit()
 
 # ── Slots ─────────────────────────────────────────────────────────
 func get_input_stack() -> Dictionary:

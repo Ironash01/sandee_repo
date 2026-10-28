@@ -10,6 +10,8 @@ region = Rect2(32, 96, 32, 32)
 [resource]
 script = ExtResource("1_8sky7")
 item_name = "Wooden Axe"
+stackable = false
+max_stack_size = 1
 description = "Destroys wooden blocks"
 item_type = "weapon"
 icon = SubResource("AtlasTexture_ate3i")

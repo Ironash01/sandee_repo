@@ -5,9 +5,11 @@ class_name QuizAltar
 # embedded in the mission's `questions` (Array[DungeonQuestion], MCQ or COMPILER)
 # one at a time. Answering ALL of them correctly clears the dungeon: the reward
 # is granted, the mission/star state is recorded, and a results screen shows the
-# player's achievements and 1-3 blue stars. The top-right HINT button can
-# auto-complete a question, lowering that star award. Done teleports back to the
-# overworld, so quiz dungeons no longer use a physical exit tile.
+# player's achievements and 0-3 blue stars. HINT reveals the current question's
+# hint (the button becomes NEXT to dismiss it); each hint or wrong code run
+# removes one star, except that hints are free in the first dungeon. Done
+# teleports back to the overworld, so quiz dungeons no longer use a physical
+# exit tile.
 #
 # Built entirely in code (no .tscn) like CavePortal — the dungeon generator
 # instantiates it with .new().
@@ -57,12 +59,20 @@ var _controls:   Control = null
 var _close_btn:  Button = null
 var _hint_btn:   Button = null
 var _run_btn:    Button = null
+var _hint_panel: PanelContainer = null
+var _hint_label: Label = null
+var _answer_buttons: Array[Button] = []
 var _hints_used: int = 0
+var _hint_open:  bool = false
+var _penalties:  int = 0
 var _hint_busy:  bool = false
+var _hint_last_press_ms: int = -1000
+var _hint_run_failed: bool = false
 var _answered:   int = 0
 var _reward_root: Control = null
 var _reward_visible: bool = false
 var _reward_stars: int = 3
+var _done_btn: Button = null
 var _exiting: bool = false
 
 # ── Compiler (COMPILER) state ─────────────────────────────────────
@@ -127,6 +137,7 @@ func _on_ui_scale(_s: float) -> void:
 	var was_reward: bool = _reward_visible
 	var saved_stars: int = _reward_stars
 	var saved_hints: int = _hints_used
+	var saved_penalties: int = _penalties
 	var saved_answered: int = _answered
 	var saved_code: String = _code_entry.text if _code_entry != null \
 			and is_instance_valid(_code_entry) else ""
@@ -139,6 +150,7 @@ func _on_ui_scale(_s: float) -> void:
 	_q_progress = null; _q_text = null; _feedback = null
 	_controls = null; _close_btn = null; _hint_btn = null
 	_run_btn = null; _compiler_grid = null
+	_hint_panel = null; _hint_label = null
 	_reward_root = null
 	_code_entry = null; _compiler_output = null; _error_label = null
 	if was_visible:
@@ -147,6 +159,7 @@ func _on_ui_scale(_s: float) -> void:
 		if _ui_registered:
 			Global.register_ui_back(_panel, Callable(self, "_escape_close"))
 		_hints_used = saved_hints
+		_penalties = saved_penalties
 		_answered = saved_answered
 		if was_reward:
 			_reward_stars = saved_stars
@@ -280,10 +293,17 @@ func _start_quiz() -> void:
 		_reward_root.queue_free()
 		_reward_root = null
 	_reward_visible = false
+	_done_btn = null
 	_index = 0
 	_hints_used = 0
+	_penalties = 0
 	_answered = 0
+	_hint_open = false
 	_hint_busy = false
+	_hint_run_failed = false
+	if mission != null:
+		_hints_used = Global.dungeon_quiz_hints_for(mission.dungeon_index)
+		_penalties = Global.dungeon_quiz_penalties_for(mission.dungeon_index)
 	_exiting = false
 	_panel.visible = true
 	_panel_scroll.visible = true
@@ -323,9 +343,14 @@ func _show_question() -> void:
 		_complete_dungeon()
 		return
 	_hint_busy = false
+	_hint_open = false
+	_hint_run_failed = false
 	if _hint_btn != null:
 		_hint_btn.disabled = false
 		_hint_btn.visible = true
+		_hint_btn.text = "HINT"
+	if _hint_panel != null:
+		_hint_panel.visible = false
 	_rebuild_controls()
 	if _content_scroll != null:
 		_content_scroll.scroll_vertical = 0
@@ -338,12 +363,19 @@ func _rebuild_controls() -> void:
 
 	for child in _controls.get_children().duplicate():
 		child.queue_free()
+	_answer_buttons.clear()
 	# The nodes just freed are gone at end of frame — drop the references so a
 	# late print/error signal can never touch a freed object.
 	_code_entry      = null
 	_compiler_output = null
 	_error_label     = null
 	_compiler_grid   = null
+	_hint_open = false
+	_hint_run_failed = false
+	if _hint_panel != null:
+		_hint_panel.visible = false
+	if _hint_btn != null:
+		_hint_btn.text = "HINT"
 	if _run_btn != null:
 		_run_btn.visible = false
 		_run_btn.disabled = false
@@ -376,7 +408,10 @@ func _make_answer_btn(label: String, value: String, q: DungeonQuestion, opt_text
 	btn.add_theme_stylebox_override("hover",   sb)
 	btn.add_theme_stylebox_override("pressed", sb)
 	btn.add_theme_color_override("font_color", C_QUESTION)
+	btn.set_meta("answer_value", value)
+	btn.set_meta("base_style", sb)
 	btn.pressed.connect(func() -> void: _grade(q, value))
+	_answer_buttons.append(btn)
 	return btn
 
 func _scroll_content_top() -> void:
@@ -394,47 +429,137 @@ func _ensure_editor_visible() -> void:
 		_content_scroll.call_deferred("ensure_control_visible", _code_entry)
 
 
-## 3 stars with no hints, 2 with exactly one, 1 with two or more.
+## Each hint reveal or wrong code run costs one blue star, except that hints are
+## free in the first main dungeon. Completion itself is independent of score.
+static func stars_for_penalties(penalties: int) -> int:
+	return clampi(3 - maxi(0, penalties), 0, 3)
+
+## Backwards-compatible alias used by older callers/tests.
 static func stars_for_hints(hints_used: int) -> int:
-	if hints_used <= 0:
-		return 3
-	if hints_used == 1:
-		return 2
-	return 1
+	return stars_for_penalties(hints_used)
 
 
 func _hint_code_for(q: DungeonQuestion) -> String:
 	# Both supported quiz languages print the expected output. c_escape keeps
 	# quotes/newlines/backslashes valid inside the generated string literal.
-	return "print(\"%s\")" % q.answer_output.c_escape()
+	if q.language == "lua" or q.language == "python":
+		return "print(\"%s\")" % q.answer_output.c_escape()
+	# Unknown/non-interpreted languages grade typed code against answer_output,
+	# so the hint must fill that exact code instead of a print() wrapper.
+	return q.answer_output
 
 
-## The HINT button reveals/auto-completes the CURRENT question. It is optional;
-## each use is counted and lowers the final star award.
-func _use_hint() -> void:
-	if _cleared or _reward_visible or _hint_busy or _running \
-			or _index >= _questions.size():
+func _hint_text_for(q: DungeonQuestion) -> String:
+	if q == null:
+		return ""
+	if q.is_compiler():
+		var base := q.hint.strip_edges()
+		if base.is_empty():
+			base = "Expected output: %s" % q.answer_output
+		return base + "\nThe correct code is filled in. Press RUN to check it."
+	# MCQ: the hint highlights the correct button, so keep the text short.
+	return "The correct answer is highlighted. Tap it when you are ready."
+
+
+## HINT prepares the current question's answer without submitting it:
+## * COMPILER: fills the editor with the expected print() program.
+## * MCQ: highlights the correct answer button.
+## The player still presses RUN / the answer button manually.
+func _on_hint_button_pressed() -> void:
+	if _cleared or _reward_visible or _running or _index >= _questions.size():
 		return
+	var now := Time.get_ticks_msec()
+	if now - _hint_last_press_ms < 220:
+		return
+	_hint_last_press_ms = now
+	if _hint_open:
+		_hide_hint()
+	else:
+		_reveal_hint()
+
+
+func _reveal_hint() -> void:
 	var q: DungeonQuestion = _questions[_index]
 	_hints_used += 1
-	_hint_busy = true
-	if _hint_btn != null:
-		_hint_btn.disabled = true
-	if _feedback != null:
-		_feedback.text = ""
+	if mission != null:
+		_penalties += Global.record_quiz_hint(mission.dungeon_index)
+	_hint_open = true
+	_hint_run_failed = false
 	if q.is_compiler():
-		var answer: String = _hint_code_for(q)
+		# Prepare the answer in the editor but do NOT run it. The player must
+		# still press RUN, so the hint never bypasses execution or grading.
 		if _code_entry != null and is_instance_valid(_code_entry):
+			var answer: String = _hint_code_for(q)
 			_code_entry.text = answer
-		if q.language == "lua" or q.language == "python":
-			_run_compiler(q, answer)
-		else:
-			# Unknown/non-interpreted language: accept the expected output
-			# directly so the hint can never soft-lock the altar.
-			_captured_output = q.answer_output
-			_grade_compiler(q)
+			_code_entry.set_caret_line(0)
+			_code_entry.set_caret_column(answer.length())
+		if _error_label != null:
+			_error_label.text = ""
 	else:
-		_grade(q, str(q.correct_option_index()))
+		_highlight_correct_answer(q)
+	if _hint_panel != null:
+		_hint_panel.visible = true
+	if _hint_label != null:
+		_hint_label.text = _hint_text_for(q)
+	if _hint_btn != null:
+		_hint_btn.text = "NEXT"
+		_hint_btn.disabled = false
+	if _feedback != null and not q.is_compiler():
+		_feedback.text = ""
+
+
+func _hide_hint() -> void:
+	_hint_open = false
+	_hint_run_failed = false
+	if _hint_panel != null:
+		_hint_panel.visible = false
+	if _hint_btn != null:
+		_hint_btn.text = "HINT"
+		_hint_btn.disabled = false
+	# Compiler code stays in the editor so the player can run it manually.
+	# MCQ highlighting is dismissed with the hint panel.
+	_clear_answer_highlight()
+
+
+func _highlight_correct_answer(q: DungeonQuestion) -> void:
+	if q == null:
+		return
+	var correct := str(q.correct_option_index())
+	var s: float = Global.ui_scale
+	for btn in _answer_buttons:
+		if not is_instance_valid(btn):
+			continue
+		if str(btn.get_meta("answer_value", "")) != correct:
+			continue
+		var base: Variant = btn.get_meta("base_style", null)
+		if not (base is StyleBoxFlat):
+			continue
+		var sb := (base as StyleBoxFlat).duplicate() as StyleBoxFlat
+		sb.bg_color = Color(0.28, 0.24, 0.10, 1.0)
+		sb.border_color = Color(1.0, 0.84, 0.30, 1.0)
+		sb.set_border_width_all(maxi(2, int(round(2.0 * s))))
+		btn.add_theme_stylebox_override("normal", sb)
+		btn.add_theme_stylebox_override("hover", sb)
+		btn.add_theme_stylebox_override("pressed", sb)
+		btn.add_theme_color_override("font_color", Color(1.0, 0.94, 0.68, 1.0))
+
+
+func _clear_answer_highlight() -> void:
+	for btn in _answer_buttons:
+		if not is_instance_valid(btn):
+			continue
+		var base: Variant = btn.get_meta("base_style", null)
+		if not (base is StyleBoxFlat):
+			continue
+		btn.add_theme_stylebox_override("normal", base as StyleBoxFlat)
+		btn.add_theme_stylebox_override("hover", base as StyleBoxFlat)
+		btn.add_theme_stylebox_override("pressed", base as StyleBoxFlat)
+		btn.add_theme_color_override("font_color", C_QUESTION)
+
+
+## Compatibility alias for callers/tests from the old auto-complete flow.
+func _use_hint() -> void:
+	_on_hint_button_pressed()
 
 
 # ── Compiler (Shape.COMPILER) controls ─────────────────────────────
@@ -695,6 +820,8 @@ func _on_quiz_failed(error: String) -> void:
 			(_compiler_q.question.left(80) if _compiler_q != null else "?"), error])
 	_accept_results = false
 	_running = false
+	_record_incorrect_submission()
+	_hint_run_failed = _hint_open
 	if _panel != null and _panel.visible:
 		Global.resume_ui_pause(self)
 		_hint_busy = false
@@ -717,6 +844,12 @@ func _set_run_busy(busy: bool) -> void:
 	if _run_btn != null and is_instance_valid(_run_btn):
 		_run_btn.disabled = busy
 
+
+func _record_incorrect_submission() -> void:
+	if mission == null:
+		return
+	_penalties += Global.record_quiz_mistake(mission.dungeon_index)
+
 func _grade_compiler(q: DungeonQuestion) -> void:
 	if q == null:
 		return
@@ -731,6 +864,8 @@ func _grade_compiler(q: DungeonQuestion) -> void:
 			_show_question()
 	else:
 		_set_status("✘ Not quite — try again.", C_ERROR)
+		_record_incorrect_submission()
+		_hint_run_failed = _hint_open
 		_hint_busy = false
 		if _hint_btn != null:
 			_hint_btn.disabled = false
@@ -750,6 +885,8 @@ func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 			_show_question()
 	else:
 		_set_status("✘ Not quite — try again.", C_ERROR)
+		_record_incorrect_submission()
+		_hint_run_failed = _hint_open
 		_hint_busy = false
 		if _hint_btn != null:
 			_hint_btn.disabled = false
@@ -771,6 +908,7 @@ func _grade(q: DungeonQuestion, input_text: String) -> void:
 	else:
 		_feedback.text = "✘ Not quite — try again."
 		_feedback.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55, 1.0))
+		_hint_run_failed = _hint_open
 
 # Whitespace/case-insensitive comparison for compiler output grading.
 var _ws_re: RegEx = null
@@ -796,7 +934,7 @@ func _complete_dungeon() -> void:
 	_running = false
 	_hint_busy = false
 	_answered = maxi(_answered, _questions.size())
-	_reward_stars = stars_for_hints(_hints_used)
+	_reward_stars = stars_for_penalties(_penalties)
 
 	Global.grant_item(mission.reward_item_path, 1)
 	var mission_id: String = "dungeon_%d" % mission.dungeon_index
@@ -816,7 +954,7 @@ func _show_reward_screen(stars: int) -> void:
 	if _reward_root != null and is_instance_valid(_reward_root):
 		_reward_root.queue_free()
 	_reward_visible = true
-	_reward_stars = clampi(stars, 1, 3)
+	_reward_stars = clampi(stars, 0, 3)
 	_panel_scroll.visible = false
 	if _hint_btn != null:
 		_hint_btn.visible = false
@@ -904,6 +1042,7 @@ func _show_reward_screen(stars: int) -> void:
 	_reward_row(vbox, "Questions answered",
 		"%d / %d" % [_answered, _questions.size()])
 	_reward_row(vbox, "Hints used", str(_hints_used))
+	_reward_row(vbox, "Star penalties", str(_penalties))
 	var reward_data: ItemData = null
 	if mission != null and not mission.reward_item_path.is_empty():
 		reward_data = load(mission.reward_item_path) as ItemData
@@ -933,7 +1072,7 @@ func _show_reward_screen(stars: int) -> void:
 			28.0 * s)
 
 	var note := Label.new()
-	note.text = "0 hints = 3 stars  ·  1 hint = 2 stars  ·  2+ hints = 1 star"
+	note.text = "3 stars start  ·  each hint or wrong run costs 1  ·  first-dungeon hints are free  ·  0 stars still clears"
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_font_size_override("font_size", Global.ui_font_size(10))
@@ -941,6 +1080,7 @@ func _show_reward_screen(stars: int) -> void:
 	vbox.add_child(note)
 
 	var done := Button.new()
+	_done_btn = done
 	done.text = "DONE — RETURN TO WORLD"
 	done.custom_minimum_size = Vector2(int(260 * s), int(42 * s))
 	done.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -1060,7 +1200,7 @@ func _build_panel() -> Control:
 
 	_hint_btn = Button.new()
 	_hint_btn.text = "HINT"
-	_hint_btn.tooltip_text = "Auto-complete this question. 3 stars = 0 hints, 2 stars = 1 hint, 1 star = 2+ hints."
+	_hint_btn.tooltip_text = "Prepare this question's answer: fill the code or highlight the correct choice. NEXT dismisses the hint. Each hint costs one blue star except in the first dungeon."
 	_hint_btn.custom_minimum_size = Vector2(int(76 * s), int(30 * s))
 	_hint_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	var hb := StyleBoxFlat.new()
@@ -1074,7 +1214,7 @@ func _build_panel() -> Control:
 	_hint_btn.add_theme_stylebox_override("hover", hb)
 	_hint_btn.add_theme_stylebox_override("pressed", hb)
 	_hint_btn.add_theme_color_override("font_color", C_TITLE)
-	_hint_btn.pressed.connect(_use_hint)
+	_hint_btn.pressed.connect(_on_hint_button_pressed)
 	hdr.add_child(_hint_btn)
 
 	# Run/Check lives beside Hint in the header so the code/output area gets the
@@ -1131,6 +1271,29 @@ func _build_panel() -> Control:
 	_q_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_q_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content_vbox.add_child(_q_text)
+
+	# Hint text lives in the question body, above the answer/code controls. It
+	# persists across Hint/Next toggles and never replaces or advances the
+	# current question.
+	_hint_panel = PanelContainer.new()
+	_hint_panel.name = "HintPanel"
+	_hint_panel.visible = false
+	var hpb := StyleBoxFlat.new()
+	hpb.bg_color = Color(0.10, 0.14, 0.28, 0.98)
+	hpb.border_color = Color(0.55, 0.72, 0.98, 0.95)
+	hpb.set_border_width_all(int(1 * s))
+	hpb.set_corner_radius_all(int(5 * s))
+	hpb.content_margin_left = int(10 * s)
+	hpb.content_margin_right = int(10 * s)
+	hpb.content_margin_top = int(7 * s)
+	hpb.content_margin_bottom = int(7 * s)
+	_hint_panel.add_theme_stylebox_override("panel", hpb)
+	_hint_label = Label.new()
+	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint_label.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	_hint_label.add_theme_color_override("font_color", Color(0.82, 0.92, 1.0, 1.0))
+	_hint_panel.add_child(_hint_label)
+	content_vbox.add_child(_hint_panel)
 
 	_controls = VBoxContainer.new()
 	_controls.add_theme_constant_override("separation", int(10 * s))
@@ -1196,6 +1359,48 @@ func _release_ui() -> void:
 	if _ui_registered:
 		_ui_registered = false
 		Global.close_ui()
+
+# ── Tutorial focus API ──────────────────────────────────────────────
+func tutorial_is_open() -> bool:
+	return _panel != null and is_instance_valid(_panel) and _panel.visible
+
+func tutorial_hint_button() -> Control:
+	return _hint_btn
+
+func tutorial_hint_open() -> bool:
+	return _hint_open
+
+func tutorial_hint_run_failed() -> bool:
+	return _hint_run_failed
+
+func tutorial_hint_panel() -> Control:
+	return _hint_panel
+
+func tutorial_run_button() -> Control:
+	return _run_btn
+
+func tutorial_code_text() -> String:
+	if _code_entry == null or not is_instance_valid(_code_entry):
+		return ""
+	return _code_entry.text.strip_edges()
+
+func tutorial_question_label() -> Control:
+	return _q_text
+
+func tutorial_answers_control() -> Control:
+	return _controls
+
+func tutorial_reward_done() -> Control:
+	return _done_btn
+
+func tutorial_reward_visible() -> bool:
+	return _reward_visible
+
+func tutorial_question_index() -> int:
+	return _index
+
+func tutorial_question_count() -> int:
+	return _questions.size()
 
 # The altar can be torn down with the dungeon while its panel is open. Without
 # this, Global's open_ui() refcount leaks and the overworld returns paused

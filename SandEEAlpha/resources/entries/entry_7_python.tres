@@ -4,21 +4,26 @@
 
 [resource]
 script = ExtResource("1_6cn5t")
-entry_name = "Input() "
-description = "In Python we have what we call the user input and to get and store that user input we would need to declare an input function for that.
+entry_name = "Joining Text"
+description = "Python joins strings with the + operator. Put the exact spaces you want inside the strings.
 
-Here is some sample codes using the user input.
+first = \"Juan\"
+last = \"Dela Cruz\"
+full = first + \" \" + last
+print(full)
 
-first_name = input(\"Enter your first name: \")
-output: Enter your first name: 
+The output is:
 
-We first declare a variable called first_name to hold the user input of their first name.
-Note that in Python all user inputs are going to be saved as strings, even if the user inputs numbers Python will read it as a string.
+Juan Dela Cruz
 
-we used the input(\"\") to ask for their name, that's basically how you would use the user input in Python.
+Convert between text and numbers with str() and int():
 
-The output will be \"Enter your first name: \" it's like printing right? but here the user can now provide inputs."
-keyword = "Input(\"\")"
+year = int(\"21\") * 2
+print(year)          # 42
+print(str(7) + \"!\")  # 7!
+
+The game's Python runtime supports these basic string and number conversions. It does not expose console input(), so lessons and programs should declare their values in code."
+keyword = "join"
 language = "python"
 category = "Easy"
 metadata/_custom_type_script = "uid://c8mblthys4abt"

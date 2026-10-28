@@ -10,6 +10,8 @@ region = Rect2(1, 96, 32, 32)
 [resource]
 script = ExtResource("1_8rcwp")
 item_name = "Wooden Sword"
+stackable = false
+max_stack_size = 1
 description = "The most basic hurt machine"
 item_type = "weapon"
 is_sword = true

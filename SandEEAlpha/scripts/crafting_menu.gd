@@ -20,6 +20,12 @@ const CATEGORIES  := ["Materials", "Blocks", "Weapons & Tools", "Others"]
 # editor has registered the helper's global class.
 const NameComplete: GDScript = preload("res://scripts/lua_name_complete.gd")
 const CACTUS_DATA: ItemData = preload("res://resources/items/cactus.tres")
+const STATION_TEMPLATE: String = """# Algorithmica station template
+# Change the recipe, amount, or use craft_color(r, g, b, n).
+set_recipe("Planks")
+craft(1)
+take_output()
+"""
 
 # ── Auto-discovered recipe directory (no hardcoded list needed) ────
 const RECIPE_DIR: String = "res://resources/recipes/"
@@ -550,6 +556,10 @@ func _build_programming_body(s: float) -> Control:
 		C_TITLE, _on_show_recipes, s)
 	recipes_btn.tooltip_text = "List every crafting recipe (with item ids) in the output."
 	btn_row.add_child(recipes_btn)
+	var template_btn := _make_action_btn("TEMPLATE", Color(0.20, 0.30, 0.48, 1.0),
+		C_TITLE, _on_load_template, s)
+	template_btn.tooltip_text = "Load a ready-to-run station example into the editor."
+	btn_row.add_child(template_btn)
 
 	_prog_log = RichTextLabel.new()
 	_prog_log.bbcode_enabled      = true
@@ -611,6 +621,20 @@ func _on_run_program() -> void:
 		_prog_log.clear()
 	station.call("run_program", code)
 	_refresh_output()
+
+# Loads a complete station program so the player can inspect/run a working
+# example without writing the boilerplate first (Automatica's SNIPPETS do the
+# same for the robot).
+func _on_load_template() -> void:
+	if _code_edit == null:
+		return
+	_code_edit.text = STATION_TEMPLATE
+	_code_edit.grab_focus()
+	_store_program_code()
+	if _prog_log != null:
+		_prog_log.clear()
+		_prog_log.append_text(
+			"[color=#aaddff]Loaded the station template. Press RUN when ready.[/color]\n")
 
 # Lists every recipe this station can run, with scripting ids, into the output.
 # The editor cannot add new Python functions (the interpreter's API table is
@@ -1258,7 +1282,14 @@ func _on_craft() -> void:
 	if recipe.ingredient_2 != null:
 		for _i in range(recipe.ingredient_2_quantity):
 			Global.remove_item(recipe.ingredient_2)
-	Global.add_item({"quantity": recipe.result_quantity, "data": recipe.result_item})
+	var added := Global.add_item({"quantity": recipe.result_quantity, "data": recipe.result_item})
+	if not added:
+		# Ingredients were consumed; keep the result via the existing world-drop
+		# recovery instead of deleting it when the inventory is full.
+		var player := Global.player_node as Node2D
+		if player != null:
+			Global.drop_item({"quantity": recipe.result_quantity, "data": recipe.result_item},
+				player.global_position)
 	Global.complete_mission("craft_item")
 	# Check for specific craft missions
 	var item_name: String = recipe.result_item.item_name.to_lower()

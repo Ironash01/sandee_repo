@@ -19,7 +19,10 @@ const BREAK_OVERLAY_SCRIPT: Script = preload("res://scripts/break_progress_overl
 # Android touch HUD (joystick + action buttons + tap-to-interact). Only added
 # on mobile; the desktop interface stays exactly as it is.
 const MOBILE_UI_SCRIPT: Script = preload("res://scripts/mobile_ui.gd")
+const CONTROLS_OVERLAY_SCRIPT: Script = preload("res://scripts/controls_overlay.gd")
 const TUTORIAL_GUIDE_SCRIPT: Script = preload("res://scripts/tutorial_guide.gd")
+const STAR_SUMMARY_SCRIPT: Script = preload("res://scripts/star_summary_ui.gd")
+const WISP_SCENE: PackedScene = preload("res://scenes/companions/Wisp.tscn")
 
 @onready var pause_menu: Control         = $CanvasLayer/PauseMenu
 @onready var pause_btn:  Button          = $CanvasLayer/PauseButton
@@ -50,10 +53,13 @@ var _transition_overlay: CanvasLayer = null
 # it stays on $CanvasLayer (10) so it remains bright and draggable on top.
 var _hud_backdrop: CanvasLayer = null
 var _mobile_ui: CanvasLayer = null
+var _controls_overlay: CanvasLayer = null
 var _notification_hud: CanvasLayer = null
 var _break_layer: CanvasLayer = null
 var _cursor_manager: Node = null
 var _tutorial_guide: Node = null
+var _wisp_companion: Node2D = null
+var _star_summary: Node = null
 
 func _ready() -> void:
 	# Direct scene transitions must not bypass the account gate. The menu and
@@ -100,6 +106,10 @@ func _ready() -> void:
 	_style_pause_button()
 	if not Global.ui_scale_changed.is_connected(_on_hud_ui_scale_changed):
 		Global.ui_scale_changed.connect(_on_hud_ui_scale_changed)
+	# Single-line overall star total immediately left of PAUSE.
+	_star_summary = STAR_SUMMARY_SCRIPT.new()
+	_hud_backdrop.add_child(_star_summary)
+	_star_summary.call("setup", pause_btn)
 	if not Global.inventory_toggled.is_connected(_on_inventory_visibility_changed):
 		Global.inventory_toggled.connect(_on_inventory_visibility_changed)
 	if not Global.modal_hud_changed.is_connected(_on_modal_hud_changed):
@@ -113,7 +123,10 @@ func _ready() -> void:
 	# Left-middle LUA status panel (3 most-current LUAs; click to expand to all).
 	_hud_backdrop.add_child(LUA_STATUS_SCRIPT.new())
 	# Tap tooltips (touch screens have no hover) — owns its own high layer.
-	add_child(TOOLTIP_TAP_SCRIPT.new())
+	# Android touch play deliberately has NO tooltip popup: it covered the HUD
+	# after ordinary taps. Desktop hover tooltips remain available.
+	if not Global.is_mobile():
+		add_child(TOOLTIP_TAP_SCRIPT.new())
 	# Top-centre gameplay notifications (fishing, farming, deaths, warnings).
 	_notification_hud = NOTIFICATION_HUD_SCRIPT.new() as CanvasLayer
 	add_child(_notification_hud)
@@ -137,6 +150,13 @@ func _ready() -> void:
 	if Global.is_mobile():
 		_mobile_ui = MOBILE_UI_SCRIPT.new() as CanvasLayer
 		add_child(_mobile_ui)
+
+	# PC-only split-wing control reference. Hidden until F1; it lights up each
+	# keycap while its bound key/button is held.
+	if not Global.is_mobile():
+		_controls_overlay = CONTROLS_OVERLAY_SCRIPT.new() as CanvasLayer
+		_controls_overlay.name = "ControlsOverlay"
+		add_child(_controls_overlay)
 
 	_setup_death_overlay()
 
@@ -294,6 +314,10 @@ func _on_generation_complete() -> void:
 	_player.visible = true
 	_player.process_mode = Node.PROCESS_MODE_DISABLED
 
+	# Recover any tool/stack overflow produced by the load-time migration before
+	# the first save. Items that still do not fit are dropped next to the player.
+	if is_instance_valid(_player) and Global.has_method("flush_pending_overflow"):
+		Global.call("flush_pending_overflow", _player.global_position + Vector2(0.0, 24.0))
 	# World is fully generated - safe to create the initial save now.
 	if Global.active_save_slot > 0 and not Global.has_save(Global.active_save_slot):
 		Global.save_game(Global.active_save_slot)
@@ -318,6 +342,7 @@ func _finish_loading_fade() -> void:
 	if is_instance_valid(_player):
 		_player.process_mode = Node.PROCESS_MODE_INHERIT
 	_setup_tutorial()
+	_setup_wisp()
 
 
 func _setup_tutorial() -> void:
@@ -337,6 +362,34 @@ func _setup_tutorial() -> void:
 	# by the director itself.
 	add_child(_tutorial_guide)
 	_tutorial_guide.call("setup", spawn, _world)
+
+# One friendly Wisp belongs to the Game root, not to $World. It therefore
+# survives every cave/pixie/dungeon swap without reparenting, and a fresh Game
+# (including a save reload) creates exactly one in place of any stale duplicate.
+# It has no progression or customization state, so it is intentionally recreated
+# on load instead of being added to the world save format.
+func _setup_wisp() -> void:
+	if _player == null or not is_instance_valid(_player):
+		return
+	if _wisp_companion != null and is_instance_valid(_wisp_companion) \
+			and not _wisp_companion.is_queued_for_deletion():
+		_wisp_companion.call("snap_to_player")
+		return
+	var existing: Node = get_tree().get_first_node_in_group("WispCompanion") \
+		if get_tree() != null else null
+	if existing != null and is_instance_valid(existing) \
+			and not existing.is_queued_for_deletion():
+		_wisp_companion = existing as Node2D
+		if _wisp_companion.get_parent() != self:
+			_wisp_companion.reparent(self)
+		_wisp_companion.call("snap_to_player")
+		return
+	var wisp := WISP_SCENE.instantiate() as Node2D
+	if wisp == null:
+		return
+	_wisp_companion = wisp
+	add_child(wisp)
+	wisp.call("snap_to_player")
 
 # ── Cave entry/exit ─────────────────────────────────────────────────────
 # Swaps $World out for a CaveWorld/PixieCaveWorld rather than a full
@@ -363,6 +416,10 @@ func _do_enter_cave(portal: CavePortal) -> void:
 	Global.is_in_dungeon = false
 	var key: String = portal.state_key() if portal != null and portal.has_method("state_key") else ""
 	var return_position: Vector2 = _player.global_position
+	# The first Pixie Cave is a safe introduction: no pixies. Later Pixie Caves
+	# spawn them normally. Persisted in Global so save/reload can't undo it.
+	var first_pixie_entry: bool = portal != null and portal.cave_type == "pixie" \
+		and not Global.first_pixie_cave_entered
 	var cached: Variant = _cave_instances.get(key) if key != "" else null
 	CrashLogger.event("WORLD", "enter cave key=%s type=%s cached=%s at=(%.1f, %.1f)" % [
 		key if key != "" else "<none>",
@@ -396,13 +453,18 @@ func _do_enter_cave(portal: CavePortal) -> void:
 			_pixie_cave_world = null
 		add_child(node)
 		move_child(node, 0)
-		node.call("setup", portal.cave_seed, return_position)
+		if node is PixieCaveWorld:
+			node.call("setup", portal.cave_seed, return_position, not first_pixie_entry)
+		else:
+			node.call("setup", portal.cave_seed, return_position)
 		if key != "":
 			_cave_instances[key] = node
 			var saved: Variant = Global.cave_states.get(key, {})
 			if saved is Dictionary and not (saved as Dictionary).is_empty():
 				node.call("apply_state", saved)
 
+	if first_pixie_entry:
+		Global.first_pixie_cave_entered = true
 	_active_cave_key = key
 	_restore_cave_exploration(key)
 	for child in node.get_children():
@@ -411,6 +473,7 @@ func _do_enter_cave(portal: CavePortal) -> void:
 	Global.world_node       = node
 	_player.global_position = node.call("get_player_spawn_position")
 	Global.reset_pause_state()
+	Global.cave_entered.emit("pixie" if _pixie_cave_world != null else "cave")
 
 func exit_cave() -> void:
 	if _transitioning:
@@ -429,6 +492,7 @@ func _do_exit_cave() -> void:
 		node = _cave_world
 	if node == null:
 		return
+	var exited_kind: String = "pixie" if _pixie_cave_world != null else "cave"
 
 	var rp: Variant = node.get("overworld_return_position")
 	var return_position: Vector2 = rp if rp is Vector2 else _player.global_position
@@ -461,6 +525,7 @@ func _do_exit_cave() -> void:
 		_world.call("reset_cave_portals")
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
+	Global.cave_exited.emit(exited_kind)
 
 func get_cave_states() -> Dictionary:
 	var out: Dictionary = {}
@@ -473,14 +538,24 @@ func get_cave_states() -> Dictionary:
 		if not is_instance_valid(node_ref):
 			continue
 		var node := node_ref as Node
-		if not node.is_inside_tree():
-			continue   # cached snapshot already lives in Global.cave_states
+		if not node.is_inside_tree() and key != _active_cave_key:
+			# Off-tree cached instances already have a snapshot in
+			# Global.cave_states. The ACTIVE cave is still snapshotted even when
+			# the Game scene is momentarily off-tree (transitions/tests), so a
+			# save made at that point keeps its live changes.
+			continue
 		if node.has_method("snapshot_state"):
 			var snap: Dictionary = node.call("snapshot_state")
 			var explored: Dictionary = Global.explored_cave_tiles if key == _active_cave_key \
 				else (_cave_explored.get(key, {}) as Dictionary)
 			snap["explored"] = _explored_to_array(explored)
 			out[key] = snap
+	if not out.is_empty():
+		# Keep the in-memory cache in sync when a save is made while inside a
+		# cave. Otherwise the file has the active snapshot but Global.cave_states
+		# remains empty until the next exit, which confuses re-entry/resume code
+		# and tests that inspect the live cache.
+		Global.cave_states = out.duplicate(true)
 	return out
 
 func _restore_cave_exploration(key: String) -> void:
@@ -590,8 +665,9 @@ func _do_exit_dungeon() -> void:
 	if _dungeon_world == null:
 		return
 	var return_position: Vector2 = _dungeon_world.overworld_return_position
+	var exited_index: int = int(_dungeon_world.get("_dungeon_index"))
 	CrashLogger.event("WORLD", "exit dungeon index=%d to=(%.1f, %.1f)" % [
-		int(_dungeon_world.get("_dungeon_index")), return_position.x, return_position.y])
+		exited_index, return_position.x, return_position.y])
 	remove_child(_dungeon_world)
 	_dungeon_world.queue_free()
 	_dungeon_world = null
@@ -613,6 +689,7 @@ func _do_exit_dungeon() -> void:
 	# overworld is back in the tree now, so the save captures real world data.
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
+	Global.dungeon_exited.emit(exited_index)
 
 # Cleanly leave any active cave/pixie cave/dungeon before quitting to the main
 # menu. Tearing the complex cave node tree down through the normal exit path —
@@ -789,6 +866,8 @@ func _set_gameplay_hud_visible(show_hud: bool) -> void:
 	$CanvasLayer.visible = show_hud
 	if _mobile_ui != null:
 		_mobile_ui.visible = show_hud
+	if _controls_overlay != null:
+		_controls_overlay.call("set_hud_suppressed", not show_hud)
 	if _notification_hud != null:
 		_notification_hud.visible = show_hud
 	if _break_layer != null:
@@ -802,9 +881,9 @@ func _on_hud_ui_scale_changed(_scale: float) -> void:
 func _style_pause_button() -> void:
 	var s: float = Global.ui_scale
 	var font_size: int = Global.ui_type_size(Global.UI_TYPE_LABEL)
-	var btn_h: float = maxf(44.0 * s, float(font_size + 20))
+	var btn_h: float = maxf(36.0 * s, float(font_size + 12))
 	var btn_w: float = maxf(96.0 * s, float(font_size * 4 + 36))
-	var margin: float = 8.0 * s
+	var margin: float = 6.0 * s
 	var safe_top: float = Global.ui_safe_insets.y
 	var safe_right: float = Global.ui_safe_insets.z
 	pause_btn.anchor_left = 1.0

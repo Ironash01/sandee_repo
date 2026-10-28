@@ -324,6 +324,7 @@ func _die() -> void:
 	HeadlessFishAI._force_release_claim()
 	Global.add_mission_progress("side_headless_angler", 1)
 	_drop_fish()
+	Global.spawn_mob_crystal_drop(get_parent(), global_position)
 	_spawn_death_burst()
 	queue_free()
 

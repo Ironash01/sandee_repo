@@ -35,6 +35,10 @@ const VARIANT_CHUNK_CHANCE: float = 0.45
 
 const FILL_PROB:         float = 0.58  # starting fraction of floor (vs. stone) — raised from 0.45 -> 0.50 -> 0.58, still too much stone at 0.50
 const SMOOTH_ITERATIONS: int   = 5
+# Solid stone layers kept around the generated grid. The camera now pads into
+# the surrounding band, so a thick inner wall keeps every edge reading as rock
+# instead of exposing a one-tile border.
+const BORDER_WALL_TILES: int = 4
 
 # Same chunk-grid idea world.gd uses for the overworld (spawn density,
 # debug chunk-border overlay), just a smaller chunk size and driving ore
@@ -108,12 +112,15 @@ func _smooth() -> void:
 	grid = new_grid
 
 func _force_border_walls() -> void:
-	for x in range(size):
-		grid[x][0]          = Tile.STONE
-		grid[x][size - 1]   = Tile.STONE
-	for y in range(size):
-		grid[0][y]          = Tile.STONE
-		grid[size - 1][y]   = Tile.STONE
+	for layer in range(BORDER_WALL_TILES):
+		var lo: int = layer
+		var hi: int = size - 1 - layer
+		for x in range(lo, hi + 1):
+			grid[x][lo] = Tile.STONE
+			grid[x][hi] = Tile.STONE
+		for y in range(lo, hi + 1):
+			grid[lo][y] = Tile.STONE
+			grid[hi][y] = Tile.STONE
 
 # Keeps the LARGEST connected floor region and stones over every other one
 # — CA smoothing normally produces several disconnected pockets scattered
@@ -126,7 +133,7 @@ func _force_border_walls() -> void:
 func _connect_main_region() -> void:
 	var regions: Array = _find_floor_regions()
 	if regions.is_empty():
-		var start: Vector2i = Vector2i(size / 2, size - 2)
+		var start: Vector2i = Vector2i(size / 2, size - 1 - BORDER_WALL_TILES)
 		grid[start.x][start.y] = Tile.FLOOR
 		entrance_tile = start
 		_carve_entrance_vestibule()
@@ -194,7 +201,8 @@ func _closest_in_set(center: Vector2i, region: Dictionary) -> Vector2i:
 func _carve_entrance_vestibule() -> void:
 	for i in range(3):
 		var t: Vector2i = entrance_tile - Vector2i(0, i)
-		if t.y >= 1 and t.y < size - 1:
+		if t.x >= BORDER_WALL_TILES and t.y >= BORDER_WALL_TILES \
+				and t.x < size - BORDER_WALL_TILES and t.y < size - BORDER_WALL_TILES:
 			grid[t.x][t.y] = Tile.FLOOR
 
 func _roll_ore_type(rng: RandomNumberGenerator) -> Dictionary:

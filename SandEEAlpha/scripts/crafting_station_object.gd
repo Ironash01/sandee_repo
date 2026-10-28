@@ -406,9 +406,7 @@ func get_output_stack() -> Dictionary:
 func _stack_limit(data: ItemData) -> int:
 	if data == null:
 		return 1
-	if not data.stackable:
-		return 1
-	return data.max_stack_size if data.max_stack_size > 0 else Global.MAX_STACK
+	return data.stack_limit()
 
 # ── Input slot (single) ───────────────────────────────────────────
 func get_input_item() -> ItemData:

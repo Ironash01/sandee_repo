@@ -28,11 +28,14 @@ const CATEGORIES: Array = [
 SandEE is a 2D sandbox about gathering, building, survival, automation and learning to program. Your world is generated from a seed and saves its terrain changes, containers, missions, dungeon progress and Bestiary records.
 
 [b]Your first session[/b]
-• You begin in a guided camp. Py-San and LUA introduce the game and its two programming languages.
-• Advance dialogue with click/tap, Enter, Space or gamepad A. The [b]SKIP LESSON[/b] button (labelled [b]SKIP[/b] on narrow screens) in the top-right of the screen while a dialogue is active skips that lesson; the objective card's [b]Skip lesson[/b] button does the same when it is available after dialogue.
+• You begin in a guided camp. Each lesson shows one short action, an arrow and a highlight on the exact target.
+• Your starter kit contains the Wooden Axe, Wooden Pickaxe, Wooden Sword and exactly 10 Bread. It is granted once per new world.
+• Follow the objective card: move twice, select the axe, chop a tree, pick up the Wood and craft the Crafting Station. The first dungeon lesson begins right after: follow the marker to the nearest entrance and confirm it.
+• The dungeon teaches the Knowledge Altar and route markers, then the Quiz Altar. Afterwards the camp teaches Automatica, Algorithmica, regular caves, Pixie Caves and Skyglass Waypoints. The first Pixie Cave is a safe introduction with no pixies; later Pixie Caves are guarded.
 • Skipping is safe. It never removes items, features or later content.
-• Open your inventory early (E on desktop, INV on Android). Your starting tools are in the hotbar; materials go into the inventory.
-• Follow the objective card at the top-centre of the screen during onboarding. Tutorial targets have a pulsing tile marker and a compass arrow above the player.
+• After onboarding, a settings tour opens Settings and highlights each control (no arrow) with a short explanation; use NEXT/SKIP to move through it.
+• Open your inventory early (E on desktop, INV on Android). The hotbar stays visible while the inventory is open.
+• Follow the objective card at the top-centre of the screen during onboarding. Tutorial targets have a pulsing marker and a compass arrow above the player.
 
 [b]HUD at a glance[/b]
 • Top-right: PAUSE button.
@@ -45,7 +48,7 @@ SandEE is a 2D sandbox about gathering, building, survival, automation and learn
 [b]Long-term goals[/b]
 • Progress the Python and Lua dungeon tracks. Each language teaches its own programming entries.
 • Defeat the Hitman miniboss to complete the main story.
-• Clear the extra dungeon track to unlock the 20 side missions.
+• Complete the main tracks, the Hitman finale and any extra dungeons to unlock the 20 side missions.
 • Fill the Bestiary by sighting and defeating every creature.
 • Build, farm, fish, smelt, automate and decorate as much as you like. The world does not end after the credits-like milestones.""",
 	},
@@ -64,12 +67,14 @@ SandEE is a 2D sandbox about gathering, building, survival, automation and learn
 • [b]Esc[/b] — pause, close the innermost panel, or cancel a tap-to-move order.
 • [b]Enter / Space[/b] — advance dialogue.
 • [b]Shift + click[/b] — mine/destroy a placed block, chest, station or furnace instead of using it.
+• [b]F1[/b] — show/hide the bottom on-screen control hints (on by default). Their keycaps light up while pressed.
+• The LMB hint follows the hovered target (use/mine/attack, move/interact/chase); [b]Shift + LMB[/b] becomes DESTROY on removable targets.
 
 [b]Point-and-click (optional)[/b]
-Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the ground walks there; clicking an interactable walks to one-block range and opens/interacts without swinging your held item; clicking a hostile creature chases and attacks it. Moving with WASD cancels the order. [b]Automatic Sprint[/b] uses stamina exactly like Shift. Build mode, UI panels and right-clicks are never intercepted.
+Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the ground walks there; clicking an interactable walks to one-block range and opens/interacts without swinging your held item; clicking a hostile creature chases and attacks it. Moving with WASD cancels the order. [b]Automatic Sprint[/b] uses stamina exactly like Shift. Build mode, UI panels and right-clicks are never intercepted. On Android the movement joystick is hidden while point-and-click is enabled; joystick mode keeps it visible. On desktop, while a usable item is selected (food, Life/Stamina Crystal, fishing rod, hoe or bucket), a click uses that item instead of issuing a move/interact order.
 
 [b][color=#8fd8ff]ANDROID / TOUCH[/color][/b]
-• Left joystick — move. A second finger can use buttons and the hotbar while moving.
+• Left joystick — move in joystick mode. A second finger can use buttons and the hotbar while moving. The joystick is hidden in point-and-click mode.
 • [b]SPRINT[/b] — hold to sprint.
 • [b]BUILD[/b] — toggle build mode (BUILD ON while active).
 • [b]INTERACT[/b] — context action for a nearby chest, crafting station or furnace. Its label changes to OPEN / CRAFT / SMELT.
@@ -106,7 +111,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 
 [b]Shelter & safe rooms[/b]
 • A valid house is a sealed room with a door and at least a 3×3 interior. Ambient hostile spawns are suppressed inside it.
-• Dungeon Knowledge and Quiz altar rooms contain green safe-zone markers. Stepping on one makes you invulnerable, heals 1 health per second, and disintegrates hostiles inside the room.
+• Dungeon Knowledge altar rooms contain green safe-zone markers. Stepping on one makes you invulnerable, heals 1 health per second, and disintegrates hostiles inside the room. Quiz rooms are combat rooms and are not safe zones.
 • A dungeon safe zone lasts 30 seconds and then needs 20 seconds to re-arm. Leaving the room ends it early.
 • Safe-zone kills grant no loot or Bestiary credit.
 
@@ -157,7 +162,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 		"id": "crafting",
 		"title": "Crafting & Machines",
 		"body": """[b][color=#8fd8ff]INVENTORY TABS[/color][/b]
-• [b]INVENTORY[/b] — 20 player slots plus your hotbar. Drag stacks between slots. When a chest is open its 8 slots appear below yours.
+• [b]INVENTORY[/b] — 20 player slots plus your hotbar. The hotbar stays visible and interactive while this panel is open, so stacks can be dragged both ways. When a chest is open its 8 slots appear below yours.
 • [b]CRAFT[/b] — recipes that need no station: the Crafting Station, Color Crafter, Bread and other hand recipes.
 • [b]ENCYCLOPEDIA[/b] — the Programming Encyclopedia. Function references are always available; language entries unlock through dungeon Knowledge Altars.
 • [b]BESTIARY[/b] — creatures you have seen and studied.
@@ -192,6 +197,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 • [b]Lua → Automatica[/b]: the robot companion. Automatica mines, chops, farms, builds, deposits loot, works stations and can become a combat follower.
 • [b]Python → Algorithmica[/b]: the automation panel inside Crafting Stations and Furnaces. It crafts items, colours blocks, loads fuel and smelts.
 • The Programming Encyclopedia (inventory tab) lists every function. Function lists are always visible; language concepts unlock as dungeon Knowledge Altars are read.
+• After your first dungeon, guided camp lessons walk through Automatica's build-line and combat examples, then Algorithmica's print example. Exploration lessons unlock only after the runs succeed.
 
 [b][color=#8fd8ff]AUTOMATICA (LUA)[/color][/b]
 1. Craft/obtain an Automatica item, select it, and place it like a block.
@@ -208,11 +214,13 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 • Crafting Station calls: set_recipe("Planks"), craft(n), get_recipe(), output_item(), output_count(), take_output(), craft_color(r, g, b, n).
 • Furnace calls: feed("Iron Ore", n), fuel("Charcoal", n), smelt(n), take_output(), input_name()/input_count(), fuel_name()/fuel_count(), output_name()/output_count().
 • Programs run against the machine's real slots. Load input/fuel first (or use feed/fuel); smelt consumes one fuel per item. Output stays in the machine until take_output().
+• Use the [b]TEMPLATE[/b] button to load a complete station or furnace example, then change the recipe, item ids and amounts.
+• The guided Algorithmica lesson opens the furnace with ready-to-run print("Algorithmica ready") code — just press RUN.
 • The editor prevents adding new Python functions, but recipe discovery is built in: use the RECIPES button to print every recipe and its scripting item ids.
 • Python and Lua are separate interpreters. A station's Python code is not run by Automatica, and Automatica cannot run a station's Python panel.
 
 [b]Practical tips[/b]
-• Start with the editor's Hello example, then use get_recipe/list_items output to learn exact item ids.
+• Start with the editor's build-line example or the Algorithmica TEMPLATE button, then use get_recipe/list_items output to learn exact item ids.
 • A robot's work radius is measured from its station, not its current position.
 • Chests are the robot's delivery network: deposit_chest() fills the nearest chest with space.
 • The Programming Encyclopedia's function descriptions are the authoritative in-game API reference.""",
@@ -223,16 +231,16 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 		"body": """[b][color=#8fd8ff]DUNGEON PROGRESSION[/color][/b]
 • The overworld always holds the current entrance for each active language track: one Lua and one Python dungeon during the main phase.
 • Walk onto an entrance and confirm Enter, or click its door. A temporary one-way waypoint appears near the player or camp; step on it to travel to the current dungeon entrance. It is consumed on use and is saved.
-• The mission tracker shows the current Lua and Python dungeon rows, then the Hitman finale, then the current extra dungeon.
+• The mission tracker shows the current Lua and Python dungeon rows, then the Hitman finale (and any active extra dungeon).
 • Clearing a dungeon removes its overworld entrance, awards its mission star and spawns the next mission in that language's track.
-• After both main language tracks, the shared [b]Hitman Miniboss[/b] dungeon unlocks. Defeating it unlocks the extra dungeon track.
-• Clearing all extra dungeons unlocks 20 side missions. Side missions have their own tracker section and use the same star/progress system.
+• After both main language tracks, the shared [b]Hitman Miniboss[/b] dungeon unlocks. Defeating it completes the main story; clearing it together with the main tracks and any extra dungeons unlocks the 20 side missions. Side missions have their own tracker section and use the same star/progress system.
 
 [b]Inside a dungeon[/b]
 • Dungeons are combat gauntlets with traps, flame vents, hostile spawns and treasure chests.
 • The first safe room contains a [b]Knowledge Altar[/b]. Read and close its entry to learn a programming concept permanently for that world. The altar also keeps a pageable archive of every entry you have learned.
-• The final room contains a [b]Quiz Altar[/b]. Answer every multiple-choice or compiler question correctly to clear the dungeon. Wrong answers can be retried; compiler questions run your code and check its output. The top-right [b]HINT[/b] button can auto-complete a question, but each use lowers the dungeon's blue-star award. Review the results and press [b]Done[/b] to return to the overworld.
-• Green safe-zone markers in altar rooms grant 30 seconds of invulnerability, healing and hostile disintegration. Safe-zone kills give no loot or Bestiary credit.
+• Guided first-dungeon runs show numbered floor markers along a safe route to the final Quiz Altar. The route follows real floor cells and avoids trap tiles.
+• The final room contains a [b]Quiz Altar[/b]. Answer every multiple-choice or compiler question correctly to clear the dungeon. Wrong answers can be retried; compiler questions run your code and check its output. [b]HINT[/b] prepares the current answer: it fills compiler code with the expected print program or highlights the correct multiple-choice button. It becomes [b]NEXT[/b], which only dismisses the hint. You still press [b]RUN[/b] or tap the answer yourself. Each hint costs one blue star except during the first dungeon, and each wrong code run also costs one. Review the results and press [b]Done[/b] to return to the overworld.
+• Green safe-zone markers in Knowledge altar rooms grant 30 seconds of invulnerability, healing and hostile disintegration. Safe-zone kills give no loot or Bestiary credit.
 • The dungeon map is fog-of-war and has no legend. The overworld and cave maps do.
 • Dungeon progress, cleared entrances, seeds and looted container state are saved per world.
 
@@ -248,8 +256,8 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 		"title": "Maps, Missions & Saving",
 		"body": """[b][color=#8fd8ff]MISSIONS & STARS[/color][/b]
 • The right-side mission tracker shows up to three active gameplay missions at a time. Started missions are prioritised so progress is never hidden.
-• Dungeon rows have three stars each: three for a no-hint clear, two for one hint and one for two or more hints. Other missions award a star when completed.
-• Side missions unlock after the main tracks, Hitman and every extra dungeon are complete.
+• Dungeon rows start at three blue stars. Each hint (except in the first dungeon) or wrong code run costs one; the score stops at zero but never blocks completion. Other missions award a star when completed.
+• Side missions unlock after the main tracks, Hitman finale and any extra dungeons are complete.
 • Mission, star, side-mission and dungeon-clear progress is stored in the world save. Automatica status appears in the left HUD and is managed from Pause > Automatica Management.
 • Online accounts also record cloud star totals and leaderboard entries.
 

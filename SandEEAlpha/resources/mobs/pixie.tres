@@ -15,3 +15,4 @@ bestiary_id = "pixie"
 bestiary_category = "Overworld"
 bestiary_description = "A glowing cave sprite that circles intruders and stings with volatile magic."
 bestiary_icon_path = "res://sprites/mobs/bestiary/pixie_icon.png"
+drops = [{"chance": 1.0, "item_path": "res://resources/items/pixie_cave_stone.tres", "max": 1, "min": 1}]

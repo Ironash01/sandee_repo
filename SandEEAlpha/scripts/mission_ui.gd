@@ -16,7 +16,7 @@ const C_ACTIVE  := Color(0.95, 0.95, 0.80, 1.00)
 const C_SECTION := Color(0.65, 0.75, 0.95, 1.00)
 
 const RIGHT_MARGIN  := 12.0
-const TOP_OFFSET    := 44.0
+const TOP_OFFSET    := 30.0
 const PANEL_WIDTH   := 250.0
 const FADE_DURATION := 0.4
 
@@ -24,8 +24,6 @@ const FADE_DURATION := 0.4
 const GAMEPLAY_POOL_SIZE := 3
 
 var _panel:        PanelContainer
-var _stars_row:    HBoxContainer
-var _world_row:    HBoxContainer
 var _rows_vbox:    VBoxContainer
 var _row_data:     Array = []    # [{label, m, row_node}]
 var _fade_tween:   Tween = null
@@ -45,8 +43,6 @@ func _ready() -> void:
 	Global.mission_updated.connect(_on_mission_updated)
 	Global.mission_completed.connect(_on_mission_completed)
 	Global.dungeon_cleared.connect(_on_dungeon_cleared)
-	Global.stars_updated.connect(_refresh_star_header)
-	Global.online_state_changed.connect(_refresh_star_header)
 	Global.ui_scale_changed.connect(_on_ui_scale)
 	Global.quest_bg_changed.connect(_on_quest_bg_changed)
 	call_deferred("_refit")
@@ -87,17 +83,11 @@ func _build_panel() -> void:
 	vbox.add_theme_constant_override("separation", int(6 * s))
 	_panel.add_child(vbox)
 
-	_stars_row = HBoxContainer.new()
-	_stars_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_stars_row.add_theme_constant_override("separation", int(6 * s))
-	vbox.add_child(_stars_row)
-
-	_world_row = HBoxContainer.new()
-	_world_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_world_row.add_theme_constant_override("separation", int(4 * s))
-	vbox.add_child(_world_row)
-	_refresh_star_header()
-
+	var title := Label.new()
+	title.text = "MISSIONS"
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	title.add_theme_color_override("font_color", C_TITLE)
+	vbox.add_child(title)
 	vbox.add_child(HSeparator.new())
 
 	_rows_vbox = VBoxContainer.new()
@@ -146,7 +136,6 @@ func _rebuild_rows() -> void:
 			for m in sides:
 				_add_gameplay_row(m)
 
-	_refresh_star_header()
 	_refit()
 
 # ── Get up to GAMEPLAY_POOL_SIZE active gameplay missions ──────────
@@ -184,7 +173,8 @@ func _active_gameplay() -> Array:
 # Informational only — there is no accept/Go step anymore. Each language's
 # current dungeon entrance is already standing in the world (see world.gd's
 # _ensure_current_dungeon_entrances). Every dungeon has THREE blue-star slots:
-# three for a no-hint clear, two for one hint, one for two or more hints.
+# each hint (except the first dungeon) or wrong code run removes one; zero stars
+# still counts as a completed dungeon.
 func _add_dungeon_row(m: Dictionary) -> void:
 	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
@@ -247,13 +237,11 @@ func _add_gameplay_row(m: Dictionary) -> void:
 
 # ── Signal handlers ───────────────────────────────────────────────
 func _on_mission_updated() -> void:
-	_refresh_star_header()
 	if _completing:
 		return   # the send-off animation rebuilds the list when it finishes
 	_rebuild_rows()
 
 func _on_mission_completed(id: String) -> void:
-	_refresh_star_header()
 	for entry in _row_data:
 		if entry["m"]["id"] == id:
 			_completing = true
@@ -292,7 +280,6 @@ func _cancel_completion() -> void:
 	_completing = false
 
 func _on_dungeon_cleared(_index: int) -> void:
-	_refresh_star_header()
 	if _completing:
 		return   # let the send-off finish; its rebuild will pick up the change
 	_rebuild_rows()
@@ -310,62 +297,6 @@ func _refill_pool() -> void:
 		_active_pool.append(m["id"])
 		if _active_pool.size() >= GAMEPLAY_POOL_SIZE:
 			break
-
-# ── Star header ───────────────────────────────────────────────────
-# Blue = dungeon missions + clear stars, yellow = overworld quests. When online
-# the top row shows the ACCOUNT (cloud) totals and a smaller "this world" row
-# shows the local world's own progress; offline both are the local totals.
-func _refresh_star_header() -> void:
-	if _stars_row == null or not is_instance_valid(_stars_row):
-		return
-	if _world_row == null or not is_instance_valid(_world_row):
-		return
-	var s: float = Global.ui_scale
-	for c in _stars_row.get_children():
-		_stars_row.remove_child(c)
-		c.queue_free()
-	for c in _world_row.get_children():
-		_world_row.remove_child(c)
-		c.queue_free()
-
-	var cloud: bool = Global.online_mode and not Supabase.profile.is_empty()
-	var eligible: bool = Global.world_progress_eligible(Global.active_save_slot)
-	_stars_row.add_child(_star_chip(StarIcon.BLUE, Global.account_blue_stars(), s, 14.0))
-	_stars_row.add_child(_star_chip(StarIcon.YELLOW, Global.account_yellow_stars(), s, 14.0))
-	var suffix := Label.new()
-	suffix.text = "account" if cloud else "local"
-	if not eligible:
-		# Worlds created before 0.9.3.0 still show their local stars but never
-		# contribute to the account/leaderboard totals.
-		suffix.text = "legacy · not ranked"
-	suffix.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
-	suffix.add_theme_color_override("font_color", C_MUTED)
-	_stars_row.add_child(suffix)
-
-	_world_row.visible = cloud and eligible
-	if cloud and eligible:
-		var world_lbl := Label.new()
-		world_lbl.text = "this world"
-		world_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
-		world_lbl.add_theme_color_override("font_color", C_MUTED)
-		_world_row.add_child(world_lbl)
-		_world_row.add_child(_star_chip(StarIcon.BLUE, Global.local_blue_stars(), s, 11.0))
-		_world_row.add_child(_star_chip(StarIcon.YELLOW, Global.local_yellow_stars(), s, 11.0))
-
-
-func _star_chip(color: Color, value: int, s: float, icon_px: float) -> HBoxContainer:
-	var chip := HBoxContainer.new()
-	chip.add_theme_constant_override("separation", int(3 * s))
-	var icon := StarIcon.new()
-	chip.add_child(icon)
-	icon.setup(color, icon_px * s)
-	var label := Label.new()
-	label.text = str(value)
-	label.add_theme_font_size_override("font_size", Global.ui_font_size(12))
-	label.add_theme_color_override("font_color", C_TITLE)
-	chip.add_child(label)
-	return chip
-
 
 # ── Helpers ───────────────────────────────────────────────────────
 func _make_sb(bg: Color, border: Color, bw: int, cr: int,

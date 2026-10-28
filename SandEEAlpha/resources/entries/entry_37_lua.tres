@@ -4,18 +4,23 @@
 
 [resource]
 script = ExtResource("1_script")
-entry_name = "Lua File I/O"
-description = "Lua uses the io library for file operations. io.open returns a file handle.
+entry_name = "Lua Station Crafting"
+description = "Automatica can operate a nearby Crafting Station through the same API documented in the Programming Encyclopedia.
 
-Writing to a file:
+Choose a recipe by its output name:
 
-local f = io.open(\"test.txt\", \"w\")\nf:write(\"Hello\")\nf:close()
+set_recipe(\"Planks\")
 
-Reading from a file:
+Load the station input from the robot's build palette or the player inventory:
 
-local f = io.open(\"test.txt\", \"r\")\nlocal content = f:read(\"*a\")\nprint(content)\nf:close()
+put_input(\"Wood\", 2)
 
-File modes: \"r\" read, \"w\" write, \"a\" append. Always close files when done. You can also use f:read(\"*l\") to read one line."
-keyword = "io.open"
+Craft the selected amount, then collect the result:
+
+craft(2)
+take_output()
+
+Every call goes through the station's real validation. If the ingredients are missing, the station prints a short reason instead of creating items. Use list_items() when you need exact item names. The helper functions exist in the Automatica environment, so print(type(set_recipe)) displays function."
+keyword = "set_recipe"
 language = "lua"
 category = "Medium"

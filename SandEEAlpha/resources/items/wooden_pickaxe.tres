@@ -10,6 +10,8 @@ region = Rect2(64, 96, 32, 32)
 [resource]
 script = ExtResource("2_gufxu")
 item_name = "Wooden Pickaxe"
+stackable = false
+max_stack_size = 1
 description = "Mines stone and iron. It's uh pretty slow? "
 item_type = "weapon"
 icon = SubResource("AtlasTexture_trikl")

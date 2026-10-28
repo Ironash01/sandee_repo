@@ -6,6 +6,8 @@
 [resource]
 script = ExtResource("1_item")
 item_name = "Water Bucket"
+stackable = false
+max_stack_size = 1
 description = "A bucket of water. Pour it on the ground to make a water source."
 item_type = "material"
 icon = ExtResource("2_tex")

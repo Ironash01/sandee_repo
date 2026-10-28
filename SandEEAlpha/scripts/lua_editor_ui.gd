@@ -20,6 +20,7 @@ var _run_btn:   Button
 var _stop_btn:  Button
 var _name_edit: LineEdit   # rename field (reflects in the robot label + status HUD)
 var _tool_slot: Control = null      # the LUA's tool slot (lua_tool_slot.gd)
+var _tabs: TabContainer = null      # Code / Inventory / Output pages
 var _combat_btn: Button = null      # combat-mode toggle
 # NOTE: there is deliberately no per-station TERMINATE button. Terminating a
 # LUA is a menu action (pause menu -> LUA Management) so the player has to pick
@@ -39,6 +40,8 @@ var _knowledge_keyword_labels: Dictionary = {}
 var _knowledge_new_badges:     Dictionary = {}
 var _lua_state: Node
 var _running:   bool = false
+# Tutorial verification: true only after the current run finishes cleanly.
+var _last_run_ok: bool = false
 # True between RUN and the settle check: the chunk has finished but its queued
 # signals may not have started a job yet, so _process must not re-pause early.
 var _awaiting_settle: bool = false
@@ -49,15 +52,17 @@ var _build_slots: Array = []   # the 3 lua_build_slot.gd Controls
 # ("run_program") so it works as a tutorial: inserting it arms the mission, and
 # a successful run completes it via the normal mission system.
 const SNIPPETS: Array = [
-	{"name": "1. Hello (tutorial)", "mission": "run_program",
-		"code": "-- Tutorial: make the robot say something.\nprint(\"Hello, SandEE!\")"},
-	{"name": "2. Auto work", "mission": "",
+	{"name": "1. Build a line (tutorial)", "mission": "",
+		"code": "-- Automatica can build for you. This uses the 32 Wood in BUILD SLOT 1.\nselect_block(0)\nbuild_line(-15, -8, 16, -8)"},
+	{"name": "2. Combat mode (tutorial)", "mission": "",
+		"code": "-- Send this Automatica into permanent combat mode.\ncombat_mode(true)"},
+	{"name": "3. Auto work", "mission": "",
 		"code": "-- Chop nearby trees, deliver the wood to a chest, then return home.\nauto_work()"},
-	{"name": "3. Craft planks", "mission": "",
+	{"name": "4. Craft planks", "mission": "",
 		"code": "-- Load 5 of the selected build-slot item into the station, then craft\n-- planks and collect them. Give the robot wood first (drag it into BUILD\n-- SLOTS, or withdraw/chop it).\nselect_block(0)\ninput_slot(5)\nset_recipe(\"Planks\")\ncraft(5)\ntake_output()"},
-	{"name": "4. Build a wall", "mission": "",
+	{"name": "5. Build a wall", "mission": "",
 		"code": "-- Place a wall of blocks from build slot 0.\nselect_block(0)\nbuild_line(0, 1, 5, 1)"},
-	{"name": "5. Chest contents", "mission": "",
+	{"name": "6. Chest contents", "mission": "",
 		"code": "-- Print what is inside the nearest chest.\nchest_contents()"},
 ]
 
@@ -319,6 +324,7 @@ func _fit_keyboard() -> void:
 # Called by the LuaNPC when the player clicks the station.
 func open_panel() -> void:
 	visible = true
+	_last_run_ok = false
 	_awaiting_settle = false
 	_sync_run_state()
 	_refresh_build_palette()
@@ -482,6 +488,7 @@ func _build() -> void:
 # the slots are views of the NPC's authoritative palette/tool.
 func _build_body(s: float) -> Control:
 	var tabs := TabContainer.new()
+	_tabs = tabs
 	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tabs.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	tabs.add_theme_font_size_override("font_size", Global.ui_font_size(13))
@@ -1164,6 +1171,7 @@ func _run_code() -> void:
 	var code: String = _code_edit.text.strip_edges()
 	if code.is_empty():
 		return
+	_last_run_ok = false
 	_lint(code)
 	# Persist the program on the NPC so it survives a reload.
 	if npc_c != null:
@@ -1295,6 +1303,7 @@ func _on_lua_move(vec: Vector2) -> void:
 
 func _on_code_executed() -> void:
 	CrashLogger.code("lua", "OK", "chunk finished")
+	_last_run_ok = true
 	# The Lua chunk itself is done. Anything it dispatched (walking, chopping,
 	# crafting) is still queued as signals, so this is the point where the
 	# output box reports the script finished — _settle_after_chunk() then
@@ -1312,6 +1321,7 @@ func _on_code_executed() -> void:
 
 func _on_code_failed(error: String) -> void:
 	CrashLogger.code("lua", "FAIL", error)
+	_last_run_ok = false
 	_print_output("[color=#ff8888]✗ %s[/color]" % error)
 	# Nothing was dispatched, so hand the pause straight back and re-enable
 	# editing; STOP must not stay clickable for code that never ran.
@@ -1347,3 +1357,46 @@ func _divider(parent: Node) -> void:
 	var d := ColorRect.new()
 	d.color = C_DIVIDER; d.custom_minimum_size = Vector2(0, 1)
 	parent.add_child(d)
+
+# ── Tutorial focus API ──────────────────────────────────────────────
+func tutorial_code_editor() -> Control:
+	return _code_edit
+
+func tutorial_tool_slot() -> Control:
+	return _tool_slot
+
+func tutorial_show_tab(tab_name: String) -> void:
+	if _tabs == null or not is_instance_valid(_tabs):
+		return
+	for i in range(_tabs.get_tab_count()):
+		if _tabs.get_tab_title(i) == tab_name:
+			_tabs.current_tab = i
+			return
+
+func tutorial_show_code_tab() -> void:
+	tutorial_show_tab("Code")
+
+func tutorial_show_inventory_tab() -> void:
+	tutorial_show_tab("Inventory")
+
+func tutorial_run_button() -> Control:
+	return _run_btn
+
+func tutorial_run_succeeded() -> bool:
+	return _last_run_ok
+
+func tutorial_code_text() -> String:
+	return _code_edit.text if _code_edit != null else ""
+
+func tutorial_output_text() -> String:
+	return _output.get_parsed_text() if _output != null else ""
+
+func tutorial_snippet_button(prefix: String) -> Control:
+	for node in find_children("*", "Button", true, false):
+		var b := node as Button
+		if b != null and b.text.begins_with(prefix):
+			return b
+	return null
+
+func tutorial_hello_button() -> Control:
+	return tutorial_snippet_button("1. Build a line")

@@ -3,7 +3,7 @@ extends Control
 var slots: Array = []
 var selected_index: int = 0
 var _hotbar_hbox: HBoxContainer = null
-var _stats_outer: HBoxContainer = null
+var _stats_outer: VBoxContainer = null
 var _stat_labels: Array = []
 var _stat_bar_bgs: Array = []
 var _inventory_open: bool = false
@@ -24,7 +24,9 @@ const C_STAMINA_FILL := Color(0.85, 0.78, 0.15, 1.00)
 const C_STAMINA_BG   := Color(0.26, 0.22, 0.04, 1.00)
 # 9 slots × 40 px + 8 gaps × 4 px = 392 — must match the hotbar HBoxContainer width
 const HOTBAR_PX := 392
-const BAR_H     := 8
+const HP_BAR_H  := 22.0
+const SP_BAR_H  := 18.0
+const STAT_GAP  := 4.0
 
 const SLOT_SIZE    := 40
 const SLOT_SCRIPT  := preload("res://scripts/hotbar_slot.gd")
@@ -36,6 +38,8 @@ var _health_fill:   ColorRect = null
 var _stamina_fill:  ColorRect = null
 var _health_bg:     Control   = null
 var _stamina_bg:    Control   = null
+var _health_label:  Label     = null
+var _stamina_label: Label     = null
 
 # ── Build mode indicator ──────────────────────────────────────────
 var _build_label: Label = null
@@ -282,12 +286,13 @@ func _apply_layout_scale() -> void:
 	_hotbar_hbox.offset_bottom = -_hotbar_bottom_margin()
 	if _stats_outer != null:
 		_stats_outer.custom_minimum_size = Vector2(total, 0)
-		_stats_outer.add_theme_constant_override("separation", int(8 * s))
+		_stats_outer.add_theme_constant_override("separation", int(STAT_GAP * s))
 	for lbl in _stat_labels:
 		if is_instance_valid(lbl):
-			var compact_fs: int = Global.ui_type_size(Global.UI_TYPE_CAPTION)
-			(lbl as Label).add_theme_font_size_override("font_size", compact_fs)
-			(lbl as Label).custom_minimum_size.x = maxf(20.0, float(compact_fs) * 2.0)
+			(lbl as Label).add_theme_font_size_override("font_size",
+				Global.ui_font_size(11))
+			(lbl as Label).add_theme_constant_override("outline_size",
+				maxi(2, int(2 * s)))
 	_apply_label_scale()
 
 func _on_inventory_toggled(is_open: bool) -> void:
@@ -472,18 +477,20 @@ func _apply_label_scale() -> void:
 	# used FIXED offsets (-64/-44) while the name scaled, so on Small/Medium
 	# the name dropped down into the bars and overlapped them.
 	var top_offset: float = _hotbar_top_offset()
-	if _build_label != null:
-		_build_label.add_theme_font_size_override("font_size", fs_build)
-		_build_label.offset_top    = int(-(top_offset + 70.0 * s))
-		_build_label.offset_bottom = int(-(top_offset + 50.0 * s))
-	if _popup_label != null:
-		_popup_label.add_theme_font_size_override("font_size", fs_popup)
-		_popup_label.offset_top    = int(-(top_offset + 92.0 * s))
-		_popup_label.offset_bottom = int(-(top_offset + 72.0 * s))
+	var stat_bottom: float = top_offset + 6.0 * s
+	var stat_top: float = stat_bottom + _stat_stack_height()
 	if _selected_name_label != null:
 		_selected_name_label.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-		_selected_name_label.offset_top    = int(-(top_offset + 48.0 * s))
-		_selected_name_label.offset_bottom = int(-(top_offset + 28.0 * s))
+		_selected_name_label.offset_top    = int(-(stat_top + 22.0 * s))
+		_selected_name_label.offset_bottom = int(-(stat_top + 2.0 * s))
+	if _build_label != null:
+		_build_label.add_theme_font_size_override("font_size", fs_build)
+		_build_label.offset_top    = int(-(stat_top + 46.0 * s))
+		_build_label.offset_bottom = int(-(stat_top + 26.0 * s))
+	if _popup_label != null:
+		_popup_label.add_theme_font_size_override("font_size", fs_popup)
+		_popup_label.offset_top    = int(-(stat_top + 70.0 * s))
+		_popup_label.offset_bottom = int(-(stat_top + 50.0 * s))
 	if _hover_label != null:
 		_hover_label.add_theme_font_size_override("font_size", fs_hover)
 		_hover_label.offset_left   = int(14 * s)
@@ -501,8 +508,8 @@ func _apply_label_scale() -> void:
 		_stuck_label.offset_top    = int(24 * s)
 		_stuck_label.offset_bottom = int(56 * s)
 	if _stat_container != null:
-		_stat_container.offset_top    = int(-(top_offset + 26.0 * s))
-		_stat_container.offset_bottom = int(-(top_offset + 2.0 * s))
+		_stat_container.offset_top    = int(-stat_top)
+		_stat_container.offset_bottom = int(-stat_bottom)
 
 func _on_hover_label_changed(text: String) -> void:
 	if _hover_label == null:
@@ -539,70 +546,91 @@ func _show_item_tip(text: String) -> void:
 func _build_stat_bars(canvas: CanvasLayer) -> void:
 	_stat_container = CenterContainer.new()
 	_stat_container.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_stat_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	canvas.add_child(_stat_container)
 
-	# Width is matched to the live hotbar in _apply_layout_scale().
-	var outer := HBoxContainer.new()
-	outer.add_theme_constant_override("separation", 8)
+	# Full-width stacked bars above the hotbar, matching the approved HUD.
+	var outer := VBoxContainer.new()
+	outer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	outer.add_theme_constant_override("separation", int(STAT_GAP * Global.ui_scale))
 	_stat_container.add_child(outer)
 	_stats_outer = outer
 
-	var hp_data := _make_stat_row("HP", C_HEALTH_BG, C_HEALTH_FILL)
+	var hp_data := _make_stat_bar("HP", C_HEALTH_BG, C_HEALTH_FILL, HP_BAR_H)
 	_health_bg   = hp_data[0] as Control
 	_health_fill = hp_data[1] as ColorRect
-	outer.add_child(hp_data[2] as Node)
+	_health_label = hp_data[2] as Label
+	_stat_labels.append(_health_label)
+	outer.add_child(_health_bg)
 
-	var sp_data := _make_stat_row("SP", C_STAMINA_BG, C_STAMINA_FILL)
+	var sp_data := _make_stat_bar("STAMINA", C_STAMINA_BG, C_STAMINA_FILL, SP_BAR_H)
 	_stamina_bg   = sp_data[0] as Control
 	_stamina_fill = sp_data[1] as ColorRect
-	outer.add_child(sp_data[2] as Node)
+	_stamina_label = sp_data[2] as Label
+	_stat_labels.append(_stamina_label)
+	outer.add_child(_stamina_bg)
+	_on_health_changed(Global.health, Global.max_health)
+	_on_stamina_changed(Global.stamina, Global.max_stamina)
 
-func _make_stat_row(lbl_text: String, bg_col: Color, fill_col: Color) -> Array:
-	var row := HBoxContainer.new()
-	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_theme_constant_override("separation", 4)
-
-	var lbl := Label.new()
-	lbl.text = lbl_text
-	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
-	lbl.add_theme_color_override("font_color", Color(0.80, 0.90, 1.00, 1.00))
-	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
-	lbl.add_theme_constant_override("shadow_offset_x", 1)
-	lbl.add_theme_constant_override("shadow_offset_y", 1)
-	lbl.custom_minimum_size = Vector2(20, 0)
-	lbl.vertical_alignment  = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(lbl)
-	_stat_labels.append(lbl)
-
-	# Expands to fill its share of HOTBAR_PX — no fixed width needed
-	var bar_bg := Control.new()
-	bar_bg.custom_minimum_size   = Vector2(0, BAR_H)
-	bar_bg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bar_bg.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
-	row.add_child(bar_bg)
+func _make_stat_bar(_lbl_text: String, bg_col: Color, fill_col: Color, height: float) -> Array:
+	var s: float = Global.ui_scale
+	var bar := Control.new()
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.custom_minimum_size = Vector2(0, height * s)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 	var bg_rect := ColorRect.new()
 	bg_rect.color = bg_col
+	bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bar_bg.add_child(bg_rect)
+	bar.add_child(bg_rect)
 
 	var fill := ColorRect.new()
-	fill.color         = fill_col
-	fill.anchor_left   = 0.0;  fill.anchor_top    = 0.0
-	fill.anchor_right  = 1.0;  fill.anchor_bottom = 1.0
-	fill.offset_left   = 0;    fill.offset_top    = 0
-	fill.offset_right  = 0;    fill.offset_bottom = 0
-	bar_bg.add_child(fill)
+	fill.color = fill_col
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fill.anchor_left = 0.0
+	fill.anchor_top = 0.0
+	fill.anchor_right = 1.0
+	fill.anchor_bottom = 1.0
+	fill.offset_left = 0
+	fill.offset_top = 0
+	fill.offset_right = 0
+	fill.offset_bottom = 0
+	bar.add_child(fill)
 
-	return [bar_bg, fill, row]
+	var label := Label.new()
+	label.text = ""
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", Global.ui_font_size(11))
+	label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	label.add_theme_color_override("font_outline_color", Color(0.06, 0.02, 0.03, 0.92))
+	label.add_theme_constant_override("outline_size", maxi(2, int(2 * s)))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	label.offset_left = 0
+	label.offset_top = 0
+	label.offset_right = 0
+	label.offset_bottom = 0
+	bar.add_child(label)
+
+	return [bar, fill, label]
+
+func _stat_stack_height() -> float:
+	return (HP_BAR_H + SP_BAR_H + STAT_GAP) * Global.ui_scale
 
 func _on_health_changed(value: float, max_v: float) -> void:
 	if _health_fill != null:
 		_health_fill.anchor_right = clampf(value / max_v, 0.0, 1.0) if max_v > 0.0 else 0.0
+	if _health_label != null:
+		_health_label.text = "HP  %d / %d" % [int(round(value)), int(round(max_v))]
 
 func _on_stamina_changed(value: float, max_v: float) -> void:
 	if _stamina_fill != null:
 		_stamina_fill.anchor_right = clampf(value / max_v, 0.0, 1.0) if max_v > 0.0 else 0.0
+	if _stamina_label != null:
+		_stamina_label.text = "STAMINA  %d / %d" % [int(round(value)), int(round(max_v))]
 
 func _refresh_hotbar() -> void:
 	for i in range(min(slots.size(), Global.HOTBAR_SIZE)):

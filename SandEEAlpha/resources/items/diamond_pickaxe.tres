@@ -10,6 +10,8 @@ region = Rect2(256, 96, 32, 32)
 [resource]
 script = ExtResource("1_tvlq5")
 item_name = "Diamond Pickaxe"
+stackable = false
+max_stack_size = 1
 description = "The fastest pick."
 icon = SubResource("AtlasTexture_f3gyt")
 is_craftable = true

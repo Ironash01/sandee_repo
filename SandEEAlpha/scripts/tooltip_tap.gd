@@ -16,6 +16,11 @@ var _style: StyleBoxFlat = null
 var _timer: float = 0.0
 
 func _ready() -> void:
+	# Android intentionally has no tap-tooltip popup; guard here as well as in
+	# Game so a stale scene or test cannot reintroduce it.
+	if Global.is_mobile():
+		queue_free()
+		return
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var layer := CanvasLayer.new()
 	layer.layer = 60
@@ -39,6 +44,8 @@ func _ready() -> void:
 	_apply_scale()
 
 func _input(event: InputEvent) -> void:
+	if _popup == null:
+		return
 	var pos := Vector2.INF
 	if event is InputEventScreenTouch and event.pressed:
 		pos = event.position
@@ -87,7 +94,7 @@ func _show_at(pos: Vector2) -> void:
 	_timer = SHOW_SEC
 
 func _process(delta: float) -> void:
-	if not _popup.visible:
+	if _popup == null or not _popup.visible:
 		return
 	_timer -= delta
 	if _timer <= 0.0:

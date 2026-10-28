@@ -5,36 +5,36 @@
 
 [sub_resource type="Resource" id="DungeonQuestion_1"]
 script = ExtResource("2_question")
-type = 0
-question = "Which function loads and runs a Lua module in modern Lua?"
-answer_a = "import"
-answer_b = "include"
-answer_c = "require"
-answer_d = "load"
-correct_index = 2
+type = 1
+question = "Write a Lua program that prints the type of the Automatica API function list_items."
+language = "lua"
+starter_code = ""
+answer_output = "function"
 
 [sub_resource type="Resource" id="DungeonQuestion_2"]
 script = ExtResource("2_question")
-type = 1
-question = "Write a Lua program that uses require to load the built-in math module and prints math.pi rounded to 2 decimal places using string.format."
-language = "lua"
-starter_code = ""
-answer_output = "3.14"
+type = 0
+question = "Which Automatica call returns every item name in the game?"
+answer_a = "list_items()"
+answer_b = "list_blocks()"
+answer_c = "get_items()"
+answer_d = "item_names()"
+correct_index = 0
 
 [sub_resource type="Resource" id="DungeonQuestion_3"]
 script = ExtResource("2_question")
 type = 0
-question = "What does the 'module' function do in Lua?"
-answer_a = "Imports a file"
-answer_b = "Defines a module table for packaging code"
-answer_c = "Deletes a module"
-answer_d = "Compiles a module"
-correct_index = 1
+question = "Which call takes 10 Wood from the nearest chest into the robot's build palette?"
+answer_a = "put_input(\"Wood\", 10)"
+answer_b = "take_output(\"Wood\", 10)"
+answer_c = "withdraw(\"Wood\", 10)"
+answer_d = "set_recipe(\"Wood\")"
+correct_index = 2
 
 [resource]
 script = ExtResource("1_script")
-mission_name = "Lua Modules"
-mission_description = "Learn how to organize and share code in Lua using require and the module system."
+mission_name = "Lua Item Discovery"
+mission_description = "Use the real list_items() catalogue and withdraw() to give Automatica exact item names."
 entry_resource_file = "entry_39_lua.tres"
 questions = Array[ExtResource("2_question")]([SubResource("DungeonQuestion_1"), SubResource("DungeonQuestion_2"), SubResource("DungeonQuestion_3")])
 dungeon_category = "main"

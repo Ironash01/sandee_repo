@@ -1,6 +1,6 @@
 extends Node
 
-# ── Shadow sprites ────────────────────────────────────────────────
+# â”€â”€ Shadow sprites â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Flat blob-shadow builder shared by every entity that draws one
 # (player, mobs, trees, placed blocks) instead of duplicating the same
 # Sprite2D setup per script.
@@ -94,8 +94,8 @@ func break_hud_visible() -> bool:
 func break_ring_size() -> float:
 	return (BREAK_RING_RADIUS * 2.0 + 8.0) * maxf(ui_scale, 0.5)
 
-const WOBBLE_AMPLITUDE_RAD: float = 0.045   # ~2.6° snap each side
-const WOBBLE_SNAPS_PER_SEC:  float = 3.0     # full left→right→left cycles per second
+const WOBBLE_AMPLITUDE_RAD: float = 0.045   # ~2.6Â° snap each side
+const WOBBLE_SNAPS_PER_SEC:  float = 3.0     # full leftâ†’rightâ†’left cycles per second
 const WOBBLE_FLIP_FRACTION:  float = 0.25    # fraction of each half spent flipping; the rest dwells
 
 func block_wobble_rotation() -> float:
@@ -106,12 +106,12 @@ func block_wobble_rotation() -> float:
 	var p: float      = clampf(half / (0.5 * WOBBLE_FLIP_FRACTION), 0.0, 1.0)
 	return lerpf(source, target, ease(p, 2.0)) * WOBBLE_AMPLITUDE_RAD
 
-# ── Keyword emphasis (shared by the knowledge altar + encyclopedia) ────
+# â”€â”€ Keyword emphasis (shared by the knowledge altar + encyclopedia) â”€â”€â”€â”€
 # A short "pop + colour flash" on a keyword Label when a knowledge entry is
 # first learned: the text scales up with a back-ease overshoot while flashing
 # bright gold, then settles back to its normal size/colour. The colour is
 # tweened through the theme override (NOT modulate) so the base colour is used
-# exactly — modulate would multiply, tinting blue text green during the flash.
+# exactly â€” modulate would multiply, tinting blue text green during the flash.
 # Caller must give the label a pivot_offset = its size * 0.5 first (so it
 # pops from the centre rather than the top-left corner).
 const KEYWORD_FLASH: Color = Color(1.00, 0.92, 0.45, 1.0)
@@ -123,11 +123,11 @@ func emphasize_keyword(label: Label, base_color: Color, base_scale: Vector2 = Ve
 	label.pivot_offset = label.size * 0.5
 	label.scale = base_scale
 	var tw := label.create_tween()
-	# Step 1 — pop out with an overshoot while flashing bright gold.
+	# Step 1 â€” pop out with an overshoot while flashing bright gold.
 	tw.tween_property(label, "scale", base_scale * 1.6, 0.18) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.parallel().tween_method(_set_label_color.bind(label), base_color, KEYWORD_FLASH, 0.18)
-	# Step 2 — settle back to normal with a springy ease, fading the flash.
+	# Step 2 â€” settle back to normal with a springy ease, fading the flash.
 	tw.tween_property(label, "scale", base_scale, 0.30) \
 		.set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
 	tw.parallel().tween_method(_set_label_color.bind(label), KEYWORD_FLASH, base_color, 0.30)
@@ -141,10 +141,10 @@ func _set_label_color(c: Color, label: Label) -> void:
 		label.add_theme_color_override("font_color", c)
 
 
-# ── Pixelated light texture ────────────────────────────────────────────
+# â”€â”€ Pixelated light texture â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Minecraft-style 2D light falloff: a circular pool whose brightness drops in
 # stepped bands (like Minecraft light levels) with a faint dither between
-# bands — so it reads as a cascade of pixels ringing out from the center
+# bands â€” so it reads as a cascade of pixels ringing out from the center
 # rather than a smooth radial gradient. Every PointLight2D in the game
 # (cave/pixie ore glows, pixie/mob glow, torches, altars) uses this so all
 # lighting shares the same look. Cached per size; each caller passes the size
@@ -176,10 +176,10 @@ static func get_pixelated_light_texture(size: int = 256) -> ImageTexture:
 	_pixel_light_cache[size] = tex
 	return tex
 
-# ── Smooth light texture ─────────────────────────────────────────────
+# â”€â”€ Smooth light texture â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Clean circular radial falloff (hot core -> transparent edge) with NO stepped
 # bands or dither. Used where the pixelated cascade reads as a jarring "square
-# highlight" — currently the placed torch's glow. The gradient falls off very
+# highlight" â€” currently the placed torch's glow. The gradient falls off very
 # fast near the center (full alpha ends ~15% of the pool) so the bright
 # "initial" light stays a tight core (~0.7 tiles) while a long faint tail
 # carries the outer reach to the full pool edge. Cached per size.
@@ -205,18 +205,18 @@ static func get_smooth_light_texture(size: int = 256) -> GradientTexture2D:
 	_smooth_light_cache[size] = tex
 	return tex
 
-# ── Hitbox debug overlay helpers ────────────────────────────────────────
+# â”€â”€ Hitbox debug overlay helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Moved out of world.gd so cave_world.gd (and any future world-like scene)
-# can draw the same hitbox visuals without duplicating this logic — the
+# can draw the same hitbox visuals without duplicating this logic â€” the
 # only thing that ever differed between them was WHICH nodes to walk, not
 # HOW to draw a shape once found. `overlay` is the CanvasItem whose own
-# _draw()/draw signal callback is currently active — same "must be called
+# _draw()/draw signal callback is currently active â€” same "must be called
 # from inside the caller's own drawing pass" rule as draw_break_bar above,
 # it just also works transitively through these calls since Godot's rule
 # is about which CanvasItem issues the draw_* call, not which script does.
 #
 # Recursively finds every CollisionShape2D whose immediate parent is a
-# StaticBody2D or CharacterBody2D (the solid hitbox) — skips shapes parented
+# StaticBody2D or CharacterBody2D (the solid hitbox) â€” skips shapes parented
 # by Area2D (interact/click trigger ranges, not physical collision), and
 # doesn't care how deeply the body is nested (e.g. ObjectItem's collider
 # sits under Sprite2D/StaticBody2D, LuaNPC has two separate bodies).
@@ -228,7 +228,7 @@ func draw_body_hitboxes(overlay: CanvasItem, root: Node, color: Color) -> void:
 		draw_body_hitboxes(overlay, child, color)
 
 # Assumes axis-aligned shapes (none of the game's mob/block colliders are
-# rotated today) — draws an outline in the overlay's local space.
+# rotated today) â€” draws an outline in the overlay's local space.
 func draw_shape_outline(overlay: CanvasItem, col: CollisionShape2D, color: Color) -> void:
 	var shape: Shape2D = col.shape
 	var center: Vector2 = overlay.to_local(col.global_position)
@@ -249,19 +249,23 @@ func draw_shape_outline(overlay: CanvasItem, col: CollisionShape2D, color: Color
 		overlay.draw_line(top + Vector2(-r, 0.0), bottom + Vector2(-r, 0.0), color, 2.0)
 		overlay.draw_line(top + Vector2( r, 0.0), bottom + Vector2( r, 0.0), color, 2.0)
 
-# ── Inventory constants ───────────────────────────────────────────
+# â”€â”€ Inventory constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const MAX_STACK:      int = 32
 const HOTBAR_SIZE:    int = 9
 const INVENTORY_SIZE: int = 20
 
-# Shared item-icon slot size (unscaled) — used by every UI that shows an
+# Shared item-icon slot size (unscaled) â€” used by every UI that shows an
 # ItemData icon (inventory grid, hand-craft tab, crafting station, trash
 # slot) so icons read as the same size across all of them.
 const ITEM_SLOT_SIZE: float = 64.0
 
-# ── Storage — each slot is {"quantity": int, "data": ItemData} ────
+# â”€â”€ Storage â€” each slot is {"quantity": int, "data": ItemData} â”€â”€â”€â”€
 var Hotbar:    Array = []
 var Inventory: Array = []
+# Items recovered from an old saved inventory that could not fit after tool
+# stacks were split on load. Flushed near the player once the world is ready;
+# kept in memory until then so a failed flush can never delete them.
+var pending_overflow_items: Array = []
 
 var hotbar_selected: int = 0
 
@@ -269,16 +273,25 @@ signal Hotbar_updated
 signal Inventory_updated
 signal hotbar_selection_changed(index: int)
 
-# ── Player stats ──────────────────────────────────────────────────
-var health:     float = 100.0
-var max_health: float = 100.0
-var stamina:    float = 50.0
-var max_stamina: float = 50.0
+# â”€â”€ Player stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const BASE_MAX_HEALTH: float = 100.0
+const MAX_HEALTH_CAP:   float = 500.0
+const BASE_MAX_STAMINA: float = 50.0
+const MAX_STAMINA_CAP:  float = 1000.0
+const STAT_CRYSTAL_BONUS: float = 10.0
+const MOB_CRYSTAL_DROP_CHANCE: float = 0.10
+const LIFE_CRYSTAL_PATH: String = "res://resources/items/life_crystal.tres"
+const STAMINA_CRYSTAL_PATH: String = "res://resources/items/stamina_crystal.tres"
+
+var health:     float = BASE_MAX_HEALTH
+var max_health: float = BASE_MAX_HEALTH
+var stamina:    float = BASE_MAX_STAMINA
+var max_stamina: float = BASE_MAX_STAMINA
 
 # Knockback strength per point of damage taken (px/s per damage point).
 const KNOCKBACK_PER_DAMAGE: float = 22.0
 
-# Central damage entry point for every mob/projectile — reduces health, emits
+# Central damage entry point for every mob/projectile â€” reduces health, emits
 # the HUD signal, grants 0.3s invincibility frames, and knocks the player back
 # OPPOSITE the direction they're facing (falling back to away-from-attacker).
 # All mobs should go through this (NOT write Global.health directly) so
@@ -297,7 +310,7 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 		return
 	var p: Node2D = player_node as Node2D
 	# Invincibility frames block HP loss (and don't re-grant), but the enemy's
-	# hit still LANDS — knockback keeps applying so enemies keep hitting even
+	# hit still LANDS â€” knockback keeps applying so enemies keep hitting even
 	# while the player is invincible.
 	var invincible: bool = p != null and p.has_method("is_invincible") and p.call("is_invincible")
 	if not invincible:
@@ -312,14 +325,14 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 			p.call("become_invincible")
 	if p == null:
 		return
-	# The attacker's hit reads as a magic swing (see magic_swing.gd) — spawned
+	# The attacker's hit reads as a magic swing (see magic_swing.gd) â€” spawned
 	# at the attacker and aimed at the player. Covers mob contact hits and
 	# projectiles, since both route through here.
 	if world_node != null and is_instance_valid(world_node):
 		MagicSwing.spawn(world_node, from_position, p.global_position - from_position, 0.9, 3)
 	var strength: float = amount * KNOCKBACK_PER_DAMAGE * maxf(0.0, knockback_scale)
 	if p.has_method("apply_knockback"):
-		# Knock the player in the ATTACKER's facing direction (attack_dir) —
+		# Knock the player in the ATTACKER's facing direction (attack_dir) â€”
 		# an enemy striking from the left knocks the player right, like other
 		# 2D games. Falls back to straight away from the attacker when the
 		# attacker didn't supply a facing.
@@ -343,6 +356,63 @@ func heal_player(amount: float) -> float:
 	health_changed.emit(health, max_health)
 	return restored
 
+## Permanent crystal growth. The applied amount is clamped to the cap and the
+## current value rises with it, so using a crystal never leaves the extra max
+## as empty health/stamina.
+func increase_max_health(amount: float) -> float:
+	if amount <= 0.0 or max_health >= MAX_HEALTH_CAP:
+		return 0.0
+	var applied: float = minf(amount, MAX_HEALTH_CAP - max_health)
+	max_health += applied
+	health = minf(max_health, health + applied)
+	health_changed.emit(health, max_health)
+	return applied
+
+func increase_max_stamina(amount: float) -> float:
+	if amount <= 0.0 or max_stamina >= MAX_STAMINA_CAP:
+		return 0.0
+	var applied: float = minf(amount, MAX_STAMINA_CAP - max_stamina)
+	max_stamina += applied
+	stamina = minf(max_stamina, stamina + applied)
+	stamina_changed.emit(stamina, max_stamina)
+	return applied
+
+func reset_player_stats() -> void:
+	max_health = BASE_MAX_HEALTH
+	health = max_health
+	max_stamina = BASE_MAX_STAMINA
+	stamina = max_stamina
+	health_changed.emit(health, max_health)
+	stamina_changed.emit(stamina, max_stamina)
+
+## One 10% roll per normal mob defeat, then a 50/50 choice between the two
+## crystal items. Optional roll/choice values let regression tests force a
+## branch without relying on RNG.
+func spawn_mob_crystal_drop(parent: Node, at: Vector2,
+		roll: float = -1.0, choice: float = -1.0) -> Node:
+	if parent == null or not is_instance_valid(parent):
+		return null
+	var chance: float = randf() if roll < 0.0 else roll
+	if chance > MOB_CRYSTAL_DROP_CHANCE:
+		return null
+	var pick: float = randf() if choice < 0.0 else choice
+	var data: ItemData = load(LIFE_CRYSTAL_PATH if pick < 0.5 else STAMINA_CRYSTAL_PATH)
+	if data == null:
+		return null
+	var drop_scene: PackedScene = load("res://scenes/ui/InventoryItem.tscn") as PackedScene
+	if drop_scene == null:
+		return null
+	var drop: Node = drop_scene.instantiate()
+	if drop == null:
+		return null
+	drop.set("item_data", data)
+	drop.set("quantity", 1)
+	parent.add_child(drop)
+	if drop is Node2D:
+		(drop as Node2D).global_position = at + Vector2(
+			randf_range(-12.0, 12.0), randf_range(-9.0, 3.0))
+	return drop
+
 # Emitted when the player's health hits zero (the game scene uses this to dim
 # the screen). _handle_player_death immediately respawns the player.
 signal player_died(death_position: Vector2)
@@ -358,13 +428,13 @@ signal player_spawned(spawn_position: Vector2)
 # only handled once per fatal hit.
 var _death_in_progress: bool = false
 ## True from the moment the player dies until respawn completes. Mobs check
-## this (see the AI scripts) so they stop moving toward — and can't damage —
+## this (see the AI scripts) so they stop moving toward â€” and can't damage â€”
 ## the frozen player's death position during the death window.
 var player_is_dead: bool = false
 const DEATH_RESPAWN_TIME: float = 5.0
 
 # Player-set respawn point (a placed Bonfire). When has_spawn_point is true the
-# player respawns HERE instead of the world spawn. Session-scoped — re-derived
+# player respawns HERE instead of the world spawn. Session-scoped â€” re-derived
 # from the live Bonfire(s) on load (see scripts/bonfire.gd).
 var spawn_point: Vector2 = Vector2.ZERO
 var has_spawn_point: bool = false
@@ -393,7 +463,7 @@ func _handle_player_death() -> void:
 	CrashLogger.event("PLAYER", "died at=(%.1f, %.1f)" % [death_pos.x, death_pos.y])
 	player_died.emit(death_pos)
 	if p != null:
-		# Freeze + hide the player while dead — the sprite disappears until the
+		# Freeze + hide the player while dead â€” the sprite disappears until the
 		# respawn timer finishes.
 		p.process_mode = Node.PROCESS_MODE_DISABLED
 		var sprite: Node = p.get_node_or_null("PlayerSprite")
@@ -405,7 +475,7 @@ func _handle_player_death() -> void:
 		player_is_dead = false
 		return
 	# Prefer the Game scene: it exits any active cave/pixie cave/dungeon first
-	# so the player ALWAYS respawns at the OVERWORLD world spawn — not inside
+	# so the player ALWAYS respawns at the OVERWORLD world spawn â€” not inside
 	# the cave they died in.
 	var spawn: Vector2 = _get_respawn_position()
 	p.global_position = spawn
@@ -438,7 +508,7 @@ func _get_respawn_position() -> Vector2:
 	if game_node != null and game_node.has_method("get_world_spawn_position"):
 		world_spawn = game_node.call("get_world_spawn_position") as Vector2
 		have_world = true
-	# A placed Bonfire overrides the world spawn (its coords are overworld-only —
+	# A placed Bonfire overrides the world spawn (its coords are overworld-only â€”
 	# see bonfire.gd, which refuses to register inside caves/dungeons).
 	if has_spawn_point:
 		return spawn_point
@@ -455,7 +525,7 @@ func _get_respawn_position() -> Vector2:
 signal health_changed(value: float, max_value: float)
 signal stamina_changed(value: float, max_value: float)
 
-# ── Settings ──────────────────────────────────────────────────────
+# â”€â”€ Settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var master_volume:      float = 1.0
 var music_volume:       float = 1.0
 var sfx_volume:         float = 1.0
@@ -465,14 +535,14 @@ var pause_on_inventory: bool  = true
 var quest_opaque_bg:    bool  = true
 signal quest_bg_changed(opaque: bool)
 var pause_menu_open:    bool  = false
-# ── Unified UI stack ──────────────────────────────────────────────
+# â”€â”€ Unified UI stack â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # All game interfaces call open_ui() / close_ui() instead of
 # managing their own boolean flags and pause state.
 var _ui_open_count: int = 0
 var player_near_station: bool  = false
 var block_mode:          bool  = false   # Ctrl toggles (gameplay build mode) - shared across all scripts
 var is_in_dungeon:       bool  = false   # true while inside a dungeon - blocks build mode toggle
-# ── Responsive UI metrics ───────────────────────────────────────────
+# â”€â”€ Responsive UI metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # ui_scale is the ONE multiplier every interface uses. It is derived from the
 # live usable viewport (never a per-save preference) and refreshed on resize /
 # orientation / safe-area changes. Base sizes stay in each UI script; this
@@ -508,7 +578,7 @@ var _ui_safe_timer:      Timer = null
 ## height (already in viewport units). -1 uses DisplayServer.
 var keyboard_height_override: float = -1.0
 
-# ── Mobile / touch state ──────────────────────────────────────────
+# â”€â”€ Mobile / touch state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Written by scripts/mobile_ui.gd (Android only). player.gd blends mobile_move
 # with the keyboard vector and reads is_shift_held() instead of the raw key, so
 # the touch HUD drives the SAME controller, speeds and collision rules. On
@@ -708,7 +778,7 @@ func _setup_ui_scaling() -> void:
 var _ui_hit_event_id: int = 0
 var _ui_hit_result: bool = false
 
-# ── UI root cache for hit-testing ────────────────────────────────────
+# â”€â”€ UI root cache for hit-testing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # _control_at_point() used to recurse from the Viewport through EVERY node in
 # the tree. In the overworld that is ~40,000 nodes (grass/trees/blocks), so one
 # is_point_over_ui() call cost ~35 ms. The desktop cursor director calls it ten
@@ -718,6 +788,35 @@ var _ui_hit_result: bool = false
 # Control), so only those roots need to be walked. Roots are registered as they
 # enter the tree; world Node2D subtrees are never visited.
 var _ui_roots: Array[Node] = []
+# Android's action buttons are registered explicitly so a touch on BUILD,
+# SPRINT, INTERACT or the joystick is always treated as UI even if the generic
+# UI-root cache has not seen the MobileUI CanvasLayer yet.
+var _mobile_hud_controls: Array[Control] = []
+# A touch that starts on UI can produce an emulated mouse press on a later
+# frame with a different coordinate mapping. This short guard prevents that
+# press from leaking into world mining/attacking.
+var _mobile_ui_touch_guard_until_ms: int = 0
+const MOBILE_UI_TOUCH_GUARD_MS: int = 160
+
+func register_mobile_hud_control(control: Control) -> void:
+	if control != null and not _mobile_hud_controls.has(control):
+		_mobile_hud_controls.append(control)
+
+func clear_mobile_hud_controls() -> void:
+	_mobile_hud_controls.clear()
+
+func is_point_over_mobile_hud(point: Vector2) -> bool:
+	for i in range(_mobile_hud_controls.size() - 1, -1, -1):
+		var control: Control = _mobile_hud_controls[i]
+		if control == null or not is_instance_valid(control):
+			_mobile_hud_controls.remove_at(i)
+			continue
+		if control.is_visible_in_tree() and control.get_global_rect().has_point(point):
+			return true
+	return false
+
+func guard_mobile_ui_touch() -> void:
+	_mobile_ui_touch_guard_until_ms = Time.get_ticks_msec() + MOBILE_UI_TOUCH_GUARD_MS
 
 func _register_ui_root(node: Node) -> void:
 	if node == null:
@@ -771,6 +870,8 @@ func is_left_action_held() -> bool:
 func is_point_over_ui(point: Vector2) -> bool:
 	if get_viewport() == null:
 		return false
+	if is_point_over_mobile_hud(point):
+		return true
 	# Iterate backwards so invalid/freed roots are pruned in place. Order does
 	# not matter for a boolean hit test: any visible blocking Control is enough.
 	for i in range(_ui_roots.size() - 1, -1, -1):
@@ -785,6 +886,11 @@ func is_point_over_ui(point: Vector2) -> bool:
 func is_mouse_event_over_ui(event: InputEvent) -> bool:
 	if not (event is InputEventMouseButton):
 		return false
+	if event.has_meta("mobile_ui_touch"):
+		return true
+	if (event as InputEventMouseButton).pressed \
+			and Time.get_ticks_msec() <= _mobile_ui_touch_guard_until_ms:
+		return true
 	var eid := event.get_instance_id()
 	if eid == _ui_hit_event_id:
 		return _ui_hit_result
@@ -921,11 +1027,15 @@ var explored_cave_tiles: Dictionary = {}
 # Per-cave persistent state, keyed by the entrance's stable state_key:
 # { "cave:<seed>:<x>:<y>": {"tiles": [...], "blocks": [...], "explored": [...]} }
 var cave_states: Dictionary = {}
+# The first Pixie Cave entered in a world is a safe introduction: it generates
+# without pixies. Later Pixie Caves spawn them normally. Persisted per save so
+# quitting/reloading cannot turn the tutorial cave hostile.
+var first_pixie_cave_entered: bool = false
 
 # True while ANY text field (TextEdit / CodeEdit / LineEdit) has keyboard focus.
 # Every hotkey handler MUST consult this: input handlers use _input(), which
 # runs BEFORE a focused Control's _gui_input() and therefore still receives the
-# key — so typing "e" in the crafting station or a digit in the Lua editor
+# key â€” so typing "e" in the crafting station or a digit in the Lua editor
 # would otherwise close the panel / change the hotbar. Checked via the viewport
 # focus owner, so it needs no per-panel bookkeeping.
 func is_text_input_focused() -> bool:
@@ -1064,10 +1174,14 @@ signal inventory_toggled(is_open: bool)
 signal modal_hud_changed(open: bool)
 signal block_mode_changed(enabled: bool)
 signal item_picked_up(item_name: String, item_type: String)
+# Emitted after the inventory craft button successfully creates an item. The
+# onboarding director uses it to verify that the player actually crafted the
+# Crafting Station rather than finding one in a chest.
+signal item_crafted(item_name: String, quantity: int)
 signal hover_label_changed(text: String)
 signal lua_stuck_notice(message: String)
 
-# ── Online mode / cloud status ────────────────────────────────────
+# â”€â”€ Online mode / cloud status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Startup requires an online sign-in; the main menu can then switch to local
 # offline play via "Play Offline". The menu's bottom-left indicator reads these
 # values, so it can only claim "Cloud Save Active" after the client has
@@ -1086,7 +1200,7 @@ signal world_loaded(slot: int)
 ## an in-flight upload can never finish under a different signed-in account.
 signal account_context_changed(account_id: String)
 
-# ── Account-bound local storage ───────────────────────────────────
+# â”€â”€ Account-bound local storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Every world file lives under user://accounts/<auth.uid()>/ and has an
 # encrypted owner sidecar. The stable Supabase UUID (never a username/email) is
 # the account identity. A world can only be listed/loaded/saved when the active
@@ -1251,7 +1365,7 @@ func set_cloud_status(status: int, detail: String = "") -> void:
 	cloud_status_detail = detail
 	cloud_status_changed.emit(status)
 
-# ── Account lifecycle ─────────────────────────────────────────────
+# â”€â”€ Account lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func _write_account_binding(account_id: String) -> void:
 	if account_test_mode:
@@ -1386,24 +1500,29 @@ func _clear_active_world_state() -> void:
 	pending_world_data.clear()
 	pending_world_seed = 0
 	pending_time_of_day = -1.0
-	tutorial_version = 2
+	tutorial_version = 3
 	tutorial_stage = 0
 	tutorial_completed = false
 	tutorial_flags.clear()
 	cave_states.clear()
+	first_pixie_cave_entered = false
 	explored_cave_tiles.clear()
 	explored_dungeon_tiles.clear()
 	dungeon_chest_states.clear()
 	cleared_dungeons.clear()
 	dungeon_stars.clear()
 	dungeon_seeds.clear()
+	dungeon_quiz_hints.clear()
+	dungeon_quiz_penalties.clear()
 	learned_entries.clear()
 	learned_keywords.clear()
 	unseen_entries.clear()
+	pending_overflow_items.clear()
 	Hotbar.fill(null)
 	Inventory.fill(null)
 	reset_missions()
 	reset_bestiary_state()
+	reset_player_stats()
 	world_node = null
 	player_node = null
 
@@ -1584,22 +1703,22 @@ func cloud_status_color() -> Color:
 		_:
 			return Color(0.55, 0.65, 0.85, 1.0)
 
-# ── Day/night + weather ──────────────────────────────────────────
+# â”€â”€ Day/night + weather â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 signal day_started
 signal night_started
 signal snowstorm_changed(active: bool)
 var snowstorm_active: bool = false
-# Mirrored by day_night_cycle.gd on every crossing — lets code that needs to
+# Mirrored by day_night_cycle.gd on every crossing â€” lets code that needs to
 # know "is it day right now" (not just react to the transition) query this
 # directly instead of tracking the signals itself.
 var is_daytime: bool = true
 # Live mirror of day_night_cycle.gd's time_of_day (0..1), written every frame
-# and persisted in save files — so the time of day survives restarts instead
+# and persisted in save files â€” so the time of day survives restarts instead
 # of always resetting to noon. Lives on Global (not the node) so it stays
 # readable even while DayNightCycle is out of the tree during cave visits.
 var time_of_day: float = 0.25
 
-# ── Missions ──────────────────────────────────────────────────────
+# â”€â”€ Missions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var missions: Array = []
 signal mission_updated
 signal mission_completed(mission_id: String)
@@ -1609,14 +1728,14 @@ signal mission_star_earned(reward_id: String)
 ## Emitted after the cloud star totals were refreshed, so the local UI can redraw.
 signal stars_updated
 
-# ── Knowledge / dungeon-mission registries ────────────────────────────
+# â”€â”€ Knowledge / dungeon-mission registries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Data-driven dungeon content lives in two resource folders and is loaded
 # once at startup:
 #   res://resources/entries/        KnowledgeEntry (encyclopedia + keyword)
-#   res://resources/dungeon_missions/  DungeonMissionData (glues entry→questions;
+#   res://resources/dungeon_missions/  DungeonMissionData (glues entryâ†’questions;
 #                               the questions are embedded inline, so no quiz files)
 # A dungeon mission references its entry by FILE NAME (e.g. "entry_1_lua.tres")
-# so the mission author never needs to build node graphs in the editor — just
+# so the mission author never needs to build node graphs in the editor â€” just
 # drop a .tres in the right folder and reference it.
 const KNOWLEDGE_DIR: String       = "res://resources/entries/"
 const DUNGEON_MISSION_DIR: String = "res://resources/dungeon_missions/"
@@ -1630,14 +1749,14 @@ var dungeon_missions:  Dictionary = {}  # dungeon_index -> DungeonMissionData
 var learned_entries:  Dictionary = {}  # entry base name -> true
 var learned_keywords: Dictionary = {}  # keyword -> entry base name
 
-# Entries learned but NOT yet viewed in the Encyclopedia — drives the
+# Entries learned but NOT yet viewed in the Encyclopedia â€” drives the
 # "emphasis" animation (pop + flash) the first time each new entry appears
 # there. Keyed by entry base name; cleared per-entry when it's been shown.
 var unseen_entries:  Dictionary = {}  # entry base name -> true
 
 signal knowledge_updated
 
-# ── Bestiary ─────────────────────────────────────────────────────────
+# â”€â”€ Bestiary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Per-world observation state. The catalog itself is static data loaded from
 # MobCombatData resources (BestiaryCatalog); these dictionaries only remember
 # which entries THIS world has seen and studied. A sighting reveals the name;
@@ -1648,17 +1767,22 @@ var _bestiary_scan_accum: float = 0.0
 const BESTIARY_SCAN_INTERVAL: float = 0.30
 signal bestiary_updated
 
-# ── Dungeon runtime state ─────────────────────────────────────────────
-# Every dungeon is worth up to THREE blue stars: the mission star plus a
-# two-star clear. Perfect clears (no hints) earn all three; one hint earns two;
-# two or more hints earn one. `dungeon_stars` stores the final 1..3 award per
-# dungeon (legacy cleared dungeons default to 3, matching the new maximum).
+# â”€â”€ Dungeon runtime state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Every dungeon is worth up to THREE blue stars. Each hint use (except in the
+# first main dungeon) and each incorrect code submission costs one star; the
+# award is derived from the persisted penalty count and clamped to 0..3.
+# `dungeon_stars` stores the final 0..3 award per dungeon.
 # dungeon_seeds: rolled ONCE, the first time the player accepts that
-# dungeon's mission, then persisted — re-entering regenerates the exact
+# dungeon's mission, then persisted â€” re-entering regenerates the exact
 # same layout (DungeonGenerator is deterministic from its seed).
 var cleared_dungeons: Dictionary = {}  # dungeon_index -> true
-var dungeon_stars:    Dictionary = {}  # dungeon_index -> 1..3 blue stars
+var dungeon_stars:    Dictionary = {}  # dungeon_index -> 0..3 blue stars
 var dungeon_seeds:    Dictionary = {}  # dungeon_index -> int
+# Quiz attempt state is persisted so closing the game mid-quiz cannot farm or
+# erase star penalties. hint count = reveals; penalties = hints (later dungeons)
+# + wrong code submissions.
+var dungeon_quiz_hints: Dictionary = {}      # dungeon_index -> int
+var dungeon_quiz_penalties: Dictionary = {}  # dungeon_index -> int
 # Rare dungeon-chest state keyed by "<dungeon_index>:<x>,<y>". Values contain
 # serialized slot contents and/or removed=true so re-entering a dungeon cannot
 # regenerate already-taken rewards.
@@ -1668,6 +1792,12 @@ signal dungeon_cleared(dungeon_index: int)
 # DungeonWorld. The onboarding director uses this to begin the in-dungeon lesson
 # without polling scene internals.
 signal dungeon_entered(dungeon_index: int)
+# Emitted once the overworld has been restored after a dungeon visit.
+signal dungeon_exited(dungeon_index: int)
+# Cave/pixie transitions. The onboarding director uses these to verify actual
+# entry and return without changing the cave systems' generation or movement.
+signal cave_entered(kind: String)
+signal cave_exited(kind: String)
 
 func load_knowledge_data() -> void:
 	knowledge_entries.clear()
@@ -1684,7 +1814,7 @@ func _load_resource_dir(dir_path: String, into: Dictionary) -> void:
 	# ResourceLoader.list_directory (NOT DirAccess) so this also works in an
 	# EXPORTED build: text resources are converted to binary on export and the
 	# original .tres is replaced by a .tres.remap stub, which DirAccess lists
-	# instead of the .tres name — so the scan silently found nothing and the
+	# instead of the .tres name â€” so the scan silently found nothing and the
 	# encyclopedia/dungeon lists came up empty. list_directory reports the
 	# original editor-side names in both cases (subdirs get a trailing "/").
 	for fname in ResourceLoader.list_directory(dir_path):
@@ -1724,7 +1854,7 @@ func dungeon_difficulty(idx: int) -> String:
 func dungeon_display_name(idx: int) -> String:
 	var dm := get_dungeon_mission_for_index(idx)
 	var title := dm.mission_name if dm != null else "Dungeon %d" % idx
-	return "%s — %s" % [title, dungeon_difficulty(idx)]
+	return "%s â€” %s" % [title, dungeon_difficulty(idx)]
 
 func get_dungeon_mission_by_file(fname: String) -> DungeonMissionData:
 	for idx in dungeon_missions:
@@ -1743,7 +1873,7 @@ func get_or_create_dungeon_seed(dungeon_index: int) -> int:
 	dungeon_seeds[dungeon_index] = seed
 	return seed
 
-# ── Rare dungeon chest persistence ────────────────────────────────────
+# â”€â”€ Rare dungeon chest persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # The chest layout is deterministic from the dungeon seed; only mutable state
 # (remaining slot contents / removed flag) is stored here. This survives death,
 # exit/re-entry, and save/load without duplicating rewards.
@@ -1765,15 +1895,14 @@ func set_dungeon_chest_state(dungeon_index: int, cell: Vector2i,
 	else:
 		dungeon_chest_states[key] = state.duplicate(true)
 
-# Records a dungeon clear and its final 1..3 blue-star award. The mission star
+# Records a dungeon clear and its final 0..3 blue-star award. The mission star
 # is emitted separately by complete_mission(); this adds the clear star
-# (stars >= 2) and the perfect-clear bonus (stars >= 3). Two or more hints
-# therefore leave only the mission star. Idempotent so re-clears never
-# double-award, and it drives the mission UI popup via dungeon_cleared.
+# (stars >= 2) and the perfect-clear bonus (stars >= 3). Zero stars still clear
+# the dungeon normally. Idempotent so re-clears never double-award.
 func record_dungeon_clear(dungeon_index: int, stars: int = 3) -> void:
 	if cleared_dungeons.has(dungeon_index):
 		return
-	var earned: int = clampi(stars, 1, 3)
+	var earned: int = clampi(stars, 0, 3)
 	cleared_dungeons[dungeon_index] = true
 	dungeon_stars[dungeon_index] = earned
 	dungeon_cleared.emit(dungeon_index)
@@ -1781,10 +1910,53 @@ func record_dungeon_clear(dungeon_index: int, stars: int = 3) -> void:
 		mission_star_earned.emit("dungeon_clear:%d" % dungeon_index)
 	if earned >= 3:
 		mission_star_earned.emit("dungeon_clear_bonus:%d" % dungeon_index)
+	# Every first dungeon clear also grants one of each permanent-stat crystal.
+	# Use the normal inventory path; if there is no room, drop beside the player.
+	_grant_dungeon_crystal(LIFE_CRYSTAL_PATH)
+	_grant_dungeon_crystal(STAMINA_CRYSTAL_PATH)
 	# The general "Clear a dungeon" quest is separate from the dungeon mission
 	# star; complete_mission is idempotent, so re-clears cannot double-award it.
 	complete_mission("clear_dungeon")
-	mission_updated.emit()  # star totals change — refresh the mission UI
+	mission_updated.emit()  # star totals change â€” refresh the mission UI
+
+func _grant_dungeon_crystal(path: String) -> void:
+	var data: ItemData = load(path) as ItemData
+	if data == null:
+		return
+	if add_item({"data": data, "quantity": 1}):
+		notify("[color=#9be89b]Dungeon reward: %s.[/color]" % data.item_name)
+		return
+	var p: Node2D = player_node as Node2D
+	if p != null and is_instance_valid(p) and get_tree() != null \
+			and get_tree().current_scene != null:
+		drop_item({"data": data, "quantity": 1}, p.global_position)
+		notify("[color=#ffd77a]Dungeon reward dropped nearby: %s.[/color]" % data.item_name)
+
+## Hints are free only during the player's FIRST dungeon clear. Both language
+## tracks expose a tutorial dungeon, so until any dungeon is cleared either
+## first main dungeon counts as "the first dungeon".
+func is_first_dungeon_hint_free(dungeon_index: int) -> bool:
+	return cleared_dungeons.is_empty() and is_first_main_dungeon(dungeon_index)
+
+func dungeon_quiz_hints_for(dungeon_index: int) -> int:
+	return maxi(0, int(dungeon_quiz_hints.get(dungeon_index, 0)))
+
+func dungeon_quiz_penalties_for(dungeon_index: int) -> int:
+	return maxi(0, int(dungeon_quiz_penalties.get(dungeon_index, 0)))
+
+## Records one hint reveal. The first main dungeon is free, but the reveal is
+## still counted for the results screen. Returns the penalty actually charged.
+func record_quiz_hint(dungeon_index: int) -> int:
+	dungeon_quiz_hints[dungeon_index] = dungeon_quiz_hints_for(dungeon_index) + 1
+	if is_first_dungeon_hint_free(dungeon_index):
+		return 0
+	dungeon_quiz_penalties[dungeon_index] = dungeon_quiz_penalties_for(dungeon_index) + 1
+	return 1
+
+## Records one incorrect code submission. Returns the penalty charged.
+func record_quiz_mistake(dungeon_index: int) -> int:
+	dungeon_quiz_penalties[dungeon_index] = dungeon_quiz_penalties_for(dungeon_index) + 1
+	return 1
 
 func is_dungeon_cleared(dungeon_index: int) -> bool:
 	return cleared_dungeons.has(dungeon_index)
@@ -1807,7 +1979,7 @@ func dungeon_stars_for(dungeon_index: int) -> int:
 func clearable_dungeon_count() -> int:
 	return dungeon_missions.size()
 
-# Reconstruct keyword → entry mapping from the learned entries each load,
+# Reconstruct keyword â†’ entry mapping from the learned entries each load,
 # so it always matches whatever entry resources currently exist.
 func _rebuild_learned_keywords() -> void:
 	learned_keywords.clear()
@@ -1818,7 +1990,7 @@ func _rebuild_learned_keywords() -> void:
 
 # Called by the knowledge altar. Records the concept in the encyclopedia and
 # unlocks its keyword (the Lua-editor enforcement itself is a later polish).
-# Returns true only when this call actually LEARNED something new — the altar
+# Returns true only when this call actually LEARNED something new â€” the altar
 # uses that to decide whether to play the first-time emphasis animation.
 func learn_entry(entry: KnowledgeEntry) -> bool:
 	if entry == null:
@@ -1834,7 +2006,7 @@ func learn_entry(entry: KnowledgeEntry) -> bool:
 	complete_mission("learn_entry")
 	return true
 
-# True the FIRST time an entry is offered in the encyclopedia — the view
+# True the FIRST time an entry is offered in the encyclopedia â€” the view
 # plays the emphasis animation for it, then calls mark_entry_seen().
 func is_entry_unseen(entry: KnowledgeEntry) -> bool:
 	return entry != null and unseen_entries.has(entry.id())
@@ -1881,7 +2053,7 @@ func find_item_by_name(query: String) -> ItemData:
 	if q.is_empty():
 		return null
 	const ITEMS_DIR: String = "res://resources/items/"
-	# 1. Exact scripting id ("iron_sword") — the form Algorithmica programs use.
+	# 1. Exact scripting id ("iron_sword") â€” the form Algorithmica programs use.
 	for fname in ResourceLoader.list_directory(ITEMS_DIR):
 		if not fname.ends_with(".tres"):
 			continue
@@ -1929,14 +2101,14 @@ func list_all_items() -> Array[ItemData]:
 	out.sort_custom(func(a: ItemData, b: ItemData) -> bool: return a.item_name < b.item_name)
 	return out
 
-# ── Player / world refs ───────────────────────────────────────────
+# â”€â”€ Player / world refs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var player_node: Node = null
 var world_node:  Node = null
-var game_node:   Node = null  # game_instance.gd — CavePortal calls enter_cave()/exit_cave(), DungeonPortal calls enter_dungeon()
+var game_node:   Node = null  # game_instance.gd â€” CavePortal calls enter_cave()/exit_cave(), DungeonPortal calls enter_dungeon()
 
 @onready var inventory_slot_scene: PackedScene = preload("res://scenes/ui/InventorySlot.tscn")
 
-# ── Key rebinding persistence ─────────────────────────────────────
+# â”€â”€ Key rebinding persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # The settings panel rebinds InputMap actions live; persist the key overrides
 # to user://keybinds.cfg so they survive restarts. Saved/loaded by physical
 # keycode (layout-independent). Only keyboard events are stored.
@@ -1968,10 +2140,10 @@ func load_keybinds() -> void:
 			ev.physical_keycode = int(code)
 			InputMap.action_add_event(action, ev)
 
-# ── Display mode persistence ──────────────────────────────────────
+# â”€â”€ Display mode persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Windowed vs fullscreen, kept in its OWN user:// config so it is GLOBAL (not
-# tied to one world's save) and survives restarts. Applied from Global._ready —
-# which runs before the main scene's _ready — so the title screen opens in the
+# tied to one world's save) and survives restarts. Applied from Global._ready â€”
+# which runs before the main scene's _ready â€” so the title screen opens in the
 # configured mode.
 #
 # Mobile is deliberately excluded: the platform owns its display, so the desktop
@@ -2045,7 +2217,7 @@ func apply_frame_settings() -> void:
 		else DisplayServer.VSYNC_DISABLED)
 
 # Puts the OS window into the configured mode. A no-op on mobile, and it never
-# forces a fixed resolution — fullscreen uses the desktop's own dimensions, and
+# forces a fixed resolution â€” fullscreen uses the desktop's own dimensions, and
 # windowed uses the project's configured window size.
 func apply_display_mode() -> void:
 	if is_mobile():
@@ -2072,7 +2244,7 @@ func set_vsync(on: bool) -> void:
 	CrashLogger.event("SETTINGS", "vsync=%s" % on)
 	save_display_settings()
 
-# ── Optional point-and-click movement ─────────────────────────────
+# â”€â”€ Optional point-and-click movement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # OFF by default on every platform and for every existing save. When ON,
 # left-click / tap on the world issues a move order (see player.gd); right-click,
 # build mode, inventory and every existing control keep working unchanged.
@@ -2112,13 +2284,19 @@ func set_point_and_click(on: bool, persist: bool = true) -> void:
 	if persist:
 		save_display_settings()
 
-# ── Shared floating item tooltip ──────────────────────────────────
+# â”€â”€ Shared floating item tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Slots and recipe buttons call these on hover; the popup follows the mouse.
 # Lazily created and parented to the scene root so it draws above every UI.
 var _item_tooltip: Node = null
 const ITEM_TOOLTIP_SCRIPT: GDScript = preload("res://scripts/item_tooltip.gd")
 
 func show_item_tooltip(inv_item: Dictionary) -> void:
+	# Android touch play intentionally has no floating item tooltips. The
+	# inventory's permanent detail sidebar still shows the selected item.
+	# Desktop hover tooltips are unchanged.
+	if is_mobile():
+		hide_item_tooltip()
+		return
 	if _item_tooltip == null or not is_instance_valid(_item_tooltip):
 		_item_tooltip = ITEM_TOOLTIP_SCRIPT.new()
 		get_tree().root.add_child(_item_tooltip)
@@ -2137,6 +2315,12 @@ var _hold_timer: Timer = null
 var _hold_item:  Dictionary = {}
 
 func item_hold_start(item: Dictionary) -> void:
+	# Touch tooltips are disabled on Android; do not create a timer that would
+	# pop a floating item panel over the touch HUD.
+	if is_mobile():
+		_hold_item = {}
+		hide_item_tooltip()
+		return
 	_hold_item = item
 	if _hold_timer == null:
 		_hold_timer = Timer.new()
@@ -2149,7 +2333,7 @@ func item_hold_start(item: Dictionary) -> void:
 func _on_hold_timeout() -> void:
 	# _hold_timer is a child of Global (an autoload Node that PAUSES with the
 	# tree), so process_mode ALWAYS keeps the hold working inside menus that
-	# pause the game — e.g. the crafting station.
+	# pause the game â€” e.g. the crafting station.
 	if not _hold_item.is_empty():
 		show_item_tooltip(_hold_item)
 
@@ -2161,7 +2345,7 @@ func item_hold_end() -> void:
 
 func _ready() -> void:
 	# Global input (Ctrl build toggle, pause shortcut) must work even when the
-	# SceneTree is paused — a leaked open_ui() leaves get_tree().paused true
+	# SceneTree is paused â€” a leaked open_ui() leaves get_tree().paused true
 	# while the player (PROCESS_MODE_ALWAYS) still moves, and a pausable Global
 	# would silently stop receiving _input. ALWAYS keeps this responsive.
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -2273,14 +2457,14 @@ func reset_bestiary_state() -> void:
 	bestiary_killed.clear()
 	bestiary_updated.emit()
 
-# Build mode toggle (Ctrl) — a core gameplay feature that switches between
+# Build mode toggle (Ctrl) â€” a core gameplay feature that switches between
 # interacting with the world and placing/building blocks. Detected centrally so
 # it works in every world (overworld/cave/pixie/dungeon); each world's own
 # per-frame ghost/grid code reacts to the flag + block_mode_changed signal.
 func _input(event: InputEvent) -> void:
 	if Global.pause_menu_open:
 		return
-	# Ctrl is a text-editing modifier (Ctrl+A/C/V/…), so never toggle build mode
+	# Ctrl is a text-editing modifier (Ctrl+A/C/V/â€¦), so never toggle build mode
 	# while a text field is focused.
 	if Global.is_text_input_focused():
 		if event is InputEventKey and (event as InputEventKey).keycode == KEY_CTRL:
@@ -2304,7 +2488,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-# ── Top-of-screen gameplay notifications ─────────────────────────
+# â”€â”€ Top-of-screen gameplay notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Player-facing feedback (fishing, farming, deaths, build-mode warnings, item
 # messages) is shown by NotificationHUD as a top-centre toast.
 signal notification_posted(message: String)
@@ -2344,12 +2528,12 @@ func _init_missions() -> void:
 		{"id": "craft_diamond_axe",     "title": "Craft a diamond axe",     "completed": false},
 	]
 
-# Dungeon missions are NOT hardcoded — one is created per DungeonMissionData
+# Dungeon missions are NOT hardcoded â€” one is created per DungeonMissionData
 # .tres file actually present in resources/dungeon_missions/, so the mission
 # list always matches the shipped dungeon content. Called after
 # load_knowledge_data() fills the dungeon_missions registry.
 func _append_dungeon_missions() -> void:
-	# Player-visible title is the mission NAME only — the numbering (Roman
+	# Player-visible title is the mission NAME only â€” the numbering (Roman
 	# numerals) was dropped so the list reads by name. The index still lives
 	# in "id" and "dungeon_index", which are internal keys, not display text.
 	var indexes: Array = dungeon_missions.keys()
@@ -2366,7 +2550,7 @@ func _append_dungeon_missions() -> void:
 			"dungeon_category": m.dungeon_category,
 		})
 
-# ── Side missions (unlocked after the complete dungeon progression) ──
+# â”€â”€ Side missions (unlocked after the complete dungeon progression) â”€â”€
 # These use the same mission dictionary/progress/save pipeline as every other
 # objective. They are deliberately world/cave/robot activities because all
 # dungeon entrances are gone once the extra track is complete. Completion
@@ -2447,7 +2631,7 @@ func active_side_missions(limit: int = 3) -> Array:
 			break
 	return out
 
-# ── Dungeon progression (sequential, no acceptance) ───────────────────
+# â”€â”€ Dungeon progression (sequential, no acceptance) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # There is no "accept a dungeon mission" step anymore. Each language runs as
 # its own strictly sequential track, and the overworld always keeps exactly
 # two entrances alive: the current Lua dungeon and the current Python dungeon
@@ -2665,7 +2849,7 @@ func complete_mission(id: String) -> void:
 			return
 
 
-# ── Local star totals (per world) ─────────────────────────────────
+# â”€â”€ Local star totals (per world) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # The local UI counts THIS world's blue/yellow stars. Blue = dungeon missions +
 # dungeon clear stars; yellow = overworld quests. The account totals below are
 # the cloud profile values when online, with the local totals as a fallback.
@@ -2706,7 +2890,7 @@ func account_yellow_stars() -> int:
 			return int(cloud.get("yellow_stars", 0))
 	return local_yellow_stars()
 
-# ── Mission progress ──────────────────────────────────────────────
+# â”€â”€ Mission progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Count missions (m["goal"] > 1) show "x/goal" in the tracker.
 # add_mission_progress increments and auto-completes at the goal;
 # set_mission_progress sets the exact count (used where a live total already
@@ -2750,7 +2934,7 @@ func record_block_placed(data: ItemData = null) -> void:
 		add_mission_progress("side_torchbearer", 1)
 
 # Credit the mining missions for a mined block/ore. Centralised so EVERY world
-# backend tracks the same quests — the overworld's placed blocks AND the cave /
+# backend tracks the same quests â€” the overworld's placed blocks AND the cave /
 # pixie-cave wall tiles (which are mined via the worlds' own _break_tile, not
 # placeable_block.gd). Without this, mining stone/iron/diamond inside a cave
 # dropped the item but never advanced "Mine 10 stone blocks" etc.
@@ -2775,127 +2959,259 @@ func reset_missions() -> void:
 		m["progress"] = 0
 	cleared_dungeons.clear()
 	dungeon_stars.clear()
+	dungeon_quiz_hints.clear()
+	dungeon_quiz_penalties.clear()
 	mission_updated.emit()
 
-# ── Add item ──────────────────────────────────────────────────────
+# â”€â”€ Add item â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 func add_item(item: Dictionary, allow_dev: bool = false) -> bool:
-	var data: ItemData = item["data"] as ItemData
-	if data != null and data.is_dev_item and not allow_dev:
+	var data: ItemData = item.get("data") as ItemData
+	if data == null:
 		return false
-	# Non-stackable items (tools) go straight to an empty slot — never
-	# merge onto an existing stack.
-	var stackable: bool = data.stackable if data != null else true
-	var stack_limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else MAX_STACK
-	var remaining: int = item["quantity"]
-	# 1. Stack in hotbar (only if stackable)
-	if stackable:
+	if data.is_dev_item and not allow_dev:
+		return false
+	var quantity: int = maxi(0, int(item.get("quantity", 1)))
+	if quantity <= 0:
+		return true
+	if space_for_item(data) < quantity:
+		return false
+	var can_stack: bool = data.can_stack()
+	var stack_limit: int = data.stack_limit()
+	var remaining: int = quantity
+	var added_total: int = 0
+	var added_hotbar := false
+	var added_inventory := false
+	# 1. Top up existing stacks (never for tools).
+	if can_stack:
 		for i in range(hotbar_item_slots()):
 			if remaining <= 0:
 				break
 			if Hotbar[i] != null \
 					and Hotbar[i]["data"] == data \
-					and Hotbar[i]["quantity"] < stack_limit:
-				var space: int = stack_limit - Hotbar[i]["quantity"]
+					and int(Hotbar[i]["quantity"]) < stack_limit:
+				var space: int = stack_limit - int(Hotbar[i]["quantity"])
 				var add: int = mini(remaining, space)
-				Hotbar[i]["quantity"] += add
+				Hotbar[i]["quantity"] = int(Hotbar[i]["quantity"]) + add
 				remaining -= add
-		if remaining <= 0:
-			Hotbar_updated.emit()
-			item_picked_up.emit(data.item_name, data.item_type)
-			CrashLogger.event("ITEM", "add %s x%d -> hotbar" % [data.item_name, int(item["quantity"])])
-			_track_craft_missions(data, item["quantity"])
-			return true
-	# 2. Stack in inventory (only if stackable)
-	if stackable:
+				added_total += add
+				added_hotbar = true
 		for i in range(Inventory.size()):
 			if remaining <= 0:
 				break
 			if Inventory[i] != null \
 					and Inventory[i]["data"] == data \
-					and Inventory[i]["quantity"] < stack_limit:
-				var space: int = stack_limit - Inventory[i]["quantity"]
+					and int(Inventory[i]["quantity"]) < stack_limit:
+				var space: int = stack_limit - int(Inventory[i]["quantity"])
 				var add: int = mini(remaining, space)
-				Inventory[i]["quantity"] += add
+				Inventory[i]["quantity"] = int(Inventory[i]["quantity"]) + add
 				remaining -= add
-		if remaining <= 0:
-			Inventory_updated.emit()
-			item_picked_up.emit(data.item_name, data.item_type)
-			CrashLogger.event("ITEM", "add %s x%d -> inventory" % [data.item_name, int(item["quantity"])])
-			_track_craft_missions(data, item["quantity"])
-			return true
-	# 3. Empty hotbar slot
+				added_total += add
+				added_inventory = true
+	# 2. Empty hotbar slots. Split at the item's real limit so a quantity > the
+	# limit can never be written into one slot.
 	for i in range(hotbar_item_slots()):
-		if Hotbar[i] == null:
-			Hotbar[i] = item.duplicate()
-			Hotbar[i]["quantity"] = remaining
-			Hotbar_updated.emit()
-			item_picked_up.emit(data.item_name, data.item_type)
-			CrashLogger.event("ITEM", "add %s x%d -> empty hotbar slot" % [data.item_name, remaining])
-			_track_craft_missions(data, item["quantity"])
-			remaining = 0
+		if remaining <= 0:
 			break
-	if remaining <= 0:
-		return true
-	# 4. Empty inventory slot
+		if Hotbar[i] != null:
+			continue
+		var take: int = mini(remaining, stack_limit)
+		Hotbar[i] = {"data": data, "quantity": take}
+		remaining -= take
+		added_total += take
+		added_hotbar = true
+	# 3. Empty inventory slots.
 	for i in range(Inventory.size()):
-		if Inventory[i] == null:
-			Inventory[i] = item.duplicate()
-			Inventory[i]["quantity"] = remaining
-			Inventory_updated.emit()
-			item_picked_up.emit(data.item_name, data.item_type)
-			CrashLogger.event("ITEM", "add %s x%d -> empty inventory slot" % [data.item_name, remaining])
-			_track_craft_missions(data, item["quantity"])
-			remaining = 0
+		if remaining <= 0:
 			break
+		if Inventory[i] != null:
+			continue
+		var take: int = mini(remaining, stack_limit)
+		Inventory[i] = {"data": data, "quantity": take}
+		remaining -= take
+		added_total += take
+		added_inventory = true
+	if added_hotbar:
+		Hotbar_updated.emit()
+	if added_inventory:
+		Inventory_updated.emit()
+	if added_total > 0:
+		item_picked_up.emit(data.item_name, data.item_type)
+		CrashLogger.event("ITEM", "add %s x%d -> %s" % [
+			data.item_name, added_total,
+			"inventory" if not added_hotbar else ("hotbar" if not added_inventory else "hotbar+inventory")])
+		_track_craft_missions(data, added_total)
 	return remaining <= 0
 
-# Free space (in items) for `data` across the hotbar + inventory, respecting
-# stack limits. Non-stackable items need a whole empty slot. Used to avoid
-# partial adds (which would lose the remainder) when returning items from a
-# robot slot to the player.
+# Total free capacity (in items) for `data` across hotbar + inventory.
 func space_for_item(data: ItemData) -> int:
 	if data == null:
 		return 0
-	var limit: int = data.max_stack_size if data.max_stack_size > 0 else MAX_STACK
+	var limit: int = data.stack_limit()
 	var space: int = 0
-	if data.stackable:
-		for arr in [Hotbar, Inventory]:
-			for slot in arr:
-				if slot == null:
-					space += limit
-				elif (slot as Dictionary)["data"] == data:
-					space += maxi(0, limit - int((slot as Dictionary)["quantity"]))
+	if data.can_stack():
+		for i in range(hotbar_item_slots()):
+			var slot: Variant = Hotbar[i]
+			if slot == null:
+				space += limit
+			elif (slot as Dictionary)["data"] == data:
+				space += maxi(0, limit - int((slot as Dictionary)["quantity"]))
+		for slot in Inventory:
+			if slot == null:
+				space += limit
+			elif (slot as Dictionary)["data"] == data:
+				space += maxi(0, limit - int((slot as Dictionary)["quantity"]))
 	else:
-		for arr in [Hotbar, Inventory]:
-			for slot in arr:
-				if slot == null:
-					space += 1
+		for i in range(hotbar_item_slots()):
+			if Hotbar[i] == null:
+				space += 1
+		for slot in Inventory:
+			if slot == null:
+				space += 1
 	return space
 
 func has_space_for_item(data: ItemData, quantity: int) -> bool:
 	return quantity <= 0 or space_for_item(data) >= quantity
 
-# ── Track wood collection for mission ─────────────────────────────
+# Places as much of a stack as possible into existing stacks then empty slots.
+# Returns the unplaced remainder. Used only by save migration and overflow
+# flushing, so it deliberately does not emit pickup/craft signals.
+func _place_stack_into_inventory(data: ItemData, quantity: int) -> int:
+	if data == null or quantity <= 0:
+		return 0
+	var limit: int = data.stack_limit()
+	var remaining: int = quantity
+	if data.can_stack():
+		for i in range(hotbar_item_slots()):
+			if remaining <= 0:
+				break
+			if Hotbar[i] != null and Hotbar[i]["data"] == data \
+					and int(Hotbar[i]["quantity"]) < limit:
+				var add: int = mini(remaining, limit - int(Hotbar[i]["quantity"]))
+				Hotbar[i]["quantity"] = int(Hotbar[i]["quantity"]) + add
+				remaining -= add
+		for i in range(Inventory.size()):
+			if remaining <= 0:
+				break
+			if Inventory[i] != null and Inventory[i]["data"] == data \
+					and int(Inventory[i]["quantity"]) < limit:
+				var add: int = mini(remaining, limit - int(Inventory[i]["quantity"]))
+				Inventory[i]["quantity"] = int(Inventory[i]["quantity"]) + add
+				remaining -= add
+	for i in range(hotbar_item_slots()):
+		if remaining <= 0:
+			break
+		if Hotbar[i] != null:
+			continue
+		var take: int = mini(remaining, limit)
+		Hotbar[i] = {"data": data, "quantity": take}
+		remaining -= take
+	for i in range(Inventory.size()):
+		if remaining <= 0:
+			break
+		if Inventory[i] != null:
+			continue
+		var take: int = mini(remaining, limit)
+		Inventory[i] = {"data": data, "quantity": take}
+		remaining -= take
+	return remaining
+
+# Existing saves may contain tool stacks (or ordinary stacks over their authored
+# limit). Split them without losing quantity; unplaceable leftovers are dropped
+# near the player once the world is ready.
+func _migrate_loaded_inventory_stacks() -> void:
+	var extras: Array = []
+	_extract_oversized_stacks(Hotbar, extras)
+	_extract_oversized_stacks(Inventory, extras)
+	if extras.is_empty():
+		return
+	for entry in extras:
+		var data: ItemData = (entry as Dictionary).get("data") as ItemData
+		var qty: int = int((entry as Dictionary).get("quantity", 0))
+		var left: int = _place_stack_into_inventory(data, qty)
+		if left > 0:
+			pending_overflow_items.append({"data": data, "quantity": left})
+	Hotbar_updated.emit()
+	Inventory_updated.emit()
+
+func _extract_oversized_stacks(arr: Array, extras: Array) -> void:
+	for i in range(arr.size()):
+		var slot: Variant = arr[i]
+		if not (slot is Dictionary):
+			continue
+		var data: ItemData = (slot as Dictionary).get("data") as ItemData
+		if data == null:
+			continue
+		var limit: int = data.stack_limit()
+		var qty: int = int((slot as Dictionary).get("quantity", 0))
+		if qty <= limit:
+			continue
+		(slot as Dictionary)["quantity"] = limit
+		var extra: int = qty - limit
+		while extra > 0:
+			var take: int = mini(extra, limit)
+			extras.append({"data": data, "quantity": take})
+			extra -= take
+
+## Recover saved-inventory overflow after the Game/world exists. Drops anything
+## that still cannot fit near `player_pos`, so migration never deletes tools.
+func flush_pending_overflow(player_pos: Vector2) -> void:
+	if pending_overflow_items.is_empty():
+		return
+	var pending: Array = pending_overflow_items.duplicate()
+	pending_overflow_items.clear()
+	var added := false
+	var tree := get_tree()
+	for entry in pending:
+		var data: ItemData = (entry as Dictionary).get("data") as ItemData
+		var qty: int = int((entry as Dictionary).get("quantity", 0))
+		if data == null or qty <= 0:
+			continue
+		var left: int = _place_stack_into_inventory(data, qty)
+		if qty - left > 0:
+			added = true
+			_track_craft_missions(data, qty - left)
+		if left <= 0:
+			continue
+		if tree == null or tree.current_scene == null:
+			pending_overflow_items.append({"data": data, "quantity": left})
+			continue
+		drop_item({"data": data, "quantity": left},
+			player_pos + Vector2(randf_range(-24.0, 24.0), randf_range(-24.0, 24.0)))
+	if added:
+		Hotbar_updated.emit()
+		Inventory_updated.emit()
+
+# ── Track wood collection for mission ───────────────────────────────
+func wood_in_inventory() -> int:
+	var total := 0
+	for i in range(hotbar_item_slots()):
+		var slot: Variant = Hotbar[i]
+		if slot is Dictionary:
+			var data: ItemData = (slot as Dictionary).get("data") as ItemData
+			if data != null and data.is_wood:
+				total += int((slot as Dictionary).get("quantity", 0))
+	for slot in Inventory:
+		if slot is Dictionary:
+			var data: ItemData = (slot as Dictionary).get("data") as ItemData
+			if data != null and data.is_wood:
+				total += int((slot as Dictionary).get("quantity", 0))
+	return total
+
 func _track_craft_missions(data: ItemData, qty: int) -> void:
 	if data == null:
 		return
-	var name_lower: String = data.item_name.to_lower()
-	if name_lower == "wood":
-		var total := 0
-		for slot in Hotbar:
-			if slot != null and (slot["data"] as ItemData).item_name == "Wood":
-				total += slot["quantity"]
-		for slot in Inventory:
-			if slot != null and (slot["data"] as ItemData).item_name == "Wood":
-				total += slot["quantity"]
-		set_mission_progress("collect_wood", total)
-		add_mission_progress("side_woodcutter", qty)
-	if name_lower.begins_with("cooked "):
+	if data.is_wood:
+		var total := wood_in_inventory()
+		var collect := _find_mission("collect_wood")
+		if not collect.is_empty():
+			set_mission_progress("collect_wood",
+				maxi(int(collect.get("progress", 0)), total))
+		var side := _find_mission("side_woodcutter")
+		if not side.is_empty():
+			set_mission_progress("side_woodcutter",
+				maxi(int(side.get("progress", 0)), total))
+	if data.item_name.to_lower().begins_with("cooked "):
 		add_mission_progress("side_chef", qty)
-
-# ── Remove one from an item slot by ItemData reference ────────────
-# Always tries the selected hotbar slot first so the active stack is
-# consumed rather than whichever matching stack happens to be at index 0.
 func remove_item(data: ItemData) -> void:
 	if hotbar_selected < Hotbar.size() \
 			and Hotbar[hotbar_selected] != null \
@@ -2920,7 +3236,7 @@ func remove_item(data: ItemData) -> void:
 			Inventory_updated.emit()
 			return
 
-# ── Hotbar helpers ────────────────────────────────────────────────
+# â”€â”€ Hotbar helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ## Stable identifier for the currently selected hotbar item. Used by mining
 ## timers to detect a real tool switch without relying on UI signals.
 func held_tool_id() -> String:
@@ -2937,7 +3253,7 @@ func get_hotbar_item() -> Variant:
 		return Hotbar[hotbar_selected]
 	return null
 
-# ── Mining level ──────────────────────────────────────────────────
+# â”€â”€ Mining level â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # The ONE place the player's mining tier is read. Returns the held PICKAXE's
 # tier, or -1 when no pickaxe is in hand, so callers can tell "no pickaxe at
 # all" (cannot mine) from "a tier-0 pickaxe". Bare hands / any non-tool item is
@@ -2945,7 +3261,7 @@ func get_hotbar_item() -> Variant:
 #
 # The gate is ItemData.is_pickaxe, NOT pickaxe_level: axes, swords and the
 # Color Crafter all carry stray pickaxe_level values (1..10), and reading those
-# as a mining tier is what let a sword — or a block — mine stone/ore.
+# as a mining tier is what let a sword â€” or a block â€” mine stone/ore.
 func held_pickaxe_level() -> int:
 	var data: ItemData = _held_item_data()
 	if data == null or not data.is_pickaxe:
@@ -2997,7 +3313,7 @@ func list_carried_items() -> Array[ItemData]:
 
 # Number of hotbar slots that may hold items. Android reserves the LAST visible
 # slot for the inventory button (see hotbar.gd), so acquired items must never
-# land there — otherwise they would be unreachable behind the button.
+# land there â€” otherwise they would be unreachable behind the button.
 func hotbar_item_slots() -> int:
 	return HOTBAR_SIZE - 1 if is_mobile() else HOTBAR_SIZE
 
@@ -3026,7 +3342,22 @@ func is_point_over_hotbar(point: Vector2) -> bool:
 			return true
 	return false
 
-# ── Player ────────────────────────────────────────────────────────
+## Index of the visible hotbar slot under `point`, or -1. Includes the mobile
+## inventory slot (the reserved last slot); callers that only switch held items
+## should compare against hotbar_item_slots().
+func hotbar_slot_at(point: Vector2) -> int:
+	var found: int = -1
+	for node in get_tree().get_nodes_in_group("hotbar_slot"):
+		var slot := node as Control
+		if slot == null or not slot.is_visible_in_tree():
+			continue
+		if slot.get_global_rect().has_point(point):
+			var slot_index: Variant = slot.get("slot_index")
+			if slot_index != null:
+				found = int(slot_index)
+	return found
+
+# â”€â”€ Player â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 func set_player_reference(player: Node) -> void:
 	player_node = player
 
@@ -3039,10 +3370,10 @@ func swing_player_item() -> void:
 			and player_node.has_method("swing_held_item"):
 		player_node.call("swing_held_item")
 
-# ── Drop item into world ──────────────────────────────────────────
+# â”€â”€ Drop item into world â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Drag-out drops always land ONE TILE in front of the player, in the
 # direction they're facing. The old behavior scattered items up to ~5
-# tiles away (fixed +50px below the player plus a random ±100px nudge);
+# tiles away (fixed +50px below the player plus a random Â±100px nudge);
 # now the anti-overlap jitter is kept small and the final spot is clamped
 # to a single tile from the player.
 const DROP_FACING_VECTORS: Dictionary = {
@@ -3074,10 +3405,10 @@ func adjust_drop_pos(_pos: Vector2) -> Vector2:
 		result = player.global_position + to_player.normalized() * 32.0
 	return result
 
-# ── UI state ─────────────────────────────────────────────────────
+# â”€â”€ UI state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # `_ui_open_count` is the number of open UI panels. `_ui_pause_suspended` holds
 # the instance ids of panels that TEMPORARILY let the world run while they stay
-# open — the LUA editor does this so its robot can work. Keeping the two apart
+# open â€” the LUA editor does this so its robot can work. Keeping the two apart
 # means the refcount stays balanced (closing still releases exactly once) and a
 # second UI (pause menu) can still pause the game while a run is in flight.
 var _ui_pause_suspended: Dictionary = {}
@@ -3227,10 +3558,10 @@ func _notification(what: int) -> void:
 			if pause_menu != null and pause_menu.has_method("show_menu"):
 				pause_menu.call("show_menu")
 
-# ── Scene-change safety net ───────────────────────────────────────
+# â”€â”€ Scene-change safety net â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Global is an autoload, so the pause model outlives every scene. If a UI node
-# is ever freed without releasing its open_ui() — or the tree is left paused by
-# a transition — the NEXT scene would inherit that: a new game / Continue that
+# is ever freed without releasing its open_ui() â€” or the tree is left paused by
+# a transition â€” the NEXT scene would inherit that: a new game / Continue that
 # starts paused, or a game where every world click is silently ignored because
 # any_ui_open() is stuck true. Every scene (re)load calls this so a fresh scene
 # always begins from a clean, unpaused state.
@@ -3250,7 +3581,7 @@ func reset_pause_state() -> void:
 	if get_tree() != null:
 		get_tree().paused = false
 	# Diagnostic: a scene/world transition had to clean up a UI that never
-	# released open_ui(). Keep this in release builds — it is silent in normal
+	# released open_ui(). Keep this in release builds â€” it is silent in normal
 	# play and makes a future pause leak visible in the log.
 	if leaked > 0:
 		push_warning("Global: reset_pause_state cleared %d unreleased UI pause(s)" % leaked)
@@ -3274,7 +3605,7 @@ func restore_overworld_interaction_state() -> void:
 			focused.release_focus()
 	reset_pause_state()
 
-# ── Block hover label ─────────────────────────────────────────────
+# â”€â”€ Block hover label â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var _current_hover_name: String = ""
 
 func set_hover(name: String) -> void:
@@ -3297,7 +3628,7 @@ func drop_item(inv_item: Dictionary, drop_position: Vector2) -> void:
 		item_data.item_name if item_data != null else "?",
 		qty, drop_position.x, drop_position.y])
 
-# ── Save / load ───────────────────────────────────────────────────
+# â”€â”€ Save / load â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var active_save_slot:   int        = -1
 var has_pending_pos:    bool       = false
 var pending_player_pos: Vector2    = Vector2.ZERO
@@ -3309,11 +3640,11 @@ var pending_world_data: Dictionary = {}
 var pending_world_seed:  int = 0
 var pending_time_of_day: float = -1.0  # -1 = no saved time, keep the noon default
 
-# ── Build version ─────────────────────────────────────────────────
+# â”€â”€ Build version â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # The ONE authoritative version string for the RUNNING build, read from the
 # Godot project setting `application/config/version` (project.godot) so there is
 # a single place to bump it. Keep the export presets' application/file_version
-# in step with it. Never confuse this with a SAVED WORLD's version — a world
+# in step with it. Never confuse this with a SAVED WORLD's version â€” a world
 # records the build it was last saved with (see world_version_of()).
 const VERSION_FALLBACK: String = "Unknown version"
 ## Worlds created before this build are not eligible for account/leaderboard
@@ -3460,7 +3791,7 @@ func install_cloud_save_bytes(slot: int, data: PackedByteArray) -> bool:
 	DirAccess.remove_absolute(abs_path + ".bak")
 	return true
 
-# ── Worlds (save slots) ───────────────────────────────────────────
+# â”€â”€ Worlds (save slots) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # A "world" is one save slot file (user://save_slot_N.json). Slots are fully
 # independent, so creating / loading / renaming / deleting one can never touch
 # another. 10 worlds max; slots 1..3 predate this and keep working unchanged.
@@ -3469,8 +3800,8 @@ const MAX_WORLDS: int = 10
 var world_name: String = ""
 # Tutorial progress is per-world. Existing pre-tutorial saves are treated as
 # completed on load so returning players are not ambushed by the intro.
-# tutorial_version 2 is the guided onboarding (dialogue + practical lessons).
-var tutorial_version: int = 2
+# tutorial_version 3 is the short, action-verified guided onboarding.
+var tutorial_version: int = 3
 var tutorial_stage: int = 0
 var tutorial_completed: bool = false
 # Per-lesson completion/reward flags: starter kit, Automatica deployment,
@@ -3586,12 +3917,13 @@ func begin_new_world(slot: int, name: String) -> void:
 		return
 	active_save_slot    = slot
 	world_name          = name.strip_edges()
-	tutorial_version    = 2
+	tutorial_version    = 3
 	tutorial_stage      = 0
 	tutorial_completed  = false
 	tutorial_flags.clear()
 	Hotbar.fill(null)
 	Inventory.fill(null)
+	pending_overflow_items.clear()
 	has_pending_pos     = false
 	pending_world_data.clear()
 	# Every new world gets its OWN map. Non-zero so it can't be mistaken for
@@ -3601,12 +3933,14 @@ func begin_new_world(slot: int, name: String) -> void:
 		pending_world_seed = randi()
 	pending_time_of_day = -1.0
 	cave_states.clear()
+	first_pixie_cave_entered = false
 	explored_cave_tiles.clear()
 	dungeon_chest_states.clear()
 	reset_missions()
 	reset_bestiary_state()
+	reset_player_stats()
 
-# ── Item (de)serialization ─────────────────────────────────────────
+# â”€â”€ Item (de)serialization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Items are normally saved by resource_path. Runtime-generated color blocks
 # have no .tres on disk, so they're saved by their RGB key instead and rebuilt
 # via ColorBlock on load. These two helpers are the single funnel every item
@@ -3724,7 +4058,7 @@ func save_game(slot: int) -> void:
 	# World metadata. `world_version` is the build that last SAVED this world;
 	# `created_version` is preserved from the first save so the world list can
 	# show where it came from. A save made before this existed simply has neither
-	# and is reported as the fallback version — nothing is migrated or invented.
+	# and is reported as the fallback version â€” nothing is migrated or invented.
 	var existing: Dictionary = get_save_info(slot)
 	var uid: String = str(existing.get("world_uid", "")).strip_edges()
 	if uid.is_empty():
@@ -3755,6 +4089,10 @@ func save_game(slot: int) -> void:
 		"tutorial_stage":    tutorial_stage,
 		"tutorial_completed": tutorial_completed,
 		"tutorial_flags":    tutorial_flags.duplicate(true),
+		"max_health":        max_health,
+		"health":            health,
+		"max_stamina":       max_stamina,
+		"stamina":           stamina,
 	}
 	if player_node != null:
 		save_data["player_pos_x"] = (player_node as Node2D).global_position.x
@@ -3762,7 +4100,7 @@ func save_game(slot: int) -> void:
 	if world_node != null and world_node.has_method("get_world_save_data"):
 		save_data["world"] = world_node.call("get_world_save_data")
 	# If the Game scene can report a save context (overworld data + a spawn
-	# point), prefer it — this is what makes "saved inside a structure" spawn
+	# point), prefer it â€” this is what makes "saved inside a structure" spawn
 	# the player outside the entrance on Continue instead of at invalid
 	# structure coordinates.
 	if game_node != null and game_node.has_method("get_overworld_save_context"):
@@ -3788,6 +4126,7 @@ func save_game(slot: int) -> void:
 		save_data["cave_states"] = game_node.call("get_cave_states")
 	else:
 		save_data["cave_states"] = cave_states.duplicate(true)
+	save_data["first_pixie_cave_entered"] = first_pixie_cave_entered
 	save_data["time_of_day"] = time_of_day
 	save_data["learned_entries"]  = learned_entries.keys()
 	save_data["learned_keywords"] = learned_keywords.keys()
@@ -3807,16 +4146,24 @@ func save_game(slot: int) -> void:
 	for idx in dungeon_seeds:
 		seeds_save.append({"index": int(idx), "seed": int(dungeon_seeds[idx])})
 	save_data["dungeon_seeds"] = seeds_save
+	var quiz_penalties_save: Array = []
+	for idx in dungeon_quiz_penalties:
+		quiz_penalties_save.append({"index": int(idx), "value": int(dungeon_quiz_penalties[idx])})
+	save_data["dungeon_quiz_penalties"] = quiz_penalties_save
+	var quiz_hints_save: Array = []
+	for idx in dungeon_quiz_hints:
+		quiz_hints_save.append({"index": int(idx), "value": int(dungeon_quiz_hints[idx])})
+	save_data["dungeon_quiz_hints"] = quiz_hints_save
 	var chest_save: Array = []
 	for key in dungeon_chest_states:
 		var state_value: Variant = dungeon_chest_states[key]
 		if state_value is Dictionary:
 			chest_save.append({"key": str(key), "state": state_value})
 	save_data["dungeon_chests"] = chest_save
-	# ── Crash-safe write ─────────────────────────────────────────
+	# â”€â”€ Crash-safe write â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	# Write to a temp file, then atomically replace the real save and keep the
 	# previous one as .bak. A crash or power loss mid-write can therefore never
-	# truncate a good save — the worst case is a stale .tmp (ignored by
+	# truncate a good save â€” the worst case is a stale .tmp (ignored by
 	# has_save/load_game) plus the intact .bak.
 	var tmp: String = path + ".tmp"
 	var bak: String = path + ".bak"
@@ -3876,13 +4223,14 @@ func load_game(slot: int) -> void:
 		cave_states = (data["cave_states"] as Dictionary).duplicate(true)
 	else:
 		cave_states.clear()
+	first_pixie_cave_entered = bool(data.get("first_pixie_cave_entered", false))
 	# Cave exploration is per-entrance; the active set is restored when a cave
 	# is entered (see game_instance._do_enter_cave).
 	explored_cave_tiles.clear()
 	# Restore the world's player-facing name (older saves have none).
 	world_name = str((data as Dictionary).get("world_name", "")).strip_edges()
 	var saved_tutorial_version: int = int(data.get("tutorial_version", 0))
-	if saved_tutorial_version >= 2:
+	if saved_tutorial_version >= 3:
 		tutorial_version = saved_tutorial_version
 		tutorial_completed = bool(data.get("tutorial_completed", false))
 		tutorial_stage = maxi(0, int(data.get("tutorial_stage", 0)))
@@ -3890,13 +4238,23 @@ func load_game(slot: int) -> void:
 		if data.get("tutorial_flags") is Dictionary:
 			tutorial_flags = (data["tutorial_flags"] as Dictionary).duplicate(true)
 	else:
-		# Legacy world (including old unfinished six-line intros): never
-		# retroactively insert the new multi-stage onboarding. Keep the player's
-		# existing world exactly where it was.
-		tutorial_version = 2
+		# Older tutorial generations (including unfinished v2 runs) are not
+		# replayed inside the new guided flow. Existing worlds keep their items,
+		# missions and dungeon progress; only the onboarding director is retired.
+		tutorial_version = 3
 		tutorial_completed = true
 		tutorial_stage = 0
 		tutorial_flags.clear()
+	# Permanent crystal growth is per world. Legacy saves without these fields
+	# start at the original base values.
+	max_health = clampf(float(data.get("max_health", BASE_MAX_HEALTH)),
+		BASE_MAX_HEALTH, MAX_HEALTH_CAP)
+	health = clampf(float(data.get("health", max_health)), 0.0, max_health)
+	max_stamina = clampf(float(data.get("max_stamina", BASE_MAX_STAMINA)),
+		BASE_MAX_STAMINA, MAX_STAMINA_CAP)
+	stamina = clampf(float(data.get("stamina", max_stamina)), 0.0, max_stamina)
+	health_changed.emit(health, max_health)
+	stamina_changed.emit(stamina, max_stamina)
 	if data.has("hotbar"):
 		var arr: Array = data["hotbar"] as Array
 		for i in range(mini(arr.size(), HOTBAR_SIZE)):
@@ -3909,13 +4267,15 @@ func load_game(slot: int) -> void:
 			var saved_slot: Variant = deserialize_item(arr[i])
 			if saved_slot != null:
 				Inventory[i] = saved_slot
+	# Split old stacked tools/oversized stacks without losing any quantity.
+	_migrate_loaded_inventory_stacks()
 	if data.has("player_pos_x") and data.has("player_pos_y"):
 		pending_player_pos = Vector2(float(data["player_pos_x"]), float(data["player_pos_y"]))
 		has_pending_pos    = true
 	if data.has("world") and data["world"] is Dictionary:
 		pending_world_data = data["world"] as Dictionary
 		# Reuse the seed this world was generated with so loading reproduces the
-		# SAME map. Legacy saves predate the field → 0 → scene default.
+		# SAME map. Legacy saves predate the field â†’ 0 â†’ scene default.
 		pending_world_seed = int(pending_world_data.get("seed", 0))
 	else:
 		pending_world_data = {}
@@ -3988,11 +4348,21 @@ func load_game(slot: int) -> void:
 		for entry in (data["dungeon_stars"] as Array):
 			if entry is Dictionary:
 				dungeon_stars[int(entry.get("index", 0))] = clampi(
-					int(entry.get("stars", 3)), 1, 3)
+					int(entry.get("stars", 3)), 0, 3)
 	if data.has("dungeon_seeds") and data["dungeon_seeds"] is Array:
 		for entry in (data["dungeon_seeds"] as Array):
 			if entry is Dictionary:
 				dungeon_seeds[int(entry["index"])] = int(entry["seed"])
+	if data.has("dungeon_quiz_penalties") and data["dungeon_quiz_penalties"] is Array:
+		for entry in (data["dungeon_quiz_penalties"] as Array):
+			if entry is Dictionary:
+				dungeon_quiz_penalties[int(entry.get("index", 0))] = \
+					maxi(0, int(entry.get("value", 0)))
+	if data.has("dungeon_quiz_hints") and data["dungeon_quiz_hints"] is Array:
+		for entry in (data["dungeon_quiz_hints"] as Array):
+			if entry is Dictionary:
+				dungeon_quiz_hints[int(entry.get("index", 0))] = \
+					maxi(0, int(entry.get("value", 0)))
 	if data.has("dungeon_chests") and data["dungeon_chests"] is Array:
 		for entry in (data["dungeon_chests"] as Array):
 			if entry is Dictionary and entry.get("state") is Dictionary:

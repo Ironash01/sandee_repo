@@ -23,6 +23,11 @@ class_name ItemData
 ## food. Consumption is handled by player.gd.
 @export var heal_amount: float = 0.0
 
+## Permanent stat growth applied when this item is used (0 = none). The player's
+## current value rises alongside the new maximum, capped by Global.
+@export var max_health_bonus: float = 0.0
+@export var max_stamina_bonus: float = 0.0
+
 # ── Farming ───────────────────────────────────────────────────────
 ## True for the farming hoe: left-clicking a grass tuft tills it into soil.
 @export var is_hoe: bool = false
@@ -84,6 +89,25 @@ func sword_slash_radius() -> int:
 
 ## Maximum number of items per stack (hard-capped at Global.MAX_STACK)
 @export_range(1, 32) var max_stack_size: int = 32
+
+## True for hand tools that must never stack. Keep this keyed off the item's
+## KIND, not sword_level/pickaxe_level defaults: sword_level defaults to 1 on
+## every ItemData, and some non-pickaxes carry stray pickaxe_level values.
+func is_tool() -> bool:
+	return is_sword or is_pickaxe or axe_level > 0 \
+		or is_hoe or is_fishing_rod or is_bucket or is_water_bucket
+
+## Final stack ceiling used by EVERY inventory/container path. Tools and other
+## explicitly non-stackable items always resolve to 1; ordinary materials keep
+## their authored max_stack_size.
+func stack_limit() -> int:
+	if is_tool() or not stackable:
+		return 1
+	return maxi(1, max_stack_size)
+
+## True only when more than one copy may share a slot.
+func can_stack() -> bool:
+	return stack_limit() > 1
 
 # ── Placement (block / door only) ────────────────────────────────
 ## Enable to allow this item to be placed in the world
@@ -163,6 +187,11 @@ func sword_slash_radius() -> int:
 ## 1+ = that tier of pickaxe or better (bare hands never qualify).
 @export_range(0, 10) var min_pickaxe_level: int = 0
 
+## True for wooden logs (Wood, Birch Wood, Snowy Wood). This is the shared
+## resource classification the wood-gathering mission uses; planks, doors and
+## floors are wooden blocks but are NOT raw wood logs.
+@export var is_wood: bool = false
+
 ## True for wooden blocks (Wood, Planks). Axes chop these without needing a
 ## pickaxe tier and get the hidden axe wooden-block speed bonus below.
 @export var wooden_block: bool = false
@@ -208,12 +237,10 @@ func axe_wood_block_bonus() -> float:
 
 # ── Validation: tools cannot stack ──────────────────────────────────
 func _validate_property(property: Dictionary) -> void:
-	if property["name"] == "stackable" and stackable:
-		# Tools (weapons, pickaxes, swords, axes) cannot stack. Keyed off the
-		# item's KIND, not pickaxe_level — non-pickaxe items carry stray
-		# pickaxe_level values that must not decide this.
-		if is_sword or is_pickaxe or sword_level > 0 or axe_level > 0:
-			property["value"] = false
+	if property["name"] == "stackable" and is_tool():
+		property["value"] = false
+	if property["name"] == "max_stack_size" and (is_tool() or not stackable):
+		property["value"] = 1
 
 # ── Helper: build the inventory dict the game uses internally ─────
 # Returns the canonical {"data": ItemData, "quantity": int} slot format

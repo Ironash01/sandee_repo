@@ -932,6 +932,7 @@ func _die(allow_loot: bool = true) -> void:
 			Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 		Global.add_mission_progress("side_worm_slayer", 1)
 		_drop_cactus_loot()
+		Global.spawn_mob_crystal_drop(get_parent(), global_position)
 	_spawn_death_burst()
 	queue_free()
 

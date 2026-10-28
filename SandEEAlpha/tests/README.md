@@ -27,6 +27,10 @@ The suite is **offline**: it never contacts Supabase. It exercises:
   pixies), visited-instance caching and same-instance re-entry, Cave A/B state
   independence, portal re-arming/monitoring after exit, and cave-state
   save/load persistence
+* cave generation edges: the first Pixie Cave is pixie-free and later ones
+  spawn normally, every Pixie Cave has at least two rooms, both cave types keep
+  four solid border layers, and both cave camera bounds include 20 tiles of wall
+  padding so edge framing does not expose the generated-grid edge
 * torch support rules in the overworld and caves (solid walls/blocks only;
   floors, torches and bonfires do not count), stale-connection refresh when
   cave walls/ore are mined or ore regenerates, isolated/connected/variant art,
@@ -38,6 +42,9 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * Algorithmica `craft_color(r,g,b,amount)`: registration/transpiler path,
   8-bit RGB validation, one-Cactus-per-block cost, output slot/stacking,
   insufficient-material atomicity, station save/load and full-inventory behavior
+* Algorithmica editor templates: ready-to-run station/furnace examples behind
+  the TEMPLATE button, and the guided furnace lesson opening with
+  `print("Algorithmica ready")` instead of a commented snippet
 * color output block RGB/HEX mode switching, display conversion, edits,
   malformed-input rejection, preview updates, quantity/program-code stability
 * Knowledge Altar archive pagination: empty/single/multi-page, boundaries,
@@ -77,13 +84,38 @@ The suite is **offline**: it never contacts Supabase. It exercises:
   modal/scroll roots, physical-pixel virtual-keyboard height conversion, a
   scroll-safe sign-in form whose fields stay above a simulated keyboard,
   modal cancellation of PNC and held touch gestures, touch-ID bridge
-  tracking/release, and hotbar/joystick clearance checks
+  tracking/release, hotbar/joystick clearance checks, explicit BUILD/SPRINT/
+  INTERACT UI hit-testing with a short world-click guard, and no Android tap or
+  press-and-hold tooltip popups
+* mobile HUD: the approved A/B/C/D action matrix (BUILD stays right with the
+  fixed joystick, moves into the joystick slot when PnC hides it, and SPRINT
+  disappears with auto-sprint), a single-line blue/yellow star total beside
+  PAUSE, a raised mission tracker with no duplicate star header, and thick
+  HP/stamina bars labelled with current / max values
+* PC floating control guide: bottom-left WASD/Shift (Shift only while
+  point-and-click is on), bottom-right merged contextual LMB chip + Ctrl build,
+  dynamic USE/MINE/ATTACK/CHOP/MOVE/INTERACT/CHASE labels, contextual Shift+
+  DESTROY, hover/press highlights, focus-loss reset, F1 hide/show, live
+  bindings, and suppression under modals, fullscreen HUD screens and text fields
+* stat crystals: Life/Stamina hotbar use raises maximum and current HP/stamina
+  by 10, caps at 500 HP / 1000 stamina, a 10% total mob drop split 50/50, one of
+  each on a first dungeon clear, and per-world save/load with legacy saves
+  defaulting to base stats
+* friendly Wisp companion: Game-owned singleton across cave/dungeon swaps,
+  Mob-group exclusion and non-blocking collision, one cached-texture light,
+  boosted cave/Pixie-Cave light profiles, the light switched off inside
+  dungeons, smooth follow with obstacle steering, distance/stuck recovery,
+  death/respawn hiding, and duplicate-instance cleanup
 * ambient birds: both approved 4-frame wing strips, day/night finch/kite
   species selection, and the absolute above-world draw layer
 * Automatica API audit: every documented helper/function executes through the
   Lua preamble plus the Rust bridge, station globals are readable, queued
   build helpers place once per captured slot, and the Algorithmica
   station/furnace references match both Python host bases
+* guided Automatica lessons: the camp robot receives exactly 32 Wood in BUILD
+  SLOT 1 for a straight build_line run, the next lesson grants one additional
+  Automatica and Wooden Sword exactly once, and the flow requires that Wooden
+  Sword in the robot's TOOL slot plus the real `combat_mode(true)` state
 * code-only Algorithmica: the crafting station exposes the Python editor but
   not the redundant recipe picker, item-input slot or output/color inspector;
   `take_output()` remains the collection path
@@ -109,6 +141,9 @@ The suite is **offline**: it never contacts Supabase. It exercises:
   and a real chest sprite resolves correctly
 * PNC tap latency: lazy (line-of-sight first) pathfinding and spatial tree
   canopy lookup without repeated whole-world scans
+* PnC usable-item click routing: food, crystals, rod, hoe and buckets use the
+  held item instead of issuing move/interact orders; one use per press, normal
+  PnC movement resumes with non-usable tools
 * Android release configuration: package id/version/INTERNET permission, GLES3
   compatibility renderer, responsive canvas scaling and first-touch UI
   emulation
@@ -135,6 +170,10 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * tutorial direction aids and persistent skip: a player-following compass arrow,
   four inward tile-marker arrowheads, a safe-area top-right SKIP LESSON button,
   and the dialogue-signal to guide-skip flow advancing exactly one lesson
+* post-onboarding settings tour: opens the real pause/settings panel, walks
+  category and setting controls with highlight-only targets (no pointing
+  arrow), NEXT/SKIP controls, scroll-safe targets, and skips missing
+  desktop-only/optional rows
 * short-screen pause menu: scroll-safe card at 640x360 with the bottom
   Help/Settings/Quit controls reachable inside the safe area
 * pause Help & Documentation: nine complete categories (start, controls,
@@ -157,9 +196,12 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * mobile altar modals: Knowledge and Quiz panels are capped to the usable
   viewport with an internal body/question scroll, responsive quiz editor/output
   and answer widths, and touch-scrollable panel surfaces
-* Lua/Python dungeon quiz audit: all 80 questions across both language tracks
-  open with readable question text at scroll top and a panel inside the mobile
-  viewport; the Lua File I/O compiler question now has a real expected output
+* Lua/Python dungeon quiz audit: all remaining questions across both language
+  tracks open with readable question text at scroll top and a panel inside the
+  mobile viewport; the Lua File I/O compiler question has a real expected
+  output, the first Python dungeon no longer contains a multiple-choice
+  question, and the tutorial highlights the answers without a label covering
+  the question
 * account isolation: account UUID-scoped local world directories, encrypted
   owner/world-uid sidecars, transition markers, verified-account offline
   binding, cross-account load/list/upload guards, and Android backup/uninstall

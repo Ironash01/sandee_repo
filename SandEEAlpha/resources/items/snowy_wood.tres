@@ -16,5 +16,6 @@ is_craftable = true
 block_level = 5
 min_pickaxe_level = 1
 wooden_block = true
+is_wood = true
 place_scene_path = "res://scenes/objects/PlaceableBlock.tscn"
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

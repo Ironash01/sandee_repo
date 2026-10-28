@@ -538,6 +538,7 @@ func _die() -> void:
 		world.call("notify_mob_killed", self)
 	if not COMBAT_DATA.bestiary_id.is_empty():
 		Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
+	Global.spawn_mob_crystal_drop(get_parent(), global_position)
 	_spawn_death_burst()
 	queue_free()
 

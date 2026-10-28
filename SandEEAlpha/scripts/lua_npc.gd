@@ -736,7 +736,7 @@ func _take_from_chest(chest: Node, data: ItemData, quantity: int) -> int:
 # else the first empty slot. Falls back to the general inventory when full.
 func _npc_add_to_palette(data: ItemData, count: int) -> void:
 	var remaining: int = count
-	var stack_limit: int = data.max_stack_size if data != null and data.max_stack_size > 0 else Global.MAX_STACK
+	var stack_limit: int = data.stack_limit() if data != null else 1
 	for i in range(_build_palette.size()):
 		if remaining <= 0:
 			break
@@ -2282,7 +2282,7 @@ func _npc_add_to_inventory(data: ItemData) -> void:
 func _inventory_add_raw(data: ItemData, count: int) -> void:
 	if data == null:
 		return
-	var stack_limit: int = data.max_stack_size if data.max_stack_size > 0 else Global.MAX_STACK
+	var stack_limit: int = data.stack_limit()
 	var remaining: int = count
 	for slot in _npc_inventory:
 		if remaining <= 0:
