@@ -2,7 +2,7 @@ use crate::transpiler::spec::{Arguments, PythonType, Symbol, SymbolsStack};
 use anyhow::{Result, anyhow};
 use godot::prelude::*;
 use ruff_python_ast::{
-    Expr, ExprContext, Identifier, Number, Operator, Stmt, StmtFunctionDef, UnaryOp,
+    CmpOp, Expr, ExprContext, Identifier, Number, Operator, Stmt, StmtFunctionDef, UnaryOp,
     visitor::Visitor,
 };
 use ruff_python_parser::{Mode, ParseOptions};
@@ -509,6 +509,20 @@ impl Transpiler {
                     .collect();
                 Ok(format!("{{{}}}", items?.join(", ")))
             }
+            Expr::Compare(comp) => {
+                if comp.ops.len() > 1 {
+                    Err(anyhow!("Chaining comparisons is not supported."))
+                } else {
+                    let left = self.transpile_expression(&comp.operands[0])?;
+                    let right = self.transpile_expression(&comp.operands[1])?;
+                    let op = &comp.ops[0];
+                    match op {
+                        CmpOp::IsNot => Ok(format!("not ({} is {})", left, right)),
+                        CmpOp::NotIn => Ok(format!("not ({} in {})", left, right)),
+                        _ => Ok(format!("{} {} {}", left, op, right)),
+                    }
+                }
+            }
             Expr::Call(call) => match &*call.func {
                 Expr::Name(name) => {
                     let name = name.id().as_str();
@@ -814,6 +828,9 @@ mod test {
             def main():
                 foo = Foo()
                 test = 'waow'.endswith('w')
+                a = True
+                b = False
+                c = a is not b
             "};
         let transpiled = transpiler.transpile(code)?;
         println!(
