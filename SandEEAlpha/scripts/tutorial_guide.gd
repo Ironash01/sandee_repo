@@ -54,6 +54,9 @@ const MAX_TARGET_DISTANCE := 1800.0
 const CAVE_TILE_PX: float = 32.0
 const CAVE_ORE_NEAR_ENTRANCE_PX: float = 8.0 * CAVE_TILE_PX
 const CAVE_ORE_MIN_EXIT_DIST_PX: float = 120.0
+# Pixie caves are smaller than regular caves (down to 36x26 tiles), so the
+# regular-cave 3.75-tile exclusion can leave no wall target near the first room.
+const PIXIE_CAVE_ORE_MIN_EXIT_DIST_PX: float = 96.0
 
 var _world: Node2D = null
 var _spawn: Vector2 = Vector2.ZERO
@@ -2299,6 +2302,11 @@ func _nearest_cave_ore(kind: String) -> Dictionary:
 	var width := int(gen.get("width")) if kind == "pixie" else int(gen.get("size"))
 	var height := int(gen.get("height")) if kind == "pixie" else int(gen.get("size"))
 	var half := Vector2i(width / 2, height / 2)
+	var border: int = PixieCaveGenerator.BORDER_WALL_TILES if kind == "pixie" \
+		else CaveGenerator.BORDER_WALL_TILES
+	var floor_tile: int = PixieCaveGenerator.Tile.FLOOR if kind == "pixie" \
+		else CaveGenerator.Tile.FLOOR
+	var reachable := _reachable_floor_cells(gen, width, height, floor_tile, border)
 	var choices: Array = []
 	if kind == "pixie":
 		choices = [
@@ -2326,6 +2334,8 @@ func _nearest_cave_ore(kind: String) -> Dictionary:
 	var exit_pos: Vector2 = exit_portal.global_position if exit_portal != null else Vector2.INF
 	var anchor_pos: Vector2 = exit_pos if exit_pos != Vector2.INF else p.global_position
 	var pick_level: int = maxi(Global.held_mining_level(), 1)
+	var min_exit_dist: float = PIXIE_CAVE_ORE_MIN_EXIT_DIST_PX if kind == "pixie" \
+		else CAVE_ORE_MIN_EXIT_DIST_PX
 	var best: Dictionary = {}
 	var best_d := INF
 	for x in range(width):
@@ -2336,11 +2346,17 @@ func _nearest_cave_ore(kind: String) -> Dictionary:
 				continue
 			if int(min_level_by_tile.get(tile_type, 999)) > pick_level:
 				continue
-			var cell := Vector2i(x, y) - half
+			var grid_cell := Vector2i(x, y)
+			# Never point the lesson at ore embedded in the solid border or in
+			# a wall pocket with no reachable floor beside it.
+			if not _cave_grid_in_playable_bounds(grid_cell, width, height, border) \
+					or not _touches_reachable_floor(grid_cell, reachable):
+				continue
+			var cell := grid_cell - half
 			var pos := tm.to_global(tm.map_to_local(cell))
 			# Never teach on an ore overlapping the exit marker: walking onto it
 			# could leave the cave before the pickup is registered.
-			if exit_pos != Vector2.INF and pos.distance_to(exit_pos) < CAVE_ORE_MIN_EXIT_DIST_PX:
+			if exit_pos != Vector2.INF and pos.distance_to(exit_pos) < min_exit_dist:
 				continue
 			# Keep the lesson in the entrance area. A far-away vein is not a
 			# useful tutorial target even if it is technically reachable.
@@ -2356,22 +2372,24 @@ func _nearest_cave_ore(kind: String) -> Dictionary:
 		return best
 	# No natural ore near the entrance: convert a nearby wall into one so the
 	# lesson never sends the player across the cave.
-	return _create_cave_ore_near_entrance(kind, gen, tm, w, choices, exit_pos, pick_level)
+	return _create_cave_ore_near_entrance(kind, gen, tm, w, choices, exit_pos,
+		pick_level, reachable, border)
 
 
 # Carve a tutorial ore out of an existing wall tile in the entrance area. The
 # tile stays solid (ores are wall tiles), is repainted immediately, and is
 # persisted by the cave's normal grid diff/save path.
 func _create_cave_ore_near_entrance(kind: String, gen, tm: TileMapLayer,
-		w: Node, choices: Array, exit_pos: Vector2, pick_level: int) -> Dictionary:
+		w: Node, choices: Array, exit_pos: Vector2, pick_level: int,
+		reachable: Dictionary, border: int) -> Dictionary:
 	var width := int(gen.get("width")) if kind == "pixie" else int(gen.get("size"))
 	var height := int(gen.get("height")) if kind == "pixie" else int(gen.get("size"))
 	var half := Vector2i(width / 2, height / 2)
 	var entrance: Vector2i = gen.get("entrance_tile") as Vector2i
 	var stone_tile: int = PixieCaveGenerator.Tile.WALL if kind == "pixie" \
 		else CaveGenerator.Tile.STONE
-	var floor_tile: int = PixieCaveGenerator.Tile.FLOOR if kind == "pixie" \
-		else CaveGenerator.Tile.FLOOR
+	var min_exit_dist: float = PIXIE_CAVE_ORE_MIN_EXIT_DIST_PX if kind == "pixie" \
+		else CAVE_ORE_MIN_EXIT_DIST_PX
 	var chosen: Dictionary = {}
 	for c_value in choices:
 		var choice := c_value as Dictionary
@@ -2384,31 +2402,23 @@ func _create_cave_ore_near_entrance(kind: String, gen, tm: TileMapLayer,
 	var best_cell := Vector2i(-9999, -9999)
 	var best_pos := Vector2.ZERO
 	var best_score := INF
-	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	for dy in range(-8, 9):
 		for dx in range(-8, 9):
 			var dist := Vector2(dx, dy).length()
 			if dist < 3.0 or dist > 8.0:
 				continue
-			var x := entrance.x + dx
-			var y := entrance.y + dy
-			if x < 1 or y < 1 or x >= width - 1 or y >= height - 1:
+			var grid_cell := Vector2i(entrance.x + dx, entrance.y + dy)
+			if not _cave_grid_in_playable_bounds(grid_cell, width, height, border):
 				continue
+			var x := grid_cell.x
+			var y := grid_cell.y
 			if int(gen.grid[x][y]) != stone_tile:
 				continue
-			var touches_floor := false
-			for d in dirs:
-				var nx := x + (d as Vector2i).x
-				var ny := y + (d as Vector2i).y
-				if nx >= 0 and ny >= 0 and nx < width and ny < height \
-						and int(gen.grid[nx][ny]) == floor_tile:
-					touches_floor = true
-					break
-			if not touches_floor:
+			if not _touches_reachable_floor(grid_cell, reachable):
 				continue
-			var cell := Vector2i(x, y) - half
+			var cell := grid_cell - half
 			var pos := tm.to_global(tm.map_to_local(cell))
-			if exit_pos != Vector2.INF and pos.distance_to(exit_pos) < CAVE_ORE_MIN_EXIT_DIST_PX:
+			if exit_pos != Vector2.INF and pos.distance_to(exit_pos) < min_exit_dist:
 				continue
 			# Prefer a spot a short walk from the entrance, not the wall directly
 			# beside the exit marker.
@@ -2425,6 +2435,47 @@ func _create_cave_ore_near_entrance(kind: String, gen, tm: TileMapLayer,
 	chosen["cell"] = best_cell
 	chosen["pos"] = best_pos
 	return chosen
+
+
+# Flood-fill the walkable floor connected to the cave entrance. Tutorial ore
+# targets must sit against one of these cells, otherwise a valid-looking ore
+# inside the solid border or an isolated wall pocket can be selected and the
+# player is told to mine something they cannot reach.
+func _reachable_floor_cells(gen, width: int, height: int,
+		floor_tile: int, border: int) -> Dictionary:
+	var reached: Dictionary = {}
+	var start: Vector2i = gen.get("entrance_tile") as Vector2i
+	if not _cave_grid_in_playable_bounds(start, width, height, border):
+		return reached
+	if int(gen.grid[start.x][start.y]) != floor_tile:
+		return reached
+	var queue: Array = [start]
+	reached[start] = true
+	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	while not queue.is_empty():
+		var cur: Vector2i = queue.pop_back()
+		for d in dirs:
+			var n: Vector2i = cur + (d as Vector2i)
+			if not _cave_grid_in_playable_bounds(n, width, height, border) \
+					or reached.has(n) \
+					or int(gen.grid[n.x][n.y]) != floor_tile:
+				continue
+			reached[n] = true
+			queue.append(n)
+	return reached
+
+
+func _touches_reachable_floor(cell: Vector2i, reachable: Dictionary) -> bool:
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if reachable.has(cell + d):
+			return true
+	return false
+
+
+func _cave_grid_in_playable_bounds(cell: Vector2i, width: int, height: int,
+		border: int) -> bool:
+	return cell.x >= border and cell.y >= border \
+		and cell.x < width - border and cell.y < height - border
 
 # ── Waypoint helpers ────────────────────────────────────────────────
 func _nearest_waypoint() -> Node2D:

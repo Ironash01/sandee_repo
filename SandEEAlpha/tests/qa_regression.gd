@@ -1558,17 +1558,76 @@ func _test_tutorial_cave_ore() -> void:
 		and ore_pos.distance_to(entrance_pos) <= near_px + 0.5
 		and ore_data != null and ore_data.min_pickaxe_level <= 1
 		and ore_cell.x >= 0 and ore_cell.y >= 0
-		and int(gen.grid[ore_cell.x][ore_cell.y]) != 0,
-		"tutorial cave ore target stays near the entrance and is mineable with the starter pickaxe")
+		and int(gen.grid[ore_cell.x][ore_cell.y]) != 0
+		and _tutorial_ore_target_ok(guide, cave, "cave", ore),
+		"tutorial cave ore target stays near the entrance, inside bounds and mineable")
 
-	guide.queue_free()
+	# Pixie caves use the same tutorial selection on a much smaller grid.
 	cave.queue_free()
 	player.queue_free()
+	Global.world_node = null
+	Global.player_node = null
+	await get_tree().process_frame
+
+	var pixie := PixieCaveWorld.new()
+	add_child(pixie)
+	pixie.setup(246810, Vector2.ZERO, false)
+	Global.world_node = pixie
+	var pixie_player := CharacterBody2D.new()
+	pixie_player.add_to_group("Player")
+	add_child(pixie_player)
+	Global.player_node = pixie_player
+	pixie_player.global_position = pixie.call("get_player_spawn_position")
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	var pixie_ore: Dictionary = guide.call("_nearest_cave_ore", "pixie")
+	var pgen = pixie.get("generator")
+	var ptm := pixie.get("_tilemap") as TileMapLayer
+	var p_entrance_tile: Vector2i = pgen.get("entrance_tile") as Vector2i
+	var p_half := Vector2i(int(pgen.get("width")) / 2, int(pgen.get("height")) / 2)
+	var p_entrance_pos: Vector2 = ptm.to_global(ptm.map_to_local(p_entrance_tile - p_half))
+	var p_ore_pos: Vector2 = pixie_ore.get("pos", Vector2.INF) as Vector2
+	var p_ore_data := load(str(pixie_ore.get("item", ""))) as ItemData
+	check(not pixie_ore.is_empty() and p_ore_pos != Vector2.INF
+		and p_ore_pos.distance_to(p_entrance_pos) <= near_px + 0.5
+		and p_ore_data != null and p_ore_data.min_pickaxe_level <= 1
+		and _tutorial_ore_target_ok(guide, pixie, "pixie", pixie_ore),
+		"tutorial Pixie Cave ore target stays near the entrance, inside bounds and mineable")
+
+	guide.queue_free()
+	pixie.queue_free()
+	pixie_player.queue_free()
 	Global.world_node = old_world if is_instance_valid(old_world) else null
 	Global.player_node = old_player if is_instance_valid(old_player) else null
 	Global.Hotbar = old_hotbar
 	Global.set_hotbar_selection(old_selected)
 	await get_tree().process_frame
+
+
+func _tutorial_ore_target_ok(guide: Node, world: Node, kind: String,
+		ore: Dictionary) -> bool:
+	if ore.is_empty():
+		return false
+	var gen = world.get("generator")
+	if gen == null:
+		return false
+	var width: int = int(gen.get("width")) if kind == "pixie" else int(gen.get("size"))
+	var height: int = int(gen.get("height")) if kind == "pixie" else int(gen.get("size"))
+	var border: int = PixieCaveGenerator.BORDER_WALL_TILES if kind == "pixie" \
+		else CaveGenerator.BORDER_WALL_TILES
+	var floor_tile: int = PixieCaveGenerator.Tile.FLOOR if kind == "pixie" \
+		else CaveGenerator.Tile.FLOOR
+	var cell: Vector2i = ore.get("cell", Vector2i(-1, -1)) as Vector2i
+	if cell.x < 0 or cell.y < 0 or cell.x >= width or cell.y >= height:
+		return false
+	var reachable: Dictionary = guide.call(
+		"_reachable_floor_cells", gen, width, height, floor_tile, border)
+	if not bool(guide.call(
+			"_cave_grid_in_playable_bounds", cell, width, height, border)):
+		return false
+	if not bool(guide.call("_touches_reachable_floor", cell, reachable)):
+		return false
+	return int(gen.grid[cell.x][cell.y]) != floor_tile
 
 
 func _test_stat_hud_layout() -> void:
@@ -3190,6 +3249,8 @@ func _test_cave_generation_edges() -> void:
 	# never collapse to a single room. The border keeps the padded camera view
 	# reading as rock instead of exposing the generated-grid edge.
 	var pixie_rooms_ok := true
+	var pixie_size_ok := true
+	var pixie_room_size_ok := true
 	var pixie_border_ok := true
 	var pixie_border: int = PixieCaveGenerator.BORDER_WALL_TILES
 	for seed_value in range(0, 200):
@@ -3197,6 +3258,13 @@ func _test_cave_generation_edges() -> void:
 		gen.generate(seed_value)
 		if gen.rooms.size() < PixieCaveGenerator.MIN_ROOMS:
 			pixie_rooms_ok = false
+		if gen.width < 36 or gen.height < 26:
+			pixie_size_ok = false
+		for room in gen.rooms:
+			var room_size: Vector2i = (room as Dictionary).get(
+				"size", Vector2i.ZERO) as Vector2i
+			if room_size.x < 7 or room_size.y < 7:
+				pixie_room_size_ok = false
 		for x in range(gen.width):
 			for layer in range(pixie_border):
 				if int(gen.grid[x][layer]) == PixieCaveGenerator.Tile.FLOOR \
@@ -3208,7 +3276,11 @@ func _test_cave_generation_edges() -> void:
 						or int(gen.grid[gen.width - 1 - layer][y]) == PixieCaveGenerator.Tile.FLOOR:
 					pixie_border_ok = false
 	check(pixie_rooms_ok,
-		"every Pixie Cave generates at least two rooms")
+		"every Pixie Cave generates at least three rooms")
+	check(pixie_size_ok,
+		"every Pixie Cave is at least 36x26 tiles")
+	check(pixie_room_size_ok,
+		"every Pixie Cave room is at least 7x7 tiles")
 	check(pixie_border_ok,
 		"Pixie Caves keep four solid border layers")
 

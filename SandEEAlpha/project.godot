@@ -11,10 +11,12 @@ config_version=5
 [application]
 
 config/name="SandEE Alpha"
+config/description="Special thanks to SandEE Devs."
 config/version="0.9.5.3"
 run/main_scene="res://scenes/ui/startup_mode.tscn"
 config/quit_on_go_back=false
 config/features=PackedStringArray("4.6", "Mobile")
+boot_splash/image="uid://cnskfqfjpeq7f"
 config/icon="res://icons/app_icon_1024.png"
 
 [autoload]
@@ -32,6 +34,7 @@ MissionToastUI="*res://scripts/mission_completion_indicator.gd"
 
 window/size/mode=2
 window/size/resizable=false
+window/size/borderless=true
 window/size/sharp_corners=true
 window/size/minimize_disabled=true
 window/size/maximize_disabled=true

@@ -5,33 +5,35 @@ class_name PixieCaveGenerator
 # see pixie_cave_world.gd for turning this grid into a TileMapLayer).
 #
 # Unlike CaveGenerator's organic cellular-automata caverns, a pixie cave is
-# a DUNGEON-LIKE layout: a grid of small rooms connected by 2-wide corridors,
+# a DUNGEON-LIKE layout: a grid of open rooms connected by 3-wide corridors,
 # walls made of pixie stone, with crystal ores housed inside the rooms.
 # Deterministic from a single int seed (same seed -> identical grid every
 # time), matching the rest of world-gen's seeded-RNG convention.
 
 enum Tile { FLOOR, WALL, CRYSTAL_COPPER, CRYSTAL_IRON, CRYSTAL_SILICON, CRYSTAL_DIAMOND, DIORITE, GRANITE }
 
-# Pixie caves come in three sizes, randomly chosen per-cave (seeded).
+# Pixie caves come in three larger sizes, randomly chosen per-cave (seeded).
+# The old 20x16/32x24 layouts read as cramped single rooms, especially in the
+# tutorial; every size now has room for several open chambers.
 const CAVE_SIZES: Array = [
-	Vector2i(32, 24),
-	Vector2i(40, 20),
-	Vector2i(20, 16),
+	Vector2i(36, 26),
+	Vector2i(40, 30),
+	Vector2i(48, 32),
 ]
 
-const ROOM_MIN: int = 5
-const ROOM_MAX: int = 8
-const ROOM_PLACE_ATTEMPTS: int = 200
+const ROOM_MIN: int = 7
+const ROOM_MAX: int = 10
+const ROOM_PLACE_ATTEMPTS: int = 300
 # Solid pixie-stone layers kept around the generated grid. The camera pads into
 # the surrounding band, so the inner edge must read as a thick rock wall.
 const BORDER_WALL_TILES: int = 4
 const ROOM_BORDER_MARGIN: int = BORDER_WALL_TILES
 const ROOM_GAP: int = 1             # min wall tiles separating two rooms
-const CORRIDOR_THICKNESS: int = 2   # 2-wide so the 33px-tall player fits
-# A Pixie Cave must never be a single-room cave. If random placement fails to
-# produce a second room (small map + unlucky large first room), rebuild with two
-# guaranteed 5x5 rooms on opposite sides.
-const MIN_ROOMS: int = 2
+const CORRIDOR_THICKNESS: int = 3   # 3-wide so the 33px-tall player has room
+# A Pixie Cave must never collapse to one or two cramped rooms. If random
+# placement fails to produce three rooms, rebuild with three guaranteed 8x8
+# rooms spread across the cave.
+const MIN_ROOMS: int = 3
 
 const ORES_PER_ROOM_MIN: int = 1
 const ORES_PER_ROOM_MAX: int = 3
@@ -88,20 +90,23 @@ func _place_rooms(rng: RandomNumberGenerator) -> void:
 		_carve_room(room)
 		rooms.append(room)
 	if rooms.size() < MIN_ROOMS:
-		_build_two_room_fallback()
+		_build_fallback_rooms()
 
-# Deterministic rescue for the rare one-room layout. Resetting the grid here is
-# safe because rooms are placed before corridors, the entrance and ores; the
-# two 5x5 rooms fit side by side even in the smallest 20x16 cave.
-func _build_two_room_fallback() -> void:
+# Deterministic rescue for an under-sized layout. Resetting the grid here is
+# safe because rooms are placed before corridors, the entrance and ores; three
+# 8x8 rooms fit across even the smallest 36x26 cave.
+func _build_fallback_rooms() -> void:
 	_init_walls()
 	rooms = []
-	var room_size := Vector2i(ROOM_MIN, ROOM_MIN)
+	var room_size := Vector2i(8, 8)
 	var y: int = (height - room_size.y) / 2
-	var left := {"pos": Vector2i(ROOM_BORDER_MARGIN, y), "size": room_size}
-	var right := {"pos": Vector2i(width - ROOM_BORDER_MARGIN - room_size.x, y),
-		"size": room_size}
-	for room in [left, right]:
+	var positions: Array = [
+		Vector2i(ROOM_BORDER_MARGIN, y),
+		Vector2i((width - room_size.x) / 2, y),
+		Vector2i(width - ROOM_BORDER_MARGIN - room_size.x, y),
+	]
+	for pos in positions:
+		var room := {"pos": pos as Vector2i, "size": room_size}
 		_carve_room(room)
 		rooms.append(room)
 

@@ -14,8 +14,8 @@ class_name PixieCaveWorld
 # cache, so this class duplicates the small tileset/painting/mining/lighting
 # helpers rather than fighting that static-cache design.
 #
-# Layout (PixieCaveGenerator): randomly 32x24, 40x20, or 20x16 dungeon-like —
-# small rooms joined by 2-wide corridors, walls of pixie stone, crystal ores
+# Layout (PixieCaveGenerator): randomly 36x26, 40x30, or 48x32 dungeon-like —
+# open rooms joined by 3-wide corridors, walls of pixie stone, crystal ores
 # housed inside rooms (copper/iron/silicon guaranteed, diamond a 5% gamble).
 # A 128-tile band of pixie stone closes the void around the grid
 # (SURROUND_BAND_TILES).

@@ -28,9 +28,10 @@ The suite is **offline**: it never contacts Supabase. It exercises:
   independence, portal re-arming/monitoring after exit, and cave-state
   save/load persistence
 * cave generation edges: the first Pixie Cave is pixie-free and later ones
-  spawn normally, every Pixie Cave has at least two rooms, both cave types keep
-  four solid border layers, and both cave camera bounds include 20 tiles of wall
-  padding so edge framing does not expose the generated-grid edge
+  spawn normally, every Pixie Cave is at least 36x26 tiles with at least three
+  7x7 rooms, both cave types keep four solid border layers, and both cave camera
+  bounds include 20 tiles of wall padding so edge framing does not expose the
+  generated-grid edge
 * torch support rules in the overworld and caves (solid walls/blocks only;
   floors, torches and bonfires do not count), stale-connection refresh when
   cave walls/ore are mined or ore regenerates, isolated/connected/variant art,
