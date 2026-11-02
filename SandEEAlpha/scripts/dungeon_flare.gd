@@ -84,6 +84,7 @@ func _physics_process(delta: float) -> void:
 		_fire_at(p.global_position)
 
 func _fire_at(target: Vector2) -> void:
+	SFX.play("sfx_dungeon_hazards", global_position, -3.0, 1.0, 0)
 	var proj := DungeonProjectile.new()
 	proj.direction = (target - global_position).normalized()
 	proj.knockback_scale = KNOCKBACK_SCALE

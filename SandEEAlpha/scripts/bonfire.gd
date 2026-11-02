@@ -13,6 +13,16 @@ const INACTIVE_TINT: Color = Color(0.62, 0.62, 0.62)   # dimmed while off
 
 var _active: bool = false
 
+func _enter_tree() -> void:
+	super()
+	if _active and is_instance_valid(SFX):
+		SFX.play_loop("sfx_fire_ambience", global_position, str(get_instance_id()))
+
+func _exit_tree() -> void:
+	if is_instance_valid(SFX):
+		SFX.stop_loop("sfx_fire_ambience", str(get_instance_id()))
+	super()
+
 func _ready() -> void:
 	super()
 	add_to_group("Bonfire")
@@ -50,6 +60,8 @@ func _activate() -> void:
 			b.call("_set_active", false)
 	Global.set_spawn_point(global_position)
 	_set_active(true)
+	SFX.play("sfx_bonfire", global_position, -2.0, 1.0, 0)
+	SFX.play_loop("sfx_fire_ambience", global_position, str(get_instance_id()))
 	Global.notify("Respawn point set to this bonfire. Click it again to clear.")
 
 func _deactivate() -> void:
@@ -58,6 +70,8 @@ func _deactivate() -> void:
 	if was_active:
 		Global.clear_spawn_point()
 	_set_active(false)
+	SFX.play("sfx_bonfire", global_position, -4.0, 0.9, 1)
+	SFX.stop_loop("sfx_fire_ambience", str(get_instance_id()))
 	if was_active:
 		Global.notify("Respawn point cleared — you'll respawn at the world spawn.")
 
@@ -79,4 +93,6 @@ func _break() -> void:
 	if _active:
 		Global.clear_spawn_point()
 		Global.notify("Respawn point reset — your bonfire was destroyed.")
+	SFX.play("sfx_bonfire", global_position, -2.0, 0.85, 1)
+	SFX.stop_loop("sfx_fire_ambience", str(get_instance_id()))
 	super()

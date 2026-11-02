@@ -1,7 +1,7 @@
-[gd_resource type="Resource" script_class="ItemData" format=3]
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://d0qidfd3tm2t8"]
 
-[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
-[ext_resource type="Texture2D" path="res://sprites/smiling_fishes.png" id="2_tex"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" uid="uid://d246d76a5od03" path="res://sprites/smiling_fishes.png" id="2_tex"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_fish"]
 atlas = ExtResource("2_tex")
@@ -9,8 +9,9 @@ region = Rect2(32, 32, 32, 32)
 
 [resource]
 script = ExtResource("1_item")
-item_name = "Cooked Allan"
-description = "A cooked red fish. Yes sir. Eat it to restore 50 health."
+item_name = "Cooked Scuttlefish"
+description = "A cooked Scuttlefish. Somehow related to shrimps. Eat it to restore 50 health."
+scripting_id = "cooked_allan"
 item_type = "consumable"
-icon = SubResource("AtlasTexture_fish")
 heal_amount = 50.0
+icon = SubResource("AtlasTexture_fish")

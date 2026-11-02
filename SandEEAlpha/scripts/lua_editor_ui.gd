@@ -13,20 +13,27 @@ const C_STOP    := Color(0.50, 0.20, 0.08, 1.00)
 const C_ERR     := Color(0.45, 0.12, 0.12, 1.00)
 const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.50)
 
+# LuaNPC owns the rename cap; the editor field uses the same constant so the UI
+# and rename() can never drift apart.
+const LUA_NPC_SCRIPT: GDScript = preload("res://scripts/lua_npc.gd")
+const CODE_SAFETY: GDScript = preload("res://scripts/code_safety.gd")
+
 # ── Refs ──────────────────────────────────────────────────────────
 var _code_edit: CodeEdit
 var _output:    RichTextLabel
 var _run_btn:   Button
 var _stop_btn:  Button
 var _name_edit: LineEdit   # rename field (reflects in the robot label + status HUD)
+var _enc_btn: Button = null # explicit CODE / ENCYCLOPEDIA toggle
 var _tool_slot: Control = null      # the LUA's tool slot (lua_tool_slot.gd)
-var _tabs: TabContainer = null      # Code / Inventory / Output pages
+var _tabs: TabContainer = null      # CODE / INVENTORY / ENCYCLOPEDIA pages
 var _combat_btn: Button = null      # combat-mode toggle
 # NOTE: there is deliberately no per-station TERMINATE button. Terminating a
 # LUA is a menu action (pause menu -> LUA Management) so the player has to pick
 # the specific LUA from the active list.
-var _body:      Control   # code + output view
-var _encycl:    Control   # encyclopedia view
+var _body:      Control   # the CODE / INVENTORY / ENCYCLOPEDIA TabContainer
+var _encycl:    Control   # the ENCYCLOPEDIA tab page
+var _panel_scroll: ScrollContainer = null  # keyboard-aware scroll area
 var _panel_center: CenterContainer = null   # keyboard-aware centring area
 var _enc_func_box: VBoxContainer   # the four Programming Encyclopedia sections
 # Section id -> expanded, kept across refreshes so a knowledge update or a UI
@@ -47,7 +54,7 @@ var _last_run_ok: bool = false
 var _awaiting_settle: bool = false
 var _build_slots: Array = []   # the 3 lua_build_slot.gd Controls
 
-# ── Example snippets (shown in the SNIPPETS column) ───────────────
+# ── Example programs (shown in the TEMPLATES column) ──────────────
 # Click one to drop its code into the editor. The first is BOUND TO A MISSION
 # ("run_program") so it works as a tutorial: inserting it arms the mission, and
 # a successful run completes it via the normal mission system.
@@ -55,7 +62,7 @@ const SNIPPETS: Array = [
 	{"name": "1. Build a line (tutorial)", "mission": "",
 		"code": "-- Automatica can build for you. This uses the 32 Wood in BUILD SLOT 1.\nselect_block(0)\nbuild_line(-15, -8, 16, -8)"},
 	{"name": "2. Combat mode (tutorial)", "mission": "",
-		"code": "-- Send this Automatica into permanent combat mode.\ncombat_mode(true)"},
+		"code": "-- combat_mode(true) follows and fights; combat_mode(false) returns to the blue station robot.\ncombat_mode(true)"},
 	{"name": "3. Auto work", "mission": "",
 		"code": "-- Chop nearby trees, deliver the wood to a chest, then return home.\nauto_work()"},
 	{"name": "4. Craft planks", "mission": "",
@@ -87,25 +94,32 @@ function place_item(dx, dy)
     __place_item(dx or 0, dy or 0)
 end
 
+-- mine() now uses the Automatica's own work radius. The Rust bridge still
+-- accepts a legacy second argument for compatibility; GDScript ignores it.
+local __mine = mine
+function mine(name)
+	__mine(name, 0)
+end
+
 function chop_trees(radius)
-    move(radius or 20, -1)
-    interact()
+	move(radius or 20, -1000001)
+	interact()
 end
 function auto_work()
-    move(0, -2)
-    interact()
+	move(0, -1000002)
+	interact()
 end
 function deposit_chest()
-    move(0, -4)
-    interact()
+	move(0, -1000004)
+	interact()
 end
 function return_to_spawn()
-    move(0, -3)
-    interact()
+	move(0, -1000003)
+	interact()
 end
 function chest_contents()
-    move(0, -5)
-    interact()
+	move(0, -1000005)
+	interact()
 end
 function craft_example()
 	-- Minimal station example. The station must already have the recipe's
@@ -128,6 +142,7 @@ end
 -- would skip tiles on diagonals; this steps one tile at a time.
 function build_line(x0, y0, x1, y1)
 	x0, y0, x1, y1 = x0 or 0, y0 or 0, x1 or 0, y1 or 0
+	move(0, -1000006)
 	local dx = math.abs(x1 - x0)
 	local dy = -math.abs(y1 - y0)
 	local sx = (x0 < x1) and 1 or -1
@@ -148,6 +163,7 @@ function build_rect(x0, y0, w, h, filled)
 	x0, y0 = x0 or 0, y0 or 0
 	w, h = w or 1, h or 1
 	filled = filled or false
+	move(0, filled and -1000012 or -1000007)
 	for x = 0, w - 1 do
 		for y = 0, h - 1 do
 			if filled or x == 0 or y == 0 or x == w - 1 or y == h - 1 then
@@ -175,6 +191,7 @@ end
 
 -- Hollow ring of radius r.
 function build_ring(r)
+	move(0, -1000008)
 	build_circle(r, false)
 end
 
@@ -182,6 +199,7 @@ end
 function build_spiral(r, turns)
 	r, turns = r or 1, turns or 1
 	if r <= 0 or turns <= 0 then return end
+	move(0, -1000011)
 	local total = turns * 2 * math.pi
 	local steps = math.max(1, math.floor(r * turns * 10))
 	for i = 0, steps do
@@ -194,6 +212,7 @@ end
 -- Sine-wave fence: `len` tiles long, `amp` tiles tall.
 function build_wave(len, amp)
 	len, amp = len or 1, amp or 1
+	move(0, -1000009)
 	for x = 0, len - 1 do
 		place_item(x, math.floor(amp * math.sin(x * 0.5) + 0.5))
 	end
@@ -202,6 +221,7 @@ end
 -- Diagonal staircase of n steps.
 function build_stairs(n)
 	n = n or 1
+	move(0, -1000010)
 	for i = 0, n - 1 do
 		place_item(i, i)
 	end
@@ -236,7 +256,11 @@ func _on_ui_scale(_s: float) -> void:
 		return
 	var saved_code: String = _code_edit.text if _code_edit != null else ""
 	var was_visible: bool  = visible
-	var was_encycl: bool   = _encycl != null and _encycl.visible
+	var was_tab: String = "CODE"
+	if _tabs != null and is_instance_valid(_tabs) and _tabs.get_tab_count() > 0:
+		was_tab = _tabs.get_tab_title(_tabs.current_tab)
+	_panel_scroll = null
+	_panel_center = null
 	for child in get_children():
 		child.queue_free()
 	await get_tree().process_frame
@@ -244,8 +268,13 @@ func _on_ui_scale(_s: float) -> void:
 	_code_edit.text = saved_code
 	_sync_run_state()
 	_wire_build_palette()
-	if was_encycl:
-		_toggle_encyclopedia()
+	# Re-select the same tab by NAME so a UI-scale rebuild never jumps the
+	# player out of the page they were using.
+	if _tabs != null:
+		for i in range(_tabs.get_tab_count()):
+			if _tabs.get_tab_title(i) == was_tab:
+				_tabs.current_tab = i
+				break
 	visible = was_visible
 
 # Walks up from this UI to the LuaNPC (the node exposing stop_work), so the
@@ -279,21 +308,25 @@ func _sync_run_state(manage_pause: bool = true) -> void:
 			active = bool(npc.call("has_active_work"))
 		elif npc.has_method("is_working"):
 			active = bool(npc.call("is_working"))
+	var in_combat: bool = npc != null and npc.has_method("is_combat") \
+		and bool(npc.call("is_combat"))
 	_running = active
+	_update_combat_button(in_combat)
 	if _run_btn != null:
-		_run_btn.disabled = active
+		_run_btn.disabled = active or in_combat
 	if _stop_btn != null:
-		_stop_btn.disabled = not active
-		_stop_btn.tooltip_text = "Stop the robot's current work." if active \
+		_stop_btn.disabled = in_combat or not active
+		_stop_btn.tooltip_text = "Stop the robot's current work." if active and not in_combat \
 			else "Nothing is running — STOP is only available while the robot is working."
 	if _code_edit != null:
-		_code_edit.editable = not active
+		_code_edit.editable = not active and not in_combat
 	# Suspending the panel's pause is what lets the robot move; it is keyed by
 	# this node, so the shared refcount stays balanced and a second UI still
-	# pauses the game.
+	# pauses the game. Combat keeps the pause in place so the player can safely
+	# use EXIT COMBAT.
 	if not manage_pause:
 		return
-	if active:
+	if active and not in_combat:
 		Global.suspend_ui_pause(self)
 	else:
 		Global.resume_ui_pause(self)
@@ -310,20 +343,27 @@ func _process(_delta: float) -> void:
 		return
 	_sync_run_state()
 
-# Android: shrink the centring area by the software keyboard's height so the
+# Android: shrink the scroll area by the software keyboard's height so the
 # focused code field and the RUN/STOP row stay above it. No-op on desktop
 # (mobile_keyboard_height() returns 0).
 func _fit_keyboard() -> void:
-	if _panel_center == null:
+	if _panel_scroll == null:
 		return
 	var inset: float = Global.keyboard_panel_inset()
 	var want: float = -(Global.ui_safe_insets.w + inset)
-	if not is_equal_approx(_panel_center.offset_bottom, want):
-		_panel_center.offset_bottom = want
+	if not is_equal_approx(_panel_scroll.offset_bottom, want):
+		_panel_scroll.offset_bottom = want
+		if _code_edit != null and is_instance_valid(_code_edit) and _code_edit.has_focus():
+			_panel_scroll.call_deferred("ensure_control_visible", _code_edit)
 
 # Called by the LuaNPC when the player clicks the station.
 func open_panel() -> void:
 	visible = true
+	# Re-entering a station always starts on CODE, never on the reference tab
+	# that happened to be open when the panel was closed.
+	if _tabs != null and _encycl != null and _tabs.current_tab == _encycl.get_index():
+		_tabs.current_tab = 0
+	SFX.play_ui("sfx_lua_station", 0)
 	_last_run_ok = false
 	_awaiting_settle = false
 	_sync_run_state()
@@ -334,6 +374,7 @@ func open_panel() -> void:
 		var npc: Node = _find_npc()
 		if npc != null and npc.has_method("get_display_name"):
 			_name_edit.text = str(npc.call("get_display_name"))
+	_update_combat_ui()
 
 # Restore the LUA's saved program into the editor (persisted on the NPC with the
 # world save, so the code survives a reload).
@@ -372,40 +413,48 @@ func _build() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
 
+	# Keyboard-aware scroll area, matching Algorithmica's editors: the panel
+	# can be taller than a phone in landscape, and a focused CodeEdit must be
+	# scrolled above the software keyboard.
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	add_child(scroll)
+	_panel_scroll = scroll
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	Global.apply_safe_area(center)
-	add_child(center)
+	var content := Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(content.x, maxf(1.0, content.y))
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(center)
 	_panel_center = center
 
 	var panel := PanelContainer.new()
-	# A TABBED panel needs far less room than the old 4-column layout, so this is
-	# much smaller than it was (1280x720 -> 680x420 before ui_scale).
-	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(680, 420))
+	# Same weight and proportions as the Algorithmica station/furnace editor:
+	# a wide code page with the reference alongside it.
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(900, 560))
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
-	ps.content_margin_left = i(12, s); ps.content_margin_right  = i(12, s)
-	ps.content_margin_top  = i(10, s); ps.content_margin_bottom = i(12, s)
+	ps.content_margin_left = i(18, s); ps.content_margin_right  = i(18, s)
+	ps.content_margin_top  = i(14, s); ps.content_margin_bottom = i(18, s)
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", i(10, s))
+	vbox.add_theme_constant_override("separation", i(8, s))
 	panel.add_child(vbox)
 
 	# ── Header ───────────────────────────────────────────────────
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", i(6, s))
+	header.add_theme_constant_override("separation", i(8, s))
 	vbox.add_child(header)
 
-	var icon := Label.new()
-	icon.text = "🤖"
-	icon.add_theme_font_size_override("font_size", Global.ui_font_size(20))
-	header.add_child(icon)
-
 	var title := Label.new()
-	title.text = "  AUTOMATICA — Code Editor"
+	title.text = "AUTOMATICA — LUA ROBOT"
 	title.add_theme_font_size_override("font_size", Global.ui_font_size(16))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -414,7 +463,11 @@ func _build() -> void:
 	# Rename field — the new name shows above the robot AND in the LUA status
 	# HUD (lua_status_ui.gd reads get_display_name()).
 	_name_edit = LineEdit.new()
-	_name_edit.placeholder_text = "name"
+	_name_edit.placeholder_text = "NAME"
+	# Hard 12-character cap shared with LuaNPC.rename_to()/rename().
+	_name_edit.max_length = LUA_NPC_SCRIPT.MAX_CUSTOM_NAME_LENGTH
+	_name_edit.tooltip_text = "Automatica names are limited to %d characters." \
+		% LUA_NPC_SCRIPT.MAX_CUSTOM_NAME_LENGTH
 	_name_edit.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_name_edit.custom_minimum_size = Vector2(i(120, s), 0)
 	var npc_now: Node = _find_npc()
@@ -424,7 +477,7 @@ func _build() -> void:
 	header.add_child(_name_edit)
 
 	var rename_btn := Button.new()
-	rename_btn.text = "Rename"
+	rename_btn.text = "RENAME"
 	rename_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	var rbs := StyleBoxFlat.new()
 	rbs.bg_color = Color(0.12, 0.18, 0.36, 1.0)
@@ -439,53 +492,46 @@ func _build() -> void:
 	rename_btn.pressed.connect(func() -> void: _on_rename_submitted(_name_edit.text))
 	header.add_child(rename_btn)
 
-	var enc_btn := Button.new()
-	enc_btn.text = "📖  Encyclopedia"
-	enc_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
-	var ebs := StyleBoxFlat.new()
-	ebs.bg_color = Color(0.12, 0.18, 0.36, 1.0)
-	ebs.border_color = C_BORDER
-	ebs.set_border_width_all(1); ebs.set_corner_radius_all(4)
-	ebs.content_margin_left = i(10, s); ebs.content_margin_right  = i(10, s)
-	ebs.content_margin_top  = i(4, s);  ebs.content_margin_bottom = i(4, s)
-	enc_btn.add_theme_stylebox_override("normal",  ebs)
-	enc_btn.add_theme_stylebox_override("hover",   ebs)
-	enc_btn.add_theme_stylebox_override("pressed", ebs)
-	enc_btn.add_theme_color_override("font_color", C_TITLE)
-	enc_btn.pressed.connect(_toggle_encyclopedia)
-	header.add_child(enc_btn)
+	# Explicit reference toggle: the tabs remain, but this makes the
+	# Encyclopedia entry point obvious and returns to CODE with the same click.
+	_enc_btn = Button.new()
+	_enc_btn.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	var eb := StyleBoxFlat.new()
+	eb.bg_color = Color(0.12, 0.18, 0.36, 1.0)
+	eb.border_color = C_BORDER
+	eb.set_border_width_all(1); eb.set_corner_radius_all(4)
+	eb.content_margin_left = i(10, s); eb.content_margin_right = i(10, s)
+	eb.content_margin_top = i(4, s); eb.content_margin_bottom = i(4, s)
+	_enc_btn.add_theme_stylebox_override("normal", eb)
+	_enc_btn.add_theme_stylebox_override("hover", eb)
+	_enc_btn.add_theme_stylebox_override("pressed", eb)
+	_enc_btn.add_theme_color_override("font_color", C_TITLE)
+	_enc_btn.pressed.connect(_toggle_encyclopedia)
+	header.add_child(_enc_btn)
+	_update_encyclopedia_button(false)
 
-	var close_btn := Button.new()
-	close_btn.text = "✕"; close_btn.flat = true
-	close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	close_btn.add_theme_color_override("font_color", C_MUTED)
-	close_btn.custom_minimum_size = Vector2(i(28, s), i(28, s))
+	var close_btn := Global.make_close_button()
+	close_btn.tooltip_text = "Close the Automatica editor."
 	close_btn.pressed.connect(_close)
 	header.add_child(close_btn)
 
 	_divider(vbox)
 
-	# ── Main body (code + output) ────────────────────────────────
+	# ── Main body: CODE / INVENTORY / ENCYCLOPEDIA tabs ──────────
+	# Same navigation model as Algorithmica's editor: the reference is a tab,
+	# not a separate overlay, and the program log sits under the code.
 	_body = _build_body(s)
 	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_body)
 
-	# ── Encyclopedia (hidden by default) ─────────────────────────
-	_encycl = _build_encyclopedia(s)
-	_encycl.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_encycl.visible = false
-	vbox.add_child(_encycl)
-
 # ── Body: code editor + output ────────────────────────────────────
-# The LUA panel is TABBED so only ONE area is on screen at a time — the old
-# layout put snippets | player items | code | output side by side across the
-# whole screen. Tabs:
-#   Code      — snippets + the editor + RUN / STOP / CLEAR / COMBAT
-#   Inventory — the player's items/hotbar + the robot's TOOL and 3 BUILD slots
-#   Output    — the program's log
+# Mirrors the Algorithmica editor's tab layout:
+#   CODE          — templates + editor + RUN/STOP/CLEAR/COMBAT + inline log
+#   INVENTORY     — the player's items/hotbar + the robot's TOOL/3 BUILD slots
+#   ENCYCLOPEDIA  — the full Programming Encyclopedia, read-only
 # Each tab is its own container, so the inventory and coding areas are separate
-# components that are navigated independently. They share no state of their own:
-# the slots are views of the NPC's authoritative palette/tool.
+# components navigated independently. They share no state of their own: the
+# slots are views of the NPC's authoritative palette/tool.
 func _build_body(s: float) -> Control:
 	var tabs := TabContainer.new()
 	_tabs = tabs
@@ -493,27 +539,24 @@ func _build_body(s: float) -> Control:
 	tabs.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	tabs.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	tabs.clip_tabs = false
+	tabs.tab_changed.connect(_on_tab_changed)
 
-	# ── Code tab ──
+	# ── CODE tab ──
 	var code_page := HBoxContainer.new()
-	code_page.name = "Code"
+	code_page.name = "CODE"
 	code_page.add_theme_constant_override("separation", i(10, s))
 
-	# Snippets column (left of the code editor).
+	# TEMPLATES column (left of the code editor), same as Algorithmica.
 	code_page.add_child(_build_snippets(s))
 
 	var ed_wrap := VBoxContainer.new()
 	ed_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ed_wrap.add_theme_constant_override("separation", i(6, s))
+	ed_wrap.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	ed_wrap.add_theme_constant_override("separation", i(8, s))
 	code_page.add_child(ed_wrap)
 
-	var ed_lbl := Label.new()
-	ed_lbl.text = "CODE"
-	ed_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
-	ed_lbl.add_theme_color_override("font_color", C_MUTED)
-	ed_wrap.add_child(ed_lbl)
-
 	_code_edit = CodeEdit.new()
+	_code_edit.custom_minimum_size  = Vector2(0, i(140, s))
 	_code_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_code_edit.placeholder_text    = "-- write your Lua code here\ninteract()"
 	_setup_code_editor()
@@ -525,7 +568,7 @@ func _build_body(s: float) -> Control:
 	_code_edit.add_theme_stylebox_override("normal", es)
 	_code_edit.add_theme_stylebox_override("focus",  es)
 	_code_edit.add_theme_color_override("font_color", C_TITLE)
-	_code_edit.add_theme_font_size_override("font_size", Global.ui_font_size(14))
+	_code_edit.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	ed_wrap.add_child(_code_edit)
 
 	# Buttons: RUN  STOP  CLEAR
@@ -551,14 +594,40 @@ func _build_body(s: float) -> Control:
 	# Combat mode (see lua_npc.gd combat section). Termination lives in the pause
 	# menu's LUA Management list.
 	_combat_btn = _make_btn("⚔ COMBAT", Color(1.0, 0.85, 0.6, 1.0), C_STOP, _toggle_combat, s)
-	_combat_btn.tooltip_text = "Send this Automatica into combat mode: it abandons its station, follows you and fights. PERMANENT - a combat Automatica can't run code, can't revert to a normal Automatica, and can only be terminated from the pause menu's Automatica Management list."
+	_combat_btn.tooltip_text = "Send this Automatica into combat mode: it abandons its station, follows you and fights. While in combat it cannot run code. Use EXIT COMBAT to return it to its station as a normal Automatica."
 	btn_row.add_child(_combat_btn)
+
+	# Inline program log below the action row, exactly like Algorithmica's
+	# station/furnace editor. It stays visible while the CODE tab is open.
+	var out_panel := PanelContainer.new()
+	out_panel.custom_minimum_size = Vector2(0, i(90, s))
+	out_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var op := StyleBoxFlat.new()
+	op.bg_color = C_OUTPUT; op.border_color = C_BORDER
+	op.set_border_width_all(1); op.set_corner_radius_all(4)
+	op.content_margin_left = i(8, s); op.content_margin_right  = i(8, s)
+	op.content_margin_top  = i(8, s); op.content_margin_bottom = i(8, s)
+	out_panel.add_theme_stylebox_override("panel", op)
+	ed_wrap.add_child(out_panel)
+
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	out_panel.add_child(scroll)
+
+	_output = RichTextLabel.new()
+	_output.bbcode_enabled        = true
+	_output.scroll_following      = true
+	_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_output.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	_output.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	_output.add_theme_color_override("default_color", C_TITLE)
+	scroll.add_child(_output)
 
 	tabs.add_child(code_page)
 
-	# ── Inventory tab ──
+	# ── INVENTORY tab ──
 	var inv_page := HBoxContainer.new()
-	inv_page.name = "Inventory"
+	inv_page.name = "INVENTORY"
 	inv_page.add_theme_constant_override("separation", i(10, s))
 
 	# Player inventory + hotbar (drag items straight into the BUILD SLOTS).
@@ -589,48 +658,26 @@ func _build_body(s: float) -> Control:
 
 	tabs.add_child(inv_page)
 
-	# ── Output tab ──
-	var out_wrap := VBoxContainer.new()
-	out_wrap.name = "Output"
-	out_wrap.add_theme_constant_override("separation", i(6, s))
-
-	var out_panel := PanelContainer.new()
-	out_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var op := StyleBoxFlat.new()
-	op.bg_color = C_OUTPUT; op.border_color = C_BORDER
-	op.set_border_width_all(1); op.set_corner_radius_all(4)
-	op.content_margin_left = i(8, s); op.content_margin_right  = i(8, s)
-	op.content_margin_top  = i(8, s); op.content_margin_bottom = i(8, s)
-	out_panel.add_theme_stylebox_override("panel", op)
-	out_wrap.add_child(out_panel)
-
-	var scroll := ScrollContainer.new()
-	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	out_panel.add_child(scroll)
-
-	_output = RichTextLabel.new()
-	_output.bbcode_enabled        = true
-	_output.scroll_following      = true
-	_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_output.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	_output.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	_output.add_theme_color_override("default_color", C_TITLE)
-	scroll.add_child(_output)
-
-	tabs.add_child(out_wrap)
+	# ── ENCYCLOPEDIA tab ──
+	_encycl = _build_encyclopedia(s)
+	_encycl.name = "ENCYCLOPEDIA"
+	_encycl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_encycl.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	tabs.add_child(_encycl)
 
 	return tabs
 
-# ── Snippets column ───────────────────────────────────────────────
-# A narrow column of example programs. Clicking one replaces the editor's
-# contents with that example (the tutorial one also arms its mission).
+# ── Templates column ──────────────────────────────────────────────
+# A narrow column of example programs, styled like Algorithmica's TEMPLATES
+# column. Clicking one replaces the editor's contents with that example (the
+# tutorial one also arms its mission).
 func _build_snippets(s: float) -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", i(6, s))
 	col.custom_minimum_size = Vector2(i(160, s), 0)
 
 	var lbl := Label.new()
-	lbl.text = "SNIPPETS"
+	lbl.text = "TEMPLATES"
 	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	lbl.add_theme_color_override("font_color", C_MUTED)
 	col.add_child(lbl)
@@ -877,15 +924,16 @@ func _on_build_palette_changed() -> void:
 	_refresh_build_palette()
 
 # ── Combat mode UI ────────────────────────────────────────────────
-# Entering combat is ONE-WAY: a combat LUA can only be terminated, never turned
-# back into a normal LUA (there is no exit-combat button).
+# The button is a toggle: COMBAT sends the robot out as a follower, EXIT
+# COMBAT returns it to its station as a normal (blue) Automatica.
 func _toggle_combat() -> void:
 	var npc: Node = _find_npc()
 	if npc == null or not npc.has_method("is_combat"):
 		return
 	if bool(npc.call("is_combat")):
-		return
-	npc.call("_enter_combat")
+		npc.call("_exit_combat")
+	else:
+		npc.call("_enter_combat")
 	_update_combat_ui()
 
 # Terminating a LUA is a MENU action now: pause menu -> LUA Management, where
@@ -894,16 +942,18 @@ func _toggle_combat() -> void:
 func _update_combat_ui() -> void:
 	var npc: Node = _find_npc()
 	var combat: bool = npc != null and npc.has_method("is_combat") and bool(npc.call("is_combat"))
-	# No exit-combat: once a LUA is in combat it stays there.
-	if _combat_btn != null:
-		_combat_btn.visible = not combat
-	if combat:
-		if _code_edit != null:
-			_code_edit.editable = false
-		if _run_btn != null:
-			_run_btn.disabled = true
-	elif _code_edit != null and _run_btn != null:
-		_sync_run_state()
+	_update_combat_button(combat)
+	_sync_run_state()
+
+# Keep the label/tooltip in step with the live combat state (the state can also
+# change from Lua's combat_mode() while this panel is open).
+func _update_combat_button(combat: bool) -> void:
+	if _combat_btn == null:
+		return
+	_combat_btn.visible = true
+	_combat_btn.text = "⚔ EXIT COMBAT" if combat else "⚔ COMBAT"
+	_combat_btn.tooltip_text = ("Return this Automatica to its station as a normal Automatica. Combat HP, target and sprite are reset." if combat
+		else "Send this Automatica into combat mode: it abandons its station, follows you and fights. While in combat it cannot run code. Use EXIT COMBAT to return it to its station as a normal Automatica.")
 
 # ── Encyclopedia ──────────────────────────────────────────────────
 # Four independently expandable sections, in this order:
@@ -921,6 +971,13 @@ func _build_encyclopedia(s: float) -> Control:
 	hdr.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	hdr.add_theme_color_override("font_color", C_TITLE)
 	root.add_child(hdr)
+
+	var hint := Label.new()
+	hint.text = "Read-only reference. Switch to CODE to write a program."
+	hint.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+	hint.add_theme_color_override("font_color", C_MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(hint)
 
 	_divider(root)
 
@@ -949,9 +1006,9 @@ func _build_encyclopedia(s: float) -> Control:
 
 	return root
 
-# Rebuilds the four accordion sections. Language sections list only what the
-# player has discovered; Automatica / Algorithmica are always fully listed.
-# Called on open so a dungeon cleared since the last look shows up.
+# Rebuilds the encyclopedia accordion sections. Language sections list only
+# what the player has discovered; Automatica / Algorithmica are always fully
+# listed. Called on open so a dungeon cleared since the last look shows up.
 func _refresh_encyclopedia_sections() -> void:
 	if _enc_func_box == null:
 		return
@@ -964,6 +1021,7 @@ func _refresh_encyclopedia_sections() -> void:
 	for section in APIReference.encyclopedia_sections():
 		var sec: Dictionary = section as Dictionary
 		var always: bool = EncyclopediaData.section_is_always_available(sec)
+		var start_open: bool = bool(sec.get("start_expanded", always))
 		var entries: Array = EncyclopediaData.entries_for_section(sec)
 		var acc := EncyclopediaSection.new()
 		acc.setup(sec, s)
@@ -980,8 +1038,9 @@ func _refresh_encyclopedia_sections() -> void:
 				acc.add_entry(e as Dictionary, s)
 		_enc_func_box.add_child(acc)
 		# Function sections open by default; language sections stay collapsed
-		# until something has been discovered.
-		acc.set_expanded(bool(_enc_open.get(acc.section_id, always)), false)
+		# until something has been discovered. The mineable-block list opts out
+		# with start_expanded = false so it does not bury the function list.
+		acc.set_expanded(bool(_enc_open.get(acc.section_id, start_open)), false)
 		acc.expansion_changed.connect(_on_encyclopedia_section_expanded)
 
 func _on_encyclopedia_section_expanded(id: String, on: bool) -> void:
@@ -1016,7 +1075,7 @@ func _refresh_knowledge_section() -> void:
 # entry name doubles as the keyword label targeted by the first-time emphasis
 # (see _emphasize_unseen_knowledge). The animation is NOT played here — the
 # section is built while hidden, so playing it now would run off-screen; it's
-# deferred to _toggle_encyclopedia when the view actually becomes visible.
+# deferred to _on_tab_changed when the reference actually becomes visible.
 func _enc_knowledge_entry(parent: Node, e: KnowledgeEntry, s: float) -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", i(4, s))
@@ -1077,16 +1136,31 @@ func _enc_section(parent: Node, text: String, s: float) -> void:
 	parent.add_child(lbl)
 
 # ── Actions ───────────────────────────────────────────────────────
+# Select the ENCYCLOPEDIA tab (or return to CODE when it is already active).
+# Kept as a helper for Back/Escape and the former header button.
 func _toggle_encyclopedia() -> void:
-	_encycl.visible = not _encycl.visible
-	_body.visible   = not _encycl.visible
-	if _encycl.visible:
-		# Rebuild so any entry learned/discovered since the last look is
-		# present, then (after a frame, so labels are laid out) play the
-		# first-time emphasis.
-		_refresh_encyclopedia_sections()
-		_refresh_knowledge_section()
-		_emphasize_unseen_knowledge.call_deferred()
+	if _tabs == null or _encycl == null:
+		return
+	var idx: int = _encycl.get_index()
+	_tabs.current_tab = 0 if _tabs.current_tab == idx else idx
+
+# Refresh the reference when its tab becomes visible, so dungeon knowledge
+# learned since the last look appears without rebuilding the editor.
+func _on_tab_changed(tab: int) -> void:
+	var on_reference: bool = _encycl != null and tab == _encycl.get_index()
+	_update_encyclopedia_button(on_reference)
+	if not on_reference:
+		return
+	_refresh_encyclopedia_sections()
+	_refresh_knowledge_section()
+	_emphasize_unseen_knowledge.call_deferred()
+
+func _update_encyclopedia_button(on_reference: bool) -> void:
+	if _enc_btn == null or not is_instance_valid(_enc_btn):
+		return
+	_enc_btn.text = "↩  CODE" if on_reference else "📖  ENCYCLOPEDIA"
+	_enc_btn.tooltip_text = ("Return to the code editor." if on_reference
+		else "Open the Programming Encyclopedia. Click again to return to CODE.")
 
 # ── Code editor: syntax highlight + autocomplete ──────────────────
 # Custom API names + Lua keywords are highlighted, and the completion popup is
@@ -1163,7 +1237,7 @@ func _run_code() -> void:
 	# Combat LUAs cannot run code (see lua_npc.gd combat section).
 	var npc_c: Node = _find_npc()
 	if npc_c != null and npc_c.has_method("is_combat") and bool(npc_c.call("is_combat")):
-		_print_output("[color=#ff8888]This Automatica is in combat mode — it cannot run code.[/color]")
+		_print_output("[color=#ff8888]This Automatica is in combat mode — use EXIT COMBAT before running code.[/color]")
 		return
 	if _lua_state == null:
 		_print_output("[color=#ff8888]No LuaState connected.[/color]")
@@ -1172,6 +1246,14 @@ func _run_code() -> void:
 	if code.is_empty():
 		return
 	_last_run_ok = false
+	# Hard pre-run guard: Lua executes synchronously, so an obvious infinite
+	# loop would freeze the game before any runtime timeout could run.
+	var unsafe: String = CODE_SAFETY.lua_issue(code)
+	if not unsafe.is_empty():
+		_print_output("[color=#ff8888]✗ %s[/color]" % unsafe)
+		SFX.play_ui("sfx_lua_run", 2, -2.0)
+		return
+	SFX.play_ui("sfx_lua_run", 0)
 	_lint(code)
 	# Persist the program on the NPC so it survives a reload.
 	if npc_c != null:
@@ -1257,6 +1339,10 @@ func _clear_code() -> void:
 func close_panel() -> void:
 	if not visible:
 		return
+	# Leaving the station returns the hidden panel to CODE so the reference
+	# cannot re-open by itself the next time the player interacts.
+	if _tabs != null and _encycl != null and _tabs.current_tab == _encycl.get_index():
+		_tabs.current_tab = 0
 	_awaiting_settle = false
 	# Persist the current editor draft before closing so Escape/Back can never
 	# silently discard code the player has not run yet.
@@ -1279,10 +1365,12 @@ func close_panel() -> void:
 func _close() -> void:
 	close_panel()
 
-# Escape/Android Back closes the API encyclopedia first, then the editor.
+# Escape/Android Back leaves the API encyclopedia tab first, then closes the
+# editor. Mirrors Algorithmica's layered back behaviour.
 func _back() -> void:
-	if _encycl != null and _encycl.visible:
-		_toggle_encyclopedia()
+	if _tabs != null and _encycl != null \
+			and _tabs.current_tab == _encycl.get_index():
+		_tabs.current_tab = 0
 		if visible:
 			Global.register_ui_back(self, Callable(self, "_back"))
 		return
@@ -1303,6 +1391,7 @@ func _on_lua_move(vec: Vector2) -> void:
 
 func _on_code_executed() -> void:
 	CrashLogger.code("lua", "OK", "chunk finished")
+	SFX.play_ui("sfx_lua_run", 1)
 	_last_run_ok = true
 	# The Lua chunk itself is done. Anything it dispatched (walking, chopping,
 	# crafting) is still queued as signals, so this is the point where the
@@ -1312,6 +1401,8 @@ func _on_code_executed() -> void:
 	# Tutorial snippet ran cleanly → complete its mission (idempotent).
 	# Any clean run counts as "Run your first Lua program" (idempotent), not
 	# just the tutorial snippet.
+	Global.record_auto_run()
+	# Legacy key retained for old saves/tests, hidden from the tracker.
 	Global.complete_mission("run_program")
 	Global.add_mission_progress("side_lua_automator", 1)
 	if not _pending_mission.is_empty():
@@ -1321,6 +1412,7 @@ func _on_code_executed() -> void:
 
 func _on_code_failed(error: String) -> void:
 	CrashLogger.code("lua", "FAIL", error)
+	SFX.play_ui("sfx_lua_run", 2, -2.0)
 	_last_run_ok = false
 	_print_output("[color=#ff8888]✗ %s[/color]" % error)
 	# Nothing was dispatched, so hand the pause straight back and re-enable
@@ -1374,10 +1466,10 @@ func tutorial_show_tab(tab_name: String) -> void:
 			return
 
 func tutorial_show_code_tab() -> void:
-	tutorial_show_tab("Code")
+	tutorial_show_tab("CODE")
 
 func tutorial_show_inventory_tab() -> void:
-	tutorial_show_tab("Inventory")
+	tutorial_show_tab("INVENTORY")
 
 func tutorial_run_button() -> Control:
 	return _run_btn

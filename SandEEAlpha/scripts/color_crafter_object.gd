@@ -37,4 +37,5 @@ func _input(event: InputEvent) -> void:
 
 func _open_menu() -> void:
 	if _menu != null and _menu.has_method("open"):
+		SFX.play_ui("sfx_color_crafter", 1, -3.0)
 		_menu.call("open")

@@ -31,6 +31,10 @@ var _last_progress: Dictionary = {}
 # Incremented on every account boundary. A coroutine captures this before its
 # first await and refuses to upload if the active account changed meanwhile.
 var _generation: int = 0
+# World UIDs tombstoned by any platform. Local copies matching these are removed
+# during sync and are never re-uploaded.
+var _deleted_uids: Dictionary = {}
+const PENDING_DELETIONS_FILE := "pending_cloud_deletions.json"
 
 
 func _ready() -> void:
@@ -39,6 +43,8 @@ func _ready() -> void:
 		Global.game_saved.connect(_on_game_saved)
 	if not Global.world_loaded.is_connected(_on_world_loaded):
 		Global.world_loaded.connect(_on_world_loaded)
+	if not Global.world_deleted.is_connected(_on_world_deleted):
+		Global.world_deleted.connect(_on_world_deleted)
 	if not Global.mission_star_earned.is_connected(_on_mission_star_earned):
 		Global.mission_star_earned.connect(_on_mission_star_earned)
 	if not Global.online_state_changed.is_connected(_on_online_state_changed):
@@ -64,6 +70,7 @@ func _on_account_context_changed(_account_id: String) -> void:
 	_generation += 1
 	_syncing.clear()
 	_dirty.clear()
+	_deleted_uids.clear()
 	_batch_running = false
 
 
@@ -78,6 +85,7 @@ func _on_online_state_changed() -> void:
 		_generation += 1
 		_syncing.clear()
 		_dirty.clear()
+		_deleted_uids.clear()
 
 
 func _on_game_saved(slot: int) -> void:
@@ -89,6 +97,179 @@ func _on_world_loaded(slot: int) -> void:
 	# Loading a world is also the recovery path for missions completed offline
 	# (and the one-time "cloud is 0 but this world has stars" migration).
 	sync_progress()
+
+
+func _on_world_deleted(slot: int, world_uid: String, checksum: String) -> void:
+	var uid := world_uid.strip_edges()
+	if uid.is_empty():
+		return
+	# The local copy is already gone. Remember the UID for this session so a
+	# save/load event cannot re-upload it, and propagate the tombstone when the
+	# account can reach the cloud.
+	_deleted_uids[uid] = true
+	if Global.account_test_mode:
+		return
+	# Persist the intent BEFORE the network call. If the app is killed while
+	# the tombstone/delete request is in flight, the next sync still finishes it
+	# and the world cannot reappear.
+	_queue_pending_delete(slot, uid, checksum)
+	if not is_enabled():
+		return
+	_propagate_delete(slot, uid, checksum)
+
+
+func is_world_deleted(world_uid: String) -> bool:
+	return _deleted_uids.has(world_uid.strip_edges())
+
+
+# Records the cloud tombstone first, then removes the matching cloud object and
+# metadata row. The tombstone is the source of truth: even if object deletion
+# fails, other devices stop re-uploading the world.
+func _propagate_delete(slot: int, world_uid: String, checksum: String) -> void:
+	var account_id := Global.current_account_id
+	var generation := _generation
+	var tombstone: Dictionary = await Supabase.record_save_deletion(world_uid, slot)
+	if not _account_is_current(account_id, generation):
+		return
+	if not tombstone.ok:
+		_queue_pending_delete(slot, world_uid, checksum)
+		return
+	var removed: Dictionary = await Supabase.delete_save(slot, world_uid, checksum)
+	if not _account_is_current(account_id, generation):
+		return
+	if removed.ok:
+		_remove_pending_delete(world_uid)
+	else:
+		_queue_pending_delete(slot, world_uid, checksum)
+
+
+func _pending_deletions_path(account_id: String) -> String:
+	if not Global.is_valid_account_id(account_id):
+		return ""
+	return "user://accounts/%s/%s" % [account_id.to_lower(), PENDING_DELETIONS_FILE]
+
+
+func _load_pending_deletions(account_id: String) -> Array:
+	var path := _pending_deletions_path(account_id)
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return []
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return []
+	var parsed: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	return parsed if parsed is Array else []
+
+
+func _save_pending_deletions(account_id: String, rows: Array) -> void:
+	var path := _pending_deletions_path(account_id)
+	if path.is_empty():
+		return
+	var dir := "user://accounts/" + account_id.to_lower()
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify(rows))
+	f.close()
+
+
+func _queue_pending_delete(slot: int, world_uid: String, checksum: String) -> void:
+	if Global.account_test_mode:
+		return
+	var account_id := Global.current_account_id
+	if not Global.is_valid_account_id(account_id):
+		return
+	var rows := _load_pending_deletions(account_id)
+	for row_value in rows:
+		if row_value is Dictionary \
+				and str((row_value as Dictionary).get("world_uid", "")) == world_uid:
+			(row_value as Dictionary)["slot"] = slot
+			(row_value as Dictionary)["checksum"] = checksum
+			_save_pending_deletions(account_id, rows)
+			return
+	rows.append({"slot": slot, "world_uid": world_uid, "checksum": checksum})
+	_save_pending_deletions(account_id, rows)
+
+
+func _remove_pending_delete(world_uid: String) -> void:
+	if Global.account_test_mode:
+		return
+	var account_id := Global.current_account_id
+	if not Global.is_valid_account_id(account_id):
+		return
+	var rows := _load_pending_deletions(account_id)
+	var kept: Array = []
+	for row_value in rows:
+		if row_value is Dictionary \
+				and str((row_value as Dictionary).get("world_uid", "")) == world_uid:
+			continue
+		kept.append(row_value)
+	_save_pending_deletions(account_id, kept)
+
+
+func _flush_pending_deletions(account_id: String, generation: int) -> void:
+	if not _account_is_current(account_id, generation):
+		return
+	var pending := _load_pending_deletions(account_id)
+	if pending.is_empty():
+		return
+	var remaining: Array = []
+	for row_value in pending:
+		if not _account_is_current(account_id, generation):
+			return
+		if not (row_value is Dictionary):
+			continue
+		var row: Dictionary = row_value
+		var uid := str(row.get("world_uid", "")).strip_edges()
+		if uid.is_empty():
+			continue
+		var slot: int = clampi(int(row.get("slot", 1)), 1, Global.MAX_WORLDS)
+		var checksum := str(row.get("checksum", ""))
+		var tombstone: Dictionary = await Supabase.record_save_deletion(uid, slot)
+		if not _account_is_current(account_id, generation):
+			return
+		if not tombstone.ok:
+			remaining.append(row)
+			continue
+		var removed: Dictionary = await Supabase.delete_save(slot, uid, checksum)
+		if not _account_is_current(account_id, generation):
+			return
+		if not removed.ok:
+			remaining.append(row)
+	_save_pending_deletions(account_id, remaining)
+
+
+func _load_deletion_tombstones(account_id: String, generation: int) -> bool:
+	var result: Dictionary = await Supabase.list_save_deletions()
+	if not _account_is_current(account_id, generation):
+		return false
+	if not result.ok:
+		CrashLogger.event("CLOUD", "deletion tombstones unavailable: %s" % str(result.get("error", "")))
+		return false
+	var next: Dictionary = {}
+	if result.data is Array:
+		for row_value in (result.data as Array):
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var row: Dictionary = row_value
+			var uid := str(row.get("world_uid", "")).strip_edges()
+			if not uid.is_empty():
+				next[uid] = true
+	_deleted_uids = next
+	_apply_remote_deletions()
+	return true
+
+
+# Removes local worlds whose exact UID was tombstoned on another platform. A
+# different world that later reused the same numeric slot is left untouched.
+func _apply_remote_deletions() -> void:
+	for slot_value in Global.owned_world_slots():
+		var slot: int = int(slot_value)
+		var info: Dictionary = Global.get_save_info(slot)
+		var uid := str(info.get("world_uid", "")).strip_edges()
+		if not uid.is_empty() and _deleted_uids.has(uid):
+			Global.delete_world(slot, false)
 
 
 func _on_mission_star_earned(reward_id: String) -> void:
@@ -232,6 +413,24 @@ func sync_all() -> Dictionary:
 	Global.set_cloud_status(Global.CloudStatus.SYNCING, "Syncing worlds...")
 	_emit_sync_progress("listing", 0, 0, 0, "Contacting cloud saves...")
 
+	# Finish deletions that happened offline before listing cloud worlds; then
+	# apply tombstones so a world deleted on another platform is removed here
+	# instead of being re-uploaded by the local-world loop below.
+	await _flush_pending_deletions(account_id, generation)
+	if not _account_is_current(account_id, generation):
+		_batch_running = false
+		Global.set_cloud_status(Global.CloudStatus.OFFLINE)
+		_emit_sync_progress("offline", 0, 0, 0, "Cloud sync stopped (account changed).")
+		sync_completed.emit(summary)
+		return summary
+	await _load_deletion_tombstones(account_id, generation)
+	if not _account_is_current(account_id, generation):
+		_batch_running = false
+		Global.set_cloud_status(Global.CloudStatus.OFFLINE)
+		_emit_sync_progress("offline", 0, 0, 0, "Cloud sync stopped (account changed).")
+		sync_completed.emit(summary)
+		return summary
+
 	var cloud := await Supabase.list_saves()
 	if not _account_is_current(account_id, generation):
 		_batch_running = false
@@ -254,6 +453,9 @@ func sync_all() -> Dictionary:
 				continue
 			var row: Dictionary = row_value
 			var slot: int = int(row.get("slot", 0))
+			var row_uid := str(row.get("world_uid", "")).strip_edges()
+			if not row_uid.is_empty() and _deleted_uids.has(row_uid):
+				continue   # tombstoned on another platform; never reinstall it
 			if slot >= 1 and slot <= Global.MAX_WORLDS:
 				cloud_by_slot[slot] = row
 
@@ -544,6 +746,11 @@ func sync_slot(slot: int, force_upload: bool = false) -> String:
 		local_info = Global.ensure_save_identity(slot)
 		local_uid = str(local_info.get("world_uid", "")).strip_edges()
 		local_revision = maxi(0, int(local_info.get("save_revision", 0)))
+	if not local_uid.is_empty() and _deleted_uids.has(local_uid):
+		# A stale local copy of a world deleted elsewhere must not be uploaded.
+		Global.delete_world(slot, false)
+		_finish(slot)
+		return "skipped"
 	var checksum := FileAccess.get_sha256(path)
 
 	var cloud := await Supabase.list_saves()

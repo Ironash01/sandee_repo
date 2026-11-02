@@ -1,0 +1,1109 @@
+{
+  "cues": {
+    "sfx_player_footsteps": {
+      "files": [
+        "res://sfx/sfx_player_footsteps/01_Footstep1__001.wav",
+        "res://sfx/sfx_player_footsteps/02_Footstep1__003.wav",
+        "res://sfx/sfx_player_footsteps/03_Footstep1__006.wav",
+        "res://sfx/sfx_player_footsteps/04_Footstep1__009.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -12.0,
+      "max_voices": 4,
+      "min_interval_ms": 80,
+      "pitch_variation": 0.06
+    },
+    "sfx_player_sprint": {
+      "files": [
+        "res://sfx/sfx_player_sprint/01_Footstep1__002.wav",
+        "res://sfx/sfx_player_sprint/02_Ouch__001.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_player_hurt": {
+      "files": [
+        "res://sfx/sfx_player_hurt/01_sfx_damage_hit1.wav",
+        "res://sfx/sfx_player_hurt/02_sfx_damage_hit3.wav",
+        "res://sfx/sfx_player_hurt/03_sfx_damage_hit5.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -4.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_player_death": {
+      "files": [
+        "res://sfx/sfx_player_death/01_Hero_Death_00.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -2.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_player_respawn": {
+      "files": [
+        "res://sfx/sfx_player_respawn/01_sfx_movement_portal1.wav",
+        "res://sfx/sfx_player_respawn/02_sfx_movement_portal3.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_player_eat": {
+      "files": [
+        "res://sfx/sfx_player_eat/01_sfx_sounds_interaction2.wav",
+        "res://sfx/sfx_player_eat/02_sfx_sounds_interaction5.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_player_crystal": {
+      "files": [
+        "res://sfx/sfx_player_crystal/01_sfx_sounds_powerup1.wav",
+        "res://sfx/sfx_player_crystal/02_sfx_sounds_powerup5.wav",
+        "res://sfx/sfx_player_crystal/03_sfx_sounds_high1.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_player_low_health": {
+      "files": [
+        "res://sfx/sfx_player_low_health/01_sfx_lowhealth_alarmloop1.wav"
+      ],
+      "loop": true,
+      "spatial": false,
+      "volume_db": -14.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_tool_swing": {
+      "files": [
+        "res://sfx/sfx_tool_swing/01_sfx_wpn_sword1.wav",
+        "res://sfx/sfx_tool_swing/02_sfx_wpn_sword2.wav",
+        "res://sfx/sfx_tool_swing/03_sfx_wpn_sword3.wav",
+        "res://sfx/sfx_tool_swing/04_sfx_wpn_dagger.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -8.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_tool_impact": {
+      "files": [
+        "res://sfx/sfx_tool_impact/01_sfx_sounds_impact1.wav",
+        "res://sfx/sfx_tool_impact/02_sfx_sounds_impact3.wav",
+        "res://sfx/sfx_tool_impact/03_sfx_sounds_impact7.wav",
+        "res://sfx/sfx_tool_impact/04_sfx_sounds_impact10.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 6,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.05
+    },
+    "sfx_block_break": {
+      "files": [
+        "res://sfx/sfx_block_break/01_sfx_exp_short_hard1.wav",
+        "res://sfx/sfx_block_break/02_sfx_exp_short_hard3.wav",
+        "res://sfx/sfx_block_break/03_sfx_exp_short_hard5.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.05
+    },
+    "sfx_block_place": {
+      "files": [
+        "res://sfx/sfx_block_place/01_sfx_sounds_impact1.wav",
+        "res://sfx/sfx_block_place/02_sfx_sounds_impact2.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -7.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_tree_chop_fall": {
+      "files": [
+        "res://sfx/sfx_tree_chop_fall/01_sfx_wpn_sword1.wav",
+        "res://sfx/sfx_tree_chop_fall/02_sfx_exp_short_soft1.wav",
+        "res://sfx/sfx_tree_chop_fall/03_sfx_movement_dooropen1.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_grass_cut": {
+      "files": [
+        "res://sfx/sfx_grass_cut/01_sfx_wpn_dagger.wav",
+        "res://sfx/sfx_grass_cut/02_sfx_sounds_interaction3.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -7.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_grass_rustle": {
+      "files": [
+        "res://sfx/sfx_grass_rustle/01_Rustle1.wav",
+        "res://sfx/sfx_grass_rustle/02_Rustle2.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -16.0,
+      "max_voices": 4,
+      "min_interval_ms": 250,
+      "pitch_variation": 0.02
+    },
+    "sfx_farming": {
+      "files": [
+        "res://sfx/sfx_farming/01_sfx_sounds_interaction2.wav",
+        "res://sfx/sfx_farming/02_sfx_sounds_interaction6.wav",
+        "res://sfx/sfx_farming/03_sfx_movement_footsteps1a.wav",
+        "res://sfx/sfx_farming/04_sfx_sounds_powerup2.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_build_mode": {
+      "files": [
+        "res://sfx/sfx_build_mode/01_sfx_sounds_button1.wav",
+        "res://sfx/sfx_build_mode/02_sfx_sounds_button3.wav",
+        "res://sfx/sfx_build_mode/03_sfx_menu_select1.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_placement_error": {
+      "files": [
+        "res://sfx/sfx_placement_error/01_sfx_sounds_error1.wav",
+        "res://sfx/sfx_placement_error/02_sfx_sounds_error3.wav",
+        "res://sfx/sfx_placement_error/03_sfx_sounds_negative1.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 180,
+      "pitch_variation": 0.02
+    },
+    "sfx_inventory_full": {
+      "files": [
+        "res://sfx/sfx_inventory_full/01_sfx_sounds_error2.wav",
+        "res://sfx/sfx_inventory_full/02_sfx_sounds_error6.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 350,
+      "pitch_variation": 0.02
+    },
+    "sfx_item_pickup": {
+      "files": [
+        "res://sfx/sfx_item_pickup/01_Pickup_00.wav",
+        "res://sfx/sfx_item_pickup/02_Pickup_02.wav",
+        "res://sfx/sfx_item_pickup/03_Pickup_04.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -7.0,
+      "max_voices": 3,
+      "min_interval_ms": 50,
+      "pitch_variation": 0.02
+    },
+    "sfx_item_drop": {
+      "files": [
+        "res://sfx/sfx_item_drop/01_sfx_sounds_interaction4.wav",
+        "res://sfx/sfx_item_drop/02_sfx_sounds_interaction8.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -8.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_inventory_open_close": {
+      "files": [
+        "res://sfx/sfx_inventory_open_close/01_Open_00.wav",
+        "res://sfx/sfx_inventory_open_close/02_Open_01.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -10.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_item_move": {
+      "files": [
+        "res://sfx/sfx_item_move/01_sfx_sounds_button6.wav",
+        "res://sfx/sfx_item_move/02_sfx_sounds_interaction1.wav",
+        "res://sfx/sfx_item_move/03_sfx_menu_move2.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -12.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_chest": {
+      "files": [
+        "res://sfx/sfx_chest/01_Open_00.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_door": {
+      "files": [
+        "res://sfx/sfx_door/01_sfx_movement_dooropen1.wav",
+        "res://sfx/sfx_door/02_sfx_movement_dooropen2.wav",
+        "res://sfx/sfx_door/03_sfx_movement_dooropen3.wav",
+        "res://sfx/sfx_door/04_sfx_movement_dooropen4.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_bonfire": {
+      "files": [
+        "res://sfx/sfx_bonfire/01_sfx_exp_short_soft1.wav",
+        "res://sfx/sfx_bonfire/02_sfx_sounds_powerup1.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_torch": {
+      "files": [
+        "res://sfx/sfx_torch/01_sfx_sounds_interaction7.wav",
+        "res://sfx/sfx_torch/02_sfx_exp_short_soft2.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -7.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_fishing": {
+      "files": [
+        "res://sfx/sfx_fishing/01_sfx_sounds_interaction3.wav",
+        "res://sfx/sfx_fishing/02_sfx_sounds_powerup2.wav",
+        "res://sfx/sfx_fishing/03_sfx_sounds_button4.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_map_waypoint": {
+      "files": [
+        "res://sfx/sfx_map_waypoint/01_sfx_movement_portal1.wav",
+        "res://sfx/sfx_map_waypoint/02_sfx_movement_portal4.wav",
+        "res://sfx/sfx_map_waypoint/03_sfx_sounds_button4.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_water": {
+      "files": [
+        "res://sfx/sfx_water/01_WaterSplash.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -8.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_ui_interaction": {
+      "files": [
+        "res://sfx/sfx_ui_interaction/01_sfx_sounds_button1.wav",
+        "res://sfx/sfx_ui_interaction/02_sfx_sounds_button4.wav",
+        "res://sfx/sfx_ui_interaction/03_sfx_menu_move1.wav",
+        "res://sfx/sfx_ui_interaction/04_sfx_menu_select1.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -14.0,
+      "max_voices": 3,
+      "min_interval_ms": 40,
+      "pitch_variation": 0.02
+    },
+    "sfx_ui_result": {
+      "files": [
+        "res://sfx/sfx_ui_result/01_sfx_sounds_powerup1.wav",
+        "res://sfx/sfx_ui_result/02_sfx_sounds_error1.wav",
+        "res://sfx/sfx_ui_result/03_sfx_sound_neutral1.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_menu_pause": {
+      "files": [
+        "res://sfx/sfx_menu_pause/01_sfx_sounds_pause1_in.wav",
+        "res://sfx/sfx_menu_pause/02_sfx_sounds_pause1_out.wav",
+        "res://sfx/sfx_menu_pause/03_sfx_sounds_pause3_in.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_save_load": {
+      "files": [
+        "res://sfx/sfx_save_load/01_sfx_sounds_button7.wav",
+        "res://sfx/sfx_save_load/02_sfx_sounds_powerup3.wav",
+        "res://sfx/sfx_save_load/03_sfx_sounds_error4.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_account_cloud": {
+      "files": [
+        "res://sfx/sfx_account_cloud/01_sfx_sounds_Blip1.wav",
+        "res://sfx/sfx_account_cloud/02_sfx_sounds_Blip5.wav",
+        "res://sfx/sfx_account_cloud/03_sfx_sound_neutral3.wav",
+        "res://sfx/sfx_account_cloud/04_sfx_sounds_error7.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_leaderboard": {
+      "files": [
+        "res://sfx/sfx_leaderboard/01_sfx_menu_select3.wav",
+        "res://sfx/sfx_leaderboard/02_sfx_coin_double1.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_mission": {
+      "files": [
+        "res://sfx/sfx_mission/01_Jingle_Achievement_00.wav",
+        "res://sfx/sfx_mission/02_Jingle_Achievement_01.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -3.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_knowledge_bestiary": {
+      "files": [
+        "res://sfx/sfx_knowledge_bestiary/01_sfx_sounds_powerup4.wav",
+        "res://sfx/sfx_knowledge_bestiary/02_sfx_sounds_high2.wav",
+        "res://sfx/sfx_knowledge_bestiary/03_sfx_sounds_fanfare2.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_tutorial": {
+      "files": [
+        "res://sfx/sfx_tutorial/01_sfx_menu_select1.wav",
+        "res://sfx/sfx_tutorial/02_sfx_sound_neutral4.wav",
+        "res://sfx/sfx_tutorial/03_sfx_sounds_powerup5.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_code_editor": {
+      "files": [
+        "res://sfx/sfx_code_editor/01_sfx_sounds_button8.wav",
+        "res://sfx/sfx_code_editor/02_sfx_sounds_Blip2.wav",
+        "res://sfx/sfx_code_editor/03_sfx_sounds_error2.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_quiz": {
+      "files": [
+        "res://sfx/sfx_quiz/01_sfx_sounds_powerup6.wav",
+        "res://sfx/sfx_quiz/02_sfx_sounds_error5.wav",
+        "res://sfx/sfx_quiz/03_sfx_sounds_button9.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_knowledge_altar": {
+      "files": [
+        "res://sfx/sfx_knowledge_altar/01_sfx_movement_dooropen2.wav",
+        "res://sfx/sfx_knowledge_altar/02_sfx_sounds_powerup7.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_color_crafter": {
+      "files": [
+        "res://sfx/sfx_color_crafter/01_sfx_sounds_Blip3.wav",
+        "res://sfx/sfx_color_crafter/02_sfx_sounds_Blip7.wav",
+        "res://sfx/sfx_color_crafter/03_sfx_sounds_powerup8.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_station": {
+      "files": [
+        "res://sfx/sfx_station/01_sfx_movement_dooropen3.wav",
+        "res://sfx/sfx_station/02_sfx_sounds_button10.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_recipe_select": {
+      "files": [
+        "res://sfx/sfx_recipe_select/01_sfx_menu_move3.wav",
+        "res://sfx/sfx_recipe_select/02_sfx_sounds_button11.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_craft": {
+      "files": [
+        "res://sfx/sfx_craft/01_Craft_00.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_station_io": {
+      "files": [
+        "res://sfx/sfx_station_io/01_sfx_sounds_interaction9.wav",
+        "res://sfx/sfx_station_io/02_sfx_coin_single4.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_furnace": {
+      "files": [
+        "res://sfx/sfx_furnace/01_sfx_exp_short_soft3.wav",
+        "res://sfx/sfx_furnace/02_sfx_sound_mechanicalnoise2.wav",
+        "res://sfx/sfx_furnace/03_sfx_sounds_impact5.wav",
+        "res://sfx/sfx_furnace/04_sfx_sounds_error6.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_lua_station": {
+      "files": [
+        "res://sfx/sfx_lua_station/01_sfx_sound_poweron.wav",
+        "res://sfx/sfx_lua_station/02_sfx_sounds_button11.wav",
+        "res://sfx/sfx_lua_station/03_sfx_sound_mechanicalnoise3.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_lua_run": {
+      "files": [
+        "res://sfx/sfx_lua_run/01_sfx_sounds_Blip4.wav",
+        "res://sfx/sfx_lua_run/02_sfx_sounds_powerup10.wav",
+        "res://sfx/sfx_lua_run/03_sfx_sounds_error8.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_robot_move": {
+      "files": [
+        "res://sfx/sfx_robot_move/01_sfx_sound_mechanicalnoise1.wav",
+        "res://sfx/sfx_robot_move/02_sfx_sound_mechanicalnoise4.wav"
+      ],
+      "loop": true,
+      "spatial": true,
+      "volume_db": -16.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_robot_work": {
+      "files": [
+        "res://sfx/sfx_robot_work/01_sfx_wpn_sword1.wav",
+        "res://sfx/sfx_robot_work/02_sfx_sounds_impact6.wav",
+        "res://sfx/sfx_robot_work/03_sfx_sound_mechanicalnoise2.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_robot_combat": {
+      "files": [
+        "res://sfx/sfx_robot_combat/01_sfx_wpn_sword2.wav",
+        "res://sfx/sfx_robot_combat/02_sfx_sounds_impact7.wav",
+        "res://sfx/sfx_robot_combat/03_sfx_deathscream_robot1.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_robot_logistics": {
+      "files": [
+        "res://sfx/sfx_robot_logistics/01_sfx_sounds_interaction10.wav",
+        "res://sfx/sfx_robot_logistics/02_sfx_sounds_button12.wav",
+        "res://sfx/sfx_robot_logistics/03_sfx_sound_mechanicalnoise5.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_robot_error": {
+      "files": [
+        "res://sfx/sfx_robot_error/01_sfx_sounds_error9.wav",
+        "res://sfx/sfx_robot_error/02_sfx_sounds_Blip6.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_algorithmica": {
+      "files": [
+        "res://sfx/sfx_algorithmica/01_sfx_sounds_Blip8.wav",
+        "res://sfx/sfx_algorithmica/02_sfx_sounds_powerup11.wav",
+        "res://sfx/sfx_algorithmica/03_sfx_sounds_error10.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_algorithmica_color": {
+      "files": [
+        "res://sfx/sfx_algorithmica_color/01_sfx_sounds_powerup12.wav",
+        "res://sfx/sfx_algorithmica_color/02_sfx_sounds_error11.wav"
+      ],
+      "loop": false,
+      "spatial": false,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_mob_wolf": {
+      "files": [
+        "res://sfx/sfx_mob_wolf/01_Roar1__001.wav",
+        "res://sfx/sfx_mob_wolf/02_Punch1__001.wav",
+        "res://sfx/sfx_mob_wolf/03_Ouch__001.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_pixie": {
+      "files": [
+        "res://sfx/sfx_mob_pixie/01_sfx_sounds_high1.wav",
+        "res://sfx/sfx_mob_pixie/02_sfx_sounds_Blip1.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_worm": {
+      "files": [
+        "res://sfx/sfx_mob_worm/01_Bass_Drum__001.wav",
+        "res://sfx/sfx_mob_worm/02_Roar1__002.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -4.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_headless_fish": {
+      "files": [
+        "res://sfx/sfx_mob_headless_fish/01_Space__001.wav",
+        "res://sfx/sfx_mob_headless_fish/02_Ouch__004.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_sheep": {
+      "files": [
+        "res://sfx/sfx_mob_sheep/01_Ouch__005.wav",
+        "res://sfx/sfx_mob_sheep/02_Roar1__003.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_hitman": {
+      "files": [
+        "res://sfx/sfx_mob_hitman/01_Punch2__001.wav",
+        "res://sfx/sfx_mob_hitman/02_Roar1__001.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -3.0,
+      "max_voices": 6,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.03
+    },
+    "sfx_mob_rune_sentinel": {
+      "files": [
+        "res://sfx/sfx_mob_rune_sentinel/01_sfx_sounds_impact8.wav",
+        "res://sfx/sfx_mob_rune_sentinel/02_sfx_sound_mechanicalnoise3.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.03
+    },
+    "sfx_mob_brass_prowler": {
+      "files": [
+        "res://sfx/sfx_mob_brass_prowler/01_sfx_sound_mechanicalnoise4.wav",
+        "res://sfx/sfx_mob_brass_prowler/02_sfx_sounds_impact9.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.03
+    },
+    "sfx_mob_cinder_ooze": {
+      "files": [
+        "res://sfx/sfx_mob_cinder_ooze/01_Explosion2__001.wav",
+        "res://sfx/sfx_mob_cinder_ooze/02_Space__002.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.03
+    },
+    "sfx_mob_cipher_warden": {
+      "files": [
+        "res://sfx/sfx_mob_cipher_warden/01_sfx_alarm_loop2.wav",
+        "res://sfx/sfx_mob_cipher_warden/02_sfx_sounds_Blip2.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.03
+    },
+    "sfx_mob_gravebell_shambler": {
+      "files": [
+        "res://sfx/sfx_mob_gravebell_shambler/01_sfx_sounds_high3.wav",
+        "res://sfx/sfx_mob_gravebell_shambler/02_sfx_sound_neutral5.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.03
+    },
+    "sfx_mob_emberfox_kit": {
+      "files": [
+        "res://sfx/sfx_mob_emberfox_kit/01_Ouch__006.wav",
+        "res://sfx/sfx_mob_emberfox_kit/02_Powerup__002.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_mossback_nib": {
+      "files": [
+        "res://sfx/sfx_mob_mossback_nib/01_sfx_movement_footsteps1a.wav",
+        "res://sfx/sfx_mob_mossback_nib/02_sfx_sounds_interaction6.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_vesper_acolyte": {
+      "files": [
+        "res://sfx/sfx_mob_vesper_acolyte/01_sfx_sound_neutral6.wav",
+        "res://sfx/sfx_mob_vesper_acolyte/02_sfx_sound_noise.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.03
+    },
+    "sfx_mob_wisp": {
+      "files": [
+        "res://sfx/sfx_mob_wisp/01_sfx_sounds_high4.wav",
+        "res://sfx/sfx_mob_wisp/02_sfx_sounds_powerup13.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.04
+    },
+    "sfx_mob_spawn_despawn": {
+      "files": [
+        "res://sfx/sfx_mob_spawn_despawn/01_sfx_movement_portal2.wav",
+        "res://sfx/sfx_mob_spawn_despawn/02_sfx_movement_portal5.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_hitman_specials": {
+      "files": [
+        "res://sfx/sfx_hitman_specials/01_sfx_wpn_cannon1.wav",
+        "res://sfx/sfx_hitman_specials/02_sfx_exp_medium1.wav",
+        "res://sfx/sfx_hitman_specials/03_sfx_sounds_impact10.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_dungeon_hazards": {
+      "files": [
+        "res://sfx/sfx_dungeon_hazards/01_sfx_wpn_laser1.wav",
+        "res://sfx/sfx_dungeon_hazards/02_sfx_wpn_laser4.wav",
+        "res://sfx/sfx_dungeon_hazards/03_sfx_sounds_impact11.wav",
+        "res://sfx/sfx_dungeon_hazards/04_sfx_exp_medium2.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -3.0,
+      "max_voices": 8,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_parry_safezone": {
+      "files": [
+        "res://sfx/sfx_parry_safezone/01_sfx_wpn_sword3.wav",
+        "res://sfx/sfx_parry_safezone/02_sfx_sounds_powerup13.wav",
+        "res://sfx/sfx_parry_safezone/03_sfx_alarm_loop3.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_cave_travel": {
+      "files": [
+        "res://sfx/sfx_cave_travel/01_sfx_movement_portal3.wav",
+        "res://sfx/sfx_cave_travel/02_sfx_movement_dooropen4.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_cave_portal": {
+      "files": [
+        "res://sfx/sfx_cave_portal/01_sfx_sound_neutral6.wav",
+        "res://sfx/sfx_cave_portal/02_sfx_sounds_button13.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_dungeon_portal": {
+      "files": [
+        "res://sfx/sfx_dungeon_portal/01_sfx_movement_portal5.wav",
+        "res://sfx/sfx_dungeon_portal/02_sfx_alarm_loop4.wav",
+        "res://sfx/sfx_dungeon_portal/03_sfx_sounds_impact11.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -5.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_dungeon_clear": {
+      "files": [
+        "res://sfx/sfx_dungeon_clear/01_Jingle_Win_00.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -2.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_world_waypoint": {
+      "files": [
+        "res://sfx/sfx_world_waypoint/01_sfx_movement_portal6.wav",
+        "res://sfx/sfx_world_waypoint/02_sfx_sounds_powerup14.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -4.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_dungeon_waypoint": {
+      "files": [
+        "res://sfx/sfx_dungeon_waypoint/01_sfx_movement_portal1.wav",
+        "res://sfx/sfx_dungeon_waypoint/02_sfx_sounds_high6.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_day_night": {
+      "files": [
+        "res://sfx/sfx_day_night/01_sfx_sound_neutral7.wav",
+        "res://sfx/sfx_day_night/02_sfx_sounds_high7.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -8.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_snowstorm": {
+      "files": [
+        "res://sfx/sfx_snowstorm/01_Wind.wav",
+        "res://sfx/sfx_snowstorm/02_WindParticles.wav"
+      ],
+      "loop": true,
+      "spatial": false,
+      "volume_db": -14.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_ambient_birds": {
+      "files": [
+        "res://sfx/sfx_ambient_birds/01_sfx_sounds_high1.wav",
+        "res://sfx/sfx_ambient_birds/02_sfx_sounds_Blip7.wav"
+      ],
+      "loop": false,
+      "spatial": true,
+      "volume_db": -6.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_cave_ambience": {
+      "files": [
+        "res://sfx/sfx_cave_ambience/01_dungeon_ambient_1.ogg"
+      ],
+      "loop": true,
+      "spatial": false,
+      "volume_db": -14.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_dungeon_ambience": {
+      "files": [
+        "res://sfx/sfx_dungeon_ambience/01_dungeon_ambient_1.ogg"
+      ],
+      "loop": true,
+      "spatial": false,
+      "volume_db": -14.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_fire_ambience": {
+      "files": [
+        "res://sfx/sfx_fire_ambience/01_fire.ogg"
+      ],
+      "loop": true,
+      "spatial": false,
+      "volume_db": -15.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    },
+    "sfx_weather_wind": {
+      "files": [
+        "res://sfx/sfx_weather_wind/01_Wind.wav",
+        "res://sfx/sfx_weather_wind/02_WindParticles.wav"
+      ],
+      "loop": true,
+      "spatial": false,
+      "volume_db": -15.0,
+      "max_voices": 4,
+      "min_interval_ms": 0,
+      "pitch_variation": 0.02
+    }
+  }
+}

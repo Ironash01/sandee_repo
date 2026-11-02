@@ -316,6 +316,8 @@ func damage_player(amount: float, from_position: Vector2, attack_dir: Vector2 = 
 	if not invincible:
 		health = maxf(0.0, health - amount)
 		health_changed.emit(health, max_health)
+		if p != null:
+			SFX.play("sfx_player_hurt", p.global_position)
 		CrashLogger.event("PLAYER", "damage=%.1f health=%.1f/%.1f attacker=(%.1f, %.1f)" % [
 			amount, health, max_health, from_position.x, from_position.y])
 		if health <= 0.0:
@@ -474,9 +476,8 @@ func _handle_player_death() -> void:
 		_death_in_progress = false
 		player_is_dead = false
 		return
-	# Prefer the Game scene: it exits any active cave/pixie cave/dungeon first
-	# so the player ALWAYS respawns at the OVERWORLD world spawn â€” not inside
-	# the cave they died in.
+	# Dungeons are the exception: dying inside one respawns at that dungeon's
+	# entrance room so the run can continue. Caves still return to the overworld.
 	var spawn: Vector2 = _get_respawn_position()
 	p.global_position = spawn
 	p.process_mode = Node.PROCESS_MODE_ALWAYS
@@ -499,10 +500,16 @@ func _handle_player_death() -> void:
 	player_is_dead = false
 
 func _get_respawn_position() -> Vector2:
+	# Dying inside a dungeon respawns at that dungeon's entrance room. This must
+	# run BEFORE get_world_spawn_position(), which deliberately exits dungeons.
+	if game_node != null and game_node.has_method("get_dungeon_respawn_position"):
+		var dungeon_spawn: Variant = game_node.call("get_dungeon_respawn_position")
+		if dungeon_spawn is Vector2 and (dungeon_spawn as Vector2) != Vector2.INF:
+			return dungeon_spawn as Vector2
 	# Call the Game scene FIRST: get_world_spawn_position() also exits any
-	# active cave/pixie cave/dungeon, so the player always respawns in the
-	# OVERWORLD. (Returning early on a bonfire would leave the player stranded
-	# inside a structure at overworld coordinates.)
+	# active cave/pixie cave, so the player respawns in the OVERWORLD. (Returning
+	# early on a bonfire would leave the player stranded inside a structure at
+	# overworld coordinates.)
 	var world_spawn: Vector2 = Vector2.ZERO
 	var have_world := false
 	if game_node != null and game_node.has_method("get_world_spawn_position"):
@@ -526,13 +533,21 @@ signal health_changed(value: float, max_value: float)
 signal stamina_changed(value: float, max_value: float)
 
 # â”€â”€ Settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-var master_volume:      float = 1.0
-var music_volume:       float = 1.0
-var sfx_volume:         float = 1.0
-var camera_zoom:        float = 1.9
-var pause_on_inventory: bool  = true
+# Audio defaults for a fresh install. The settings file overrides these once
+# the player moves a slider or creates a save-independent preference.
+const DEFAULT_MASTER_VOLUME: float = 0.90
+const DEFAULT_MUSIC_VOLUME: float = 0.70
+const DEFAULT_SFX_VOLUME: float = 0.80
+const DEFAULT_CAMERA_ZOOM: float = 1.9
+const DEFAULT_PAUSE_ON_INVENTORY: bool = true
+const DEFAULT_QUEST_OPAQUE_BG: bool = true
+var master_volume:      float = DEFAULT_MASTER_VOLUME
+var music_volume:       float = DEFAULT_MUSIC_VOLUME
+var sfx_volume:         float = DEFAULT_SFX_VOLUME
+var camera_zoom:        float = DEFAULT_CAMERA_ZOOM
+var pause_on_inventory: bool  = DEFAULT_PAUSE_ON_INVENTORY
 # Quest tracker: draw an opaque panel background instead of floating text.
-var quest_opaque_bg:    bool  = true
+var quest_opaque_bg:    bool  = DEFAULT_QUEST_OPAQUE_BG
 signal quest_bg_changed(opaque: bool)
 var pause_menu_open:    bool  = false
 # â”€â”€ Unified UI stack â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -580,17 +595,31 @@ var keyboard_height_override: float = -1.0
 
 # â”€â”€ Mobile / touch state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Written by scripts/mobile_ui.gd (Android only). player.gd blends mobile_move
-# with the keyboard vector and reads is_shift_held() instead of the raw key, so
-# the touch HUD drives the SAME controller, speeds and collision rules. On
-# desktop these stay at their defaults and nothing changes.
+# with the keyboard vector, reads mobile_sprint for the latched SPRINT toggle,
+# and is_shift_held() for shift-click actions, so the touch HUD drives the SAME
+# controller, speeds and collision rules. On desktop these stay at their
+# defaults and nothing changes.
 var mobile_move:  Vector2 = Vector2.ZERO
 ## True while tap-to-control is holding the left action for continuous mining.
 var pnc_hold_active: bool = false
 var mobile_shift: bool    = false
+## Latched Android SPRINT toggle. Kept separate from mobile_shift on purpose:
+## sprinting must not turn every click into a shift-click (mining a chest
+## instead of opening it, etc.).
+var mobile_sprint: bool   = false
 var _touch_mouse_active: bool    = false
 var _touch_mouse_pos:    Vector2 = Vector2.ZERO
 
-# Shift equivalent for sprint + shift-click actions.
+signal mobile_sprint_changed(enabled: bool)
+
+func set_mobile_sprint(on: bool) -> void:
+	if mobile_sprint == on:
+		return
+	mobile_sprint = on
+	mobile_sprint_changed.emit(on)
+
+# Shift equivalent for shift-click actions. Mobile SPRINT is deliberately NOT
+# included here; player.gd reads mobile_sprint separately for sprinting.
 func is_shift_held() -> bool:
 	return mobile_shift or Input.is_key_pressed(KEY_SHIFT)
 
@@ -685,13 +714,48 @@ func apply_safe_area(control: Control, extra_margin: float = 0.0) -> void:
 	control.offset_bottom = -(ui_safe_insets.w + extra_margin)
 
 ## Scaled minimum size for a panel, clamped inside the usable viewport so modal
-## dialogs and their Apply/Cancel buttons can never land off-screen.
-func ui_fit_min_size(base_size: Vector2, margin: float = 12.0) -> Vector2:
+## dialogs and their Apply/Cancel buttons can never land off-screen. A caller
+## that keeps the persistent hotbar visible passes its band as
+## `bottom_reserve`; the panel then fits ABOVE the hotbar instead of extending
+## behind it.
+func ui_fit_min_size(base_size: Vector2, margin: float = 12.0,
+		bottom_reserve: float = 0.0) -> Vector2:
 	var content := ui_content_rect().size
 	var pad: float = maxf(2.0, margin * ui_scale)
 	return Vector2(
 		minf(base_size.x * ui_scale, maxf(240.0, content.x - pad * 2.0)),
-		minf(base_size.y * ui_scale, maxf(180.0, content.y - pad * 2.0)))
+		minf(base_size.y * ui_scale,
+			maxf(180.0, content.y - pad * 2.0 - maxf(0.0, bottom_reserve))))
+
+## Standard text close button for modal headers. The old "✕" glyphs were tiny
+## touch targets on phones; every interface now uses this readable CLOSE button.
+func make_close_button() -> Button:
+	var s: float = ui_scale
+	var btn := Button.new()
+	btn.text = "CLOSE"
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	btn.custom_minimum_size = Vector2(maxf(84.0 * s, 84.0), maxf(38.0 * s, 44.0))
+	btn.add_theme_font_size_override("font_size", ui_font_size(11))
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.10, 0.14, 0.26, 0.98)
+	normal.border_color = Color(0.30, 0.42, 0.68, 1.0)
+	normal.set_border_width_all(maxi(1, int(round(1.5 * s))))
+	normal.set_corner_radius_all(maxi(3, int(round(5 * s))))
+	normal.content_margin_left = maxi(8, int(round(10 * s)))
+	normal.content_margin_right = maxi(8, int(round(10 * s)))
+	normal.content_margin_top = maxi(4, int(round(5 * s)))
+	normal.content_margin_bottom = maxi(4, int(round(5 * s)))
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(0.16, 0.23, 0.38, 1.0)
+	var pressed := normal.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color(0.22, 0.32, 0.52, 1.0)
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_color_override("font_color", Color(0.80, 0.90, 1.0, 1.0))
+	btn.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
+	return btn
 
 func _compute_safe_insets(viewport_size: Vector2) -> Vector4:
 	if not is_mobile() or DisplayServer.get_name() == "headless":
@@ -908,9 +972,16 @@ func is_mouse_event_over_ui(event: InputEvent) -> bool:
 ## actually touched, even after a previous PNC order moved the cursor.
 func mouse_event_world(node: Node2D, event: InputEvent) -> Vector2:
 	var vp := get_viewport()
-	if vp != null and event is InputEventMouse:
-		return vp.get_canvas_transform().affine_inverse() \
-			* (event as InputEventMouse).position
+	if vp != null:
+		var pos := Vector2.INF
+		if event is InputEventMouse:
+			pos = (event as InputEventMouse).position
+		elif event is InputEventScreenTouch:
+			pos = (event as InputEventScreenTouch).position
+		elif event is InputEventScreenDrag:
+			pos = (event as InputEventScreenDrag).position
+		if pos != Vector2.INF:
+			return vp.get_canvas_transform().affine_inverse() * pos
 	return mouse_world(node)
 
 # Windows/Viewports in this Godot build do not expose gui_find_control(), so
@@ -975,24 +1046,22 @@ func mobile_keyboard_height() -> float:
 	return keyboard_height_in_viewport(
 		pixels, vp.get_stretch_transform().get_scale().y, vp_height)
 
-## Pure inset rule for full-screen code editors. A docked Android keyboard
-## resizes the activity (adjustResize), so the viewport becomes shorter than its
-## no-keyboard maximum. A floating keyboard leaves the viewport full-size; in
-## that case the whole editor panel must not move. Returning 0 when the viewport
-## has grown back also clears a stale keyboard height after the keyboard hides.
-static func editor_keyboard_inset(raw: float, current_h: float, max_h: float,
+## Pure inset rule for full-screen code editors. Android keyboards may either
+## resize the activity (adjustResize / docked) or float over a full-size
+## viewport; both still cover the bottom of the screen, so a focused text field
+## must lift above the reported keyboard height in either case. Returning 0 when
+## the keyboard is hidden also clears a stale height.
+static func editor_keyboard_inset(raw: float, _current_h: float, _max_h: float,
 		focused: bool) -> float:
 	if raw <= 0.0 or not focused:
-		return 0.0
-	if current_h >= max_h - 8.0:
 		return 0.0
 	return raw
 
 var _editor_viewport_max_h: float = 0.0
 
-## Keyboard inset used by Algorithmica/quiz editor panels. Unlike the sign-in
-## forms, editor panels must not float above the screen for a floating keyboard,
-## and must come back down as soon as the docked keyboard disappears.
+## Keyboard inset used by Algorithmica/quiz editor panels. Lifts the focused
+## editor above both docked and floating Android keyboards, and comes back down
+## as soon as the keyboard disappears.
 func keyboard_panel_inset() -> float:
 	var current_h: float = ui_viewport_size.y
 	if current_h <= 0.0:
@@ -1024,6 +1093,72 @@ var explored_dungeon_tiles: Dictionary = {}
 # per entrance by game_instance._do_enter_cave()/_do_exit_cave(); each cave's
 # set is stored inside cave_states so re-entry restores its explored map.
 var explored_cave_tiles: Dictionary = {}
+
+# Minimap/waypoint-preview colours for player-placed blocks, cached by item id.
+# The map used to show only terrain, so player-built structures vanished from
+# both the minimap and the world-waypoint overview. The block's own artwork
+# supplies the colour, which keeps stone, wood, torches, machines and every
+# colour-crafted block recognisable without a hand-maintained palette.
+var _map_block_color_cache: Dictionary = {}
+
+func placed_block_map_color(entry: Variant) -> Color:
+	if not (entry is Dictionary):
+		return Color(0, 0, 0, 0)
+	var info := entry as Dictionary
+	var node: Variant = info.get("node")
+	var data: ItemData = null
+	if is_instance_valid(node):
+		data = node.get("item_data") as ItemData
+	var key := data.item_id() if data != null \
+		else str(info.get("name", "")).strip_edges().to_lower()
+	if key.is_empty():
+		return Color(0, 0, 0, 0)
+	if _map_block_color_cache.has(key):
+		return _map_block_color_cache[key] as Color
+	var tex: Texture2D = null
+	if data != null:
+		tex = data.icon if data.icon != null else data.placeable_sprite
+	if tex == null and is_instance_valid(node):
+		tex = _first_texture_in(node)
+	var col := ObjectBurst.average_color(tex) if tex != null \
+		else _fallback_map_block_color(key)
+	col.a = 1.0
+	_map_block_color_cache[key] = col
+	return col
+
+func _first_texture_in(node: Node) -> Texture2D:
+	if node is Sprite2D and (node as Sprite2D).texture != null:
+		return (node as Sprite2D).texture
+	for child in node.get_children():
+		var found := _first_texture_in(child)
+		if found != null:
+			return found
+	return null
+
+func _fallback_map_block_color(key: String) -> Color:
+	var n := key.to_lower()
+	if n.contains("water"):
+		return Color(0.24, 0.50, 0.82, 1.0)
+	if n.contains("torch") or n.contains("bonfire") or n.contains("campfire"):
+		return Color(0.98, 0.56, 0.16, 1.0)
+	if n.contains("door") or n.contains("wood") or n.contains("plank"):
+		return Color(0.58, 0.39, 0.20, 1.0)
+	if n.contains("stone"):
+		return Color(0.56, 0.56, 0.58, 1.0)
+	if n.contains("iron"):
+		return Color(0.60, 0.68, 0.78, 1.0)
+	if n.contains("diamond") or n.contains("crystal"):
+		return Color(0.46, 0.90, 0.92, 1.0)
+	if n.contains("chest"):
+		return Color(0.92, 0.72, 0.24, 1.0)
+	if n.contains("lua") or n.contains("automatica"):
+		return Color(0.66, 0.46, 0.95, 1.0)
+	if n.contains("craft"):
+		return Color(0.30, 0.82, 0.96, 1.0)
+	if n.contains("furnace"):
+		return Color(0.98, 0.46, 0.18, 1.0)
+	return Color(0.72, 0.68, 0.56, 1.0)
+
 # Per-cave persistent state, keyed by the entrance's stable state_key:
 # { "cave:<seed>:<x>:<y>": {"tiles": [...], "blocks": [...], "explored": [...]} }
 var cave_states: Dictionary = {}
@@ -1172,6 +1307,10 @@ signal inventory_toggled(is_open: bool)
 # game HUD is hidden while these are open so the hotbar/minimap can never
 # overlap their panels.
 signal modal_hud_changed(open: bool)
+# Item-driven modals (crafting station, furnace, Color Crafter) need the
+# persistent hotbar even though the rest of the HUD hides. This is separate
+# from modal_hud_changed so editors/documentation/map still hide it.
+signal hotbar_modal_changed(open: bool)
 signal block_mode_changed(enabled: bool)
 signal item_picked_up(item_name: String, item_type: String)
 # Emitted after the inventory craft button successfully creates an item. The
@@ -1192,10 +1331,18 @@ var cloud_status: int = CloudStatus.OFFLINE
 var cloud_status_detail: String = ""
 signal online_state_changed
 signal cloud_status_changed(status: int)
+## Emitted when an accepted save starts its disk write. The global autosave
+## indicator listens so it can show the same notification in every scene.
+signal save_started(slot: int)
+## Emitted when that save write succeeds or fails.
+signal save_finished(slot: int, success: bool)
 ## Emitted after a successful atomic save / load, so automatic cloud sync can
 ## react to autosaves, quit-to-menu saves and world joins exactly once.
 signal game_saved(slot: int)
 signal world_loaded(slot: int)
+## Emitted after a local world is removed. CloudSync turns this into a cloud
+## tombstone so other platforms delete their copy instead of re-uploading it.
+signal world_deleted(slot: int, world_uid: String, checksum: String)
 ## Emitted whenever the active account boundary changes. Cloud sync listens so
 ## an in-flight upload can never finish under a different signed-in account.
 signal account_context_changed(account_id: String)
@@ -1510,6 +1657,7 @@ func _clear_active_world_state() -> void:
 	explored_dungeon_tiles.clear()
 	dungeon_chest_states.clear()
 	cleared_dungeons.clear()
+	last_cleared_dungeon_index = 0
 	dungeon_stars.clear()
 	dungeon_seeds.clear()
 	dungeon_quiz_hints.clear()
@@ -1728,6 +1876,11 @@ signal mission_star_earned(reward_id: String)
 ## Emitted after the cloud star totals were refreshed, so the local UI can redraw.
 signal stars_updated
 
+# Session hook for the Automatica mission tutorial. Incremented whenever the
+# full Mission Log opens, so the guide can verify the player actually read it
+# without depending on the transient modal node.
+var mission_log_open_count: int = 0
+
 # â”€â”€ Knowledge / dungeon-mission registries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Data-driven dungeon content lives in two resource folders and is loaded
 # once at startup:
@@ -1776,6 +1929,9 @@ signal bestiary_updated
 # dungeon's mission, then persisted â€” re-entering regenerates the exact
 # same layout (DungeonGenerator is deterministic from its seed).
 var cleared_dungeons: Dictionary = {}  # dungeon_index -> true
+## Most recently cleared dungeon. Drives the overworld guide's language
+## alternation (Python -> Lua -> Python). Zero means no dungeon cleared yet.
+var last_cleared_dungeon_index: int = 0
 var dungeon_stars:    Dictionary = {}  # dungeon_index -> 0..3 blue stars
 var dungeon_seeds:    Dictionary = {}  # dungeon_index -> int
 # Quiz attempt state is persisted so closing the game mid-quiz cannot farm or
@@ -1904,6 +2060,7 @@ func record_dungeon_clear(dungeon_index: int, stars: int = 3) -> void:
 		return
 	var earned: int = clampi(stars, 0, 3)
 	cleared_dungeons[dungeon_index] = true
+	last_cleared_dungeon_index = dungeon_index
 	dungeon_stars[dungeon_index] = earned
 	dungeon_cleared.emit(dungeon_index)
 	if earned >= 2:
@@ -2150,6 +2307,8 @@ func load_keybinds() -> void:
 # window-mode controls are hidden there and apply_display_mode() is a no-op.
 const DISPLAY_PATH: String = "user://settings.cfg"
 const DISPLAY_SECTION: String = "display"
+const AUDIO_SECTION: String = "audio"
+const GAMEPLAY_SECTION: String = "gameplay"
 # Default matches project.godot's window mode (2 = maximized), so a fresh install
 # behaves exactly as before until the player chooses otherwise.
 var fullscreen: bool = false
@@ -2182,13 +2341,35 @@ func load_display_settings() -> void:
 		vsync_enabled = true
 		point_and_click = false
 		point_and_click_auto_sprint = false
+		master_volume = DEFAULT_MASTER_VOLUME
+		music_volume = DEFAULT_MUSIC_VOLUME
+		sfx_volume = DEFAULT_SFX_VOLUME
+		camera_zoom = DEFAULT_CAMERA_ZOOM
+		pause_on_inventory = DEFAULT_PAUSE_ON_INVENTORY
+		quest_opaque_bg = DEFAULT_QUEST_OPAQUE_BG
+		apply_audio_volumes()
 		point_and_click_changed.emit(false)
 		return
 	fullscreen = bool(cfg.get_value(DISPLAY_SECTION, "fullscreen", fullscreen))
 	vsync_enabled = bool(cfg.get_value(DISPLAY_SECTION, "vsync_enabled", true))
+	camera_zoom = clampf(float(cfg.get_value(DISPLAY_SECTION, "camera_zoom",
+		DEFAULT_CAMERA_ZOOM)), 0.5, 3.0)
+	master_volume = clampf(float(cfg.get_value(AUDIO_SECTION, "master_volume",
+		DEFAULT_MASTER_VOLUME)), 0.0, 1.0)
+	music_volume = clampf(float(cfg.get_value(AUDIO_SECTION, "music_volume",
+		DEFAULT_MUSIC_VOLUME)), 0.0, 1.0)
+	sfx_volume = clampf(float(cfg.get_value(AUDIO_SECTION, "sfx_volume",
+		DEFAULT_SFX_VOLUME)), 0.0, 1.0)
+	pause_on_inventory = bool(cfg.get_value(GAMEPLAY_SECTION,
+		"pause_on_inventory", DEFAULT_PAUSE_ON_INVENTORY))
+	quest_opaque_bg = bool(cfg.get_value(GAMEPLAY_SECTION,
+		"quest_opaque_bg", DEFAULT_QUEST_OPAQUE_BG))
 	point_and_click = bool(cfg.get_value("controls", "point_and_click", false))
 	point_and_click_auto_sprint = bool(cfg.get_value(
 		"controls", "point_and_click_auto_sprint", false))
+	apply_audio_volumes()
+	camera_zoom_changed.emit(camera_zoom)
+	quest_bg_changed.emit(quest_opaque_bg)
 	point_and_click_changed.emit(point_and_click)
 
 func save_display_settings() -> void:
@@ -2196,6 +2377,12 @@ func save_display_settings() -> void:
 	cfg.load(DISPLAY_PATH)          # keep any other keys already in the file
 	cfg.set_value(DISPLAY_SECTION, "fullscreen", fullscreen)
 	cfg.set_value(DISPLAY_SECTION, "vsync_enabled", vsync_enabled)
+	cfg.set_value(DISPLAY_SECTION, "camera_zoom", camera_zoom)
+	cfg.set_value(AUDIO_SECTION, "master_volume", master_volume)
+	cfg.set_value(AUDIO_SECTION, "music_volume", music_volume)
+	cfg.set_value(AUDIO_SECTION, "sfx_volume", sfx_volume)
+	cfg.set_value(GAMEPLAY_SECTION, "pause_on_inventory", pause_on_inventory)
+	cfg.set_value(GAMEPLAY_SECTION, "quest_opaque_bg", quest_opaque_bg)
 	# Obsolete pre-0.9.4 controls are removed from the file instead of being
 	# silently carried forward. Older configs simply lose these two keys.
 	for obsolete in ["fps_limit", "show_fps"]:
@@ -2243,6 +2430,65 @@ func set_vsync(on: bool) -> void:
 	apply_frame_settings()
 	CrashLogger.event("SETTINGS", "vsync=%s" % on)
 	save_display_settings()
+
+# ── Audio settings ─────────────────────────────────────────────────
+# The same persisted values drive the main-menu and in-game settings panels.
+func apply_audio_volumes() -> void:
+	_apply_bus_volume("Master", master_volume)
+	_apply_bus_volume("Music", music_volume)
+	_apply_bus_volume("SFX", sfx_volume)
+
+func _apply_bus_volume(bus_name: String, value: float) -> void:
+	var idx := AudioServer.get_bus_index(bus_name)
+	if idx != -1:
+		AudioServer.set_bus_volume_db(idx,
+			linear_to_db(maxf(clampf(value, 0.0, 1.0), 0.0001)))
+
+func set_master_volume(value: float, persist: bool = true) -> void:
+	master_volume = clampf(value, 0.0, 1.0)
+	_apply_bus_volume("Master", master_volume)
+	CrashLogger.event("SETTINGS", "master_volume=%.2f" % master_volume)
+	if persist:
+		save_display_settings()
+
+func set_music_volume(value: float, persist: bool = true) -> void:
+	music_volume = clampf(value, 0.0, 1.0)
+	_apply_bus_volume("Music", music_volume)
+	CrashLogger.event("SETTINGS", "music_volume=%.2f" % music_volume)
+	if persist:
+		save_display_settings()
+
+func set_sfx_volume(value: float, persist: bool = true) -> void:
+	sfx_volume = clampf(value, 0.0, 1.0)
+	_apply_bus_volume("SFX", sfx_volume)
+	CrashLogger.event("SETTINGS", "sfx_volume=%.2f" % sfx_volume)
+	if persist:
+		save_display_settings()
+
+func set_camera_zoom(value: float, persist: bool = true) -> void:
+	var next: float = clampf(value, 0.5, 3.0)
+	if not is_equal_approx(camera_zoom, next):
+		camera_zoom = next
+		camera_zoom_changed.emit(camera_zoom)
+	if persist:
+		save_display_settings()
+
+func set_pause_on_inventory(on: bool, persist: bool = true) -> void:
+	if pause_on_inventory == on:
+		return
+	pause_on_inventory = on
+	CrashLogger.event("SETTINGS", "pause_on_inventory=%s" % on)
+	if persist:
+		save_display_settings()
+
+func set_quest_opaque_bg(on: bool, persist: bool = true) -> void:
+	if quest_opaque_bg == on:
+		return
+	quest_opaque_bg = on
+	quest_bg_changed.emit(on)
+	CrashLogger.event("SETTINGS", "quest_opaque_bg=%s" % on)
+	if persist:
+		save_display_settings()
 
 # â”€â”€ Optional point-and-click movement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # OFF by default on every platform and for every existing save. When ON,
@@ -2476,6 +2722,12 @@ func _input(event: InputEvent) -> void:
 		return
 	var key_event := event as InputEventKey
 	if key_event.keycode == KEY_CTRL and not key_event.shift_pressed:
+		# Build mode only exists inside a running world. Global input is always
+		# active, so without this guard Ctrl on the title/menu would latch build
+		# mode on and the next loaded world would start with PnC clicks placing
+		# blocks instead of issuing move orders.
+		if game_node == null or not is_instance_valid(game_node):
+			return
 		# One implementation for the Ctrl key, the mobile BUILD button and any
 		# future UI toggle. The old duplicated branch skipped the dungeon guard
 		# notification and could drift from toggle_build_mode().
@@ -2497,7 +2749,66 @@ func notify(message: String) -> void:
 	notification_posted.emit(message)
 
 func _init_missions() -> void:
+	# ── Automation mission flow (player-facing) ───────────────────────
+	# These replace the old generic overworld mission list. The legacy entries
+	# below remain hidden for save/test compatibility but never appear in the
+	# tracker. Each new mission has a category so the UI can group them later.
 	missions = [
+		# Automatica — 12
+		{"id": "auto_boot", "title": "Boot Sequence", "category": "Automatica",
+			"objective": "Successfully run any Automatica program.", "completed": false, "goal": 1},
+		{"id": "auto_nameplate", "title": "Nameplate Protocol", "category": "Automatica",
+			"objective": "Rename a robot with rename().", "completed": false, "goal": 1},
+		{"id": "auto_timber", "title": "Timber Routine", "category": "Automatica",
+			"objective": "Chop 10 trees with chop_trees(20).", "completed": false, "goal": 10},
+		{"id": "auto_work_cycle", "title": "Full Work Cycle", "category": "Automatica",
+			"objective": "Complete one auto_work() cycle.", "completed": false, "goal": 1},
+		{"id": "auto_chest_logistics", "title": "Chest Logistics", "category": "Automatica",
+			"objective": "Withdraw 16 Wood and print the chest contents.", "completed": false, "goal": 1},
+		{"id": "auto_line", "title": "Line Worker", "category": "Automatica",
+			"objective": "Place a 12-block line with build_line().", "completed": false, "goal": 1},
+		{"id": "auto_frame", "title": "Foundation Frame", "category": "Automatica",
+			"objective": "Build a hollow 6x6 frame with build_rect().", "completed": false, "goal": 1},
+		{"id": "auto_ring", "title": "Rune Ring", "category": "Automatica",
+			"objective": "Build a 20-block ring with build_ring().", "completed": false, "goal": 1},
+		{"id": "auto_pattern", "title": "Pattern Practice", "category": "Automatica",
+			"objective": "Build a 16-block wave and 12-step staircase.", "completed": false, "goal": 1},
+		{"id": "auto_spiral", "title": "Spiral Shrine", "category": "Automatica",
+			"objective": "Build a 30-block spiral with build_spiral().", "completed": false, "goal": 1},
+		{"id": "auto_miner", "title": "Miner Unit", "category": "Automatica",
+			"objective": "Mine 10 Stone blocks with mine(\"stone_block\").", "completed": false, "goal": 10},
+		{"id": "auto_combat", "title": "Combat Protocol", "category": "Automatica",
+			"objective": "Enter combat_mode(true) and defeat 3 mobs with the robot.", "completed": false, "goal": 3},
+
+		# Algorithmica — 12
+		{"id": "algo_boot", "title": "Python Primer", "category": "Algorithmica",
+			"objective": "Successfully run any Algorithmica program.", "completed": false, "goal": 1},
+		{"id": "algo_recipe_reader", "title": "Recipe Reader", "category": "Algorithmica",
+			"objective": "Print the selected recipe and output count.", "completed": false, "goal": 1},
+		{"id": "algo_planks", "title": "Plank Factory", "category": "Algorithmica",
+			"objective": "Craft and collect 16 Planks.", "completed": false, "goal": 16},
+		{"id": "algo_batch", "title": "Batch Logic", "category": "Algorithmica",
+			"objective": "Craft 16 items in one program.", "completed": false, "goal": 16},
+		{"id": "algo_output_audit", "title": "Output Audit", "category": "Algorithmica",
+			"objective": "Inspect output item/count before and after crafting.", "completed": false, "goal": 1},
+		{"id": "algo_color_starter", "title": "Color Starter", "category": "Algorithmica",
+			"objective": "Craft 2 red blocks with craft_color().", "completed": false, "goal": 2},
+		{"id": "algo_color_wheel", "title": "Color Wheel", "category": "Algorithmica",
+			"objective": "Craft 2 red, 2 green and 2 blue blocks.", "completed": false, "goal": 6},
+		{"id": "algo_palette", "title": "Palette Stockpile", "category": "Algorithmica",
+			"objective": "Craft 16 colored blocks.", "completed": false, "goal": 16},
+		{"id": "algo_furnace_primer", "title": "Furnace Primer", "category": "Algorithmica",
+			"objective": "Feed, fuel, smelt and collect 5 Iron Bars.", "completed": false, "goal": 1},
+		{"id": "algo_furnace_status", "title": "Furnace Status", "category": "Algorithmica",
+			"objective": "Print input/fuel status, then smelt 4 Iron Bars.", "completed": false, "goal": 1},
+		{"id": "algo_iron_line", "title": "Iron Line", "category": "Algorithmica",
+			"objective": "Smelt 10 Iron Bars in one program.", "completed": false, "goal": 1},
+		{"id": "algo_crystal_run", "title": "Crystal Run", "category": "Algorithmica",
+			"objective": "Smelt 6 Crystal Iron Ore into Iron Bars.", "completed": false, "goal": 6},
+	]
+	# Legacy mission keys stay available to old saves and code paths, but are
+	# hidden from the tracker so the player only sees the automation flow.
+	var legacy_defs: Array = [
 		{"id": "move",             "title": "Input any movement",    "completed": false},
 		{"id": "open_inventory",   "title": "Open your inventory",   "completed": false},
 		{"id": "cut_tree",         "title": "Cut your first tree",   "completed": false},
@@ -2527,6 +2838,11 @@ func _init_missions() -> void:
 		{"id": "craft_diamond_pickaxe", "title": "Craft a diamond pickaxe", "completed": false},
 		{"id": "craft_diamond_axe",     "title": "Craft a diamond axe",     "completed": false},
 	]
+	for d in legacy_defs:
+		var legacy: Dictionary = (d as Dictionary).duplicate(true)
+		legacy["hidden"] = true
+		legacy["legacy"] = true
+		missions.append(legacy)
 
 # Dungeon missions are NOT hardcoded â€” one is created per DungeonMissionData
 # .tres file actually present in resources/dungeon_missions/, so the mission
@@ -2826,6 +3142,59 @@ func current_dungeon_indices() -> Array:
 				break
 	return out
 
+## The language the persistent overworld guide should recommend next. The two
+## main tracks alternate from the most recently cleared dungeon, so a Python
+## clear recommends Lua and a Lua clear recommends Python. A fresh save starts
+## on the Python track (the first main dungeon in the registry).
+func next_guided_dungeon_language() -> String:
+	if main_dungeons_complete():
+		var boss_or_extra := next_guided_dungeon_index()
+		return dungeon_language(boss_or_extra) if boss_or_extra > 0 else ""
+	var last_lang: String = dungeon_language(last_cleared_dungeon_index) \
+		if last_cleared_dungeon_index > 0 else ""
+	var preferred := "python"
+	if last_lang == "lua":
+		preferred = "python"
+	elif last_lang == "python":
+		preferred = "lua"
+	if current_main_dungeon_index(preferred) > 0:
+		return preferred
+	for lang in DUNGEON_LANGUAGES:
+		if current_main_dungeon_index(lang) > 0:
+			return lang
+	return ""
+
+## Exact dungeon index for the overworld guide and the minimap's "next dungeon"
+## emphasis. During the boss/extra phase there is only one current entrance, so
+## the first live index wins.
+func next_guided_dungeon_index() -> int:
+	if main_dungeons_complete():
+		var all := current_dungeon_indices()
+		return int(all[0]) if not all.is_empty() else 0
+	var lang := next_guided_dungeon_language()
+	var idx := current_main_dungeon_index(lang)
+	if idx > 0:
+		return idx
+	for candidate in DUNGEON_LANGUAGES:
+		idx = current_main_dungeon_index(candidate)
+		if idx > 0:
+			return idx
+	return 0
+
+func next_guided_dungeon_name() -> String:
+	var idx := next_guided_dungeon_index()
+	if idx <= 0:
+		return ""
+	var lang := dungeon_language(idx)
+	if not lang.is_empty():
+		return "%s Dungeon" % lang.capitalize()
+	var mission := get_dungeon_mission_for_index(idx)
+	if mission != null and mission.is_boss():
+		return "Hitman Miniboss"
+	if mission != null and not mission.mission_name.is_empty():
+		return mission.mission_name
+	return "Dungeon"
+
 func _find_mission(id: String) -> Dictionary:
 	for m in missions:
 		if m["id"] == id:
@@ -2840,11 +3209,13 @@ func complete_mission(id: String) -> void:
 			# mission_completed FIRST so the tracker can animate the row while
 			# it still exists; mission_updated then rebuilds the list.
 			mission_completed.emit(id)
-			# Dungeon missions are blue; overworld quests are yellow.
-			if m.has("dungeon_index"):
-				mission_star_earned.emit("dungeon_mission:" + id)
-			else:
-				mission_star_earned.emit("mission:" + id)
+			# Dungeon missions are blue; overworld quests are yellow. Hidden
+			# legacy objectives never award a visible star.
+			if not bool(m.get("hidden", false)):
+				if m.has("dungeon_index"):
+					mission_star_earned.emit("dungeon_mission:" + id)
+				else:
+					mission_star_earned.emit("mission:" + id)
 			mission_updated.emit()
 			return
 
@@ -2872,6 +3243,8 @@ func local_blue_stars() -> int:
 func local_yellow_stars() -> int:
 	var total: int = 0
 	for m in missions:
+		if bool(m.get("hidden", false)):
+			continue
 		if bool(m.get("completed", false)) and not m.has("dungeon_index"):
 			total += 1
 	return total
@@ -2920,10 +3293,202 @@ func set_mission_progress(id: String, value: int) -> void:
 			return
 
 func add_mission_progress(id: String, amount: int = 1) -> void:
+	# A mob killed during a robot combat swing also advances Combat Protocol.
+	# Mob death paths already report their own slayer missions; this central
+	# hook attributes those reports to the robot while its attack is resolving.
+	if _lua_combat_attack_depth > 0 \
+			and AUTO_COMBAT_KILL_MISSIONS.has(id) and id != "auto_combat":
+		var cm := _find_mission("auto_combat")
+		if not cm.is_empty() and bool(cm.get("mode", false)):
+			add_mission_progress("auto_combat", amount)
 	for m in missions:
 		if m["id"] == id and not m["completed"]:
 			set_mission_progress(id, int(m.get("progress", 0)) + amount)
 			return
+
+# ── Automation mission events (Automatica) ───────────────────────
+func record_auto_run() -> void:
+	complete_mission("auto_boot")
+
+func record_auto_rename() -> void:
+	complete_mission("auto_nameplate")
+
+func record_auto_tree() -> void:
+	add_mission_progress("auto_timber", 1)
+
+func record_auto_work_cycle() -> void:
+	complete_mission("auto_work_cycle")
+
+func record_auto_withdraw(data: ItemData, quantity: int) -> void:
+	if data == null or data.item_id() != "wood" or quantity <= 0:
+		return
+	var m := _find_mission("auto_chest_logistics")
+	if m.is_empty() or bool(m.get("completed", false)):
+		return
+	m["wood_withdrawn"] = int(m.get("wood_withdrawn", 0)) + quantity
+	if int(m.get("wood_withdrawn", 0)) >= 16 and bool(m.get("contents_printed", false)):
+		complete_mission("auto_chest_logistics")
+
+func record_auto_chest_contents() -> void:
+	var m := _find_mission("auto_chest_logistics")
+	if m.is_empty() or bool(m.get("completed", false)):
+		return
+	m["contents_printed"] = true
+	if int(m.get("wood_withdrawn", 0)) >= 16:
+		complete_mission("auto_chest_logistics")
+
+func record_auto_combat_mode() -> void:
+	var m := _find_mission("auto_combat")
+	if not m.is_empty() and not bool(m.get("completed", false)):
+		m["mode"] = true
+
+# Build helpers are reconstructed by lua_npc as their placement queue drains.
+# `mode` identifies the helper and `count` is the number of successful blocks.
+func record_auto_build(mode: String, count: int) -> void:
+	match mode:
+		"line":
+			if count >= 12:
+				complete_mission("auto_line")
+		"rect":
+			if count >= 20:
+				complete_mission("auto_frame")
+		"ring":
+			if count >= 20:
+				complete_mission("auto_ring")
+		"spiral":
+			if count >= 30:
+				complete_mission("auto_spiral")
+		"wave", "stairs":
+			var m := _find_mission("auto_pattern")
+			if m.is_empty() or bool(m.get("completed", false)):
+				return
+			m[mode + "_blocks"] = maxi(int(m.get(mode + "_blocks", 0)), count)
+			if int(m.get("wave_blocks", 0)) >= 16 and int(m.get("stairs_blocks", 0)) >= 12:
+				complete_mission("auto_pattern")
+
+func record_auto_mined(data: ItemData) -> void:
+	if data != null and data.item_id() == "stone":
+		add_mission_progress("auto_miner", 1)
+
+# Robot attack attribution: mob death code calls add_mission_progress() for its
+# slayer missions synchronously inside take_hit(), so the depth flag is enough
+# to credit the robot without changing every mob's take_hit signature.
+var _lua_combat_attack_depth: int = 0
+const AUTO_COMBAT_KILL_MISSIONS: Array = [
+	"side_wolf_slayer", "side_pixie_slayer", "side_headless_angler", "defeat_worms",
+]
+
+func begin_lua_combat_attack() -> void:
+	_lua_combat_attack_depth += 1
+
+func end_lua_combat_attack() -> void:
+	_lua_combat_attack_depth = maxi(0, _lua_combat_attack_depth - 1)
+
+# ── Automation mission events (Algorithmica) ──────────────────────
+func record_algo_run() -> void:
+	complete_mission("algo_boot")
+
+func record_algo_craft(data: ItemData, produced: int) -> void:
+	if data == null or produced <= 0:
+		return
+	if data.item_id() == "planks":
+		var m := _find_mission("algo_planks")
+		if m.is_empty() or bool(m.get("completed", false)):
+			return
+		m["crafted"] = int(m.get("crafted", 0)) + produced
+		if int(m.get("crafted", 0)) >= 16 and int(m.get("taken", 0)) >= 16:
+			complete_mission("algo_planks")
+
+func record_algo_take_output(data: ItemData, taken: int) -> void:
+	if data == null or taken <= 0:
+		return
+	if data.item_id() == "planks":
+		var m := _find_mission("algo_planks")
+		if m.is_empty() or bool(m.get("completed", false)):
+			return
+		m["taken"] = int(m.get("taken", 0)) + taken
+		set_mission_progress("algo_planks", mini(int(m.get("taken", 0)), 16))
+		if int(m.get("crafted", 0)) >= 16 and int(m.get("taken", 0)) >= 16:
+			complete_mission("algo_planks")
+	elif data.item_id() == "ironbar":
+		var primer := _find_mission("algo_furnace_primer")
+		if primer.is_empty() or bool(primer.get("completed", false)):
+			return
+		primer["taken"] = int(primer.get("taken", 0)) + taken
+		_check_algo_furnace_primer(primer)
+
+func record_algo_color(r: int, g: int, b: int, amount: int) -> void:
+	if amount <= 0:
+		return
+	# Palette Stockpile: every craft_color block counts.
+	add_mission_progress("algo_palette", amount)
+	# Color Starter: exact red.
+	if r == 255 and g == 0 and b == 0:
+		add_mission_progress("algo_color_starter", amount)
+	# Color Wheel: 2 red + 2 green + 2 blue, independent of craft order.
+	var m := _find_mission("algo_color_wheel")
+	if not m.is_empty() and not bool(m.get("completed", false)):
+		if r == 255 and g == 0 and b == 0:
+			m["red"] = int(m.get("red", 0)) + amount
+		elif r == 0 and g == 255 and b == 0:
+			m["green"] = int(m.get("green", 0)) + amount
+		elif r == 0 and g == 0 and b == 255:
+			m["blue"] = int(m.get("blue", 0)) + amount
+		var done: int = mini(int(m.get("red", 0)), 2) \
+			+ mini(int(m.get("green", 0)), 2) + mini(int(m.get("blue", 0)), 2)
+		set_mission_progress("algo_color_wheel", done)
+		if int(m.get("red", 0)) >= 2 and int(m.get("green", 0)) >= 2 \
+				and int(m.get("blue", 0)) >= 2:
+			complete_mission("algo_color_wheel")
+
+func record_algo_feed(accepted: int) -> void:
+	if accepted <= 0:
+		return
+	_advance_algo_primer("fed", accepted)
+
+func record_algo_fuel(accepted: int) -> void:
+	if accepted <= 0:
+		return
+	_advance_algo_primer("fueled", accepted)
+
+func record_algo_smelt_iron(smelted: int) -> void:
+	if smelted <= 0:
+		return
+	_advance_algo_primer("smelted", smelted)
+
+func record_algo_crystal_smelt(smelted: int) -> void:
+	if smelted > 0:
+		add_mission_progress("algo_crystal_run", smelted)
+
+func _advance_algo_primer(key: String, amount: int) -> void:
+	var m := _find_mission("algo_furnace_primer")
+	if m.is_empty() or bool(m.get("completed", false)):
+		return
+	m[key] = int(m.get(key, 0)) + amount
+	_check_algo_furnace_primer(m)
+
+func _check_algo_furnace_primer(m: Dictionary) -> void:
+	if int(m.get("fed", 0)) >= 1 and int(m.get("fueled", 0)) >= 1 \
+			and int(m.get("smelted", 0)) >= 5 and int(m.get("taken", 0)) >= 5:
+		complete_mission("algo_furnace_primer")
+
+func record_algo_station_run(stats: Dictionary) -> void:
+	record_algo_run()
+	if bool(stats.get("recipe_read", false)) \
+			and bool(stats.get("output_count_read", false)):
+		complete_mission("algo_recipe_reader")
+	if int(stats.get("crafted_total", 0)) >= 16:
+		complete_mission("algo_batch")
+	if bool(stats.get("output_before", false)) \
+			and bool(stats.get("output_after", false)):
+		complete_mission("algo_output_audit")
+
+func record_algo_furnace_run(smelted_iron: int, input_status: bool, fuel_status: bool) -> void:
+	record_algo_run()
+	if input_status and fuel_status and smelted_iron >= 4:
+		complete_mission("algo_furnace_status")
+	if smelted_iron >= 10:
+		complete_mission("algo_iron_line")
 
 # Authoritative "one block was successfully placed" event. All world backends
 # call this only after placement is confirmed.
@@ -2958,6 +3523,7 @@ func reset_missions() -> void:
 		m["completed"] = false
 		m["progress"] = 0
 	cleared_dungeons.clear()
+	last_cleared_dungeon_index = 0
 	dungeon_stars.clear()
 	dungeon_quiz_hints.clear()
 	dungeon_quiz_penalties.clear()
@@ -2974,6 +3540,7 @@ func add_item(item: Dictionary, allow_dev: bool = false) -> bool:
 	if quantity <= 0:
 		return true
 	if space_for_item(data) < quantity:
+		SFX.play_ui("sfx_inventory_full", 0, -4.0)
 		return false
 	var can_stack: bool = data.can_stack()
 	var stack_limit: int = data.stack_limit()
@@ -3272,6 +3839,33 @@ func held_pickaxe_level() -> int:
 func held_mining_level() -> int:
 	return maxi(0, held_pickaxe_level())
 
+# Shared break-time formula for placed blocks, cave walls and mineable objects.
+# `hardness` is the block's block_level (wood-penalty adjusted where relevant)
+# and `mining_level` is the held pickaxe tier. Keep the floor above one click's
+# CLICK_BREAK_SECONDS (0.5 s): the old 0.1 s floor made an iron/diamond pickaxe
+# destroy every low-tier block with a single tap.
+const MIN_PLAYER_BREAK_SECONDS: float = 0.75
+
+func mining_break_seconds(hardness: float, mining_level: int) -> float:
+	return maxf(MIN_PLAYER_BREAK_SECONDS,
+		hardness - float(maxi(0, mining_level)))
+
+# True when the selected hotbar item can mine `data`: a pickaxe at or above the
+# object's required tier, or an axe for wooden/torch objects. Interactive
+# objects use this to let a mining click/tap take priority over opening their
+# UI, which is essential on mobile where there is no Shift key.
+func held_item_can_mine(data: ItemData) -> bool:
+	if data == null:
+		return false
+	var held := _held_item_data()
+	if held == null:
+		return false
+	if held.is_pickaxe:
+		return held.pickaxe_level >= data.min_pickaxe_level
+	if held.axe_level > 0 and (data.wooden_block or data.is_torch):
+		return true
+	return false
+
 # The ItemData of the currently selected hotbar slot, or null (empty slot).
 func _held_item_data() -> ItemData:
 	var slot: Variant = get_hotbar_item()
@@ -3318,14 +3912,23 @@ func hotbar_item_slots() -> int:
 	return HOTBAR_SIZE - 1 if is_mobile() else HOTBAR_SIZE
 
 ## Height of the gameplay hotbar HUD band above the bottom safe area:
-## slot row + its bottom margin + the HP/SP band above it. Mirrors hotbar.gd's
-## live sizing. Used ONLY by the Inventory screen so it can stay above the
-## persistent hotbar; maps/documentation and other modals remain full-screen.
+## slot row + its bottom margin + the 6px gap + the HP/SP stack. Mirrors
+## hotbar.gd's `_apply_label_scale()`: stat_bottom = hotbar_top + 6*s and the
+## HP/SP bars add (22 + 18 + 4)*s, so the stat top is hotbar_top + 50*s.
+## Used by the Inventory and the item-driven modals (crafting station, furnace,
+## Color Crafter) so their content stays above the persistent hotbar;
+## maps/documentation and other modals remain full-screen.
 func hotbar_hud_height() -> float:
 	var s: float = ui_scale
 	var base: float = 36.0 if is_mobile() else 40.0
 	var slot_px: float = round(maxf(base * s, 44.0 if is_mobile() else base * s))
-	return slot_px + 8.0 * s + 28.0 * s
+	return slot_px + 8.0 * s + 50.0 * s
+
+## Bottom padding shared by those item-driven modals: the full hotbar band plus
+## the same small breathing gap the inventory uses. Safe-area insets are added
+## by the caller because each UI applies them differently.
+func hotbar_modal_reserve() -> float:
+	return hotbar_hud_height() + 12.0 * ui_scale
 
 func set_hotbar_selection(index: int) -> void:
 	hotbar_selected = clamp(index, 0, hotbar_item_slots() - 1)
@@ -3477,6 +4080,7 @@ func request_ui_back(event: InputEvent = null) -> bool:
 func cancel_gameplay_input() -> void:
 	mobile_move = Vector2.ZERO
 	mobile_shift = false
+	set_mobile_sprint(false)
 	pnc_hold_active = false
 	var p: Node = player_node
 	if is_instance_valid(p) and p.has_method("cancel_pending_input"):
@@ -3574,6 +4178,7 @@ func reset_pause_state() -> void:
 	pnc_hold_active = false
 	mobile_move = Vector2.ZERO
 	mobile_shift = false
+	set_mobile_sprint(false)
 	clear_touch_mouse()
 	break_hud_progress = 0.0
 	_break_hud_source_id = 0
@@ -3585,6 +4190,18 @@ func reset_pause_state() -> void:
 	# play and makes a future pause leak visible in the log.
 	if leaked > 0:
 		push_warning("Global: reset_pause_state cleared %d unreleased UI pause(s)" % leaked)
+
+
+## Build mode is intentionally not saved, but it is a global toggle that stays
+## active on the title/menu screens. A fresh world must never inherit it: with
+## point-and-click enabled, a stale build mode makes every move click place a
+## block, which looks exactly like the game falling back to WASD/joystick mode.
+func reset_build_mode_for_world() -> void:
+	if not block_mode:
+		return
+	block_mode = false
+	CrashLogger.event("BUILD", "mode=off (world load)")
+	block_mode_changed.emit(false)
 
 
 # Restore the overworld-only interaction state after a dungeon. Dungeons
@@ -3653,7 +4270,7 @@ const LEADERBOARD_MIN_WORLD_VERSION: String = "0.9.3.0"
 ## Bump when mission definitions change materially. Stored in saves so future
 ## migrations can distinguish old layouts; v2 = wolf mission retired + diamond
 ## equipment missions added.
-const MISSIONS_VERSION: int = 2
+const MISSIONS_VERSION: int = 3
 
 func version_at_least(version: String, minimum: String) -> bool:
 	var value := version.strip_edges()
@@ -3809,6 +4426,14 @@ var tutorial_completed: bool = false
 # retries never duplicate rewards.
 var tutorial_flags: Dictionary = {}
 
+## Tutorial camp structures (the furnace, Automatica station, etc.) are part of
+## the guided onboarding and must not be mined or dismantled while it is still
+## running. After the tutorial completes they become ordinary placeables, so the
+## player can clear or relocate the camp normally.
+func is_tutorial_protected(node: Node) -> bool:
+	return not tutorial_completed and node != null and is_instance_valid(node) \
+		and node.is_in_group("TutorialCamp")
+
 # The version this world was CREATED with, else the one it was last SAVED with,
 # else a fallback. Never invents a version for an old save that has neither.
 func world_version_of(slot: int) -> String:
@@ -3896,18 +4521,27 @@ func next_free_slot() -> int:
 	return -1
 
 # Deletes an OWNED world. Callers MUST have confirmed with the player first.
-func delete_world(slot: int) -> bool:
+# `propagate` is false only when CloudSync is applying a remote tombstone (the
+# cloud copy is already deleted; re-emitting would loop).
+func delete_world(slot: int, propagate: bool = true) -> bool:
 	if not _identity_is_verified() or not has_save(slot):
 		return false
 	var path := save_file_path(slot)
 	if path.is_empty():
 		return false
+	var info := get_save_info(slot)
+	if str(info.get("world_uid", "")).strip_edges().is_empty():
+		info = ensure_save_identity(slot)
+	var world_uid := str(info.get("world_uid", "")).strip_edges()
+	var checksum := FileAccess.get_sha256(path) if FileAccess.file_exists(path) else ""
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".tmp"))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".bak"))
 	_remove_owner_sidecar(current_account_id, slot)
 	if active_save_slot == slot:
 		active_save_slot = -1
+	if propagate:
+		world_deleted.emit(slot, world_uid, checksum)
 	return true
 
 # Starts a brand-new world in `slot` (name + empty inventory + reset missions),
@@ -4055,6 +4689,7 @@ func save_game(slot: int) -> void:
 	active_save_slot = slot
 	CrashLogger.event("SAVE", "begin slot=%d world=%s" % [
 		slot, world_name if not world_name.is_empty() else "<unnamed>"])
+	save_started.emit(slot)
 	# World metadata. `world_version` is the build that last SAVED this world;
 	# `created_version` is preserved from the first save so the world list can
 	# show where it came from. A save made before this existed simply has neither
@@ -4071,6 +4706,7 @@ func save_game(slot: int) -> void:
 	# becoming an unowned world another session could inherit.
 	if not _write_owner_sidecar(current_account_id, slot, uid):
 		CrashLogger.event("SAVE", "blocked: owner sidecar write failed slot=%d" % slot)
+		save_finished.emit(slot, false)
 		return
 	var save_data: Dictionary = {
 		"slot":         slot,
@@ -4138,6 +4774,7 @@ func save_game(slot: int) -> void:
 	for idx in cleared_dungeons:
 		cleared_save.append(int(idx))
 	save_data["cleared_dungeons"] = cleared_save
+	save_data["last_cleared_dungeon_index"] = last_cleared_dungeon_index
 	var dungeon_stars_save: Array = []
 	for idx in dungeon_stars:
 		dungeon_stars_save.append({"index": int(idx), "stars": int(dungeon_stars[idx])})
@@ -4170,6 +4807,7 @@ func save_game(slot: int) -> void:
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
 		push_warning("Global: could not open %s for writing" % tmp)
+		save_finished.emit(slot, false)
 		return
 	f.store_string(JSON.stringify(save_data))
 	f.close()
@@ -4183,6 +4821,7 @@ func save_game(slot: int) -> void:
 		if backup_err != OK:
 			push_warning("Global: could not rotate the previous save (%s)" % error_string(backup_err))
 			DirAccess.remove_absolute(abs_tmp)
+			save_finished.emit(slot, false)
 			return
 	var replace_err: Error = DirAccess.rename_absolute(abs_tmp, abs_path)
 	if replace_err != OK:
@@ -4191,9 +4830,11 @@ func save_game(slot: int) -> void:
 		if FileAccess.file_exists(bak):
 			DirAccess.rename_absolute(abs_bak, abs_path)
 		DirAccess.remove_absolute(abs_tmp)
+		save_finished.emit(slot, false)
 		return
 	CrashLogger.event("SAVE", "ok slot=%d revision=%d" % [
 		slot, int(save_data.get("save_revision", 0))])
+	save_finished.emit(slot, true)
 	game_saved.emit(slot)
 
 func load_game(slot: int) -> void:
@@ -4344,6 +4985,12 @@ func load_game(slot: int) -> void:
 		for idx in (data["cleared_dungeons"] as Array):
 			if not cleared_dungeons.has(int(idx)):
 				cleared_dungeons[int(idx)] = true
+	if data.has("last_cleared_dungeon_index"):
+		last_cleared_dungeon_index = int(data.get("last_cleared_dungeon_index", 0))
+	elif not cleared_dungeons.is_empty():
+		# Pre-guide saves have no explicit order field; Dictionary insertion
+		# order follows the saved array, so the last entry is the newest clear.
+		last_cleared_dungeon_index = int((cleared_dungeons.keys() as Array).back())
 	if data.has("dungeon_stars") and data["dungeon_stars"] is Array:
 		for entry in (data["dungeon_stars"] as Array):
 			if entry is Dictionary:

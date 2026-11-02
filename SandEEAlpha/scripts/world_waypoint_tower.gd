@@ -166,6 +166,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _open_map() -> bool:
+	SFX.play("sfx_world_waypoint", global_position, -3.0, 1.0, 0)
+	SFX.play("sfx_map_waypoint", global_position, -5.0, 1.0, 0)
 	if _opening:
 		return false
 	var maps := get_tree().get_nodes_in_group("Minimap")

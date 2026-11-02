@@ -159,9 +159,10 @@ func _input(event: InputEvent) -> void:
 	# opening together left the tree paused with nothing on screen.
 	if not _cursor_over(Global.mouse_event_world(self, event)): return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		# Shift + left-click: mine the chest off the wall (respects pickaxe
-		# tier + block_level break time) instead of toggling its UI.
-		if Global.is_shift_held():
+		# A pickaxe makes destruction take priority over opening the chest, so
+		# tap-to-control on mobile (which has no Shift) can still demolish it.
+		# Shift + left-click remains the explicit desktop alternative.
+		if Global.is_shift_held() or Global.held_item_can_mine(item_data):
 			if event.pressed:
 				_try_start_breaking()
 				if _breaking:
@@ -236,6 +237,7 @@ func _open_chest_ui() -> void:
 	var layer: Node = ui.get_parent()
 	if layer != null:
 		layer.set("visible", true)
+	SFX.play("sfx_chest", global_position, -2.0, 1.0, 0)
 	Global.open_ui()
 	Global.inventory_toggled.emit(true)
 
@@ -257,6 +259,7 @@ func _close_ui() -> void:
 	_open_ui = null
 	if ui != null and is_instance_valid(ui) and ui.has_method("close_chest"):
 		ui.call("close_chest", self)
+		SFX.play("sfx_chest", global_position, -4.0, 0.9, 1)
 
 # ── Drag & drop (chest ↔ player inventory, plus slot reordering) ───
 # The shared slot component (inventory_slot.gd) makes every slot in the
@@ -361,7 +364,7 @@ func _on_body_exited(body: Node) -> void:
 
 # ── Shift-click breaking (respects the mining mechanic) ───────────
 # Mirrors crafting_station_object.gd / placeable_block.gd exactly: shift +
-# left-click runs the hold-to-break mechanic — duration = block_level -
+# left-click runs the hold-to-break mechanic — duration = Global.mining_break_seconds(
 # pickaxe_level (min 0.1s), gated by min_pickaxe_level — instead of
 # destroying the chest instantly. Fresh shift-clicks each add
 # CLICK_BREAK_SECONDS of work and progress persists
@@ -389,7 +392,7 @@ func _process(delta: float) -> void:
 	if not _breaking:
 		return
 	if not _player_nearby \
-			or not Global.is_shift_held() \
+			or (not Global.is_shift_held() and not Global.held_item_can_mine(item_data)) \
 			or not Global.is_left_action_held():
 		_cancel_breaking()
 		return
@@ -408,6 +411,9 @@ func _draw() -> void:
 # Adds damage (in seconds of break work) from a held frame's delta or a
 # fresh shift-click's flat CLICK_BREAK_SECONDS, then breaks when full.
 func _add_break_progress(seconds: float) -> void:
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
@@ -442,7 +448,7 @@ func _tick_wobble() -> void:
 # Begin the mining process. No-op when no pickaxe is selected, the held
 # pickaxe is below min_pickaxe_level, or it's already breaking.
 func _try_start_breaking() -> void:
-	if _breaking:
+	if _breaking or Global.is_tutorial_protected(self):
 		return
 	var pick_lvl := _held_pickaxe_level()
 	if pick_lvl < 0:
@@ -451,7 +457,7 @@ func _try_start_breaking() -> void:
 	if pick_lvl < min_lvl:
 		return  # pickaxe tier too low
 	var block_lvl: int = item_data.block_level if item_data != null else 0
-	_break_duration = maxf(0.1, float(block_lvl - pick_lvl))
+	_break_duration = Global.mining_break_seconds(float(block_lvl), pick_lvl)
 	# The swing animation plays for any item used to break — route through the
 	# player so it fires even though the chest consumed the click input.
 	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
@@ -479,6 +485,9 @@ func _held_pickaxe_level() -> int:
 # Break on completion: unregister from the world, drop the contents, then
 # drop the chest item itself.
 func _do_break() -> void:
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	_cancel_breaking()
 	var world: Node = _world_ref if _world_ref != null else Global.world_node
 	if world != null and world.has_method("unregister_block"):

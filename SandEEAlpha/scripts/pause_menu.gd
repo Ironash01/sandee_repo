@@ -172,6 +172,7 @@ func show_menu() -> void:
 		return
 	Global.pause_menu_open = true
 	visible = true
+	SFX.play_ui("sfx_menu_pause", 0)
 	_pause_center.visible    = true
 	_pause_center.scroll_vertical = 0
 	_settings_center.visible = false
@@ -192,6 +193,7 @@ func hide_menu() -> void:
 	Global.pause_menu_open = false
 	Global.unregister_ui_back(self)
 	visible = false
+	SFX.play_ui("sfx_menu_pause", 1, -4.0)
 	# Resume only when NOTHING else still needs the game paused ΓÇö the same rule
 	# Global.close_ui() uses. Writing paused = false unconditionally here would
 	# resume gameplay while another UI/dialog was still open.
@@ -266,10 +268,11 @@ func _build_lua_panel() -> void:
 	outer.add_child(title)
 
 	var hint := Label.new()
-	hint.text = "Select a LUA to terminate it permanently."
+	hint.text = "Each row shows NORMAL or COMBAT mode. Only combat LUAs can be terminated."
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
 	hint.add_theme_color_override("font_color", C_MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	outer.add_child(hint)
 
 	# Scrollable so a long list can't overflow the panel.
@@ -400,6 +403,19 @@ func _make_lua_row(npc: Node) -> Control:
 	row.add_child(name_lbl)
 
 	var combat: bool = npc.has_method("is_combat") and bool(npc.call("is_combat"))
+	# Explicit MODE state, separate from the live action ("Idle", "Mining", …):
+	# NORMAL = blue station robot, COMBAT = red follower.
+	var mode := Label.new()
+	mode.text = "COMBAT" if combat else "NORMAL"
+	mode.custom_minimum_size = Vector2(int(64 * s), 0)
+	mode.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mode.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_CAPTION))
+	mode.add_theme_color_override("font_color",
+		Color(1.0, 0.48, 0.40, 1.0) if combat else Color(0.55, 0.85, 1.0, 1.0))
+	mode.tooltip_text = ("Combat mode: follows the player and fights." if combat
+		else "Normal mode: works from its station.")
+	row.add_child(mode)
+
 	var status: String = str(npc.call("get_status"))
 	if combat and npc.has_method("get_combat_hp"):
 		status += "  HP %d/%d" % [int(npc.call("get_combat_hp")), int(npc.call("get_combat_max_hp"))]

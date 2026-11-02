@@ -57,6 +57,8 @@ var _inv_slots:    Array    = []  # InventorySlot instances for the bottom grid
 var furnace: Node = null
 var _panel:  Control = null
 var _prog_btn: Button = null
+var _content_center: CenterContainer = null
+var _content_scroll: ScrollContainer = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -107,7 +109,11 @@ func open_as_station() -> void:
 
 func show_menu() -> void:
 	visible = true
+	SFX.play_ui("sfx_furnace", 0)
 	Global.open_ui()
+	# The furnace is item-driven: keep the persistent hotbar on top of its
+	# panel while the rest of the gameplay HUD still hides.
+	Global.hotbar_modal_changed.emit(true)
 	Global.modal_hud_changed.emit(true)
 	Global.register_ui_back(self, Callable(self, "dismiss_back"))
 
@@ -126,9 +132,11 @@ func hide_menu() -> void:
 	if _panel != null and _panel.visible:
 		_panel.call("close")
 	visible = false
+	SFX.play_ui("sfx_furnace", 1, -3.0)
 	Global.unregister_ui_back(self)
 	Global.close_ui()
 	Global.modal_hud_changed.emit(false)
+	Global.hotbar_modal_changed.emit(false)
 
 # ── Recipe loading ─────────────────────────────────────────────────
 func _load_recipes() -> void:
@@ -164,12 +172,30 @@ func _build_ui() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
 
+	# Reserve the persistent-hotbar band and let short screens scroll instead
+	# of pushing the furnace controls under the hotbar.
+	var hotbar_reserve: float = Global.hotbar_modal_reserve()
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.offset_bottom = -(Global.ui_safe_insets.w + hotbar_reserve)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	add_child(scroll)
+	_content_scroll = scroll
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
+	var content := Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(content.x,
+		maxf(1.0, content.y - hotbar_reserve))
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(center)
+	_content_center = center
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(680, 420))
+	panel.custom_minimum_size = Global.ui_fit_min_size(
+		Vector2(680, 420), 12.0, hotbar_reserve)
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(2); ps.set_corner_radius_all(8)
@@ -205,11 +231,8 @@ func _build_ui() -> void:
 	prog_btn.pressed.connect(_open_programming)
 	header.add_child(prog_btn)
 
-	var close_btn := Button.new()
-	close_btn.text = "✕"; close_btn.flat = true
+	var close_btn := Global.make_close_button()
 	close_btn.tooltip_text = "Close the furnace."
-	close_btn.add_theme_color_override("font_color", C_MUTED)
-	close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	close_btn.pressed.connect(hide_menu)
 	header.add_child(close_btn)
 
@@ -408,6 +431,7 @@ func _load_slot_from(data: Dictionary, as_fuel: bool) -> void:
 		return
 	# Remove ONLY what the furnace accepted; the rest stays in the inventory.
 	_remove_from_source(data, accepted)
+	SFX.play_ui("sfx_station_io", 0, -2.0)
 	_hint("Loaded %d × %s." % [accepted, item_data.item_name])
 	_refresh_slots()
 
@@ -464,6 +488,7 @@ func _on_output_slot_clicked() -> void:
 	if furnace == null:
 		return
 	if int(furnace.call("take_output")) > 0:
+		SFX.play_ui("sfx_station_io", 1)
 		_hint("Took the smelted item.")
 		_refresh_slots()
 
@@ -481,7 +506,10 @@ func _on_smelt_pressed() -> void:
 	if furnace == null:
 		return
 	if not bool(furnace.call("begin_cook")):
+		SFX.play_ui("sfx_furnace", 3, -3.0)
 		_hint("Cannot smelt — check input, fuel and output space.")
+	else:
+		SFX.play_ui("sfx_furnace", 2)
 	_refresh_slots()
 
 # ── Refresh ────────────────────────────────────────────────────────

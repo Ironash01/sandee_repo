@@ -12,6 +12,7 @@ signal signal_create(object: String)
 # richer API (e.g. the Crafting Station's StationPythonHost) can point at its
 # own base script that extends this one.
 const DEFAULT_BASE_PATH: String = "res://resources/godot_transpile_base.gd"
+const CODE_SAFETY: GDScript = preload("res://scripts/code_safety.gd")
 
 # Python allows names such as `int` to be shadowed by a variable, but the
 # generated code is GDScript. GDScript treats these as built-in types/keywords,
@@ -33,12 +34,13 @@ const RESERVED_GDSCRIPT_NAMES: Array[String] = [
 	"true", "false", "null", "void", "namespace",
 ]
 
-var transpiler: PythonTranspiler
+var transpiler: Object = null
 var code: String
 var base_path: String = DEFAULT_BASE_PATH
 var _base: String
 func _ready() -> void:
-	transpiler = PythonTranspiler.new()
+	if ClassDB.class_exists("PythonTranspiler"):
+		transpiler = ClassDB.instantiate("PythonTranspiler") as Object
 	_base = _load_godot_base(base_path)
 
 func _load_godot_base(path: String) -> String:
@@ -107,15 +109,27 @@ func _reserved_name_error(name: String) -> String:
 func run_code():
 	if not is_inside_tree():
 		return
+	if transpiler == null:
+		var unavailable := "Python execution is unavailable in this build."
+		_code_log("FAIL", unavailable)
+		code_failed.emit(unavailable)
+		return
 	var source: String = _ensure_main(code if code != null else "")
 	_code_log("RUN", "chars=%d\n%s" % [source.length(), source])
+	# Python is transpiled to GDScript and runs synchronously; reject obvious
+	# non-terminating loops before executing them on the main thread.
+	var unsafe: String = CODE_SAFETY.python_issue(source)
+	if not unsafe.is_empty():
+		_code_log("FAIL", unsafe)
+		code_failed.emit(unsafe)
+		return
 	var reserved_name := _reserved_assignment_name(source)
 	if not reserved_name.is_empty():
 		var failure := _reserved_name_error(reserved_name)
 		_code_log("FAIL", failure)
 		code_failed.emit(failure)
 		return
-	var result = transpiler.transpile(source)
+	var result = transpiler.call("transpile", source)
 	var is_ok = result[0]
 	var transpiled = result[1]
 	if is_ok:

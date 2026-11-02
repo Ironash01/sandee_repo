@@ -64,7 +64,9 @@ func _on_ui_scale(_s: float) -> void:
 func _process(_delta: float) -> void:
 	if not visible or _panel_scroll == null:
 		return
-	var want: float = -(Global.ui_safe_insets.w + Global.keyboard_panel_inset())
+	var bottom_inset: float = maxf(Global.keyboard_panel_inset(),
+		Global.hotbar_modal_reserve())
+	var want: float = -(Global.ui_safe_insets.w + bottom_inset)
 	if not is_equal_approx(_panel_scroll.offset_bottom, want):
 		_panel_scroll.offset_bottom = want
 		var focused := get_viewport().gui_get_focus_owner()
@@ -81,6 +83,9 @@ func open() -> void:
 	visible = true
 	_fit()
 	Global.open_ui()
+	# The Color Crafter is item-driven: keep the persistent hotbar on top of
+	# its panel while the rest of the gameplay HUD still hides.
+	Global.hotbar_modal_changed.emit(true)
 	Global.modal_hud_changed.emit(true)
 	Global.register_ui_back(self, Callable(self, "hide_menu"))
 	_refresh_all()
@@ -92,6 +97,7 @@ func hide_menu() -> void:
 	Global.unregister_ui_back(self)
 	Global.close_ui()
 	Global.modal_hud_changed.emit(false)
+	Global.hotbar_modal_changed.emit(false)
 
 func _input(event: InputEvent) -> void:
 	if not visible:
@@ -112,6 +118,7 @@ func _rebuild() -> void:
 
 func _build() -> void:
 	var s: float = Global.ui_scale
+	var hotbar_reserve: float = Global.hotbar_modal_reserve()
 	var root := Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
@@ -126,6 +133,7 @@ func _build() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	Global.apply_safe_area(scroll)
+	scroll.offset_bottom = -(Global.ui_safe_insets.w + hotbar_reserve)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	root.add_child(scroll)
@@ -134,11 +142,14 @@ func _build() -> void:
 	var center := CenterContainer.new()
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	center.custom_minimum_size = Global.ui_content_rect().size
+	var content := Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(content.x,
+		maxf(1.0, content.y - hotbar_reserve))
 	scroll.add_child(center)
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(440, 360))
+	panel.custom_minimum_size = Global.ui_fit_min_size(
+		Vector2(440, 360), 12.0, hotbar_reserve)
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
@@ -166,15 +177,11 @@ func _build() -> void:
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
-	_close_btn = Button.new()
-	_close_btn.text = "✕"
-	_close_btn.flat = true
+	_close_btn = Global.make_close_button()
 	_close_btn.tooltip_text = "Close the Color Crafter."
-	_close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	_close_btn.add_theme_color_override("font_color", C_MUTED)
-	_close_btn.custom_minimum_size = Vector2(int(28 * s), int(28 * s))
 	_close_btn.pressed.connect(hide_menu)
 	header.add_child(_close_btn)
+	header_spacer.custom_minimum_size = Vector2(_close_btn.custom_minimum_size.x, 0)
 
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", int(14 * s))
@@ -343,14 +350,17 @@ func _update_cactus_label() -> void:
 # ── Craft ──────────────────────────────────────────────────────────
 func _craft() -> void:
 	if ColorBlock.is_forbidden(_r, _g, _b):
+		SFX.play_ui("sfx_color_crafter", 0, -3.0)
 		_set_hint("Pure black and pure white are not allowed.", true)
 		return
 	if Global.count_item(CACTUS_DATA) < 1:
+		SFX.play_ui("sfx_color_crafter", 0, -3.0)
 		_set_hint("You need a cactus to craft.", true)
 		return
 	Global.remove_item(CACTUS_DATA)
 	var blk: ItemData = ColorBlock.get_block(_r, _g, _b)
 	Global.add_item({"data": blk, "quantity": 1})
+	SFX.play_ui("sfx_color_crafter", 2)
 	_set_hint("Crafted a Color Block (#%s)." % ColorBlock.key_for(_r, _g, _b), false)
 	_update_cactus_label()
 

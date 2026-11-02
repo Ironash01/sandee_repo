@@ -42,12 +42,13 @@ static func item_names() -> Array:
 	_items_loaded = true
 	# Prefer the interpreter's list_items() (authoritative ItemData names).
 	if ClassDB.class_exists("LuaState"):
-		var probe = LuaState.new()
-		var names: Variant = probe.call("run_list_items")
-		probe.free()
-		if names is Array and not (names as Array).is_empty():
-			_items_cache = names as Array
-			return _items_cache
+		var probe = ClassDB.instantiate("LuaState")
+		if probe != null:
+			var names: Variant = probe.call("run_list_items")
+			probe.free()
+			if names is Array and not (names as Array).is_empty():
+				_items_cache = names as Array
+				return _items_cache
 	_items_cache = _fallback_items()
 	return _items_cache
 

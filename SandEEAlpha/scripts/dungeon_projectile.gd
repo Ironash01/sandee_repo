@@ -37,6 +37,7 @@ var _parried: bool = false
 var _safe_gone: bool = false
 
 func _ready() -> void:
+	add_to_group("DungeonProjectile")
 	# Layer 2 is the "sword-hittable" layer (the swing hitbox masks it), so the
 	# player can PARRY this projectile out of the air. It still scans layer 4
 	# (the player) for the contact hit.
@@ -117,6 +118,7 @@ func _on_body_entered(body: Node) -> void:
 	if Global.is_player_in_safe_zone():
 		_vanish_in_safe_zone()
 		return
+	SFX.play("sfx_dungeon_hazards", global_position, -2.0, 1.0, 1)
 	Global.damage_player(damage, global_position, direction, knockback_scale)
 	queue_free()
 
@@ -139,6 +141,7 @@ func parry(_source_pos: Vector2) -> void:
 	if _parried:
 		return
 	_parried = true
+	SFX.play("sfx_parry_safezone", global_position, -3.0, 1.0, 0)
 	monitoring = false
 	var b: Node2D = MELLOW_BURST_SCRIPT.new() as Node2D
 	if b != null:

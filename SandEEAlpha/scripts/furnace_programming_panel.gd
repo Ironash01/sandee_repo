@@ -19,9 +19,13 @@ const C_ERR     := Color(0.45, 0.20, 0.20, 1.00)
 # preload (not class_name) so name-argument completion works before the class
 # global is registered by the editor.
 const NameComplete: GDScript = preload("res://scripts/lua_name_complete.gd")
+const ALGORITHMICA_REFERENCE: GDScript = preload("res://scripts/algorithmica_reference.gd")
+const TEMPLATE_LIST: GDScript = preload("res://scripts/algorithmica_template_list.gd")
 const PYTHON_SPEC: LanguageSpecification = preload("res://resources/python_language_spec.tres")
-const DEFAULT_FURNACE_HINT: String = "# item ids: iron_ore, charcoal\n# feed(\"iron_ore\", 5)\n# fuel(\"charcoal\", 3)\n# smelt(5)\n# take_output()\n"
-const FURNACE_TEMPLATE: String = """# Algorithmica furnace template
+const DEFAULT_FURNACE_HINT: String = "feed(\"iron_ore\", 5)\nfuel(\"charcoal\", 3)\nsmelt(5)\ntake_output()\n"
+const FURNACE_TEMPLATE: String = APIReference.ALGORITHMICA_FURNACE_TEMPLATE
+const LEGACY_FURNACE_HINT: String = "# item ids: iron_ore, charcoal\n# feed(\"iron_ore\", 5)\n# fuel(\"charcoal\", 3)\n# smelt(5)\n# take_output()\n"
+const LEGACY_FURNACE_TEMPLATE: String = """# Algorithmica furnace template
 # Change the item ids and amounts to match the furnace's contents.
 feed("iron_ore", 5)
 fuel("charcoal", 3)
@@ -33,8 +37,10 @@ const TUTORIAL_TEMPLATE: String = "print(\"Algorithmica ready\")\n"
 var furnace: Node = null
 
 var _root:   Control = null
-var _panel_center: CenterContainer = null   # keyboard-aware centring area
+var _panel_scroll: ScrollContainer = null   # keyboard-aware scroll area
+var _panel_center: CenterContainer = null
 var _code:   CodeEdit = null
+var _tabs:   TabContainer = null
 var _output: RichTextLabel = null
 var _hint:   Label = null
 var _run_btn: Button = null
@@ -81,12 +87,20 @@ func open(furnace_node: Node) -> void:
 			Global.tutorial_flags.get("algorithmica_template_ready", false))
 		if tutorial_ready and (stripped.is_empty()
 				or stripped == FURNACE_TEMPLATE.strip_edges()
-				or stripped == DEFAULT_FURNACE_HINT.strip_edges()):
-			# Tutorial run: open with ready-to-run code instead of a commented
-			# example, so the lesson is just "press RUN".
+				or stripped == DEFAULT_FURNACE_HINT.strip_edges()
+				or stripped == LEGACY_FURNACE_TEMPLATE.strip_edges()
+				or stripped == LEGACY_FURNACE_HINT.strip_edges()):
+			# Tutorial run: open with ready-to-run code so the lesson is just
+			# "press RUN".
 			_code.text = TUTORIAL_TEMPLATE
 		elif stripped.is_empty():
 			_code.text = DEFAULT_FURNACE_HINT
+		elif stripped == LEGACY_FURNACE_TEMPLATE.strip_edges() \
+				or stripped == LEGACY_FURNACE_HINT.strip_edges():
+			# Migrate the old commented defaults in existing saves. User code
+			# (including user comments) is preserved.
+			_code.text = FURNACE_TEMPLATE
+			furnace.set("program_code", FURNACE_TEMPLATE)
 		else:
 			_code.text = saved
 	_connect_host()
@@ -132,12 +146,20 @@ func _input(event: InputEvent) -> void:
 
 # Android: keep the furnace Algorithmica panel above the software keyboard.
 func _process(_delta: float) -> void:
-	if not visible or _panel_center == null:
+	if not visible or _panel_scroll == null:
 		return
-	var inset: float = Global.keyboard_panel_inset()
+	var inset: float = maxf(Global.keyboard_panel_inset(),
+		Global.hotbar_modal_reserve())
 	var want: float = -(Global.ui_safe_insets.w + inset)
-	if not is_equal_approx(_panel_center.offset_bottom, want):
-		_panel_center.offset_bottom = want
+	if not is_equal_approx(_panel_scroll.offset_bottom, want):
+		_panel_scroll.offset_bottom = want
+		if _code != null and is_instance_valid(_code) and _code.has_focus():
+			_ensure_code_visible()
+
+func _ensure_code_visible() -> void:
+	if _panel_scroll == null or _code == null or not is_instance_valid(_code):
+		return
+	_panel_scroll.call_deferred("ensure_control_visible", _code)
 
 func _connect_host() -> void:
 	if furnace == null:
@@ -153,25 +175,39 @@ func _connect_host() -> void:
 		host.connect("code_executed", _on_executed)
 
 func _load_template() -> void:
+	_load_named_template("algorithmica.template.furnace")
+
+func _load_named_template(entry_id: String) -> void:
+	for entry in APIReference.templates_for("Furnace"):
+		if str((entry as Dictionary).get("id", "")) == entry_id:
+			_on_template_picked(entry as Dictionary)
+			return
+
+# Loads a named template chosen from the TEMPLATES column.
+func _on_template_picked(entry: Dictionary) -> void:
 	if _code == null:
 		return
-	_code.text = FURNACE_TEMPLATE
+	var code: String = str(entry.get("code", ""))
+	_code.text = code
 	if furnace != null:
-		furnace.set("program_code", FURNACE_TEMPLATE)
+		furnace.set("program_code", code)
 	_code.grab_focus()
 	if _output != null:
 		_output.clear()
 		_output.append_text(
-			"[color=#aaddff]Loaded the furnace template. Press RUN when ready.[/color]\n")
+			"[color=#aaddff]Loaded template: %s. Press RUN when ready.[/color]\n"
+			% str(entry.get("name", "Algorithmica")))
 
 func _run() -> void:
 	if furnace == null or _code == null:
 		return
+	SFX.play_ui("sfx_algorithmica", 0)
 	_last_run_ok = false
 	# A furnace program may only use furnace functions (the host enforces this
 	# too). Check here so the error lands in the visible output panel.
 	var foreign := AlgorithmicaAPI.foreign_calls(_code.text, AlgorithmicaAPI.FURNACE)
 	if not foreign.is_empty():
+		SFX.play_ui("sfx_algorithmica", 2, -2.0)
 		_output.clear()
 		_output.append_text("[color=#ff8888]✗ %s[/color]\n"
 			% AlgorithmicaAPI.rejection_message(foreign, AlgorithmicaAPI.FURNACE))
@@ -200,14 +236,20 @@ func _open_name_popup() -> void:
 	if _name_popup.visible:
 		return
 	_name_list.clear()
-	# Carried items first (inventory + hotbar), then the full catalogue — every
-	# entry is the scripting id the program should use.
+	# Carried items first (inventory + hotbar), then the public catalogue — every
+	# entry is the scripting id the program should use. Dev-only blocks are not
+	# valid gameplay inputs and must never appear in the picker.
 	var seen: Dictionary = {}
 	for data in Global.list_carried_items():
+		if data.is_dev_item:
+			continue
 		_name_list.add_item("%s   (%s)" % [data.item_id(), data.item_name])
 		_name_list.set_item_metadata(_name_list.item_count - 1, data.item_id())
 		seen[data.item_id()] = true
-	for id in Global.all_item_ids():
+	for data in Global.list_all_items():
+		if data.is_dev_item:
+			continue
+		var id := data.item_id()
 		if seen.has(id):
 			continue
 		_name_list.add_item(id)
@@ -215,6 +257,9 @@ func _open_name_popup() -> void:
 	var local: Vector2 = _code.get_caret_draw_pos()
 	_name_popup.position = Vector2i(_code.get_screen_position() + local) + Vector2i(0, 22)
 	_name_popup.popup()
+	# Keep keyboard focus in the editor so Backspace/Delete edits lines even
+	# while the suggestion pane is open.
+	_code.grab_focus()
 
 func _on_name_item_selected(idx: int) -> void:
 	var id: String = str(_name_list.get_item_metadata(idx))
@@ -230,11 +275,13 @@ func _on_print(s: String) -> void:
 
 func _on_failed(e: String) -> void:
 	_last_run_ok = false
+	SFX.play_ui("sfx_algorithmica", 2, -2.0)
 	if _output != null:
 		_output.append_text("[color=#ff8888]Error: %s[/color]\n" % e)
 
 func _on_executed() -> void:
 	_last_run_ok = true
+	SFX.play_ui("sfx_algorithmica", 1)
 	if _output != null:
 		_output.append_text("[color=#88ffaa]✓ Finished running[/color]\n")
 
@@ -264,6 +311,7 @@ func _target_badge(s: float) -> Control:
 # ── Build ─────────────────────────────────────────────────────────
 func _build() -> void:
 	var s: float = Global.ui_scale
+	var hotbar_reserve: float = Global.hotbar_modal_reserve()
 	var root := Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
@@ -275,14 +323,29 @@ func _build() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(overlay)
 
+	# Keyboard-aware ScrollContainer: the panel can be taller than a phone in
+	# landscape, and a focused CodeEdit must be scrolled above the keyboard.
+	var panel_scroll := ScrollContainer.new()
+	panel_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(panel_scroll)
+	panel_scroll.offset_bottom = -(Global.ui_safe_insets.w + hotbar_reserve)
+	panel_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	panel_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	root.add_child(panel_scroll)
+	_panel_scroll = panel_scroll
+
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	Global.apply_safe_area(center)
-	root.add_child(center)
+	var content := Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(content.x,
+		maxf(1.0, content.y - hotbar_reserve))
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel_scroll.add_child(center)
 	_panel_center = center
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(560, 420))
+	panel.custom_minimum_size = Global.ui_fit_min_size(
+		Vector2(560, 420), 12.0, hotbar_reserve)
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = C_PANEL; ps.border_color = C_BORDER
 	ps.set_border_width_all(int(2 * s)); ps.set_corner_radius_all(int(8 * s))
@@ -305,22 +368,38 @@ func _build() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	header.add_child(_target_badge(s))
-	var close_btn := Button.new()
-	close_btn.text = "✕"; close_btn.flat = true
+	var close_btn := Global.make_close_button()
 	close_btn.tooltip_text = "Close the program editor."
-	close_btn.add_theme_color_override("font_color", C_MUTED)
-	close_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	close_btn.pressed.connect(close)
 	header.add_child(close_btn)
 
-	# Reference line — target first, then the API. The badge wording matches the
-	# Programming Encyclopedia's Algorithmica target labels.
-	var ref := Label.new()
-	ref.text = "TARGET: FURNACE  ·  feed(name, n) · fuel(name, n) · smelt(n) · take_output() · input_*/fuel_*/output_*"
-	ref.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ref.add_theme_font_size_override("font_size", Global.ui_font_size(11))
-	ref.add_theme_color_override("font_color", C_MUTED)
-	vbox.add_child(ref)
+	# Code and reference are separate tabs, matching Automatica's editor.
+	_tabs = TabContainer.new()
+	_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tabs.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	_tabs.clip_tabs = false
+	vbox.add_child(_tabs)
+
+	var code_row := HBoxContainer.new()
+	code_row.name = "CODE"
+	code_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	code_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	code_row.add_theme_constant_override("separation", int(10 * s))
+	_tabs.add_child(code_row)
+	code_row.add_child(TEMPLATE_LIST.build("Furnace", s, _on_template_picked))
+
+	var code_page := VBoxContainer.new()
+	code_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	code_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	code_page.add_theme_constant_override("separation", int(10 * s))
+	code_row.add_child(code_page)
+
+	var reference: Control = ALGORITHMICA_REFERENCE.new() as Control
+	reference.name = "ENCYCLOPEDIA"
+	reference.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reference.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tabs.add_child(reference)
 
 	_code = CodeEdit.new()
 	_code.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -340,13 +419,18 @@ func _build() -> void:
 	LanguageSpecification.style_code_edit(_code, C_TITLE, C_MUTED)
 	_code.set_code_completion_enabled(true)
 	_code.caret_changed.connect(_on_code_caret_changed)
-	vbox.add_child(_code)
+	_code.focus_entered.connect(_ensure_code_visible)
+	code_page.add_child(_code)
 
 	# Item-name popup (feed/fuel args) — same helper the station editor uses.
+	# It must not take keyboard focus: the player keeps typing/deleting in the
+	# code editor while the suggestion list is visible.
 	_name_popup = PopupPanel.new()
+	_name_popup.unfocusable = true
 	var name_list := ItemList.new()
 	name_list.custom_minimum_size = Vector2(int(200 * s), int(180 * s))
 	name_list.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	name_list.focus_mode = Control.FOCUS_NONE
 	name_list.item_selected.connect(_on_name_item_selected)
 	_name_popup.add_child(name_list)
 	_name_list = name_list
@@ -354,7 +438,7 @@ func _build() -> void:
 
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", int(6 * s))
-	vbox.add_child(btn_row)
+	code_page.add_child(btn_row)
 	var run_btn := Button.new()
 	_run_btn = run_btn
 	run_btn.text = "▶  RUN"
@@ -369,19 +453,6 @@ func _build() -> void:
 	run_btn.add_theme_color_override("font_color", Color(0.8, 1.0, 0.8))
 	run_btn.pressed.connect(_run)
 	btn_row.add_child(run_btn)
-	var template_btn := Button.new()
-	template_btn.text = "TEMPLATE"
-	template_btn.tooltip_text = "Load a ready-to-run furnace example into the editor."
-	template_btn.custom_minimum_size = Vector2(0, int(32 * s))
-	template_btn.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	var ts := StyleBoxFlat.new(); ts.bg_color = Color(0.20, 0.30, 0.48, 1.0)
-	ts.border_color = C_BORDER
-	ts.set_border_width_all(int(1 * s)); ts.set_corner_radius_all(int(4 * s))
-	template_btn.add_theme_stylebox_override("normal", ts)
-	template_btn.add_theme_stylebox_override("hover", ts)
-	template_btn.add_theme_color_override("font_color", C_TITLE)
-	template_btn.pressed.connect(_load_template)
-	btn_row.add_child(template_btn)
 	var clr_btn := Button.new()
 	clr_btn.text = "✕ CLEAR"
 	clr_btn.tooltip_text = "Clear the editor and the output."
@@ -403,7 +474,7 @@ func _build() -> void:
 	op.content_margin_left = int(8 * s); op.content_margin_right = int(8 * s)
 	op.content_margin_top = int(8 * s); op.content_margin_bottom = int(8 * s)
 	out_panel.add_theme_stylebox_override("panel", op)
-	vbox.add_child(out_panel)
+	code_page.add_child(out_panel)
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	out_panel.add_child(scroll)

@@ -208,6 +208,7 @@ func _try_attack_player(delta: float) -> void:
 	if global_position.distance_to(p.global_position) > ATTACK_RANGE:
 		return
 	_attack_cooldown = ATTACK_COOLDOWN
+	SFX.play("sfx_mob_pixie", global_position, -3.0, 1.0, 0)
 	Global.damage_player(COMBAT_DATA.damage, global_position, _last_move_dir)
 	_show_name_label()
 
@@ -221,6 +222,7 @@ func take_hit(damage: float, source_pos: Vector2, apply_knockback: bool = true) 
 	damage = COMBAT_DATA.damage_taken(damage)
 	_mob_health = maxf(0.0, _mob_health - damage)
 	_last_damage_ms = Time.get_ticks_msec()
+	SFX.play("sfx_mob_pixie", global_position, -3.0, 1.0, 1)
 	var away: Vector2 = global_position - source_pos
 	if away.length_squared() > 0.001:
 		away = away.normalized()
@@ -300,6 +302,7 @@ func _die() -> void:
 	if _dead:
 		return
 	_dead = true
+	SFX.play("sfx_mob_pixie", global_position, -2.0, 1.0, 2)
 	var world: Node = Global.world_node
 	if is_instance_valid(world) and world.has_method("notify_mob_killed"):
 		world.call("notify_mob_killed", self)

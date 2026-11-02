@@ -49,8 +49,22 @@ The suite is **offline**: it never contacts Supabase. It exercises:
   malformed-input rejection, preview updates, quantity/program-code stability
 * Knowledge Altar archive pagination: empty/single/multi-page, boundaries,
   and live archive refresh when knowledge unlocks while open
+* Knowledge Altar interaction: only the altar under the cursor opens, opening
+  alone never learns, and Continue emits the explicit read event the tutorial
+  uses instead of trusting an already-learned entry
+* overlapping interactable disambiguation: nearest Automatica station/robot and
+  nearest point-and-click target win, and camp placement reserves the player's
+  tile ring plus both guides' footprints
 * cave/Pixie underfoot drop pickup and quantity preservation
+* full-inventory pickup attempts warn once per approach instead of replaying
+  the inventory-full sound every frame, and the drop is collected automatically
+  when inventory space opens
 * cave/Pixie mining collision blocker while a tile is visually hidden
+* shared player mining-time formula with a minimum break time: iron/diamond
+  pickaxes no longer one-tap every low-tier block, while harder blocks still
+  take longer
+* held-button chain mining: placed blocks and cave walls/ores that come under
+  the cursor continue breaking without a new click, and stop on release
 * Desert Worm water-boundary movement guard
 * complete ore smelting coverage: every base/crystal/diamond ore has a valid
   recipe, is selectable by the timed furnace cook, and smelts through the real
@@ -60,8 +74,8 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * shared held-item damage display (sword tier or 1.0 token, never false zero)
 * updated cactus spawn interval/clearances, and Desert Worm 5-10 cactus loot
   with one-bundle-per-defeat and no loot from cleanup/despawn paths
-* fish display-name fixes with stable scripting ids, Automatica naming and
-  legacy `lua` item id preservation
+* fish display names (Yellow Carp, Anglefish, Eelfish, Scuttlefish) with stable
+  scripting ids, Automatica naming, and legacy `lua` item id preservation
 * Headless Fish one-raw-fish drops and no loot from despawn cleanup
 * rare dungeon-chest generation in eligible bonus rooms, deterministic
   Automatica/food loot, dungeon state persistence, and Large/Pixie cave
@@ -69,15 +83,32 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * combined inventory/chest drawer: icon-labelled Chest tab under the lifted
   player grid, drag in/out in both directions, delete-from-chest, and the
   bottom-right delete target inside the inventory panel
-* minimap Automatica/LUA marker colour and `LUA` legend constant
+* minimap Automatica sprite icon/legend plus live Crafting Station, Furnace
+  and Color Crafter markers, and tap/click travel to Automatica or dungeon
+  portal icons on the expanded overworld map
 * Hitman miniboss two-room generation, enlarged sprite/health, single spawn,
   defeat completion and exit activation
 * the optional extra-dungeon path (exercised with a synthetic mission) using no
   Knowledge Altar and two functional Quiz Altars
 * 20 unique side missions, locked-before-progression behavior and post-unlock
   progress tracking
+* full mission log: every visible main, dungeon and side mission in
+  encyclopedia-style expandable rows with task, purpose, lesson and rewards,
+  active groups first, completed missions collected at the bottom, plus a
+  two-side-mission live tracker limit
+* Py-San in-dungeon explanations for where the Knowledge and Quiz Altars are
+  and what each lesson is for, with matching altar atlas art on the world and
+  minimap
 * blank player-facing Lua/Python dungeon starter code with validation intact
 * Quiz Altar auto-pause and post-completion dungeon exit placement beside the player
+* dungeon route guidance: every run draws dotted floor circles to the Knowledge
+  Altar first and then the Quiz Altar (boss finale points at the Miniboss and
+  exit), while main-dungeon Quiz Altars stay locked behind a gold padlock until
+  their linked knowledge entry is learned
+* overworld next-dungeon guidance: route dots, a labelled marker and a compass
+  alternate the Lua/Python tracks from the last cleared dungeon, and every
+  dungeon entrance gets a pulsing minimap halo with the recommended next one
+  emphasized in teal; dungeon maps pulse their current objective
 * Escape/back closing the top menu overlay and cancelling (not confirming) a
   destructive dialog
 * Android/touch safety: event-position UI hit-testing, safe-area offsets for
@@ -92,11 +123,57 @@ The suite is **offline**: it never contacts Supabase. It exercises:
   disappears with auto-sprint), a single-line blue/yellow star total beside
   PAUSE, a raised mission tracker with no duplicate star header, and thick
   HP/stamina bars labelled with current / max values
-* PC floating control guide: bottom-left WASD/Shift (Shift only while
-  point-and-click is on), bottom-right merged contextual LMB chip + Ctrl build,
+* mobile multi-touch: secondary fingers directly trigger BUILD/SPRINT/INTERACT
+  and hotbar slots without stealing the held joystick touch or relying on the
+  joystick's GUI mouse focus
+* cave entrance prompts use the real cave type: regular entrances say
+  "Large Cave Entrance" and pixie entrances say "Pixie Cave Entrance"
+* cave/Pixie Cave/dungeon transitions: a scaled loading bar with distinct
+  destination labels while the world swap is prepared, and pause-safe cleanup
+  so tutorial dialogue cannot leave the overlay stuck on "Ready"
+* title branding: website cartridge-tree mark, app-icon colour palette and
+  white/green SandEE wordmark (the icon's S is not repeated), with Py-San and
+  LUA flanking the logo on both the sign-in and main-menu screens; a 1-in-5
+  easter egg replaces the E run with `SandEEEEEEEEEEEEEEEEEEEEEEEEEEEE`
+* global autosave notification: a top-centre "Autosaving..." pill with a
+  circular spinner appears during every save, across the overworld, caves,
+  dungeons, editors and menus, with a minimum on-screen time
+* Minecraft-style ambient BGM: menu, overworld day/night, snowy, shelter, cave
+  and four randomized dungeon variations, with fade-in/out and quiet gaps
+  between tracks (no immediate repeat)
+* dungeon deaths respawn at the dungeon's generated entrance room instead of
+  exiting to the overworld; cave and overworld deaths still use the world spawn
+* PNC treats the object's own proximity area as already-in-range, so tapping a
+  nearby chest/station/furnace/door opens or mines it immediately instead of
+  pathing into the object
+* Automatica tutorial mission lesson: after building the line, Py-San lists the
+  first active Automatica missions and explains the tracker/log, while the HUD
+  temporarily shows only the mission tracker and star total; opening the full
+  mission log verifies the lesson before the normal HUD returns
+* GUIDED START objective card is horizontally screen-centred (and shrinks
+  around that centre on narrow screens so it stays clear of the top-right HUD)
+* dungeon Quiz Altar HINT shows the answer only as ghost/placeholder text in
+  the code editor; the player must type it themselves, and Hint/Next never
+  overwrites their code
+* every Bestiary/dungeon enemy uses the same autohide health bar as legacy
+  mobs, positioned above tall 48/64px sprites and their upward offsets instead
+  of being hidden behind the animated sprite
+* map previews: the minimap and world-waypoint overview include player-placed
+  blocks using each block's item colour, and Automatica stations show their
+  custom names on both previews
+* PC floating control guide: bottom-right WASD/Shift (Shift only while
+  point-and-click is on) beside the merged contextual LMB chip + Ctrl build,
   dynamic USE/MINE/ATTACK/CHOP/MOVE/INTERACT/CHASE labels, contextual Shift+
   DESTROY, hover/press highlights, focus-loss reset, F1 hide/show, live
   bindings, and suppression under modals, fullscreen HUD screens and text fields
+* mobile point-and-click: taps drive moves and interactables on Android, a
+  pickaxe-held tap opens a nearby crafting station/furnace instead of mining it,
+  automatic sprint stays configurable while PnC is off, manual SPRINT remains
+  visible in joystick mode, and the disabled INTERACT button keeps its circular
+  style instead of falling back to a rectangle
+* world-load input state: a build-mode toggle left on from the title/menu or
+  loading screen is cleared before control is handed back, so it cannot make
+  point-and-click move clicks place blocks instead
 * stat crystals: Life/Stamina hotbar use raises maximum and current HP/stamina
   by 10, caps at 500 HP / 1000 stamina, a 10% total mob drop split 50/50, one of
   each on a first dungeon clear, and per-world save/load with legacy saves
@@ -116,9 +193,43 @@ The suite is **offline**: it never contacts Supabase. It exercises:
   SLOT 1 for a straight build_line run, the next lesson grants one additional
   Automatica and Wooden Sword exactly once, and the flow requires that Wooden
   Sword in the robot's TOOL slot plus the real `combat_mode(true)` state
+* post-lesson explanations: Automatica and Algorithmica each add a one-time
+  two-box explanation after their first successful build/run, and both resume
+  correctly after save/reload without replaying the lesson briefing
+* Automatica combat swings are independent: robots use their own randomized
+  attack cooldowns and are never triggered by the player's swing
+* combat Automatica projectile defence: nearby flare/Hitman bolts heading for
+  the robot or its escorted player are auto-parried through the same `parry()`
+  path as the player's sword, with a short cooldown and no non-combat parries
+* Automatica hunting uses the shared hostility check, so it now targets both
+  legacy mobs and the newer Bestiary/dungeon enemies
+* combat mode is reversible: combat followers expose a click target for the
+  editor, PnC can interact with the floating robot, and `combat_mode(false)` or
+  EXIT COMBAT returns it to its blue station form
+* Automatica Management rows show an explicit NORMAL/COMBAT mode badge beside
+  the live action status and combat HP
+* tutorial HUD gating: mission tracker/star total stay hidden for the whole
+  onboarding (the Automatica mission lesson opts in temporarily), and tutorial
+  camp structures reject break attempts until the tutorial is complete
+* Automatica renaming is capped at 12 characters in both `rename()` and the
+  editor's rename field, with trimmed input and old saves clamped on load
 * code-only Algorithmica: the crafting station exposes the Python editor but
   not the redundant recipe picker, item-input slot or output/color inspector;
   `take_output()` remains the collection path
+* Algorithmica item suggestions hide dev-only blocks and use a non-focusable
+  popup, so Backspace/Delete keep editing the code while the list is open
+* Automatica editor layout matches Algorithmica: CODE/INVENTORY/ENCYCLOPEDIA
+  tabs, a TEMPLATES column, the program log inline under the code editor, and
+  the same panel proportions/header structure
+* Automatica reference toggle is explicit in the header, and closing/reopening
+  the station always returns to CODE instead of restoring the encyclopedia tab
+* code safety: obvious non-terminating Lua/Python loops are rejected before
+  execution, with break/return-aware checks and string/comment stripping
+* mission-complete toast: a persistent top-centre notification for Lua, Python,
+  Automatica, Algorithmica and side missions, queued and stacked below autosave
+* crafting requirements: every ingredient row shows its item name in both the
+  inventory crafting tab and the crafting-station sidebar, with a data-driven
+  where-to-get hint on PC hover and Android press-and-hold
 * quiz altar results: boxed compiler output, a top-right HINT button that
   auto-completes one question, 3/2/1 blue-star awards by hint count, the
   achievements/Done results screen, and Done returning to the overworld
@@ -132,9 +243,16 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * stable per-world save UID/revision, legacy-save migration, and cloud-sync
   conflict classification (different world, newer cloud, equal-revision
   divergence, legacy metadata, newer local upload)
+* cloud deletion tombstones: deleting a world emits its stable UID/checksum,
+  queued offline deletions persist per account, remote tombstones delete the
+  matching local copy instead of re-uploading it, and stale cloud rows are
+  hidden from the Cloud Saves list
 * WASD/tap-to-control movement parity: all eight directions, normalized
   diagonal speed, sprint/stamina state, snowstorm slowdown, movement
   animations, wall collision, and cancellation on UI/mode/focus changes
+* point-and-click wall handling: a solid point with no walkable approach or no
+  A* route is rejected immediately instead of walking into it until the stuck
+  timeout
 * point-and-click interaction: interactable objects resolve to their owning
   node, PNC walks to one-block range of the object origin/approach point, then
   opens or interacts directly; synthetic replays cannot make the player swing,
@@ -150,6 +268,9 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * global display settings: FPS limit options and Unlimited mapping on both
   platforms, nearest-option sanitization, Engine.max_fps application, and a
   desktop-only VSync control
+* shared settings persistence: main-menu and in-game panels save master/music/
+  SFX volume, camera zoom, pause-on-inventory and quest-background choices to
+  settings.cfg; fresh installs default to 90% master / 70% music / 80% SFX
 * responsive UI metrics: desktop/phone scale floors and caps, aspect-independent
   short-edge sizing, compact-viewport modal clamping, and removal of the old
   per-save UI-scale preference
@@ -170,10 +291,23 @@ The suite is **offline**: it never contacts Supabase. It exercises:
 * tutorial direction aids and persistent skip: a player-following compass arrow,
   four inward tile-marker arrowheads, a safe-area top-right SKIP LESSON button,
   and the dialogue-signal to guide-skip flow advancing exactly one lesson
+* opening-tutorial HUD reveal: movement starts with only essential controls,
+  tools/hotbar (including its nested canvas) appear at the tree lesson,
+  map/missions/stars at the dungeon lesson, and the full normal HUD becomes
+  permanent from Automatica onward; completion is saved and later tutorial
+  lessons never re-hide the HUD
+* tutorial travel briefings: Py-San explains dungeon, cave, Pixie Cave,
+  waypoint, camp-return and Algorithmica destinations before any tutorial
+  relocation, and the GUIDED START card hides while inventory/station panels
+  are open so it cannot cover their tabs
+* tutorial cave ore target: natural ores are limited to the entrance area, and
+  a nearby wall is converted into a mineable ore when the layout has none close
+  enough, so the lesson never points across the cave
 * post-onboarding settings tour: opens the real pause/settings panel, walks
   category and setting controls with highlight-only targets (no pointing
   arrow), NEXT/SKIP controls, scroll-safe targets, and skips missing
-  desktop-only/optional rows
+  desktop-only/optional rows; the GUIDED START card anchors to the top-left and
+  reserves the top-right star/PAUSE/mission column so it cannot overlap them
 * short-screen pause menu: scroll-safe card at 640x360 with the bottom
   Help/Settings/Quit controls reachable inside the safe area
 * pause Help & Documentation: nine complete categories (start, controls,

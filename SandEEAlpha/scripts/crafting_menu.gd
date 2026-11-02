@@ -19,8 +19,12 @@ const CATEGORIES  := ["Materials", "Blocks", "Weapons & Tools", "Others"]
 # preload (not class_name) so the name-argument completion works even before the
 # editor has registered the helper's global class.
 const NameComplete: GDScript = preload("res://scripts/lua_name_complete.gd")
+const ALGORITHMICA_REFERENCE: GDScript = preload("res://scripts/algorithmica_reference.gd")
+const TEMPLATE_LIST: GDScript = preload("res://scripts/algorithmica_template_list.gd")
 const CACTUS_DATA: ItemData = preload("res://resources/items/cactus.tres")
-const STATION_TEMPLATE: String = """# Algorithmica station template
+const STATION_TEMPLATE: String = APIReference.ALGORITHMICA_STATION_TEMPLATE
+const COLOR_TEMPLATE: String = APIReference.ALGORITHMICA_COLOR_TEMPLATE
+const LEGACY_STATION_TEMPLATE: String = """# Algorithmica station template
 # Change the recipe, amount, or use craft_color(r, g, b, n).
 set_recipe("Planks")
 craft(1)
@@ -98,6 +102,24 @@ var _row_btns:      Array      = []
 var _title_label:   Label
 var _main_scroll:   ScrollContainer = null
 var _prog_scroll:   ScrollContainer = null
+var _prog_tabs:     TabContainer = null
+var _main_panel:    PanelContainer = null
+var _items_panel:   PlayerItemsPanel = null
+# Requirement-name hover/long-press source popup. This is separate from the
+# shared item tooltip because Android deliberately suppresses that one.
+var _source_tip:          PanelContainer = null
+var _source_tip_label:    Label = null
+var _source_tip_owner:    Control = null
+var _source_tip_from_hold: bool = false
+var _source_hold_timer:   Timer = null
+var _pending_source_label: Control = null
+var _pending_source_text:  String = ""
+# Mobile finger-drag state for the station's outer scroll (the panel can be
+# taller than a short phone screen, especially above the persistent hotbar).
+var _touch_scroll_target: ScrollContainer = null
+var _touch_scroll_index: int = -1
+var _touch_scroll_accum: float = 0.0
+var _touch_scroll_started: bool = false
 
 # ── Lifecycle ─────────────────────────────────────────────────────
 func _ready() -> void:
@@ -127,6 +149,13 @@ func _on_ui_scale(_s: float) -> void:
 	_row_btns.clear()
 	_recipe_list  = null
 	_detail_panel = null
+	_source_tip = null
+	_source_tip_label = null
+	_source_tip_owner = null
+	_source_tip_from_hold = false
+	_source_hold_timer = null
+	_pending_source_label = null
+	_pending_source_text = ""
 	_selected_idx = -1
 	if not is_inside_tree():
 		return
@@ -163,6 +192,11 @@ func open_as_station() -> void:
 # ── Build UI ──────────────────────────────────────────────────────
 func _build() -> void:
 	var s: float = Global.ui_scale
+	var hotbar_reserve: float = Global.hotbar_modal_reserve()
+	_touch_scroll_target = null
+	_touch_scroll_index = -1
+	_touch_scroll_accum = 0.0
+	_touch_scroll_started = false
 
 	var overlay := ColorRect.new()
 	overlay.color        = C_OVERLAY
@@ -173,12 +207,15 @@ func _build() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	Global.apply_safe_area(scroll)
+	scroll.offset_bottom = -(Global.ui_safe_insets.w + hotbar_reserve)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	add_child(scroll)
 	_main_scroll = scroll
 	var center := CenterContainer.new()
-	center.custom_minimum_size = Global.ui_content_rect().size
+	var content := Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(content.x,
+		maxf(1.0, content.y - hotbar_reserve))
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(center)
@@ -189,21 +226,24 @@ func _build() -> void:
 
 	# Single centred panel (no side tab strip) — same shape as the furnace UI.
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(1080, 540))
+	panel.custom_minimum_size = Global.ui_fit_min_size(
+		Vector2(1080, 540), 12.0, hotbar_reserve)
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(16*s), int(16*s), int(14*s), int(16*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	outer.add_child(panel)
+	_main_panel = panel
 
 	# Inventory on the LEFT, station content on the RIGHT (furnace parity).
 	var panel_row := HBoxContainer.new()
 	panel_row.add_theme_constant_override("separation", int(14 * s))
 	panel.add_child(panel_row)
 
-	# Inventory only here — the on-screen hotbar is hidden with the rest of the
-	# gameplay HUD while this full-screen modal is open, so no HOTBAR strip.
+	# Inventory only here — the persistent gameplay hotbar stays visible above
+	# this modal (see hotbar_modal_changed), so the panel does not duplicate it.
 	var items := PlayerItemsPanel.new()
 	items.show_hotbar = false
 	panel_row.add_child(items)
+	_items_panel = items
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", int(10 * s))
@@ -224,11 +264,8 @@ func _build() -> void:
 	prog_btn.add_theme_color_override("font_color", C_TITLE)
 	prog_btn.pressed.connect(func() -> void: _set_mode(Mode.PROGRAMMING))
 	header.add_child(prog_btn)
-	var close := Button.new()
-	close.text = "✕"
-	close.flat = true
+	var close := Global.make_close_button()
 	close.tooltip_text = "Close the crafting station."
-	close.add_theme_color_override("font_color", C_MUTED)
 	close.pressed.connect(hide_menu)
 	header.add_child(close)
 
@@ -242,12 +279,14 @@ func _build() -> void:
 	_build_programming_overlay(s)
 
 	_set_mode(Mode.CRAFTING)
+	_build_source_tip(s)
 
 # Algorithmica overlay: the Python editor (plus its API hint, RUN/CLEAR/RECIPES
 # row and output log). Recipe selection and item input are code-driven:
 # set_recipe("Planks") + craft(n); take_output() collects the result. The
 # editor's autocomplete supplies the function and item-name lists.
 func _build_programming_overlay(s: float) -> void:
+	var hotbar_reserve: float = Global.hotbar_modal_reserve()
 	_prog_overlay = Control.new()
 	_prog_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_prog_overlay.visible = false
@@ -262,19 +301,23 @@ func _build_programming_overlay(s: float) -> void:
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	Global.apply_safe_area(scroll)
+	scroll.offset_bottom = -(Global.ui_safe_insets.w + hotbar_reserve)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_prog_overlay.add_child(scroll)
 	_prog_scroll = scroll
 	var center := CenterContainer.new()
-	center.custom_minimum_size = Global.ui_content_rect().size
+	var content := Global.ui_content_rect().size
+	center.custom_minimum_size = Vector2(content.x,
+		maxf(1.0, content.y - hotbar_reserve))
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(center)
 	_overlay_center = center
 
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(900, 560))
+	panel.custom_minimum_size = Global.ui_fit_min_size(
+		Vector2(900, 560), 12.0, hotbar_reserve)
 	var ps := _sb(C_PANEL, C_BORDER, 6, int(18*s), int(18*s), int(14*s), int(18*s))
 	panel.add_theme_stylebox_override("panel", ps)
 	center.add_child(panel)
@@ -290,9 +333,8 @@ func _build_programming_overlay(s: float) -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	header.add_child(_target_badge(AlgorithmicaAPI.STATION, s))
-	var close := Button.new()
-	close.text = "✕"; close.flat = true
-	close.add_theme_color_override("font_color", C_MUTED)
+	var close := Global.make_close_button()
+	close.tooltip_text = "Close Algorithmica and return to the station."
 	close.pressed.connect(_close_programming)
 	header.add_child(close)
 
@@ -300,10 +342,25 @@ func _build_programming_overlay(s: float) -> void:
 	# done by the program itself (set_recipe / craft / take_output), so the
 	# redundant picker and input/output widgets are not built. The editor's
 	# autocomplete/name popup already lists every callable and item id.
+	# Code and reference are separate tabs, matching Automatica's editor.
+	_prog_tabs = TabContainer.new()
+	_prog_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_prog_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_prog_tabs.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	_prog_tabs.clip_tabs = false
+	vbox.add_child(_prog_tabs)
+
 	_prog_body = _build_programming_body(s)
+	_prog_body.name = "CODE"
 	_prog_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_prog_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(_prog_body)
+	_prog_tabs.add_child(_prog_body)
+
+	var reference: Control = ALGORITHMICA_REFERENCE.new() as Control
+	reference.name = "ENCYCLOPEDIA"
+	reference.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reference.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_prog_tabs.add_child(reference)
 
 # Small target chip, matching the Programming Encyclopedia's Algorithmica
 # target badges so the machine is identifiable at a glance.
@@ -334,11 +391,18 @@ func _close_programming() -> void:
 func _process(_delta: float) -> void:
 	if not visible:
 		return
-	var inset: float = Global.keyboard_panel_inset()
+	# Keep the panel above the persistent hotbar. A docked Android keyboard
+	# already covers the bottom band, so reserve whichever is taller instead of
+	# stacking both insets.
+	var inset: float = maxf(Global.keyboard_panel_inset(),
+		Global.hotbar_modal_reserve())
 	var want: float = -(Global.ui_safe_insets.w + inset)
 	if _main_scroll != null and is_instance_valid(_main_scroll) \
 			and not is_equal_approx(_main_scroll.offset_bottom, want):
 		_main_scroll.offset_bottom = want
+		var main_focus := get_viewport().gui_get_focus_owner()
+		if main_focus is LineEdit and _main_scroll.is_ancestor_of(main_focus):
+			_main_scroll.call_deferred("ensure_control_visible", main_focus)
 	if _prog_scroll != null and is_instance_valid(_prog_scroll) \
 			and not is_equal_approx(_prog_scroll.offset_bottom, want):
 		_prog_scroll.offset_bottom = want
@@ -351,11 +415,22 @@ func _ensure_prog_editor_visible() -> void:
 		return
 	_prog_scroll.call_deferred("ensure_control_visible", _code_edit)
 
+func _ensure_main_edit_visible(edit: Control) -> void:
+	if _main_scroll == null or not is_instance_valid(_main_scroll) \
+			or edit == null or not is_instance_valid(edit):
+		return
+	_main_scroll.call_deferred("ensure_control_visible", edit)
+
 # ── Mode switch ───────────────────────────────────────────────────
 # Two modes only: manual CRAFTING, and the code-only ALGORITHMICA overlay.
 # Recipes and inputs are selected by the Python program itself.
 func _set_mode(mode: int) -> void:
 	_mode = mode
+	if mode != Mode.CRAFTING:
+		_cancel_source_hold()
+		_hide_source_tip()
+	if mode == Mode.PROGRAMMING:
+		SFX.play_ui("sfx_code_editor", 0)
 	if _prog_overlay != null:   _prog_overlay.visible   = mode != Mode.CRAFTING
 	if _craft_body != null:     _craft_body.visible     = mode == Mode.CRAFTING
 	# Leaving Algorithmica keeps the editor text on the station.
@@ -498,25 +573,21 @@ func _refresh_automation_selection() -> void:
 
 # ── Programming body ──────────────────────────────────────────────
 func _build_programming_body(s: float) -> Control:
+	# Same layout as Automatica's CODE tab: named snippets/templates in a
+	# left column, the editor + actions on the right.
+	var page := HBoxContainer.new()
+	page.add_theme_constant_override("separation", int(10 * s))
+	page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page.add_child(TEMPLATE_LIST.build("Crafting Station", s, _on_template_picked))
+
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", int(8 * s))
-	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	page.add_child(root)
 
-	root.add_child(_lbl("PYTHON AUTOMATION — CRAFTING STATION ONLY", Global.ui_font_size(11), C_MUTED))
-	# Custom (game) API only here — the language's own built-ins are listed in
-	# the Programming Encyclopedia, and the two are deliberately kept apart.
-	# Source of truth: scripts/api_reference.gd.
-	var custom: Array = APIReference.CUSTOM_PYTHON_STATION
-	var lines: PackedStringArray = []
-	for e in custom:
-		lines.append("%s — %s" % [str(e["sig"]), str(e["desc"])])
-	var hint := _lbl("Station API — item arguments are ids (iron_sword, wood):\n" + "\n".join(lines),
-		Global.ui_font_size(10), C_MUTED)
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	root.add_child(hint)
-
-	# Live material readout for craft_color(). The function itself validates and
-	# consumes; this label only mirrors the station-panel API hint above.
+	# The full station/furnace API lives in the ENCYCLOPEDIA tab, exactly like
+	# Automatica's reference. The code page stays code-only.
 	_color_hint = _lbl("", Global.ui_font_size(10), C_EFFECT)
 	_color_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(_color_hint)
@@ -527,9 +598,15 @@ func _build_programming_body(s: float) -> Control:
 	_code_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_code_edit.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	_code_edit.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	_code_edit.placeholder_text      = "# recipe + inputs are code, e.g.:\nset_recipe(\"Planks\")\ncraft(1)\ntake_output()"
+	_code_edit.placeholder_text      = "set_recipe(\"Planks\")\ncraft(1)\ntake_output()"
 	if station != null:
-		_code_edit.text = str(station.get("program_code"))
+		var saved_code := str(station.get("program_code"))
+		# Migrate the old commented default in existing saves to the code-only
+		# starter; user-written code (including their own comments) is untouched.
+		if saved_code.strip_edges() == LEGACY_STATION_TEMPLATE.strip_edges():
+			saved_code = STATION_TEMPLATE
+			station.set("program_code", STATION_TEMPLATE)
+		_code_edit.text = saved_code
 	# Item-id popup: inside a name argument, list carried items first, then the
 	# whole catalogue — every entry is the scripting id.
 	_code_edit.text_changed.connect(_on_program_text_changed)
@@ -537,9 +614,13 @@ func _build_programming_body(s: float) -> Control:
 	root.add_child(_code_edit)
 
 	_name_popup = PopupPanel.new()
+	# Keep focus in the Python editor while the suggestion pane is open, so
+	# Backspace/Delete continue editing lines instead of being swallowed.
+	_name_popup.unfocusable = true
 	var name_list := ItemList.new()
 	name_list.custom_minimum_size = Vector2(int(200 * s), int(180 * s))
 	name_list.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	name_list.focus_mode = Control.FOCUS_NONE
 	name_list.item_selected.connect(_on_name_item_selected)
 	_name_popup.add_child(name_list)
 	_name_list = name_list
@@ -556,10 +637,6 @@ func _build_programming_body(s: float) -> Control:
 		C_TITLE, _on_show_recipes, s)
 	recipes_btn.tooltip_text = "List every crafting recipe (with item ids) in the output."
 	btn_row.add_child(recipes_btn)
-	var template_btn := _make_action_btn("TEMPLATE", Color(0.20, 0.30, 0.48, 1.0),
-		C_TITLE, _on_load_template, s)
-	template_btn.tooltip_text = "Load a ready-to-run station example into the editor."
-	btn_row.add_child(template_btn)
 
 	_prog_log = RichTextLabel.new()
 	_prog_log.bbcode_enabled      = true
@@ -569,7 +646,20 @@ func _build_programming_body(s: float) -> Control:
 	_prog_log.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	_prog_log.add_theme_color_override("default_color", C_MUTED)
 	root.add_child(_prog_log)
-	return root
+	return page
+
+# Loads a named template chosen from the TEMPLATES column.
+func _on_template_picked(entry: Dictionary) -> void:
+	if _code_edit == null:
+		return
+	_code_edit.text = str(entry.get("code", ""))
+	_code_edit.grab_focus()
+	_store_program_code()
+	if _prog_log != null:
+		_prog_log.clear()
+		_prog_log.append_text(
+			"[color=#aaddff]Loaded template: %s. Press RUN when ready.[/color]\n"
+			% str(entry.get("name", "Algorithmica")))
 
 func _make_action_btn(text: String, bg: Color, fg: Color, cb: Callable, s: float) -> Button:
 	var btn := Button.new()
@@ -623,18 +713,22 @@ func _on_run_program() -> void:
 	_refresh_output()
 
 # Loads a complete station program so the player can inspect/run a working
-# example without writing the boilerplate first (Automatica's SNIPPETS do the
+# example without writing the boilerplate first (Automatica's TEMPLATES do the
 # same for the robot).
+# Kept for callers/tests written against the old single TEMPLATE button.
 func _on_load_template() -> void:
-	if _code_edit == null:
-		return
-	_code_edit.text = STATION_TEMPLATE
-	_code_edit.grab_focus()
-	_store_program_code()
-	if _prog_log != null:
-		_prog_log.clear()
-		_prog_log.append_text(
-			"[color=#aaddff]Loaded the station template. Press RUN when ready.[/color]\n")
+	_load_named_template("algorithmica.template.station")
+
+# Color Crafter variant: craft_color() is a Crafting Station function, not a
+# separate machine API, so the shared editor offers it as a second template.
+func _on_load_color_template() -> void:
+	_load_named_template("algorithmica.template.color")
+
+func _load_named_template(entry_id: String) -> void:
+	for entry in APIReference.templates_for("Crafting Station"):
+		if str((entry as Dictionary).get("id", "")) == entry_id:
+			_on_template_picked(entry as Dictionary)
+			return
 
 # Lists every recipe this station can run, with scripting ids, into the output.
 # The editor cannot add new Python functions (the interpreter's API table is
@@ -694,15 +788,21 @@ func _open_name_popup() -> void:
 	if _name_popup.visible:
 		return
 	_name_list.clear()
-	# Carried items first (inventory + hotbar), then the full catalogue. Every
+	# Carried items first (inventory + hotbar), then the public catalogue. Every
 	# entry is the SCRIPTING ID (lowercase, spaces → underscores) so the program
-	# can paste it straight in; the display name is shown beside it.
+	# can paste it straight in; the display name is shown beside it. Dev-only
+	# blocks are not valid gameplay inputs and must never appear.
 	var seen: Dictionary = {}
 	for data in Global.list_carried_items():
+		if data.is_dev_item:
+			continue
 		_name_list.add_item("%s   (%s)" % [data.item_id(), data.item_name])
 		_name_list.set_item_metadata(_name_list.item_count - 1, data.item_id())
 		seen[data.item_id()] = true
-	for id in Global.all_item_ids():
+	for data in Global.list_all_items():
+		if data.is_dev_item:
+			continue
+		var id := data.item_id()
 		if seen.has(id):
 			continue
 		_name_list.add_item(id)
@@ -710,6 +810,7 @@ func _open_name_popup() -> void:
 	var local: Vector2 = _code_edit.get_caret_draw_pos()
 	_name_popup.position = Vector2i(_code_edit.get_screen_position() + local) + Vector2i(0, 22)
 	_name_popup.popup()
+	_code_edit.grab_focus()
 
 func _on_name_item_selected(idx: int) -> void:
 	var id: String = str(_name_list.get_item_metadata(idx))
@@ -724,10 +825,12 @@ func _on_program_print(text: String) -> void:
 		_prog_log.append_text("[color=#aaddff]» %s[/color]\n" % text)
 
 func _on_program_error(error: String) -> void:
+	SFX.play_ui("sfx_code_editor", 2, -2.0)
 	if _prog_log != null:
 		_prog_log.append_text("[color=#ff8888]✗ %s[/color]\n" % error)
 
 func _on_program_done() -> void:
+	SFX.play_ui("sfx_code_editor", 1)
 	if _prog_log != null:
 		_prog_log.append_text("[color=#88ffaa]✓ Finished running[/color]\n")
 	_refresh_color_hint()
@@ -854,6 +957,7 @@ func _build_color_output_panel(s: float) -> Control:
 	_color_edit.max_length = 20
 	_color_edit.placeholder_text = "255, 0, 0"
 	_color_edit.text_submitted.connect(_on_color_text_submitted)
+	_color_edit.focus_entered.connect(_ensure_main_edit_visible.bind(_color_edit))
 	_color_edit.focus_exited.connect(_on_color_focus_exited)
 	row.add_child(_color_edit)
 
@@ -1038,9 +1142,9 @@ func _build_detail(s: float) -> Control:
 	vbox.add_child(_detail_name)
 	_div(vbox)
 	vbox.add_child(_lbl("INGREDIENTS", Global.ui_font_size(11), C_MUTED))
-	_detail_ing1 = _build_icon_row(s)
+	_detail_ing1 = _build_icon_row(s, true)
 	vbox.add_child(_detail_ing1)
-	_detail_ing2 = _build_icon_row(s)
+	_detail_ing2 = _build_icon_row(s, true)
 	vbox.add_child(_detail_ing2)
 	_div(vbox)
 	vbox.add_child(_lbl("RESULT", Global.ui_font_size(11), C_MUTED))
@@ -1061,10 +1165,9 @@ func _build_detail(s: float) -> Control:
 	return root
 
 # A single icon row: a material/result icon followed by a "have/needed" count
-# (e.g. "3/10"). The icon is shown normally when the player has the material,
-# darkened when they have none, and the count is RED when they don't have
-# enough to craft (have < needed). Reused for both ingredients and the result.
-func _build_icon_row(s: float) -> HBoxContainer:
+# (e.g. "3/10"). Ingredient rows also carry the item's NAME above the count, and
+# that name label is the PC-hover / Android press-and-hold source hint target.
+func _build_icon_row(s: float, show_name: bool = false) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", int(8 * s))
 	row.add_theme_constant_override("alignment", BoxContainer.ALIGNMENT_CENTER)
@@ -1073,17 +1176,156 @@ func _build_icon_row(s: float) -> HBoxContainer:
 	icon.custom_minimum_size = Vector2(26 * s, 26 * s)
 	icon.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.expand_mode          = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	icon.mouse_filter         = Control.MOUSE_FILTER_IGNORE
 	row.add_child(icon)
 
+	var text_col: VBoxContainer = null
+	if show_name:
+		text_col = VBoxContainer.new()
+		text_col.add_theme_constant_override("separation", int(1 * s))
+		text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(text_col)
+
+		var name_lbl := _lbl("", Global.ui_font_size(12), C_TITLE)
+		name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+		name_lbl.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		name_lbl.mouse_entered.connect(_on_requirement_name_hover.bind(name_lbl))
+		name_lbl.mouse_exited.connect(_on_requirement_name_unhover.bind(name_lbl))
+		name_lbl.gui_input.connect(_on_requirement_name_gui_input.bind(name_lbl))
+		text_col.add_child(name_lbl)
+		row.set_meta("name", name_lbl)
+
 	var qty := Label.new()
-	qty.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	row.add_child(qty)
+	qty.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+	qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if text_col != null:
+		text_col.add_child(qty)
+	else:
+		row.add_child(qty)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	# Stash the refs on the row so the filler functions can use them.
 	row.set_meta("icon", icon)
 	row.set_meta("qty", qty)
 	return row
+
+
+# ── Requirement source hint (PC hover / Android hold) ──────────────
+func _build_source_tip(s: float) -> void:
+	var content := Global.ui_content_rect().size
+	var tip_w: float = minf(360.0 * s, maxf(160.0 * s, content.x - 48.0 * s))
+	_source_tip = PanelContainer.new()
+	_source_tip.visible = false
+	_source_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_source_tip.z_index = 300
+	_source_tip.add_theme_stylebox_override("panel",
+		_sb(C_TIP_BG, C_BORDER, 4, int(10 * s), int(10 * s),
+			int(8 * s), int(8 * s)))
+	_source_tip_label = _lbl("", Global.ui_font_size(11), C_TITLE)
+	_source_tip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_source_tip_label.custom_minimum_size = Vector2(tip_w, 0.0)
+	_source_tip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_source_tip.add_child(_source_tip_label)
+	add_child(_source_tip)
+
+	_source_hold_timer = Timer.new()
+	_source_hold_timer.one_shot = true
+	_source_hold_timer.wait_time = 0.45
+	_source_hold_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_source_hold_timer)
+	_source_hold_timer.timeout.connect(_on_source_hold_timeout)
+
+
+func _on_requirement_name_hover(label: Control) -> void:
+	if label == null or not is_instance_valid(label):
+		return
+	label.add_theme_color_override("font_color", C_EFFECT)
+	# Android's emulated mouse fires mouse_entered on touch; only the explicit
+	# press-and-hold path should open the popup there.
+	if Global.is_mobile():
+		return
+	_show_source_tip(label, str(label.get_meta("source_text", "")))
+
+
+func _on_requirement_name_unhover(label: Control) -> void:
+	if label != null and is_instance_valid(label):
+		label.add_theme_color_override("font_color", C_TITLE)
+	if _pending_source_label == label:
+		_cancel_source_hold()
+	if _source_tip_owner == label:
+		_hide_source_tip()
+
+
+func _on_requirement_name_gui_input(event: InputEvent, label: Control) -> void:
+	if event is InputEventScreenTouch:
+		var touch := event as InputEventScreenTouch
+		if touch.pressed:
+			_start_source_hold(label)
+		else:
+			_cancel_source_hold()
+	elif event is InputEventScreenDrag:
+		_cancel_source_hold()
+
+
+func _start_source_hold(label: Control) -> void:
+	if label == null or not is_instance_valid(label) or _source_hold_timer == null:
+		return
+	_pending_source_label = label
+	_pending_source_text = str(label.get_meta("source_text", ""))
+	_hide_source_tip()
+	_source_hold_timer.start()
+
+
+func _on_source_hold_timeout() -> void:
+	if _pending_source_label == null or not is_instance_valid(_pending_source_label):
+		return
+	_source_tip_from_hold = true
+	_show_source_tip(_pending_source_label, _pending_source_text)
+
+
+func _cancel_source_hold() -> void:
+	if _source_hold_timer != null:
+		_source_hold_timer.stop()
+	_pending_source_label = null
+	_pending_source_text = ""
+	if _source_tip_from_hold:
+		_hide_source_tip()
+
+
+func _show_source_tip(owner: Control, text: String) -> void:
+	var body := text.strip_edges()
+	if _source_tip == null or _source_tip_label == null \
+			or owner == null or not is_instance_valid(owner) or body.is_empty():
+		return
+	_source_tip_label.text = "Where to get it:\n" + body
+	_source_tip_owner = owner
+	_source_tip.visible = true
+	_source_tip.reset_size()
+	var tip_size: Vector2 = _source_tip.get_combined_minimum_size()
+	var view: Vector2 = size
+	if view.x <= 0.0 or view.y <= 0.0:
+		view = get_viewport_rect().size
+	var s: float = Global.ui_scale
+	var margin: float = 8.0 * s
+	var owner_rect: Rect2 = owner.get_global_rect()
+	var local_pos: Vector2 = owner_rect.position - global_position
+	var x: float = clampf(local_pos.x, margin,
+		maxf(margin, view.x - tip_size.x - margin))
+	var y: float = local_pos.y + owner_rect.size.y + 4.0 * s
+	if y + tip_size.y > view.y - margin:
+		y = local_pos.y - tip_size.y - 4.0 * s
+	y = clampf(y, margin, maxf(margin, view.y - tip_size.y - margin))
+	_source_tip.position = Vector2(x, y)
+	_source_tip.size = tip_size
+
+
+func _hide_source_tip() -> void:
+	if _source_tip != null and is_instance_valid(_source_tip):
+		_source_tip.visible = false
+	_source_tip_owner = null
+	_source_tip_from_hold = false
 
 # ── Helpers ───────────────────────────────────────────────────────
 func _sb(bg: Color, border: Color, r: int,
@@ -1135,6 +1377,8 @@ func _craft_state(recipe: CraftingRecipe) -> CraftState:
 
 # ── Category ──────────────────────────────────────────────────────
 func _on_category(cat: String) -> void:
+	_cancel_source_hold()
+	_hide_source_tip()
 	_active_cat   = cat
 	_selected_idx = -1
 	_detail_panel.visible = false
@@ -1218,6 +1462,9 @@ func _refresh_highlights() -> void:
 
 # ── Recipe selection ──────────────────────────────────────────────
 func _on_select(idx: int) -> void:
+	_cancel_source_hold()
+	_hide_source_tip()
+	SFX.play_ui("sfx_recipe_select")
 	_selected_idx        = idx
 	var recipe: CraftingRecipe = _filtered[idx] as CraftingRecipe
 	_detail_name.text    = recipe.result_item.item_name
@@ -1240,9 +1487,16 @@ func _on_select(idx: int) -> void:
 func _fill_icon_row(row: HBoxContainer, data: ItemData, needed: int, is_ingredient: bool) -> void:
 	var icon := row.get_meta("icon") as TextureRect
 	var qty  := row.get_meta("qty") as Label
+	var name_lbl: Label = null
+	if row.has_meta("name"):
+		name_lbl = row.get_meta("name") as Label
 	if icon == null or qty == null or data == null:
 		return
 	icon.texture = data.icon if data.icon != null else null
+	if name_lbl != null:
+		name_lbl.text = data.item_name
+		name_lbl.set_meta("item_data", data)
+		name_lbl.set_meta("source_text", ItemSource.where_to_get(data))
 	var have: int = Global.count_item(data) if is_ingredient else needed
 	icon.modulate = Color(0.35, 0.35, 0.35, 1.0) if (is_ingredient and have <= 0) else Color.WHITE
 	if is_ingredient:
@@ -1291,6 +1545,7 @@ func _on_craft() -> void:
 			Global.drop_item({"quantity": recipe.result_quantity, "data": recipe.result_item},
 				player.global_position)
 	Global.complete_mission("craft_item")
+	SFX.play_ui("sfx_craft", 1 if added else 2)
 	# Check for specific craft missions
 	var item_name: String = recipe.result_item.item_name.to_lower()
 	if item_name.contains("sword"):
@@ -1317,8 +1572,14 @@ func _on_craft() -> void:
 
 # ── Show / Hide ───────────────────────────────────────────────────
 func show_menu() -> void:
+	_cancel_source_hold()
+	_hide_source_tip()
 	visible = true
+	SFX.play_ui("sfx_station", 0)
 	Global.open_ui()
+	# The station is item-driven: keep the persistent hotbar on top of its
+	# panel while the rest of the gameplay HUD still hides.
+	Global.hotbar_modal_changed.emit(true)
 	Global.modal_hud_changed.emit(true)
 	Global.register_ui_back(self, Callable(self, "dismiss_back"))
 
@@ -1341,12 +1602,16 @@ func dismiss_back() -> void:
 func hide_menu() -> void:
 	if not visible:
 		return
+	_cancel_source_hold()
+	_hide_source_tip()
 	# Keep the program text on the station so reopening restores it.
 	_store_program_code()
 	visible = false
+	SFX.play_ui("sfx_station", 1, -3.0)
 	Global.unregister_ui_back(self)
 	Global.close_ui()
 	Global.modal_hud_changed.emit(false)
+	Global.hotbar_modal_changed.emit(false)
 
 # E (the "inventory" action) also closes the station menu here — unlike the
 # inventory panel, this menu isn't a child of the player, so player.gd never
@@ -1371,3 +1636,92 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed("inventory") and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		hide_menu()
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		# A release or drag anywhere ends a requirement-name long-press, even if
+		# the finger left the label before lifting.
+		if event is InputEventScreenDrag or not (event as InputEventScreenTouch).pressed:
+			_cancel_source_hold()
+		_handle_touch_scroll(event)
+
+## Mobile finger-drag scrolling for the station's outer panel / Algorithmica
+## overlay. Starting on an occupied item slot, a button, a text field or a
+## nested list keeps that control's own gesture; empty space and empty inventory
+## slots scroll the panel.
+func _handle_touch_scroll(event: InputEvent) -> void:
+	if not Global.is_mobile():
+		return
+	var target: ScrollContainer = null
+	if _prog_overlay != null and _prog_overlay.visible:
+		target = _prog_scroll
+	else:
+		target = _main_scroll
+	if target == null or not is_instance_valid(target):
+		return
+	var bar := target.get_v_scroll_bar()
+	if bar == null or bar.max_value <= bar.page + 0.5:
+		return
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			_touch_scroll_target = null
+			_touch_scroll_index = -1
+			_touch_scroll_accum = 0.0
+			_touch_scroll_started = false
+			if not target.get_global_rect().has_point(t.position):
+				return
+			if _touch_scroll_blocked_at(t.position, target):
+				return
+			_touch_scroll_target = target
+			_touch_scroll_index = t.index
+		else:
+			if t.index != _touch_scroll_index:
+				return
+			if _touch_scroll_started:
+				get_viewport().set_input_as_handled()
+			_touch_scroll_target = null
+			_touch_scroll_index = -1
+			_touch_scroll_accum = 0.0
+			_touch_scroll_started = false
+		return
+	if event is InputEventScreenDrag and event.index == _touch_scroll_index \
+			and _touch_scroll_target != null \
+			and is_instance_valid(_touch_scroll_target):
+		var d := event as InputEventScreenDrag
+		_touch_scroll_started = true
+		_touch_scroll_accum -= d.relative.y
+		var step: int = int(_touch_scroll_accum)
+		if step != 0:
+			_touch_scroll_target.scroll_vertical += step
+			_touch_scroll_accum -= float(step)
+		get_viewport().set_input_as_handled()
+
+func _touch_scroll_blocked_at(pos: Vector2, target: ScrollContainer) -> bool:
+	var bar := target.get_v_scroll_bar()
+	if bar != null and bar.visible and bar.get_global_rect().has_point(pos):
+		return true
+	for n in target.find_children("*", "ScrollContainer", true, false):
+		var nested := n as ScrollContainer
+		if nested != null and nested.is_visible_in_tree() \
+				and nested.get_global_rect().has_point(pos):
+			return true
+	if _items_panel != null and is_instance_valid(_items_panel):
+		for slot in (_items_panel.get("_inv_slots") as Array):
+			var s := slot as Control
+			if s != null and is_instance_valid(s) and s.is_visible_in_tree() \
+					and s.get_global_rect().has_point(pos) and s.get("item") != null:
+				return true
+	return _control_blocks_touch(self, pos)
+
+func _control_blocks_touch(node: Node, pos: Vector2) -> bool:
+	for child in node.get_children():
+		if child is BaseButton or child is Slider:
+			var b := child as Control
+			if b.is_visible_in_tree() and b.get_global_rect().has_point(pos):
+				return true
+		elif child is LineEdit or child is TextEdit:
+			var text := child as Control
+			if text.is_visible_in_tree() and text.get_global_rect().has_point(pos):
+				return true
+		if _control_blocks_touch(child, pos):
+			return true
+	return false

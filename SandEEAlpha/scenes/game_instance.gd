@@ -60,6 +60,16 @@ var _cursor_manager: Node = null
 var _tutorial_guide: Node = null
 var _wisp_companion: Node2D = null
 var _star_summary: Node = null
+# Opening-tutorial HUD reveal only (Basic Movement through the opening dungeon
+# endpoint). Later tutorial lessons always run with the normal HUD.
+var _mission_ui: Control = null
+var _minimap: Control = null
+var _lua_status: Control = null
+var _opening_ui_tier: int = TutorialUiReveal.Tier.ALL
+# Automatica mission lesson: show only the mission tracker, star total and
+# system controls while Py-San explains how missions work.
+var _tutorial_mission_focus: bool = false
+@onready var _hotbar: Control = $CanvasLayer/Control
 
 func _ready() -> void:
 	# Direct scene transitions must not bypass the account gate. The menu and
@@ -77,11 +87,21 @@ func _ready() -> void:
 	# loads so every panel rebuilt here uses the current viewport metrics.
 	Global.refresh_ui_scale()
 	Global.game_node = self
+	# Non-BGM overworld wind bed. The manager stops it on cave/dungeon entry and
+	# resumes it on exit; this is the initial start for a normal overworld load.
+	SFX.play_loop("sfx_weather_wind")
 	CrashLogger.event("GAME", "ready version=%s slot=%d mobile=%s" % [
 		Global.game_version(), Global.active_save_slot, Global.is_mobile()])
 	# A fresh game scene must never inherit a pause/UI state from the previous
 	# one (quit-to-menu with a UI open, a leaked open_ui(), etc).
 	Global.reset_pause_state()
+	# Build mode is global and can be toggled on the title/menu. Clear any stale
+	# state before the world is playable; otherwise PnC clicks place blocks and
+	# the game looks like it fell back to WASD/joystick movement.
+	Global.reset_build_mode_for_world()
+	# The overworld is already registered by World._ready; this keeps ambient
+	# music continuous across save loads and title-screen returns.
+	Music.play_overworld()
 
 	# Background HUD layer (map + quest list + pause button). Layer 1 is BELOW
 	# every panel (2+), so a panel's dim overlay covers and dims it along with
@@ -108,6 +128,9 @@ func _ready() -> void:
 		Global.ui_scale_changed.connect(_on_hud_ui_scale_changed)
 	# Single-line overall star total immediately left of PAUSE.
 	_star_summary = STAR_SUMMARY_SCRIPT.new()
+	# Missions and their reward total stay hidden until the guided tutorial is
+	# finished; the Automatica mission lesson explicitly opts back in.
+	_star_summary.visible = Global.tutorial_completed
 	_hud_backdrop.add_child(_star_summary)
 	_star_summary.call("setup", pause_btn)
 	if not Global.inventory_toggled.is_connected(_on_inventory_visibility_changed):
@@ -115,13 +138,20 @@ func _ready() -> void:
 	if not Global.modal_hud_changed.is_connected(_on_modal_hud_changed):
 		Global.modal_hud_changed.connect(_on_modal_hud_changed)
 	_start_autosave()
-	_add_mission_ui()
+	# Mission progress is a meaningful checkpoint. Save on the signal, but
+	# throttle rapid updates (mining/building can emit several per second) so a
+	# progress tick cannot thrash the save file.
+	if not Global.mission_updated.is_connected(_on_mission_progress_autosave):
+		Global.mission_updated.connect(_on_mission_progress_autosave)
+	_mission_ui = _add_mission_ui()
 
 	# Bottom-left minimap (click / M opens the full map). Background HUD layer,
 	# so panels dim it.
-	_hud_backdrop.add_child(MINIMAP_SCRIPT.new())
+	_minimap = MINIMAP_SCRIPT.new() as Control
+	_hud_backdrop.add_child(_minimap)
 	# Left-middle LUA status panel (3 most-current LUAs; click to expand to all).
-	_hud_backdrop.add_child(LUA_STATUS_SCRIPT.new())
+	_lua_status = LUA_STATUS_SCRIPT.new() as Control
+	_hud_backdrop.add_child(_lua_status)
 	# Tap tooltips (touch screens have no hover) — owns its own high layer.
 	# Android touch play deliberately has NO tooltip popup: it covered the HUD
 	# after ordinary taps. Desktop hover tooltips remain available.
@@ -166,6 +196,9 @@ func _ready() -> void:
 
 	# Show loading screen before any generation work starts.
 	_show_loading_screen()
+	# Apply the saved opening-tutorial HUD tier before the world is visible, so
+	# a fresh movement lesson never flashes the full gameplay interface.
+	_apply_opening_ui_from_global()
 
 	# World._ready() already set Global.world_node and deferred generation,
 	# so signals are safe to connect here before that deferred work fires.
@@ -339,6 +372,9 @@ func _finish_loading_fade() -> void:
 	_loading_label = null
 	_loading_bar = null
 	_loading_progress = 0.0
+	# Ctrl remains global input during the loading overlay; pressing it there
+	# must not leave the world in build mode once control is handed back.
+	Global.reset_build_mode_for_world()
 	if is_instance_valid(_player):
 		_player.process_mode = Node.PROCESS_MODE_INHERIT
 	_setup_tutorial()
@@ -407,7 +443,10 @@ func enter_cave(portal: CavePortal) -> void:
 		if portal != null and portal.has_method("reset_after_exit"):
 			portal.call("reset_after_exit")
 		return
-	_run_scene_transition(Callable(self, "_do_enter_cave").bind(portal), "Entering cave...")
+	var label_text := "Entering cave..."
+	if portal != null and portal.cave_type == "pixie":
+		label_text = "Entering pixie cave..."
+	_run_scene_transition(Callable(self, "_do_enter_cave").bind(portal), label_text)
 
 # Previously visited caves are re-added from the cache with their live state;
 # new/loaded caves generate from the stable entrance seed, then restore the
@@ -474,12 +513,15 @@ func _do_enter_cave(portal: CavePortal) -> void:
 	_player.global_position = node.call("get_player_spawn_position")
 	Global.reset_pause_state()
 	Global.cave_entered.emit("pixie" if _pixie_cave_world != null else "cave")
+	Music.play_context("cave")
 
 func exit_cave() -> void:
 	if _transitioning:
 		return
 	if _pixie_cave_world != null or _cave_world != null:
-		_run_scene_transition(Callable(self, "_do_exit_cave"), "Leaving cave...")
+		var label_text := "Leaving pixie cave..." if _pixie_cave_world != null \
+			else "Leaving cave..."
+		_run_scene_transition(Callable(self, "_do_exit_cave"), label_text)
 
 # The cave instance is snapshotted and kept alive off-tree, never freed on
 # exit. Re-entering the same entrance restores the live runtime state; the
@@ -526,6 +568,7 @@ func _do_exit_cave() -> void:
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
 	Global.cave_exited.emit(exited_kind)
+	Music.play_overworld()
 
 func get_cave_states() -> Dictionary:
 	var out: Dictionary = {}
@@ -588,6 +631,10 @@ func _explored_from_array(values: Variant) -> Dictionary:
 
 func _exit_tree() -> void:
 	CrashLogger.event("GAME", "scene exit slot=%d" % Global.active_save_slot)
+	# SFX is an autoload and outlives this scene; without this a cave/weather
+	# loop would keep playing over the title screen after quit-to-menu.
+	if is_instance_valid(SFX):
+		SFX.stop_all()
 	# Cached cave worlds are orphans by design; free them with the Game scene.
 	for key in _cave_instances:
 		var node_ref: Variant = _cave_instances[key]
@@ -652,6 +699,7 @@ func _do_enter_dungeon(dungeon_index: int, mission: DungeonMissionData) -> void:
 	Global.complete_mission("enter_dungeon")
 	# A portal/dialog from the overworld must not keep the dungeon paused.
 	Global.reset_pause_state()
+	Music.play_context("dungeon")
 
 func exit_dungeon() -> void:
 	if _transitioning:
@@ -690,6 +738,7 @@ func _do_exit_dungeon() -> void:
 	if Global.active_save_slot > 0:
 		Global.save_game(Global.active_save_slot)
 	Global.dungeon_exited.emit(exited_index)
+	Music.play_overworld()
 
 # Cleanly leave any active cave/pixie cave/dungeon before quitting to the main
 # menu. Tearing the complex cave node tree down through the normal exit path —
@@ -705,10 +754,9 @@ func cleanup_for_menu() -> void:
 	elif _dungeon_world != null:
 		_do_exit_dungeon()
 
-# Death respawn: leave any active cave/pixie cave/dungeon (so the overworld is
-# restored and the player isn't stuck inside the structure), then return the
-# OVERWORLD's world-spawn point. Dying anywhere — cave, dungeon, or overworld —
-# always puts the player back at the true world spawn.
+# Death respawn: caves are left so the overworld is restored and the player
+# isn't stranded inside the structure. Dungeons are handled separately by
+# get_dungeon_respawn_position() so a death restarts the run at its entrance.
 func get_world_spawn_position() -> Vector2:
 	# Respawn must have the overworld back synchronously before the caller
 	# places the player; an async transition would later overwrite the
@@ -721,14 +769,27 @@ func get_world_spawn_position() -> Vector2:
 		return _world.call("_world_spawn_pos") as Vector2
 	return Vector2.ZERO
 
+
+## Dungeon death respawn: keep the dungeon instance alive and return the
+## generated entrance-room spawn. Vector2.INF means "not in a dungeon", so
+## Global falls back to the overworld spawn for caves/overworld deaths.
+func get_dungeon_respawn_position() -> Vector2:
+	if _dungeon_world == null or not is_instance_valid(_dungeon_world):
+		return Vector2.INF
+	if _dungeon_world.generator == null:
+		return Vector2.INF
+	return _dungeon_world.get_player_spawn_pos()
+
 # ── Autosave ──────────────────────────────────────────────────────────
-func _add_mission_ui() -> void:
+func _add_mission_ui() -> Control:
 	var ui: Control = load("res://scripts/mission_ui.gd").new() as Control
+	ui.visible = Global.tutorial_completed
 	# Quest list lives on the background HUD layer so panels dim it.
 	if _hud_backdrop != null:
 		_hud_backdrop.add_child(ui)
 	else:
 		$CanvasLayer.add_child(ui)
+	return ui
 
 # Automatic crash protection: write the active world to its save slot once a
 # minute while playing. Saves are skipped until a slot exists and while the
@@ -736,6 +797,11 @@ func _add_mission_ui() -> void:
 # save). Global.save_game() writes atomically, so a crash mid-save can only
 # leave a .tmp/.bak file, never a truncated save.
 const AUTOSAVE_INTERVAL_SEC: float = 60.0
+# Mission progress can change many times in a few seconds (mining, building,
+# crafting). Save at most once per this window when it does, in addition to the
+# regular 60-second timer.
+const MISSION_AUTOSAVE_MIN_MS: int = 5000
+var _last_mission_autosave_ms: int = -1000000
 
 func _start_autosave() -> void:
 	var timer := Timer.new()
@@ -749,6 +815,13 @@ func _start_autosave() -> void:
 	add_child(timer)
 
 func _on_autosave() -> void:
+	_save_if_safe()
+
+func _on_mission_progress_autosave() -> void:
+	var now: int = Time.get_ticks_msec()
+	if now - _last_mission_autosave_ms < MISSION_AUTOSAVE_MIN_MS:
+		return
+	_last_mission_autosave_ms = now
 	_save_if_safe()
 
 # Shared save guard for the timer and Android lifecycle interruptions. Never
@@ -811,14 +884,16 @@ func _run_scene_transition(callback: Callable, label_text: String) -> void:
 	if _transitioning:
 		return
 	_transitioning = true
+	var s: float = Global.ui_scale
 	var layer := CanvasLayer.new()
 	layer.layer = 130  # above the loading screen and HUD
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(layer)
 	_transition_overlay = layer
 
 	var bg := ColorRect.new()
 	bg.color = Color(0.0, 0.0, 0.0, 0.0)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(bg)
 
@@ -826,25 +901,77 @@ func _run_scene_transition(callback: Callable, label_text: String) -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	Global.apply_safe_area(center)
 	layer.add_child(center)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", int(10 * s))
+	center.add_child(vbox)
 	var label := Label.new()
 	label.text = label_text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", Global.ui_font_size(18))
 	label.add_theme_color_override("font_color", C_TITLE)
-	center.add_child(label)
+	vbox.add_child(label)
 
-	var tween := create_tween()
-	tween.tween_property(bg, "color:a", 1.0, 0.28)
-	tween.tween_callback(func() -> void:
-		callback.call()
-	)
-	tween.tween_interval(0.15)
-	tween.tween_property(bg, "color:a", 0.0, 0.35)
-	tween.tween_callback(func() -> void:
-		_transitioning = false
-		layer.queue_free()
-		_transition_overlay = null
-	)
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 100.0
+	bar.value = 0.0
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(
+		int(360 * s), maxi(8, int(12 * s)))
+	bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.03, 0.05, 0.10, 1.0)
+	bar_bg.border_color = C_BORDER
+	bar_bg.set_border_width_all(maxi(1, int(1 * s)))
+	bar_bg.set_corner_radius_all(int(4 * s))
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = C_TITLE
+	bar_fill.set_corner_radius_all(int(4 * s))
+	bar.add_theme_stylebox_override("background", bar_bg)
+	bar.add_theme_stylebox_override("fill", bar_fill)
+	vbox.add_child(bar)
+
+	var hint := Label.new()
+	hint.text = "Restoring the world..." if label_text.begins_with("Leaving") \
+		else "Building the world..."
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+	hint.add_theme_color_override("font_color", C_MUTED)
+	vbox.add_child(hint)
+
+	var fade_in := create_tween()
+	fade_in.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	fade_in.tween_property(bg, "color:a", 1.0, 0.28)
+	var bar_in := create_tween()
+	bar_in.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	bar_in.tween_property(bar, "value", 88.0, 0.28)
+	await fade_in.finished
+	if not is_instance_valid(layer):
+		return
+	# Let the bar reach its pre-generation value on screen before the
+	# synchronous world build blocks the main thread.
+	await get_tree().process_frame
+	callback.call()
+	if not is_instance_valid(layer):
+		return
+	bar.value = 100.0
+	label.text = "Ready"
+	hint.text = ""
+	# The callback can open a tutorial dialogue (which calls Global.open_ui()
+	# and pauses the tree). A normal bound tween would stop at "Ready" and leave
+	# this overlay covering the screen forever, so the exit tween must process
+	# while paused.
+	var done := create_tween()
+	done.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	done.tween_interval(0.15)
+	done.tween_property(bg, "color:a", 0.0, 0.35)
+	await done.finished
+	if not is_instance_valid(layer):
+		return
+	_transitioning = false
+	layer.queue_free()
+	_transition_overlay = null
 
 # ── Pause button styling ──────────────────────────────────────────────
 func _on_inventory_visibility_changed(is_open: bool) -> void:
@@ -855,10 +982,18 @@ func _on_inventory_visibility_changed(is_open: bool) -> void:
 	_set_gameplay_hud_visible(not is_open)
 
 func _on_modal_hud_changed(open: bool) -> void:
-	# Station/editor screens cover the full playfield and have their own item
-	# sources; hiding the HUD prevents the hotbar and overlays from covering
-	# their content.
-	_set_gameplay_hud_visible(not open)
+	# Station/editor screens cover the full playfield, so the background HUD
+	# hides. The hotbar decides separately (hotbar_modal_changed): the item-
+	# driven station/furnace/Color Crafter panels keep it, editors, docs and the
+	# map still hide it.
+	if open:
+		_set_gameplay_hud_visible(false)
+	elif _tutorial_mission_focus:
+		# The mission-log modal just closed during the Automatica lesson:
+		# restore the mission-only HUD instead of the full gameplay HUD.
+		_apply_tutorial_mission_focus_ui()
+	else:
+		_set_gameplay_hud_visible(true)
 
 func _set_gameplay_hud_visible(show_hud: bool) -> void:
 	if _hud_backdrop != null:
@@ -874,6 +1009,106 @@ func _set_gameplay_hud_visible(show_hud: bool) -> void:
 		_break_layer.visible = show_hud
 	if not show_hud:
 		Global.hide_item_tooltip()
+
+
+# ── Opening-tutorial HUD reveal ─────────────────────────────────────
+# Called by TutorialGuide as it advances. `step_id` is the authoritative live
+# step; the saved stage/flag path covers reloads and returns.
+func apply_opening_tutorial_ui(step_id: String = "") -> void:
+	var tier := TutorialUiReveal.tier_for_progress(
+		Global.tutorial_stage, Global.tutorial_completed, Global.tutorial_flags,
+		Global.cleared_dungeons.size())
+	if not step_id.is_empty():
+		tier = maxi(tier, TutorialUiReveal.tier_for_step(step_id))
+	_apply_opening_ui_tier(tier)
+
+
+func _apply_opening_ui_from_global() -> void:
+	apply_opening_tutorial_ui("")
+
+
+## Automatica mission lesson HUD. The tracker and reward total are the only
+## gameplay HUD elements the player needs while learning how missions work.
+func apply_tutorial_mission_focus(on: bool) -> void:
+	_tutorial_mission_focus = on
+	if on:
+		_apply_tutorial_mission_focus_ui()
+	else:
+		_restore_after_tutorial_mission_focus()
+
+
+func _apply_tutorial_mission_focus_ui() -> void:
+	if _hud_backdrop != null:
+		_hud_backdrop.visible = true
+	_set_hud_control_visible(_mission_ui, true)
+	_set_hud_control_visible(_star_summary, true)
+	_set_hud_control_visible(_hotbar, false)
+	if _hotbar != null and is_instance_valid(_hotbar) \
+			and _hotbar.has_method("set_tutorial_hidden"):
+		_hotbar.call("set_tutorial_hidden", true)
+	_set_hud_control_visible(_minimap, false)
+	_set_hud_control_visible(_lua_status, false)
+	_set_hud_control_visible(_notification_hud, false)
+	if _mobile_ui != null and is_instance_valid(_mobile_ui):
+		_mobile_ui.call("set_tutorial_ui_reveal", false, false, false)
+		_set_hud_control_visible(_mobile_ui, false)
+	if _controls_overlay != null and is_instance_valid(_controls_overlay):
+		_controls_overlay.call("set_tutorial_hidden", true)
+
+
+func _restore_after_tutorial_mission_focus() -> void:
+	_tutorial_mission_focus = false
+	if _hud_backdrop != null:
+		_hud_backdrop.visible = true
+	# A modal (the mission log) may have hidden the hotbar's whole layer.
+	var base_canvas := get_node_or_null("CanvasLayer")
+	if base_canvas != null:
+		base_canvas.set("visible", true)
+	_set_hud_control_visible(_mobile_ui, true)
+	_set_hud_control_visible(_notification_hud, true)
+	_set_hud_control_visible(_break_layer, true)
+	apply_opening_tutorial_ui("")
+
+
+func opening_ui_tier() -> int:
+	return _opening_ui_tier
+
+
+func _apply_opening_ui_tier(tier: int) -> void:
+	_opening_ui_tier = clampi(tier,
+		TutorialUiReveal.Tier.MOVEMENT, TutorialUiReveal.Tier.ALL)
+	var tools: bool = _opening_ui_tier >= TutorialUiReveal.Tier.TOOLS
+	var dungeon: bool = _opening_ui_tier >= TutorialUiReveal.Tier.DUNGEON
+	var all_hud: bool = _opening_ui_tier >= TutorialUiReveal.Tier.ALL
+	# Missions stay hidden for the WHOLE tutorial, not just its opening tiers.
+	# The Automatica mission lesson opts in explicitly via
+	# apply_tutorial_mission_focus(true), and completing the tutorial reveals
+	# the tracker permanently.
+	var missions: bool = Global.tutorial_completed or _tutorial_mission_focus
+
+	# Movement: only the pause/system control and tutorial guidance remain.
+	# Tools: hotbar/inventory, placement controls and the PC control guide.
+	# Dungeon: map becomes relevant; missions remain hidden until onboarding ends.
+	# All: LUA status returns with the normal post-opening HUD.
+	_set_hud_control_visible(_hotbar, tools)
+	if _hotbar != null and is_instance_valid(_hotbar) \
+			and _hotbar.has_method("set_tutorial_hidden"):
+		_hotbar.call("set_tutorial_hidden", not tools)
+	_set_hud_control_visible(_mission_ui, missions)
+	_set_hud_control_visible(_star_summary, missions)
+	_set_hud_control_visible(_minimap, dungeon)
+	_set_hud_control_visible(_lua_status, all_hud)
+	if _controls_overlay != null and is_instance_valid(_controls_overlay):
+		_controls_overlay.call("set_tutorial_hidden", not tools)
+	if _mobile_ui != null and is_instance_valid(_mobile_ui):
+		_mobile_ui.call("set_tutorial_ui_reveal", tools, dungeon, true)
+	if all_hud:
+		Global.tutorial_flags[TutorialUiReveal.COMPLETE_FLAG] = true
+
+
+func _set_hud_control_visible(control: Node, on: bool) -> void:
+	if control is CanvasItem and is_instance_valid(control):
+		(control as CanvasItem).visible = on
 
 func _on_hud_ui_scale_changed(_scale: float) -> void:
 	_style_pause_button()

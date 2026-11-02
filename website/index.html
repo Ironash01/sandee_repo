@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SandEE &mdash; Learn Lua &amp; Python in a 2D Open-World Survival Crafting Game</title>
-  <meta name="description" content="SandEE is an educational multi-platform 2D open-world survival crafting game that teaches Lua and Python to ICT and STEM students through real embedded interpreters.">
+  <meta name="description" content="SandEE is an educational multi-platform 2D open-world survival crafting game that teaches Lua and Python through randomly generated worlds, caves, dungeons, and cross-platform saves.">
   <link rel="icon" type="image/svg+xml" href="assets/img/logo.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,6 +26,7 @@
         <a href="#about">About</a>
         <a href="#developers">Developers</a>
         <a href="#downloads">Downloads</a>
+        <a href="end-user-survey.html">End User Survey</a>
       </nav>
       <button class="nav-toggle" type="button"
               aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="primary-nav">
@@ -42,29 +43,32 @@
         <div>
           <span class="kicker">BS Computer Science Thesis &bull; Capstone Project</span>
           <h1>Sand<span class="ee">EE</span></h1>
-          <p class="lead">Learn Lua &amp; Python by playing.</p>
+          <p class="lead">Mine, Build, and Learn!</p>
           <p class="hero__sub">
-            An educational, multi-platform 2D open-world survival crafting game that teaches
-            programming to ICT and STEM students &mdash; through a real Lua robot, Python-powered
-            machines, and missions that guide you from your first line of code to full automation.
+            An educational 2D open-world survival crafting game for ICT and STEM students.
+            Explore <strong>randomly generated worlds, caves, and dungeons</strong>, automate them
+            with Lua and Python, and keep your progress with
+            <strong class="hero__nowrap">cross-platform saves</strong> on Windows and Android.
           </p>
 
           <div class="dl-row">
-            <a class="btn" href="downloads/SandEE-0.9.4.5-win64.zip" download
-               aria-label="Download SandEE 0.9.4.5 for Windows">
+            <a class="btn" href="https://github.com/Ironash01/sandee_repo/releases/latest/download/sandee_windows.zip"
+               aria-label="Download the latest SandEE release for Windows">
               <img class="ic" src="assets/img/platform-pc.svg" alt=""> Download for PC
             </a>
-            <a class="btn btn--accent" href="downloads/SandEE-0.9.4.5.apk" download
-               aria-label="Download SandEE 0.9.4.5 APK for Android">
+            <a class="btn btn--accent" href="https://github.com/Ironash01/sandee_repo/releases/latest/download/SandEE.apk"
+               aria-label="Download the latest SandEE APK for Android">
               <img class="ic" src="assets/img/platform-android.svg" alt=""> Download for Android
             </a>
           </div>
-          <p class="platforms">Windows and Android alpha v0.9.4.5 available now</p>
+          <p class="platforms">Windows and Android builds available now</p>
         </div>
 
         <div class="hero__art">
           <div class="panel">
-            <img src="assets/img/hero.svg" alt="Pixel-art key art of the SandEE open world with a player and a coding robot">
+            <img src="assets/img/screenshots/dungeon-lua-01.jpg" width="1440" height="810"
+                 alt="Actual in-game screenshot of SandEE: a player exploring a randomly generated Lua dungeon">
+            <span class="hero__shot-tag">IN-GAME SCREEN</span>
           </div>
         </div>
       </div>
@@ -73,13 +77,14 @@
     <!-- =========================================================== ribbon -->
     <div class="ribbon">
       <ul>
-        <li>Open World Sandbox</li>
+        <li>Randomly Generated Worlds</li>
+        <li>Caves &amp; Dungeons</li>
         <li>Survival &amp; Crafting</li>
         <li>Lua Robot</li>
         <li>Python Automation</li>
-        <li>Real Interpreters</li>
+        <li>Cross-Platform Saves</li>
         <li>Mission Progression</li>
-        <li>Multi-Platform</li>
+        <li>Real Interpreters</li>
       </ul>
     </div>
 
@@ -97,9 +102,9 @@
         <div class="grid grid--3">
           <article class="panel card">
             <div class="card__ic">&#9632;</div>
-            <h3>Open World Sandbox</h3>
-            <p>Explore a procedurally generated world of biomes, caves, and structures &mdash; free to
-               build, mine, and shape however you like.</p>
+            <h3>Randomly Generated Worlds</h3>
+            <p>Every world is generated from scratch, including its biomes, caves, and dungeons
+               &mdash; so no two playthroughs are the same.</p>
           </article>
 
           <article class="panel card">
@@ -137,6 +142,15 @@
                &mdash; including real errors and real feedback.</p>
           </article>
         </div>
+
+        <div class="panel panel--inset save-banner">
+          <div>
+            <h3>Your progress follows you</h3>
+            <p>Cross-platform saves keep your worlds, missions, and stars in sync between
+               Windows and Android.</p>
+          </div>
+          <span class="save-banner__tag">Windows &harr; Android</span>
+        </div>
       </div>
     </section>
 
@@ -145,7 +159,7 @@
       <div class="wrap">
         <div class="section__head">
           <h2>Inside the world</h2>
-          <p>Step into the themed dungeons &mdash; from the Lua Ancient Rune Sanctum to the Python Stonegate Foundry.</p>
+          <p>Step into randomly generated themed dungeons &mdash; from the Lua Ancient Rune Sanctum to the Python Stonegate Foundry.</p>
         </div>
 
         <div class="shots">
@@ -193,6 +207,8 @@
               survival crafting game, so the code you write actually affects the world around you. A
               mission system introduces syntax gradually, and visual feedback turns abstract concepts
               into things you can see, break, and fix &mdash; just like in a real programming environment.
+              Every new save begins in a freshly generated world, and cross-platform cloud saves let
+              you continue on Windows or Android.
             </p>
 
             <h3>Our objectives</h3>
@@ -275,35 +291,35 @@
       <div class="wrap">
         <div class="section__head">
           <h2>Download SandEE</h2>
-          <p>Windows and Android alpha <strong>v0.9.4.5</strong> are ready to download.</p>
+          <p>Windows and Android builds are ready to download.</p>
         </div>
 
         <div class="dl-grid">
           <article class="panel dl-card">
             <img src="assets/img/platform-pc.svg" alt="">
             <h3>PC / Windows</h3>
-            <a class="btn btn--block" href="downloads/SandEE-0.9.4.5-win64.zip" download
-               aria-label="Download SandEE 0.9.4.5 for Windows">Download for PC</a>
-            <small>Windows 10 / 11 (64-bit) &bull; v0.9.4.5 &bull; 44.3 MB ZIP<br>
+            <a class="btn btn--block" href="https://github.com/Ironash01/sandee_repo/releases/latest/download/sandee_windows.zip"
+               aria-label="Download the latest SandEE release for Windows">Download for PC</a>
+            <small>Windows 10 / 11 (64-bit) &bull; Latest release<br>
               Extract, then run <code>sandee.exe</code></small>
           </article>
           <article class="panel dl-card">
             <img src="assets/img/platform-android.svg" alt="">
             <h3>Android</h3>
-            <a class="btn btn--block btn--accent" href="downloads/SandEE-0.9.4.5.apk" download
-               aria-label="Download SandEE 0.9.4.5 APK for Android">Download for Android</a>
-            <small>Android 8.0 and newer &bull; v0.9.4.5 &bull; 38.7 MB APK</small>
+            <a class="btn btn--block btn--accent" href="https://github.com/Ironash01/sandee_repo/releases/latest/download/SandEE.apk"
+               aria-label="Download the latest SandEE APK for Android">Download for Android</a>
+            <small>Android 8.0 and newer &bull; Latest release</small>
           </article>
         </div>
 
         <div class="panel reqs">
-          <h3>System requirements <span class="dim" style="font-size:16px">(alpha &mdash; subject to change)</span></h3>
+          <h3>System requirements <span class="dim" style="font-size:16px">(subject to change)</span></h3>
           <table>
             <tr><td>Operating system</td><td>Windows 10/11 (64-bit) &bull; Android 8.0+</td></tr>
             <tr><td>Processor</td><td>Dual-core 2.0 GHz or better</td></tr>
             <tr><td>Memory</td><td>4 GB RAM</td></tr>
             <tr><td>Graphics</td><td>OpenGL 3.3 / Vulkan / DirectX 12 compatible</td></tr>
-            <tr><td>Storage</td><td>300 MB available space</td></tr>
+            <tr><td>Storage</td><td>500 MB available space</td></tr>
             <tr><td>Input</td><td>Keyboard &amp; mouse (PC) &bull; touch (Android)</td></tr>
           </table>
         </div>
@@ -319,7 +335,7 @@
           <p>Point your phone camera at the QR code to open the SandEE homepage on your
              device. It is the quickest way to share the project with classmates, teachers
              or friends.</p>
-          <p class="qr__note">Android players can install the latest alpha from the
+          <p class="qr__note">Android players can install the latest build from the
              <a href="#downloads">Downloads</a> section.</p>
         </div>
         <figure class="qr__card panel">
@@ -358,6 +374,7 @@
           <h4>Quick Links</h4>
           <ul>
             <li><a href="#downloads">Downloads</a></li>
+            <li><a href="end-user-survey.html">End User Survey</a></li>
             <li><a href="#share">Scan &amp; Share</a></li>
             <li><a href="#screens">Screenshots</a></li>
             <li><a href="#top">Back to Top</a></li>
@@ -428,6 +445,16 @@
       document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') { setOpen(false); }
       });
+    })();
+
+    // Default the QA evaluation date to today.
+    (function () {
+      var field = document.getElementById('qa-date');
+      if (!field || field.value) { return; }
+      var now = new Date();
+      var month = String(now.getMonth() + 1).padStart(2, '0');
+      var day = String(now.getDate()).padStart(2, '0');
+      field.value = now.getFullYear() + '-' + month + '-' + day;
     })();
   </script>
 </body>

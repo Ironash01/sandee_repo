@@ -1,0 +1,91 @@
+id,category,action,trigger,sound,variants,priority,notes
+sfx_player_footsteps,Player,Footsteps by surface,"Walking or sprinting on grass, dirt, stone, snow, wood, sand, or shallow water",Short material-specific step; 3-4 pitch variants per surface,21-28,P0,Highest repetition in the game; surface variants matter more than volume.
+sfx_player_sprint,Player,Sprint start / stamina empty,Sprint begins; stamina hits exhaustion; recovery,"Short exertion cue, tired breath, stamina warning",3,P1,Keep the loop quiet and duck it under other SFX.
+sfx_player_hurt,Player,Player takes damage,Global.damage_player applies damage (not blocked by i-frames),Short pain grunt + impact layer; light/heavy variants,3,P0,Do not retrigger every frame; use the damage event.
+sfx_player_death,Player,Player death,Death sequence starts,"Falling body, equipment clatter, low death sting",1-2,P0,Music/BGM is out of scope; this is a short death SFX.
+sfx_player_respawn,Player,Player respawns,Respawn at bonfire/world spawn,Soft whoosh + settling step,1,P1,Avoid a full fanfare; keep it brief.
+sfx_player_eat,Player,Eat food / drink,Food item consumed,Crunch/chew/sip set,3,P1,Different food families can share one set.
+sfx_player_crystal,Player,Use Life/Stamina crystal,Stat crystal consumed,Crystalline chime + healing shimmer,2,P1,Life and stamina can use pitch/color variants.
+sfx_player_low_health,Player,Low-health heartbeat,Health below threshold,Muffled heartbeat/breathing loop,1 loop,P2,Optional; make it duckable and disable in accessibility settings.
+sfx_tool_swing,Tools & World,Sword/tool swing,swing_held_item / swing_performed,"Airy whoosh; sword, axe, and pickaxe variants",3-4,P0,The swing fires frequently; variation prevents fatigue.
+sfx_tool_impact,Tools & World,Tool hits a target,"Sword hitbox hits mob, block, tree, or grass","Flesh, wood, stone, soft-earth impact layers",12-16,P0,Layer with the swing; do not replace it.
+sfx_block_break,Tools & World,Block breaks,placeable_block._break or cave _break_tile,"Wood, stone, soft earth, ore break set",12-16,P0,"One break cue per material family, 3 variants each."
+sfx_block_place,Tools & World,Block placed,world.place_block_at or robot placement,"Wood, stone, soft earth placement thud",9,P1,Robot placement can use a quieter servo-layered variant.
+sfx_tree_chop_fall,Tools & World,Tree chopped and falls,tree.gd takes chop damage; final chop frees the tree,"Wood crack, creak, fall, ground impact",3-4,P1,Fall cue should be longer but not boomy.
+sfx_grass_cut,Tools & World,Grass cut,world._cut_grass_row / sword grass cut,Sharp swish + soft foliage rustle,2,P1,Can share the swing layer but needs a leafy tail.
+sfx_grass_rustle,Tools & World,Walk through grass,Player moves through a grass tuft,Soft brush/rustle,2,P2,Throttle it; do not play on every frame.
+sfx_farming,Tools & World,"Till, plant, water, harvest","Hoe use, seed placement, bucket pour, crop harvest","Soil scrape, seed drop, water pour, plant pull",6-8,P1,One set per action; crops can share the harvest sound.
+sfx_build_mode,Tools & World,Build mode toggle,Global.block_mode changes,Short UI/mechanical toggle,2,P2,Quiet; this is a mode switch.
+sfx_placement_error,Tools & World,Invalid placement,Ghost turns red / placement rejected,Dull denial buzz or click,1-2,P1,Do not use the same sound as a successful place.
+sfx_inventory_full,Tools & World,Inventory or chest full,add_item / deposit_item fails,Low error thunk,1,P1,Distinct from generic UI error.
+sfx_item_pickup,Items & Interactables,Item pickup,Drop enters inventory or hotbar,Short bright pickup blip; stack-size variants,2-3,P0,Do not play one cue per item in a large stack.
+sfx_item_drop,Items & Interactables,Item drop,Player or robot drops an item,Soft item drop/land,1-2,P1,Material variants optional.
+sfx_inventory_open_close,Items & Interactables,Inventory open / close,Inventory UI opens or closes,Panel slide + soft click,2,P0,Keep short; menus are frequent.
+sfx_hotbar,Items & Interactables,Hotbar select / scroll,Hotbar slot changes,Short tick/click,2,P0,Pitch up/down for next/previous is optional.
+sfx_item_move,Items & Interactables,Move/stack/delete item,Drag item between slots; split stack; trash,"Soft pick/place click, trash crumple",2-3,P1,Do not confuse with world pickup.
+sfx_chest,Items & Interactables,Chest open/close,Chest UI opens/closes; rare chest found,"Wood latch, lid creak, close thud; rare chest sparkle",3-4,P1,Rare chest needs a distinct reward flourish.
+sfx_door,Items & Interactables,Door open/close,Placeable door toggles,Latch click + wood swing/close,2,P1,Use material variants for birch/snowy doors if cheap.
+sfx_bonfire,Items & Interactables,Bonfire ignite/extinguish/toggle,Bonfire plain-click sets or clears respawn,"Whoosh, crackle burst, soft extinguish",2-3,P1,Active vs inactive state should be audibly distinct.
+sfx_torch,Items & Interactables,Torch place/remove,Torch placed or mined,Soft plant/light pop; remove puff,2,P1,Optional quiet flame loop under ambience.
+sfx_fishing,Items & Interactables,"Fishing cast, bite, reel, catch",Rod cast; fish bites; reel starts; catch/miss resolves,"Cast whoosh, splash, line tick, reel, catch jingle, miss plop",6,P1,The bite should be the clearest cue; player reaction depends on it.
+sfx_map_waypoint,Items & Interactables,Map/waypoint interactions,Map opens/closes; waypoint selected; travel starts/arrives,"Map unfold, marker click, charge hum, teleport whoosh, arrival settle",4-6,P1,Waypoint charge should communicate the delay before travel.
+sfx_water,Items & Interactables,Water splash / bucket,Enter/exit water; fill/empty bucket; pour water,"Splash, wade, bucket fill, pour",4,P1,Throttle wading; bucket fill/pour are distinct one-shots.
+sfx_ui_interaction,UI & Progression,UI hover/click/back/tab/toggle/slider,Any menu interaction,"Pixel click/blip, back, tab, toggle, slider tick; 2-3 variants each",10-14,P0,Click/back are P0; hover/slider are polish.
+sfx_ui_result,UI & Progression,Success/error/notification,"Action succeeds, fails, or toast appears","Success chime, error buzz, info/success/warn toast",4-5,P0,Keep the same language across all menus.
+sfx_menu_pause,UI & Progression,"Menu open/close, pause/unpause","Main menu, pause menu, settings, inventory","Panel open/close, pause stop/resume",4,P1,Pause should be short and non-musical.
+sfx_save_load,UI & Progression,Save/load/delete,"Save slot saved, loaded, deleted, or errors","Confirm click, save stamp, load whoosh, delete warning",4,P1,Delete should require a clearly different confirmation tone.
+sfx_account_cloud,UI & Progression,"Login, signup, logout, cloud sync","Account form submit; cloud sync starts, succeeds, conflicts, fails","Auth success/fail; sync spinner ticks, success, conflict, error",7-8,P2,Conflict/error cues must not be confused with gameplay damage.
+sfx_leaderboard,UI & Progression,Leaderboard refresh / star claim,Leaderboard loads; mission reward claimed,"Refresh tick, star claim chime",2,P2,Star claim can share the star-earned cue.
+sfx_mission,UI & Progression,Mission progress / mission complete / star,add_mission_progress; complete_mission; mission_star_earned,"Progress tick, completion flourish, star sparkle",3,P0,Mission completion is a core reward moment.
+sfx_knowledge_bestiary,UI & Progression,Knowledge or bestiary unlock,Knowledge entry learned; bestiary entry discovered,"Page shimmer, archive stamp, creature reveal",2-3,P1,Separate archive vs creature identity.
+sfx_tutorial,UI & Progression,Tutorial dialogue/advance/complete/skip,"Tutorial opens, advances, finishes, or is skipped","Dialogue open, text advance, success, skip",4,P1,Do not use the same sound as generic menu click.
+sfx_code_editor,UI & Progression,Code editor open/run/stop/success/error,Lua/Python editor opens; RUN/STOP; program succeeds/fails,"Panel open, run start, terminal tick, success chime, error buzz, stop",6,P1,Typing sounds are optional P2; errors must feel distinct.
+sfx_quiz,UI & Progression,Quiz open/correct/wrong/hint/run/complete,Quiz altar opens; answer submitted; hint; code run; results,"Panel open, correct, wrong, hint, run, completion",6,P1,Wrong answer should be clear but not harsh.
+sfx_knowledge_altar,UI & Progression,Knowledge altar open/page/unlock,Altar opens; page turns; entry unlocks,"Stone open, page turn, unlock shimmer",3,P2,Can reuse knowledge unlock with altar-specific layer.
+sfx_color_crafter,UI & Progression,Color select/craft,Color wheel changes; colored block crafted,"Color tick, hue chime, craft pop",2-3,P1,Pitch can follow the selected hue for feedback.
+sfx_station,Crafting & Automation,Crafting station open/close,Crafting station UI opens/closes,"Wood/metal panel open, close latch",2,P1,"Station identity: workshop, not generic menu."
+sfx_recipe_select,Crafting & Automation,Recipe selected,Recipe list selection changes,Soft page/click tick,2,P1,Quiet; selection can be rapid.
+sfx_craft,Crafting & Automation,Craft start/complete/fail,"craft() / craft_request starts, finishes, or fails","Work start, hammer/craft completion, error buzz",3-4,P0,Completion is P0; start/fail are P1.
+sfx_station_io,Crafting & Automation,Input insert / output collect,Input slot loaded; output taken,Item drop into slot; output pickup/chime,2,P1,Give output collection a small reward feel.
+sfx_furnace,Crafting & Automation,"Furnace open/close, feed, fuel, smelt, fail",Furnace UI opens; feed/fuel; smelt starts/tick/completes/fails,"Lid, ore drop, fuel whoosh, fire loop, metal clink, error",7-9,P1,Smelt loop must be quiet and duckable under UI.
+sfx_lua_station,Crafting & Automation,Lua station place/editor open/close,LUA station placed; editor opens/closes,"Robot boot chirp, panel open, panel close",3,P1,The station is a robot; give it a servo/terminal identity.
+sfx_lua_run,Crafting & Automation,Automatica run start/success/error/stop,Run pressed; program executes; error; STOP,"Terminal run, success beep, error buzz, stop clunk",4,P1,Match the algorithmica run language but keep robot/terminal timbre.
+sfx_robot_move,Crafting & Automation,Robot movement/hover,Robot is moving or hovering,Soft servo loop or periodic hover tick,1 loop,P2,Loop only while moving; avoid constant whine.
+sfx_robot_work,Crafting & Automation,Robot chop/mine/place,"Robot performs chop, mine, or placement",Servo + wood/stone impact; build placement,6-8,P1,Reuse world impact layers with a robot servo transient.
+sfx_robot_combat,Crafting & Automation,Robot attack/hurt/death,"Robot swings, takes damage, dies/terminates","Metal swing, hit, damage clank, shutdown",4-5,P1,Combat robots need a distinct shutdown cue.
+sfx_robot_logistics,Crafting & Automation,Robot deposit/withdraw/return/home,"Robot deposits to chest, withdraws, or returns to station","Item transfer ticks, servo turn, docking clunk",4,P2,Low priority but useful for long automation sessions.
+sfx_robot_error,Crafting & Automation,Robot error/no tool/invalid request,No tool equipped; invalid target; no chest/space,Robot error chirp + UI error,2,P1,Must be distinct from player inventory error.
+sfx_algorithmica,Crafting & Automation,Algorithmica run start/success/error/reject,"Python program runs, succeeds, fails, or uses a foreign API","Terminal run, success chime, error buzz, rejection buzz",4,P1,Station/furnace should share the same Algorithmica identity.
+sfx_algorithmica_color,Crafting & Automation,Color craft,craft_color() succeeds or fails,Hue pop/chime; low cactus error,2,P1,Could reuse color crafter cue with a machine layer.
+sfx_mob_wolf,Combat & Mobs,Wolf voice set,"Wolf idle/ambient, attack, hurt, and death","growl, bite snap, yelp, death whine",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_pixie,Combat & Mobs,Pixie voice set,"Pixie idle/ambient, attack, hurt, and death","glassy chime, dart, cry, death sparkle",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_worm,Combat & Mobs,Desert Worm voice set,"Desert Worm idle/ambient, attack, hurt, and death","burrow rumble, emerge, lunge, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_headless_fish,Combat & Mobs,Headless Fish voice set,"Headless Fish idle/ambient, attack, hurt, and death","wing flap, bite, hurt, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_sheep,Combat & Mobs,Sheep voice set,"Sheep idle/ambient, attack, hurt, and death","bleat, hurt, death",3-5,P2,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_hitman,Combat & Mobs,Hitman voice set,"Hitman idle/ambient, attack, hurt, and death","heavy footstep, roar, slam, projectile, hurt, defeat",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_rune_sentinel,Combat & Mobs,Rune Sentinel voice set,"Rune Sentinel idle/ambient, attack, hurt, and death","stone grind, slam, hurt, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_brass_prowler,Combat & Mobs,Brass Prowler voice set,"Brass Prowler idle/ambient, attack, hurt, and death","mechanical skitter, swipe, hurt, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_cinder_ooze,Combat & Mobs,Cinder Ooze voice set,"Cinder Ooze idle/ambient, attack, hurt, and death","bubble, spit, hurt, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_cipher_warden,Combat & Mobs,Cipher Warden voice set,"Cipher Warden idle/ambient, attack, hurt, and death","digital hum, cast, hurt, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_gravebell_shambler,Combat & Mobs,Gravebell Shambler voice set,"Gravebell Shambler idle/ambient, attack, hurt, and death","bell rattle, swipe, hurt, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_emberfox_kit,Combat & Mobs,Emberfox Kit voice set,"Emberfox Kit idle/ambient, attack, hurt, and death","chirp, pounce, hurt, death",3-5,P2,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_mossback_nib,Combat & Mobs,Mossback Nib voice set,"Mossback Nib idle/ambient, attack, hurt, and death","nibble, charge, hurt, death",3-5,P2,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_vesper_acolyte,Combat & Mobs,Vesper Acolyte voice set,"Vesper Acolyte idle/ambient, attack, hurt, and death","chant, cast, hurt, death",3-5,P1,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_wisp,Combat & Mobs,Wisp companion voice set,"Wisp companion idle/ambient, attack, hurt, and death","soft chime, follow loop, hurt, fade",3-5,P2,One distinct identity per mob; do not reuse the player hit sound as the death cue.
+sfx_mob_spawn_despawn,Combat & Mobs,Mob spawn/despawn,A mob appears in view or is recycled off-screen,Soft spatial pop/whoosh; avoid off-screen churn,2,P2,Do not play for ambient spawns outside the camera.
+sfx_hitman_specials,Combat & Mobs,"Hitman projectile, slam, self-destruct","Hitman fires, slams, or self-destructs","Projectile launch, impact, heavy slam, explosion",4,P1,Self-destruct must be heard over other combat.
+sfx_dungeon_hazards,Combat & Mobs,Dungeon flare/projectile/trap/explosion,Flare fires; projectile flies/impacts; trap steps; explosion,"Vent whoosh, bolt launch, sizzle, click, blast",6-8,P0,Trap click is a warning; explosion is P0.
+sfx_parry_safezone,Combat & Mobs,Parry projectile / safe-zone ward,Sword parries a bolt; safe zone activates or pulses,"Metal ting, safe-zone hum, ward pulse",3,P1,Parry should be crisp; safe-zone hum is optional ambience.
+sfx_cave_travel,World & Dungeon,Enter/exit cave,Cave portal confirms; player enters or leaves cave,"Stone slide, echo, distant drip, exit gust",2-3,P1,"Cave transition should feel like a space change, not a menu."
+sfx_cave_portal,World & Dungeon,Cave entrance highlight/confirm,Player nears a cave mouth; confirms entry,"Low rumble, highlight ping, confirm click",2-3,P2,Keep the highlight subtle; confirm is the important cue.
+sfx_dungeon_portal,World & Dungeon,Dungeon portal enter/exit,"Dungeon portal activates, entered, or exited","Rune hum, portal whoosh, arrival thud",3,P1,Dungeons should sound different from caves.
+sfx_dungeon_clear,World & Dungeon,Dungeon clear / star award,Dungeon cleared; 1/2/3-star result,"Clear fanfare, star chime, perfect-clear shimmer",4,P0,"This is the main reward moment; no BGM needed, just a strong SFX."
+sfx_world_waypoint,World & Dungeon,World waypoint activate/travel,Tower activated; travel charge; arrival,"Crystal chime, charge loop, teleport whoosh, arrival",3-4,P1,Charge sound communicates the cast delay.
+sfx_dungeon_waypoint,World & Dungeon,Dungeon waypoint spawn/activate,Temporary waypoint appears; activated,"Rune spawn, activation ping",2,P2,Could share world waypoint family with a darker layer.
+sfx_day_night,World & Dungeon,Day/night transition,Dawn or dusk changes the world state,Soft wind/chime transition,2,P2,Not BGM; a short environmental sting.
+sfx_snowstorm,World & Dungeon,Snowstorm start/end,Snowstorm begins or ends,"Wind rise, wind fade, snow crunch layer",2-3,P2,Weather layer; ensure it ducks under combat.
+sfx_ambient_birds,World & Dungeon,Ambient bird chirps,Day/night ambient birds appear,Finch/kite chirp variants,4-6,P2,Non-BGM ambience; spatial one-shots.
+sfx_cave_ambience,World & Dungeon,Cave ambience,Player is inside a cave,"Drips, low echo, distant stone settles",1 loop,P2,Non-BGM bed; loop seamlessly.
+sfx_dungeon_ambience,World & Dungeon,Dungeon ambience,Player is inside a dungeon,"Low rune hum, torch crackle, distant stone",1 loop,P2,Non-BGM bed; layer with portal/fire SFX.
+sfx_fire_ambience,World & Dungeon,Torch/bonfire ambience,Player near lit torch/bonfire,Small flame crackle loop,1-2 loops,P2,Spatial loop; fade with distance.
+sfx_weather_wind,World & Dungeon,Generic wind/weather bed,"Exposed overworld, snowy biome, storm",Soft wind loop; snowstorm variant,2 loops,P2,Keep under BGM and other ambience.

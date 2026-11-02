@@ -141,6 +141,7 @@ func start(cast_point: Vector2) -> void:
 	_show_rod()
 	set_process(true)
 	queue_redraw()
+	SFX.play("sfx_fishing", _cast_point, -3.0, 1.0, 0)
 	Global.notify("[color=#7fd0ff]You cast your line...[/color]")
 
 func cancel(reason: String = "") -> void:
@@ -208,6 +209,7 @@ func _update_rod() -> void:
 func _resolve() -> void:
 	var chance: float = randf_range(catch_min, catch_max)
 	if randf() > chance:
+		SFX.play("sfx_fishing", _cast_point, -5.0, 0.9, 2)
 		_end_cast()
 		Global.notify("[color=#ffaa66]The fish got away...[/color]")
 		return
@@ -220,6 +222,7 @@ func _begin_reel(fish: ItemData) -> void:
 	_reel_from = _float_local()      # capture the bobbing float BEFORE flipping to reeling
 	_reeling = true
 	_reel_t = 0.0
+	SFX.play("sfx_fishing", _reel_from, -3.0, 1.0, 1)
 	Global.notify("[color=#7fd0ff]Something's on the line![/color]")
 	if _fish_sprite != null and is_instance_valid(_fish_sprite):
 		_fish_sprite.queue_free()

@@ -16,6 +16,9 @@ radius = 28.0
 [sub_resource type="RectangleShape2D" id="RectShape_robot"]
 size = Vector2(15, 15)
 
+[sub_resource type="CircleShape2D" id="CircleShape_robot_click"]
+radius = 24.0
+
 [node name="LuaNPC" type="Node2D" unique_id=1321413095]
 script = ExtResource("1_lua")
 
@@ -44,3 +47,11 @@ scale = Vector2(0.75, 0.75)
 [node name="RobotCol" type="CollisionShape2D" parent="Robot"]
 position = Vector2(0, 7.5)
 shape = SubResource("RectShape_robot")
+
+[node name="RobotClickArea" type="Area2D" parent="Robot"]
+collision_layer = 8
+collision_mask = 0
+input_pickable = true
+
+[node name="ClickShape" type="CollisionShape2D" parent="Robot/RobotClickArea"]
+shape = SubResource("CircleShape_robot_click")

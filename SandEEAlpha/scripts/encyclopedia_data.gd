@@ -10,10 +10,12 @@ class_name EncyclopediaData
 #     already persisted per world by Global (learned_entries), so saves keep
 #     working and replaying a dungeon can never duplicate an entry.
 #
-#   • FUNCTION sections (Automatica / Algorithmica) are ALWAYS fully listed.
-#     They document the custom LUA robot API and the custom Python automation
-#     API, which exist from the start of a new world — nothing here gates,
-#     grants or bypasses execution rights.
+#   • FUNCTION sections (Automatica / Automatica mineable block names /
+#     Algorithmica / Algorithmica code templates) are ALWAYS fully listed.
+#     They document the custom LUA robot API, its copy-ready mine() references,
+#     the custom Python automation API, and complete runnable programs, which
+#     all exist from the start of a new world — nothing here gates, grants or
+#     bypasses execution rights.
 #
 # Entry ids are stable (see APIReference) and never saved themselves: the
 # saved state is only the learned KnowledgeEntry ids, as before.

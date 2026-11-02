@@ -1,0 +1,325 @@
+cue_id,category,action,priority,coverage,role,pack,source_file,local_file,bytes
+sfx_player_footsteps,Player,Footsteps by surface,P0,Direct + pitch,primary,PHX8,Footstep1/Wav/Footstep1__001.wav,by_pack/PHX8/Footstep1/Wav/Footstep1__001.wav,4110
+sfx_player_footsteps,Player,Footsteps by surface,P0,Direct + pitch,primary,PHX8,Footstep1/Wav/Footstep1__003.wav,by_pack/PHX8/Footstep1/Wav/Footstep1__003.wav,4356
+sfx_player_footsteps,Player,Footsteps by surface,P0,Direct + pitch,primary,PHX8,Footstep1/Wav/Footstep1__006.wav,by_pack/PHX8/Footstep1/Wav/Footstep1__006.wav,1506
+sfx_player_footsteps,Player,Footsteps by surface,P0,Direct + pitch,primary,PHX8,Footstep1/Wav/Footstep1__009.wav,by_pack/PHX8/Footstep1/Wav/Footstep1__009.wav,3663
+sfx_player_footsteps,Player,Footsteps by surface,P0,Direct + pitch,secondary,OGA512,Movement/Footsteps/sfx_movement_footsteps1a.wav,by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav,4494
+sfx_player_footsteps,Player,Footsteps by surface,P0,Direct + pitch,secondary,OGA512,Movement/Footsteps/sfx_movement_footsteps1b.wav,by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1b.wav,4588
+sfx_player_footsteps,Player,Footsteps by surface,P0,Direct + pitch,secondary,OGA512,Movement/Footsteps/sfx_movement_footsteps5.wav,by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps5.wav,4758
+sfx_player_sprint,Player,Sprint start / stamina empty,P1,Layer,primary,PHX8,Footstep1/Wav/Footstep1__002.wav,by_pack/PHX8/Footstep1/Wav/Footstep1__002.wav,3380
+sfx_player_sprint,Player,Sprint start / stamina empty,P1,Layer,primary,PHX8,Ouch/Wav/Ouch__001.wav,by_pack/PHX8/Ouch/Wav/Ouch__001.wav,13037
+sfx_player_sprint,Player,Sprint start / stamina empty,P1,Layer,secondary,OGA512,Movement/Footsteps/sfx_movement_footstepsloop3_fast.wav,by_pack/OGA512/Movement/Footsteps/sfx_movement_footstepsloop3_fast.wav,28410
+sfx_player_hurt,Player,Player takes damage,P0,Layer,primary,OGA512,General Sounds/Simple Damage Sounds/sfx_damage_hit1.wav,by_pack/OGA512/General Sounds/Simple Damage Sounds/sfx_damage_hit1.wav,5274
+sfx_player_hurt,Player,Player takes damage,P0,Layer,primary,OGA512,General Sounds/Simple Damage Sounds/sfx_damage_hit3.wav,by_pack/OGA512/General Sounds/Simple Damage Sounds/sfx_damage_hit3.wav,10074
+sfx_player_hurt,Player,Player takes damage,P0,Layer,primary,OGA512,General Sounds/Simple Damage Sounds/sfx_damage_hit5.wav,by_pack/OGA512/General Sounds/Simple Damage Sounds/sfx_damage_hit5.wav,9350
+sfx_player_hurt,Player,Player takes damage,P0,Layer,secondary,PHX8,Ouch/Wav/Ouch__001.wav,by_pack/PHX8/Ouch/Wav/Ouch__001.wav,13037
+sfx_player_hurt,Player,Player takes damage,P0,Layer,secondary,PHX8,Ouch/Wav/Ouch__003.wav,by_pack/PHX8/Ouch/Wav/Ouch__003.wav,6148
+sfx_player_death,Player,Player death,P0,Direct,primary,LRSF8,Wav/Hero_Death_00.wav,by_pack/LRSF8/Wav/Hero_Death_00.wav,232576
+sfx_player_death,Player,Player death,P0,Direct,secondary,OGA512,Death Screams/Human/sfx_deathscream_human1.wav,by_pack/OGA512/Death Screams/Human/sfx_deathscream_human1.wav,48562
+sfx_player_death,Player,Player death,P0,Direct,secondary,OGA512,Death Screams/Human/sfx_deathscream_human5.wav,by_pack/OGA512/Death Screams/Human/sfx_deathscream_human5.wav,64516
+sfx_player_respawn,Player,Player respawns,P1,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal1.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal1.wav,123948
+sfx_player_respawn,Player,Player respawns,P1,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal3.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal3.wav,103724
+sfx_player_respawn,Player,Player respawns,P1,Layer,secondary,LRSF8,Wav/Jingle_Achievement_00.wav,by_pack/LRSF8/Wav/Jingle_Achievement_00.wav,580538
+sfx_player_eat,Player,Eat food / drink,P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction2.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction2.wav,59006
+sfx_player_eat,Player,Eat food / drink,P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction5.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction5.wav,37612
+sfx_player_eat,Player,Eat food / drink,P1,Layer,secondary,PHX8,Pickup/Wav/Pickup__001.wav,by_pack/PHX8/Pickup/Wav/Pickup__001.wav,3172
+sfx_player_crystal,Player,Use Life/Stamina crystal,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup1.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup1.wav,73932
+sfx_player_crystal,Player,Use Life/Stamina crystal,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup5.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup5.wav,20198
+sfx_player_crystal,Player,Use Life/Stamina crystal,P1,Layer,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high1.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high1.wav,7478
+sfx_player_crystal,Player,Use Life/Stamina crystal,P1,Layer,secondary,LRSF8,Wav/Jingle_Achievement_00.wav,by_pack/LRSF8/Wav/Jingle_Achievement_00.wav,580538
+sfx_player_low_health,Player,Low-health heartbeat,P2,Direct,primary,OGA512,General Sounds/Alarms/Low health Alarms/sfx_lowhealth_alarmloop1.wav,by_pack/OGA512/General Sounds/Alarms/Low health Alarms/sfx_lowhealth_alarmloop1.wav,70610
+sfx_player_low_health,Player,Low-health heartbeat,P2,Direct,secondary,OGA512,General Sounds/Alarms/Low health Alarms/sfx_lowhealth_alarmloop2.wav,by_pack/OGA512/General Sounds/Alarms/Low health Alarms/sfx_lowhealth_alarmloop2.wav,70612
+sfx_tool_swing,Tools & World,Sword/tool swing,P0,Direct + pitch,primary,OGA512,Weapons/Melee/sfx_wpn_sword1.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_sword1.wav,9980
+sfx_tool_swing,Tools & World,Sword/tool swing,P0,Direct + pitch,primary,OGA512,Weapons/Melee/sfx_wpn_sword2.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_sword2.wav,8636
+sfx_tool_swing,Tools & World,Sword/tool swing,P0,Direct + pitch,primary,OGA512,Weapons/Melee/sfx_wpn_sword3.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_sword3.wav,12306
+sfx_tool_swing,Tools & World,Sword/tool swing,P0,Direct + pitch,primary,OGA512,Weapons/Melee/sfx_wpn_dagger.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_dagger.wav,2102
+sfx_tool_swing,Tools & World,Sword/tool swing,P0,Direct + pitch,secondary,PHX8,Pew/Wav/Pew__002.wav,by_pack/PHX8/Pew/Wav/Pew__002.wav,10376
+sfx_tool_impact,Tools & World,Tool hits a target,P0,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact1.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact1.wav,8418
+sfx_tool_impact,Tools & World,Tool hits a target,P0,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact3.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact3.wav,4300
+sfx_tool_impact,Tools & World,Tool hits a target,P0,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact7.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact7.wav,8410
+sfx_tool_impact,Tools & World,Tool hits a target,P0,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact10.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact10.wav,32132
+sfx_tool_impact,Tools & World,Tool hits a target,P0,Layer,secondary,PHX8,Punch1/Wav/Punch1__001.wav,by_pack/PHX8/Punch1/Wav/Punch1__001.wav,6507
+sfx_tool_impact,Tools & World,Tool hits a target,P0,Layer,secondary,PHX8,Punch2/Wav/Punch2__001.wav,by_pack/PHX8/Punch2/Wav/Punch2__001.wav,8075
+sfx_block_break,Tools & World,Block breaks,P0,Layer,primary,OGA512,Explosions/Short/sfx_exp_short_hard1.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_hard1.wav,53182
+sfx_block_break,Tools & World,Block breaks,P0,Layer,primary,OGA512,Explosions/Short/sfx_exp_short_hard3.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_hard3.wav,55440
+sfx_block_break,Tools & World,Block breaks,P0,Layer,primary,OGA512,Explosions/Short/sfx_exp_short_hard5.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_hard5.wav,75308
+sfx_block_break,Tools & World,Block breaks,P0,Layer,secondary,PHX8,Explosion1/Wav/Explosion1__001.wav,by_pack/PHX8/Explosion1/Wav/Explosion1__001.wav,14500
+sfx_block_place,Tools & World,Block placed,P1,Direct + pitch,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact1.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact1.wav,8418
+sfx_block_place,Tools & World,Block placed,P1,Direct + pitch,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact2.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact2.wav,12398
+sfx_block_place,Tools & World,Block placed,P1,Direct + pitch,secondary,PHX8,Footstep1/Wav/Footstep1__005.wav,by_pack/PHX8/Footstep1/Wav/Footstep1__005.wav,2387
+sfx_tree_chop_fall,Tools & World,Tree chopped and falls,P1,Layer,primary,OGA512,Weapons/Melee/sfx_wpn_sword1.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_sword1.wav,9980
+sfx_tree_chop_fall,Tools & World,Tree chopped and falls,P1,Layer,primary,OGA512,Explosions/Short/sfx_exp_short_soft1.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_soft1.wav,42068
+sfx_tree_chop_fall,Tools & World,Tree chopped and falls,P1,Layer,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen1.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen1.wav,11404
+sfx_tree_chop_fall,Tools & World,Tree chopped and falls,P1,Layer,secondary,LUNAR8,Debris1.wav,by_pack/LUNAR8/Debris1.wav,22588
+sfx_grass_cut,Tools & World,Grass cut,P1,Layer,primary,OGA512,Weapons/Melee/sfx_wpn_dagger.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_dagger.wav,2102
+sfx_grass_cut,Tools & World,Grass cut,P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction3.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction3.wav,87076
+sfx_grass_cut,Tools & World,Grass cut,P1,Layer,secondary,LUNAR8,Rustle1.wav,by_pack/LUNAR8/Rustle1.wav,22588
+sfx_grass_rustle,Tools & World,Walk through grass,P2,Process,primary,LUNAR8,Rustle1.wav,by_pack/LUNAR8/Rustle1.wav,22588
+sfx_grass_rustle,Tools & World,Walk through grass,P2,Process,primary,LUNAR8,Rustle2.wav,by_pack/LUNAR8/Rustle2.wav,22588
+sfx_grass_rustle,Tools & World,Walk through grass,P2,Process,secondary,OGA512,Movement/Footsteps/sfx_movement_footsteps1a.wav,by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav,4494
+sfx_farming,Tools & World,"Till, plant, water, harvest",P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction2.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction2.wav,59006
+sfx_farming,Tools & World,"Till, plant, water, harvest",P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction6.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction6.wav,42102
+sfx_farming,Tools & World,"Till, plant, water, harvest",P1,Layer,primary,OGA512,Movement/Footsteps/sfx_movement_footsteps1a.wav,by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav,4494
+sfx_farming,Tools & World,"Till, plant, water, harvest",P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup2.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup2.wav,65740
+sfx_farming,Tools & World,"Till, plant, water, harvest",P1,Layer,secondary,LUNAR8,WaterSplash.wav,by_pack/LUNAR8/WaterSplash.wav,19516
+sfx_build_mode,Tools & World,Build mode toggle,P2,Direct,primary,OGA512,General Sounds/Buttons/sfx_sounds_button1.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button1.wav,29592
+sfx_build_mode,Tools & World,Build mode toggle,P2,Direct,primary,OGA512,General Sounds/Buttons/sfx_sounds_button3.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button3.wav,13870
+sfx_build_mode,Tools & World,Build mode toggle,P2,Direct,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_select1.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_select1.wav,31174
+sfx_build_mode,Tools & World,Build mode toggle,P2,Direct,secondary,PHX8,Menu/Wav/Menu__001.wav,by_pack/PHX8/Menu/Wav/Menu__001.wav,3752
+sfx_placement_error,Tools & World,Invalid placement,P1,Direct,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error1.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error1.wav,28876
+sfx_placement_error,Tools & World,Invalid placement,P1,Direct,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error3.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error3.wav,18810
+sfx_placement_error,Tools & World,Invalid placement,P1,Direct,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_negative1.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_negative1.wav,127824
+sfx_placement_error,Tools & World,Invalid placement,P1,Direct,secondary,PHX8,Menu/Wav/Menu__002.wav,by_pack/PHX8/Menu/Wav/Menu__002.wav,3716
+sfx_inventory_full,Tools & World,Inventory or chest full,P1,Direct + pitch,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error2.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error2.wav,23536
+sfx_inventory_full,Tools & World,Inventory or chest full,P1,Direct + pitch,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error6.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error6.wav,9026
+sfx_inventory_full,Tools & World,Inventory or chest full,P1,Direct + pitch,secondary,PHX8,Ouch/Wav/Ouch__002.wav,by_pack/PHX8/Ouch/Wav/Ouch__002.wav,14382
+sfx_item_pickup,Items & Interactables,Item pickup,P0,Direct,primary,LRSF8,Wav/Pickup_00.wav,by_pack/LRSF8/Wav/Pickup_00.wav,19682
+sfx_item_pickup,Items & Interactables,Item pickup,P0,Direct,primary,LRSF8,Wav/Pickup_02.wav,by_pack/LRSF8/Wav/Pickup_02.wav,47142
+sfx_item_pickup,Items & Interactables,Item pickup,P0,Direct,primary,LRSF8,Wav/Pickup_04.wav,by_pack/LRSF8/Wav/Pickup_04.wav,48376
+sfx_item_pickup,Items & Interactables,Item pickup,P0,Direct,secondary,OGA512,General Sounds/Coins/sfx_coin_single1.wav,by_pack/OGA512/General Sounds/Coins/sfx_coin_single1.wav,36906
+sfx_item_pickup,Items & Interactables,Item pickup,P0,Direct,secondary,OGA512,General Sounds/Coins/sfx_coin_single3.wav,by_pack/OGA512/General Sounds/Coins/sfx_coin_single3.wav,11798
+sfx_item_drop,Items & Interactables,Item drop,P1,Direct + pitch,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction4.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction4.wav,49834
+sfx_item_drop,Items & Interactables,Item drop,P1,Direct + pitch,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction8.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction8.wav,184038
+sfx_item_drop,Items & Interactables,Item drop,P1,Direct + pitch,secondary,PHX8,Pickup/Wav/Pickup__002.wav,by_pack/PHX8/Pickup/Wav/Pickup__002.wav,10289
+sfx_inventory_open_close,Items & Interactables,Inventory open / close,P0,Direct,primary,LRSF8,Wav/Open_00.wav,by_pack/LRSF8/Wav/Open_00.wav,145156
+sfx_inventory_open_close,Items & Interactables,Inventory open / close,P0,Direct,primary,LRSF8,Wav/Open_01.wav,by_pack/LRSF8/Wav/Open_01.wav,145156
+sfx_inventory_open_close,Items & Interactables,Inventory open / close,P0,Direct,secondary,OGA512,General Sounds/Menu Sounds/sfx_menu_select2.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_select2.wav,27110
+sfx_hotbar,Items & Interactables,Hotbar select / scroll,P0,Direct,primary,OGA512,General Sounds/Buttons/sfx_sounds_button2.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button2.wav,46052
+sfx_hotbar,Items & Interactables,Hotbar select / scroll,P0,Direct,primary,OGA512,General Sounds/Buttons/sfx_sounds_button5.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button5.wav,25208
+sfx_hotbar,Items & Interactables,Hotbar select / scroll,P0,Direct,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_move1.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_move1.wav,3672
+sfx_hotbar,Items & Interactables,Hotbar select / scroll,P0,Direct,secondary,LRSF8,Wav/Menu_Navigate_00.wav,by_pack/LRSF8/Wav/Menu_Navigate_00.wav,10716
+sfx_item_move,Items & Interactables,Move/stack/delete item,P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button6.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button6.wav,16542
+sfx_item_move,Items & Interactables,Move/stack/delete item,P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction1.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction1.wav,10412
+sfx_item_move,Items & Interactables,Move/stack/delete item,P1,Layer,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_move2.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_move2.wav,5508
+sfx_item_move,Items & Interactables,Move/stack/delete item,P1,Layer,secondary,LRSF8,Wav/Menu_Navigate_01.wav,by_pack/LRSF8/Wav/Menu_Navigate_01.wav,10188
+sfx_chest,Items & Interactables,Chest open/close,P1,Layer,primary,LRSF8,Wav/Open_00.wav,by_pack/LRSF8/Wav/Open_00.wav,145156
+sfx_chest,Items & Interactables,Chest open/close,P1,Layer,secondary,OGA512,Movement/Opening Doors/sfx_movement_dooropen1.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen1.wav,11404
+sfx_chest,Items & Interactables,Chest open/close,P1,Layer,secondary,OGA512,General Sounds/Coins/sfx_coin_cluster1.wav,by_pack/OGA512/General Sounds/Coins/sfx_coin_cluster1.wav,61286
+sfx_door,Items & Interactables,Door open/close,P1,Direct,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen1.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen1.wav,11404
+sfx_door,Items & Interactables,Door open/close,P1,Direct,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen2.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen2.wav,11508
+sfx_door,Items & Interactables,Door open/close,P1,Direct,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen3.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen3.wav,13084
+sfx_door,Items & Interactables,Door open/close,P1,Direct,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen4.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen4.wav,9462
+sfx_door,Items & Interactables,Door open/close,P1,Direct,secondary,OGA512,General Sounds/Impacts/sfx_sounds_impact2.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact2.wav,12398
+sfx_bonfire,Items & Interactables,Bonfire ignite/extinguish/toggle,P1,Layer,primary,OGA512,Explosions/Short/sfx_exp_short_soft1.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_soft1.wav,42068
+sfx_bonfire,Items & Interactables,Bonfire ignite/extinguish/toggle,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup1.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup1.wav,73932
+sfx_bonfire,Items & Interactables,Bonfire ignite/extinguish/toggle,P1,Layer,secondary,FIRE,fire.wav,by_pack/FIRE/fire.wav,10324410
+sfx_torch,Items & Interactables,Torch place/remove,P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction7.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction7.wav,12492
+sfx_torch,Items & Interactables,Torch place/remove,P1,Layer,primary,OGA512,Explosions/Short/sfx_exp_short_soft2.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_soft2.wav,53726
+sfx_torch,Items & Interactables,Torch place/remove,P1,Layer,secondary,FIRE,fire.wav,by_pack/FIRE/fire.wav,10324410
+sfx_fishing,Items & Interactables,"Fishing cast, bite, reel, catch",P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction3.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction3.wav,87076
+sfx_fishing,Items & Interactables,"Fishing cast, bite, reel, catch",P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup2.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup2.wav,65740
+sfx_fishing,Items & Interactables,"Fishing cast, bite, reel, catch",P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button4.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button4.wav,40874
+sfx_fishing,Items & Interactables,"Fishing cast, bite, reel, catch",P1,Layer,secondary,LUNAR8,WaterSplash.wav,by_pack/LUNAR8/WaterSplash.wav,19516
+sfx_map_waypoint,Items & Interactables,Map/waypoint interactions,P1,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal1.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal1.wav,123948
+sfx_map_waypoint,Items & Interactables,Map/waypoint interactions,P1,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal4.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal4.wav,121972
+sfx_map_waypoint,Items & Interactables,Map/waypoint interactions,P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button4.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button4.wav,40874
+sfx_map_waypoint,Items & Interactables,Map/waypoint interactions,P1,Layer,secondary,PHX8,Teleport1/Wav/Teleport1__001.wav,by_pack/PHX8/Teleport1/Wav/Teleport1__001.wav,18239
+sfx_water,Items & Interactables,Water splash / bucket,P1,Process,primary,LUNAR8,WaterSplash.wav,by_pack/LUNAR8/WaterSplash.wav,19516
+sfx_water,Items & Interactables,Water splash / bucket,P1,Process,secondary,OGA512,General Sounds/Interactions/sfx_sounds_interaction5.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction5.wav,37612
+sfx_ui_interaction,UI & Progression,UI hover/click/back/tab/toggle/slider,P0,Direct,primary,OGA512,General Sounds/Buttons/sfx_sounds_button1.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button1.wav,29592
+sfx_ui_interaction,UI & Progression,UI hover/click/back/tab/toggle/slider,P0,Direct,primary,OGA512,General Sounds/Buttons/sfx_sounds_button4.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button4.wav,40874
+sfx_ui_interaction,UI & Progression,UI hover/click/back/tab/toggle/slider,P0,Direct,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_move1.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_move1.wav,3672
+sfx_ui_interaction,UI & Progression,UI hover/click/back/tab/toggle/slider,P0,Direct,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_select1.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_select1.wav,31174
+sfx_ui_interaction,UI & Progression,UI hover/click/back/tab/toggle/slider,P0,Direct,secondary,LRSF8,Wav/Menu_Navigate_00.wav,by_pack/LRSF8/Wav/Menu_Navigate_00.wav,10716
+sfx_ui_interaction,UI & Progression,UI hover/click/back/tab/toggle/slider,P0,Direct,secondary,LRSF8,Wav/Menu_Navigate_02.wav,by_pack/LRSF8/Wav/Menu_Navigate_02.wav,10188
+sfx_ui_result,UI & Progression,Success/error/notification,P0,Direct,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup1.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup1.wav,73932
+sfx_ui_result,UI & Progression,Success/error/notification,P0,Direct,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error1.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error1.wav,28876
+sfx_ui_result,UI & Progression,Success/error/notification,P0,Direct,primary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral1.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral1.wav,23642
+sfx_ui_result,UI & Progression,Success/error/notification,P0,Direct,secondary,LRSF8,Wav/Jingle_Achievement_00.wav,by_pack/LRSF8/Wav/Jingle_Achievement_00.wav,580538
+sfx_ui_result,UI & Progression,Success/error/notification,P0,Direct,secondary,LRSF8,Wav/Jingle_Lose_00.wav,by_pack/LRSF8/Wav/Jingle_Lose_00.wav,1064068
+sfx_menu_pause,UI & Progression,"Menu open/close, pause/unpause",P1,Direct,primary,OGA512,General Sounds/Pause Sounds/sfx_sounds_pause1_in.wav,by_pack/OGA512/General Sounds/Pause Sounds/sfx_sounds_pause1_in.wav,22964
+sfx_menu_pause,UI & Progression,"Menu open/close, pause/unpause",P1,Direct,primary,OGA512,General Sounds/Pause Sounds/sfx_sounds_pause1_out.wav,by_pack/OGA512/General Sounds/Pause Sounds/sfx_sounds_pause1_out.wav,19472
+sfx_menu_pause,UI & Progression,"Menu open/close, pause/unpause",P1,Direct,primary,OGA512,General Sounds/Pause Sounds/sfx_sounds_pause3_in.wav,by_pack/OGA512/General Sounds/Pause Sounds/sfx_sounds_pause3_in.wav,24212
+sfx_menu_pause,UI & Progression,"Menu open/close, pause/unpause",P1,Direct,secondary,OGA512,General Sounds/Menu Sounds/sfx_menu_select1.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_select1.wav,31174
+sfx_save_load,UI & Progression,Save/load/delete,P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button7.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button7.wav,21770
+sfx_save_load,UI & Progression,Save/load/delete,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup3.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup3.wav,37068
+sfx_save_load,UI & Progression,Save/load/delete,P1,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error4.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error4.wav,4300
+sfx_save_load,UI & Progression,Save/load/delete,P1,Layer,secondary,LRSF8,Wav/Jingle_Achievement_00.wav,by_pack/LRSF8/Wav/Jingle_Achievement_00.wav,580538
+sfx_account_cloud,UI & Progression,"Login, signup, logout, cloud sync",P2,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip1.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip1.wav,5650
+sfx_account_cloud,UI & Progression,"Login, signup, logout, cloud sync",P2,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip5.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip5.wav,10144
+sfx_account_cloud,UI & Progression,"Login, signup, logout, cloud sync",P2,Layer,primary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral3.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral3.wav,108226
+sfx_account_cloud,UI & Progression,"Login, signup, logout, cloud sync",P2,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error7.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error7.wav,12490
+sfx_account_cloud,UI & Progression,"Login, signup, logout, cloud sync",P2,Layer,secondary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise1.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise1.wav,241418
+sfx_leaderboard,UI & Progression,Leaderboard refresh / star claim,P2,Direct,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_select3.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_select3.wav,64832
+sfx_leaderboard,UI & Progression,Leaderboard refresh / star claim,P2,Direct,primary,OGA512,General Sounds/Coins/sfx_coin_double1.wav,by_pack/OGA512/General Sounds/Coins/sfx_coin_double1.wav,18638
+sfx_leaderboard,UI & Progression,Leaderboard refresh / star claim,P2,Direct,secondary,LRSF8,Wav/Collect_Point_00.wav,by_pack/LRSF8/Wav/Collect_Point_00.wav,91500
+sfx_mission,UI & Progression,Mission progress / mission complete / star,P0,Layer,primary,LRSF8,Wav/Jingle_Achievement_00.wav,by_pack/LRSF8/Wav/Jingle_Achievement_00.wav,580538
+sfx_mission,UI & Progression,Mission progress / mission complete / star,P0,Layer,primary,LRSF8,Wav/Jingle_Achievement_01.wav,by_pack/LRSF8/Wav/Jingle_Achievement_01.wav,684232
+sfx_mission,UI & Progression,Mission progress / mission complete / star,P0,Layer,secondary,OGA512,General Sounds/Fanfares/sfx_sounds_fanfare1.wav,by_pack/OGA512/General Sounds/Fanfares/sfx_sounds_fanfare1.wav,45556
+sfx_mission,UI & Progression,Mission progress / mission complete / star,P0,Layer,secondary,OGA512,General Sounds/Coins/sfx_coin_cluster1.wav,by_pack/OGA512/General Sounds/Coins/sfx_coin_cluster1.wav,61286
+sfx_knowledge_bestiary,UI & Progression,Knowledge or bestiary unlock,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup4.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup4.wav,65326
+sfx_knowledge_bestiary,UI & Progression,Knowledge or bestiary unlock,P1,Layer,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high2.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high2.wav,15804
+sfx_knowledge_bestiary,UI & Progression,Knowledge or bestiary unlock,P1,Layer,primary,OGA512,General Sounds/Fanfares/sfx_sounds_fanfare2.wav,by_pack/OGA512/General Sounds/Fanfares/sfx_sounds_fanfare2.wav,24916
+sfx_knowledge_bestiary,UI & Progression,Knowledge or bestiary unlock,P1,Layer,secondary,LRSF8,Wav/Collect_Point_00.wav,by_pack/LRSF8/Wav/Collect_Point_00.wav,91500
+sfx_tutorial,UI & Progression,Tutorial dialogue/advance/complete/skip,P1,Layer,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_select1.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_select1.wav,31174
+sfx_tutorial,UI & Progression,Tutorial dialogue/advance/complete/skip,P1,Layer,primary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral4.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral4.wav,46206
+sfx_tutorial,UI & Progression,Tutorial dialogue/advance/complete/skip,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup5.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup5.wav,20198
+sfx_tutorial,UI & Progression,Tutorial dialogue/advance/complete/skip,P1,Layer,secondary,LRSF8,Wav/Menu_Navigate_03.wav,by_pack/LRSF8/Wav/Menu_Navigate_03.wav,10532
+sfx_code_editor,UI & Progression,Code editor open/run/stop/success/error,P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button8.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button8.wav,45494
+sfx_code_editor,UI & Progression,Code editor open/run/stop/success/error,P1,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip2.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip2.wav,15340
+sfx_code_editor,UI & Progression,Code editor open/run/stop/success/error,P1,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error2.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error2.wav,23536
+sfx_code_editor,UI & Progression,Code editor open/run/stop/success/error,P1,Layer,secondary,PHX8,Menu/Wav/Menu__002.wav,by_pack/PHX8/Menu/Wav/Menu__002.wav,3716
+sfx_quiz,UI & Progression,Quiz open/correct/wrong/hint/run/complete,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup6.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup6.wav,25948
+sfx_quiz,UI & Progression,Quiz open/correct/wrong/hint/run/complete,P1,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error5.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error5.wav,28876
+sfx_quiz,UI & Progression,Quiz open/correct/wrong/hint/run/complete,P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button9.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button9.wav,20684
+sfx_quiz,UI & Progression,Quiz open/correct/wrong/hint/run/complete,P1,Layer,secondary,LRSF8,Wav/Jingle_Achievement_00.wav,by_pack/LRSF8/Wav/Jingle_Achievement_00.wav,580538
+sfx_knowledge_altar,UI & Progression,Knowledge altar open/page/unlock,P2,Layer,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen2.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen2.wav,11508
+sfx_knowledge_altar,UI & Progression,Knowledge altar open/page/unlock,P2,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup7.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup7.wav,58650
+sfx_knowledge_altar,UI & Progression,Knowledge altar open/page/unlock,P2,Layer,secondary,LRSF8,Wav/Open_01.wav,by_pack/LRSF8/Wav/Open_01.wav,145156
+sfx_color_crafter,UI & Progression,Color select/craft,P1,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip3.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip3.wav,7610
+sfx_color_crafter,UI & Progression,Color select/craft,P1,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip7.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip7.wav,4174
+sfx_color_crafter,UI & Progression,Color select/craft,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup8.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup8.wav,34790
+sfx_color_crafter,UI & Progression,Color select/craft,P1,Layer,secondary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high3.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high3.wav,17376
+sfx_station,Crafting & Automation,Crafting station open/close,P1,Layer,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen3.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen3.wav,13084
+sfx_station,Crafting & Automation,Crafting station open/close,P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button10.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button10.wav,6082
+sfx_station,Crafting & Automation,Crafting station open/close,P1,Layer,secondary,LRSF8,Wav/Open_00.wav,by_pack/LRSF8/Wav/Open_00.wav,145156
+sfx_recipe_select,Crafting & Automation,Recipe selected,P1,Direct,primary,OGA512,General Sounds/Menu Sounds/sfx_menu_move3.wav,by_pack/OGA512/General Sounds/Menu Sounds/sfx_menu_move3.wav,6900
+sfx_recipe_select,Crafting & Automation,Recipe selected,P1,Direct,primary,OGA512,General Sounds/Buttons/sfx_sounds_button11.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button11.wav,8378
+sfx_recipe_select,Crafting & Automation,Recipe selected,P1,Direct,secondary,LRSF8,Wav/Menu_Navigate_01.wav,by_pack/LRSF8/Wav/Menu_Navigate_01.wav,10188
+sfx_craft,Crafting & Automation,Craft start/complete/fail,P0,Layer,primary,LRSF8,Wav/Craft_00.wav,by_pack/LRSF8/Wav/Craft_00.wav,145156
+sfx_craft,Crafting & Automation,Craft start/complete/fail,P0,Layer,secondary,OGA512,General Sounds/Impacts/sfx_sounds_impact4.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact4.wav,4300
+sfx_craft,Crafting & Automation,Craft start/complete/fail,P0,Layer,secondary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup9.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup9.wav,56944
+sfx_station_io,Crafting & Automation,Input insert / output collect,P1,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction9.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction9.wav,5148
+sfx_station_io,Crafting & Automation,Input insert / output collect,P1,Layer,primary,OGA512,General Sounds/Coins/sfx_coin_single4.wav,by_pack/OGA512/General Sounds/Coins/sfx_coin_single4.wav,12490
+sfx_station_io,Crafting & Automation,Input insert / output collect,P1,Layer,secondary,LRSF8,Wav/Pickup_01.wav,by_pack/LRSF8/Wav/Pickup_01.wav,23290
+sfx_furnace,Crafting & Automation,"Furnace open/close, feed, fuel, smelt, fail",P1,Layer,primary,OGA512,Explosions/Short/sfx_exp_short_soft3.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_soft3.wav,68966
+sfx_furnace,Crafting & Automation,"Furnace open/close, feed, fuel, smelt, fail",P1,Layer,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise2.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise2.wav,192218
+sfx_furnace,Crafting & Automation,"Furnace open/close, feed, fuel, smelt, fail",P1,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact5.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact5.wav,12492
+sfx_furnace,Crafting & Automation,"Furnace open/close, feed, fuel, smelt, fail",P1,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error6.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error6.wav,9026
+sfx_furnace,Crafting & Automation,"Furnace open/close, feed, fuel, smelt, fail",P1,Layer,secondary,FIRE,fire.wav,by_pack/FIRE/fire.wav,10324410
+sfx_lua_station,Crafting & Automation,Lua station place/editor open/close,P1,Layer,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_poweron.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_poweron.wav,142070
+sfx_lua_station,Crafting & Automation,Lua station place/editor open/close,P1,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button11.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button11.wav,8378
+sfx_lua_station,Crafting & Automation,Lua station place/editor open/close,P1,Layer,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise3.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise3.wav,135364
+sfx_lua_station,Crafting & Automation,Lua station place/editor open/close,P1,Layer,secondary,LRSF8,Wav/Open_01.wav,by_pack/LRSF8/Wav/Open_01.wav,145156
+sfx_lua_run,Crafting & Automation,Automatica run start/success/error/stop,P1,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip4.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip4.wav,3814
+sfx_lua_run,Crafting & Automation,Automatica run start/success/error/stop,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup10.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup10.wav,22474
+sfx_lua_run,Crafting & Automation,Automatica run start/success/error/stop,P1,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error8.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error8.wav,25780
+sfx_lua_run,Crafting & Automation,Automatica run start/success/error/stop,P1,Layer,secondary,PHX8,Menu/Wav/Menu__003.wav,by_pack/PHX8/Menu/Wav/Menu__003.wav,1712
+sfx_robot_move,Crafting & Automation,Robot movement/hover,P2,Direct,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise1.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise1.wav,241418
+sfx_robot_move,Crafting & Automation,Robot movement/hover,P2,Direct,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise4.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise4.wav,76836
+sfx_robot_move,Crafting & Automation,Robot movement/hover,P2,Direct,secondary,LOOPS30,machine_01.ogg,by_pack/LOOPS30/machine_01.ogg,56095
+sfx_robot_move,Crafting & Automation,Robot movement/hover,P2,Direct,secondary,LOOPS30,machine_02.ogg,by_pack/LOOPS30/machine_02.ogg,28176
+sfx_robot_work,Crafting & Automation,Robot chop/mine/place,P1,Layer,primary,OGA512,Weapons/Melee/sfx_wpn_sword1.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_sword1.wav,9980
+sfx_robot_work,Crafting & Automation,Robot chop/mine/place,P1,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact6.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact6.wav,8396
+sfx_robot_work,Crafting & Automation,Robot chop/mine/place,P1,Layer,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise2.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise2.wav,192218
+sfx_robot_work,Crafting & Automation,Robot chop/mine/place,P1,Layer,secondary,LOOPS30,machine_03.ogg,by_pack/LOOPS30/machine_03.ogg,31880
+sfx_robot_combat,Crafting & Automation,Robot attack/hurt/death,P1,Layer,primary,OGA512,Weapons/Melee/sfx_wpn_sword2.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_sword2.wav,8636
+sfx_robot_combat,Crafting & Automation,Robot attack/hurt/death,P1,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact7.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact7.wav,8410
+sfx_robot_combat,Crafting & Automation,Robot attack/hurt/death,P1,Layer,primary,OGA512,Death Screams/Robot/sfx_deathscream_robot1.wav,by_pack/OGA512/Death Screams/Robot/sfx_deathscream_robot1.wav,53372
+sfx_robot_combat,Crafting & Automation,Robot attack/hurt/death,P1,Layer,secondary,PHX8,Punch2/Wav/Punch2__001.wav,by_pack/PHX8/Punch2/Wav/Punch2__001.wav,8075
+sfx_robot_logistics,Crafting & Automation,Robot deposit/withdraw/return/home,P2,Layer,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction10.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction10.wav,25926
+sfx_robot_logistics,Crafting & Automation,Robot deposit/withdraw/return/home,P2,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button12.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button12.wav,17250
+sfx_robot_logistics,Crafting & Automation,Robot deposit/withdraw/return/home,P2,Layer,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise5.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise5.wav,215768
+sfx_robot_logistics,Crafting & Automation,Robot deposit/withdraw/return/home,P2,Layer,secondary,LOOPS30,machine_04.ogg,by_pack/LOOPS30/machine_04.ogg,28418
+sfx_robot_error,Crafting & Automation,Robot error/no tool/invalid request,P1,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error9.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error9.wav,28484
+sfx_robot_error,Crafting & Automation,Robot error/no tool/invalid request,P1,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip6.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip6.wav,8958
+sfx_robot_error,Crafting & Automation,Robot error/no tool/invalid request,P1,Layer,secondary,PHX8,Menu/Wav/Menu__004.wav,by_pack/PHX8/Menu/Wav/Menu__004.wav,3765
+sfx_algorithmica,Crafting & Automation,Algorithmica run start/success/error/reject,P1,Layer,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip8.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip8.wav,6052
+sfx_algorithmica,Crafting & Automation,Algorithmica run start/success/error/reject,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup11.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup11.wav,39590
+sfx_algorithmica,Crafting & Automation,Algorithmica run start/success/error/reject,P1,Layer,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error10.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error10.wav,26562
+sfx_algorithmica,Crafting & Automation,Algorithmica run start/success/error/reject,P1,Layer,secondary,PHX8,Menu/Wav/Menu__005.wav,by_pack/PHX8/Menu/Wav/Menu__005.wav,3935
+sfx_algorithmica_color,Crafting & Automation,Color craft,P1,Direct,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup12.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup12.wav,53698
+sfx_algorithmica_color,Crafting & Automation,Color craft,P1,Direct,primary,OGA512,General Sounds/Negative Sounds/sfx_sounds_error11.wav,by_pack/OGA512/General Sounds/Negative Sounds/sfx_sounds_error11.wav,40476
+sfx_algorithmica_color,Crafting & Automation,Color craft,P1,Direct,secondary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high4.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high4.wav,25110
+sfx_mob_wolf,Combat & Mobs,Wolf voice set,P1,Layer + pitch,primary,PHX8,Roar1/Wav/Roar1__001.wav,by_pack/PHX8/Roar1/Wav/Roar1__001.wav,31304
+sfx_mob_wolf,Combat & Mobs,Wolf voice set,P1,Layer + pitch,primary,PHX8,Punch1/Wav/Punch1__001.wav,by_pack/PHX8/Punch1/Wav/Punch1__001.wav,6507
+sfx_mob_wolf,Combat & Mobs,Wolf voice set,P1,Layer + pitch,primary,PHX8,Ouch/Wav/Ouch__001.wav,by_pack/PHX8/Ouch/Wav/Ouch__001.wav,13037
+sfx_mob_wolf,Combat & Mobs,Wolf voice set,P1,Layer + pitch,secondary,OGA512,Death Screams/Alien/sfx_deathscream_alien1.wav,by_pack/OGA512/Death Screams/Alien/sfx_deathscream_alien1.wav,133922
+sfx_mob_pixie,Combat & Mobs,Pixie voice set,P1,Layer + pitch,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high1.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high1.wav,7478
+sfx_mob_pixie,Combat & Mobs,Pixie voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip1.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip1.wav,5650
+sfx_mob_pixie,Combat & Mobs,Pixie voice set,P1,Layer + pitch,secondary,PHX8,Powerup/Wav/Powerup__001.wav,by_pack/PHX8/Powerup/Wav/Powerup__001.wav,15564
+sfx_mob_pixie,Combat & Mobs,Pixie voice set,P1,Layer + pitch,secondary,PHX8,Ouch/Wav/Ouch__004.wav,by_pack/PHX8/Ouch/Wav/Ouch__004.wav,7493
+sfx_mob_worm,Combat & Mobs,Desert Worm voice set,P1,Layer + pitch,primary,PHX8,Bass Drum/Wav/Bass Drum__001.wav,by_pack/PHX8/Bass Drum/Wav/Bass Drum__001.wav,6954
+sfx_mob_worm,Combat & Mobs,Desert Worm voice set,P1,Layer + pitch,primary,PHX8,Roar1/Wav/Roar1__002.wav,by_pack/PHX8/Roar1/Wav/Roar1__002.wav,26427
+sfx_mob_worm,Combat & Mobs,Desert Worm voice set,P1,Layer + pitch,secondary,OGA512,Explosions/Short/sfx_exp_short_soft4.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_soft4.wav,51318
+sfx_mob_headless_fish,Combat & Mobs,Headless Fish voice set,P1,Layer + pitch,primary,PHX8,Space/Wav/Space__001.wav,by_pack/PHX8/Space/Wav/Space__001.wav,13741
+sfx_mob_headless_fish,Combat & Mobs,Headless Fish voice set,P1,Layer + pitch,primary,PHX8,Ouch/Wav/Ouch__004.wav,by_pack/PHX8/Ouch/Wav/Ouch__004.wav,7493
+sfx_mob_headless_fish,Combat & Mobs,Headless Fish voice set,P1,Layer + pitch,secondary,OGA512,Death Screams/Alien/sfx_deathscream_alien2.wav,by_pack/OGA512/Death Screams/Alien/sfx_deathscream_alien2.wav,70624
+sfx_mob_sheep,Combat & Mobs,Sheep voice set,P2,Layer + pitch,primary,PHX8,Ouch/Wav/Ouch__005.wav,by_pack/PHX8/Ouch/Wav/Ouch__005.wav,3954
+sfx_mob_sheep,Combat & Mobs,Sheep voice set,P2,Layer + pitch,primary,PHX8,Roar1/Wav/Roar1__003.wav,by_pack/PHX8/Roar1/Wav/Roar1__003.wav,21811
+sfx_mob_sheep,Combat & Mobs,Sheep voice set,P2,Layer + pitch,secondary,OGA512,Death Screams/Alien/sfx_deathscream_alien3.wav,by_pack/OGA512/Death Screams/Alien/sfx_deathscream_alien3.wav,74156
+sfx_mob_hitman,Combat & Mobs,Hitman voice set,P1,Layer + pitch,primary,PHX8,Punch2/Wav/Punch2__001.wav,by_pack/PHX8/Punch2/Wav/Punch2__001.wav,8075
+sfx_mob_hitman,Combat & Mobs,Hitman voice set,P1,Layer + pitch,primary,PHX8,Roar1/Wav/Roar1__001.wav,by_pack/PHX8/Roar1/Wav/Roar1__001.wav,31304
+sfx_mob_hitman,Combat & Mobs,Hitman voice set,P1,Layer + pitch,secondary,OGA512,Death Screams/Human/sfx_deathscream_human2.wav,by_pack/OGA512/Death Screams/Human/sfx_deathscream_human2.wav,55574
+sfx_mob_rune_sentinel,Combat & Mobs,Rune Sentinel voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact8.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact8.wav,12514
+sfx_mob_rune_sentinel,Combat & Mobs,Rune Sentinel voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise3.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise3.wav,135364
+sfx_mob_rune_sentinel,Combat & Mobs,Rune Sentinel voice set,P1,Layer + pitch,secondary,OGA512,Death Screams/Robot/sfx_deathscream_robot2.wav,by_pack/OGA512/Death Screams/Robot/sfx_deathscream_robot2.wav,66476
+sfx_mob_brass_prowler,Combat & Mobs,Brass Prowler voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_mechanicalnoise4.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_mechanicalnoise4.wav,76836
+sfx_mob_brass_prowler,Combat & Mobs,Brass Prowler voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact9.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact9.wav,144822
+sfx_mob_brass_prowler,Combat & Mobs,Brass Prowler voice set,P1,Layer + pitch,secondary,PHX8,Pew/Wav/Pew__002.wav,by_pack/PHX8/Pew/Wav/Pew__002.wav,10376
+sfx_mob_brass_prowler,Combat & Mobs,Brass Prowler voice set,P1,Layer + pitch,secondary,PHX8,Ouch/Wav/Ouch__002.wav,by_pack/PHX8/Ouch/Wav/Ouch__002.wav,14382
+sfx_mob_cinder_ooze,Combat & Mobs,Cinder Ooze voice set,P1,Layer + pitch,primary,PHX8,Explosion2/Wav/Explosion2__001.wav,by_pack/PHX8/Explosion2/Wav/Explosion2__001.wav,31945
+sfx_mob_cinder_ooze,Combat & Mobs,Cinder Ooze voice set,P1,Layer + pitch,primary,PHX8,Space/Wav/Space__002.wav,by_pack/PHX8/Space/Wav/Space__002.wav,29795
+sfx_mob_cinder_ooze,Combat & Mobs,Cinder Ooze voice set,P1,Layer + pitch,secondary,OGA512,Death Screams/Alien/sfx_deathscream_alien3.wav,by_pack/OGA512/Death Screams/Alien/sfx_deathscream_alien3.wav,74156
+sfx_mob_cipher_warden,Combat & Mobs,Cipher Warden voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Alarms/Alarms/sfx_alarm_loop2.wav,by_pack/OGA512/General Sounds/Alarms/Alarms/sfx_alarm_loop2.wav,71672
+sfx_mob_cipher_warden,Combat & Mobs,Cipher Warden voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip2.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip2.wav,15340
+sfx_mob_cipher_warden,Combat & Mobs,Cipher Warden voice set,P1,Layer + pitch,secondary,OGA512,Death Screams/Android/sfx_deathscream_android1.wav,by_pack/OGA512/Death Screams/Android/sfx_deathscream_android1.wav,35380
+sfx_mob_gravebell_shambler,Combat & Mobs,Gravebell Shambler voice set,P1,Layer + pitch,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high3.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high3.wav,17376
+sfx_mob_gravebell_shambler,Combat & Mobs,Gravebell Shambler voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral5.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral5.wav,53450
+sfx_mob_gravebell_shambler,Combat & Mobs,Gravebell Shambler voice set,P1,Layer + pitch,secondary,PHX8,Roar1/Wav/Roar1__002.wav,by_pack/PHX8/Roar1/Wav/Roar1__002.wav,26427
+sfx_mob_emberfox_kit,Combat & Mobs,Emberfox Kit voice set,P2,Layer + pitch,primary,PHX8,Ouch/Wav/Ouch__006.wav,by_pack/PHX8/Ouch/Wav/Ouch__006.wav,5299
+sfx_mob_emberfox_kit,Combat & Mobs,Emberfox Kit voice set,P2,Layer + pitch,primary,PHX8,Powerup/Wav/Powerup__002.wav,by_pack/PHX8/Powerup/Wav/Powerup__002.wav,14200
+sfx_mob_emberfox_kit,Combat & Mobs,Emberfox Kit voice set,P2,Layer + pitch,secondary,OGA512,Death Screams/Alien/sfx_deathscream_alien4.wav,by_pack/OGA512/Death Screams/Alien/sfx_deathscream_alien4.wav,73644
+sfx_mob_mossback_nib,Combat & Mobs,Mossback Nib voice set,P2,Layer + pitch,primary,OGA512,Movement/Footsteps/sfx_movement_footsteps1a.wav,by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav,4494
+sfx_mob_mossback_nib,Combat & Mobs,Mossback Nib voice set,P2,Layer + pitch,primary,OGA512,General Sounds/Interactions/sfx_sounds_interaction6.wav,by_pack/OGA512/General Sounds/Interactions/sfx_sounds_interaction6.wav,42102
+sfx_mob_mossback_nib,Combat & Mobs,Mossback Nib voice set,P2,Layer + pitch,secondary,PHX8,Ouch/Wav/Ouch__007.wav,by_pack/PHX8/Ouch/Wav/Ouch__007.wav,13066
+sfx_mob_vesper_acolyte,Combat & Mobs,Vesper Acolyte voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral6.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral6.wav,33470
+sfx_mob_vesper_acolyte,Combat & Mobs,Vesper Acolyte voice set,P1,Layer + pitch,primary,OGA512,General Sounds/Weird Sounds/sfx_sound_noise.wav,by_pack/OGA512/General Sounds/Weird Sounds/sfx_sound_noise.wav,128692
+sfx_mob_vesper_acolyte,Combat & Mobs,Vesper Acolyte voice set,P1,Layer + pitch,secondary,PHX8,Space/Wav/Space__003.wav,by_pack/PHX8/Space/Wav/Space__003.wav,32576
+sfx_mob_wisp,Combat & Mobs,Wisp companion voice set,P2,Layer + pitch,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high4.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high4.wav,25110
+sfx_mob_wisp,Combat & Mobs,Wisp companion voice set,P2,Layer + pitch,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup13.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup13.wav,37566
+sfx_mob_wisp,Combat & Mobs,Wisp companion voice set,P2,Layer + pitch,secondary,PHX8,Powerup/Wav/Powerup__003.wav,by_pack/PHX8/Powerup/Wav/Powerup__003.wav,21353
+sfx_mob_spawn_despawn,Combat & Mobs,Mob spawn/despawn,P2,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal2.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal2.wav,192812
+sfx_mob_spawn_despawn,Combat & Mobs,Mob spawn/despawn,P2,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal5.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal5.wav,78028
+sfx_mob_spawn_despawn,Combat & Mobs,Mob spawn/despawn,P2,Layer,secondary,PHX8,Teleport1/Wav/Teleport1__002.wav,by_pack/PHX8/Teleport1/Wav/Teleport1__002.wav,14699
+sfx_hitman_specials,Combat & Mobs,"Hitman projectile, slam, self-destruct",P1,Layer,primary,OGA512,Weapons/Cannon/sfx_wpn_cannon1.wav,by_pack/OGA512/Weapons/Cannon/sfx_wpn_cannon1.wav,79480
+sfx_hitman_specials,Combat & Mobs,"Hitman projectile, slam, self-destruct",P1,Layer,primary,OGA512,Explosions/Medium Length/sfx_exp_medium1.wav,by_pack/OGA512/Explosions/Medium Length/sfx_exp_medium1.wav,152364
+sfx_hitman_specials,Combat & Mobs,"Hitman projectile, slam, self-destruct",P1,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact10.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact10.wav,32132
+sfx_hitman_specials,Combat & Mobs,"Hitman projectile, slam, self-destruct",P1,Layer,secondary,PHX8,Explosion2/Wav/Explosion2__002.wav,by_pack/PHX8/Explosion2/Wav/Explosion2__002.wav,18001
+sfx_dungeon_hazards,Combat & Mobs,Dungeon flare/projectile/trap/explosion,P0,Layer,primary,OGA512,Weapons/Lasers/sfx_wpn_laser1.wav,by_pack/OGA512/Weapons/Lasers/sfx_wpn_laser1.wav,32330
+sfx_dungeon_hazards,Combat & Mobs,Dungeon flare/projectile/trap/explosion,P0,Layer,primary,OGA512,Weapons/Lasers/sfx_wpn_laser4.wav,by_pack/OGA512/Weapons/Lasers/sfx_wpn_laser4.wav,30934
+sfx_dungeon_hazards,Combat & Mobs,Dungeon flare/projectile/trap/explosion,P0,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact11.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact11.wav,29304
+sfx_dungeon_hazards,Combat & Mobs,Dungeon flare/projectile/trap/explosion,P0,Layer,primary,OGA512,Explosions/Medium Length/sfx_exp_medium2.wav,by_pack/OGA512/Explosions/Medium Length/sfx_exp_medium2.wav,123520
+sfx_dungeon_hazards,Combat & Mobs,Dungeon flare/projectile/trap/explosion,P0,Layer,secondary,PHX8,Explosion1/Wav/Explosion1__002.wav,by_pack/PHX8/Explosion1/Wav/Explosion1__002.wav,18426
+sfx_parry_safezone,Combat & Mobs,Parry projectile / safe-zone ward,P1,Layer,primary,OGA512,Weapons/Melee/sfx_wpn_sword3.wav,by_pack/OGA512/Weapons/Melee/sfx_wpn_sword3.wav,12306
+sfx_parry_safezone,Combat & Mobs,Parry projectile / safe-zone ward,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup13.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup13.wav,37566
+sfx_parry_safezone,Combat & Mobs,Parry projectile / safe-zone ward,P1,Layer,primary,OGA512,General Sounds/Alarms/Alarms/sfx_alarm_loop3.wav,by_pack/OGA512/General Sounds/Alarms/Alarms/sfx_alarm_loop3.wav,90924
+sfx_parry_safezone,Combat & Mobs,Parry projectile / safe-zone ward,P1,Layer,secondary,PHX8,Punch1/Wav/Punch1__002.wav,by_pack/PHX8/Punch1/Wav/Punch1__002.wav,5905
+sfx_cave_travel,World & Dungeon,Enter/exit cave,P1,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal3.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal3.wav,103724
+sfx_cave_travel,World & Dungeon,Enter/exit cave,P1,Layer,primary,OGA512,Movement/Opening Doors/sfx_movement_dooropen4.wav,by_pack/OGA512/Movement/Opening Doors/sfx_movement_dooropen4.wav,9462
+sfx_cave_travel,World & Dungeon,Enter/exit cave,P1,Layer,secondary,LUNAR8,Wind.wav,by_pack/LUNAR8/Wind.wav,177002
+sfx_cave_portal,World & Dungeon,Cave entrance highlight/confirm,P2,Layer,primary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral6.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral6.wav,33470
+sfx_cave_portal,World & Dungeon,Cave entrance highlight/confirm,P2,Layer,primary,OGA512,General Sounds/Buttons/sfx_sounds_button13.wav,by_pack/OGA512/General Sounds/Buttons/sfx_sounds_button13.wav,36768
+sfx_cave_portal,World & Dungeon,Cave entrance highlight/confirm,P2,Layer,secondary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high5.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high5.wav,26240
+sfx_dungeon_portal,World & Dungeon,Dungeon portal enter/exit,P1,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal5.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal5.wav,78028
+sfx_dungeon_portal,World & Dungeon,Dungeon portal enter/exit,P1,Layer,primary,OGA512,General Sounds/Alarms/Alarms/sfx_alarm_loop4.wav,by_pack/OGA512/General Sounds/Alarms/Alarms/sfx_alarm_loop4.wav,86572
+sfx_dungeon_portal,World & Dungeon,Dungeon portal enter/exit,P1,Layer,primary,OGA512,General Sounds/Impacts/sfx_sounds_impact11.wav,by_pack/OGA512/General Sounds/Impacts/sfx_sounds_impact11.wav,29304
+sfx_dungeon_portal,World & Dungeon,Dungeon portal enter/exit,P1,Layer,secondary,PHX8,Teleport2/Wav/Teleport2__001.wav,by_pack/PHX8/Teleport2/Wav/Teleport2__001.wav,17590
+sfx_dungeon_clear,World & Dungeon,Dungeon clear / star award,P0,Layer,primary,LRSF8,Wav/Jingle_Win_00.wav,by_pack/LRSF8/Wav/Jingle_Win_00.wav,756868
+sfx_dungeon_clear,World & Dungeon,Dungeon clear / star award,P0,Layer,secondary,OGA512,General Sounds/Fanfares/sfx_sounds_fanfare3.wav,by_pack/OGA512/General Sounds/Fanfares/sfx_sounds_fanfare3.wav,25406
+sfx_dungeon_clear,World & Dungeon,Dungeon clear / star award,P0,Layer,secondary,OGA512,General Sounds/Coins/sfx_coin_cluster3.wav,by_pack/OGA512/General Sounds/Coins/sfx_coin_cluster3.wav,41530
+sfx_world_waypoint,World & Dungeon,World waypoint activate/travel,P1,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal6.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal6.wav,147286
+sfx_world_waypoint,World & Dungeon,World waypoint activate/travel,P1,Layer,primary,OGA512,General Sounds/Positive Sounds/sfx_sounds_powerup14.wav,by_pack/OGA512/General Sounds/Positive Sounds/sfx_sounds_powerup14.wav,45358
+sfx_world_waypoint,World & Dungeon,World waypoint activate/travel,P1,Layer,secondary,PHX8,Teleport2/Wav/Teleport2__002.wav,by_pack/PHX8/Teleport2/Wav/Teleport2__002.wav,22385
+sfx_dungeon_waypoint,World & Dungeon,Dungeon waypoint spawn/activate,P2,Layer,primary,OGA512,Movement/Portals and Transitions/sfx_movement_portal1.wav,by_pack/OGA512/Movement/Portals and Transitions/sfx_movement_portal1.wav,123948
+sfx_dungeon_waypoint,World & Dungeon,Dungeon waypoint spawn/activate,P2,Layer,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high6.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high6.wav,9964
+sfx_dungeon_waypoint,World & Dungeon,Dungeon waypoint spawn/activate,P2,Layer,secondary,PHX8,Teleport1/Wav/Teleport1__003.wav,by_pack/PHX8/Teleport1/Wav/Teleport1__003.wav,16756
+sfx_day_night,World & Dungeon,Day/night transition,P2,Layer,primary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral7.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral7.wav,61142
+sfx_day_night,World & Dungeon,Day/night transition,P2,Layer,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high7.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high7.wav,21930
+sfx_day_night,World & Dungeon,Day/night transition,P2,Layer,secondary,LUNAR8,WindParticles.wav,by_pack/LUNAR8/WindParticles.wav,44604
+sfx_snowstorm,World & Dungeon,Snowstorm start/end,P2,Process,primary,LUNAR8,Wind.wav,by_pack/LUNAR8/Wind.wav,177002
+sfx_snowstorm,World & Dungeon,Snowstorm start/end,P2,Process,primary,LUNAR8,WindParticles.wav,by_pack/LUNAR8/WindParticles.wav,44604
+sfx_snowstorm,World & Dungeon,Snowstorm start/end,P2,Process,secondary,LOOPS30,noise_02.ogg,by_pack/LOOPS30/noise_02.ogg,146990
+sfx_ambient_birds,World & Dungeon,Ambient bird chirps,P2,Generate,primary,OGA512,General Sounds/High Pitched Sounds/sfx_sounds_high1.wav,by_pack/OGA512/General Sounds/High Pitched Sounds/sfx_sounds_high1.wav,7478
+sfx_ambient_birds,World & Dungeon,Ambient bird chirps,P2,Generate,primary,OGA512,General Sounds/Simple Bleeps/sfx_sounds_Blip7.wav,by_pack/OGA512/General Sounds/Simple Bleeps/sfx_sounds_Blip7.wav,4174
+sfx_ambient_birds,World & Dungeon,Ambient bird chirps,P2,Generate,secondary,OGA512,General Sounds/Neutral Sounds/sfx_sound_neutral8.wav,by_pack/OGA512/General Sounds/Neutral Sounds/sfx_sound_neutral8.wav,8886
+sfx_cave_ambience,World & Dungeon,Cave ambience,P2,Process,primary,DUNGEON,dungeon_ambient_1.ogg,by_pack/DUNGEON/dungeon_ambient_1.ogg,1626352
+sfx_cave_ambience,World & Dungeon,Cave ambience,P2,Process,secondary,LUNAR8,Wind.wav,by_pack/LUNAR8/Wind.wav,177002
+sfx_dungeon_ambience,World & Dungeon,Dungeon ambience,P2,Process,primary,DUNGEON,dungeon_ambient_1.ogg,by_pack/DUNGEON/dungeon_ambient_1.ogg,1626352
+sfx_dungeon_ambience,World & Dungeon,Dungeon ambience,P2,Process,secondary,LOOPS30,ambient_01.ogg,by_pack/LOOPS30/ambient_01.ogg,258149
+sfx_dungeon_ambience,World & Dungeon,Dungeon ambience,P2,Process,secondary,LOOPS30,machine_05.ogg,by_pack/LOOPS30/machine_05.ogg,52518
+sfx_fire_ambience,World & Dungeon,Torch/bonfire ambience,P2,Process,primary,FIRE,fire.wav,by_pack/FIRE/fire.wav,10324410
+sfx_fire_ambience,World & Dungeon,Torch/bonfire ambience,P2,Process,secondary,OGA512,Explosions/Short/sfx_exp_short_soft5.wav,by_pack/OGA512/Explosions/Short/sfx_exp_short_soft5.wav,47762
+sfx_weather_wind,World & Dungeon,Generic wind/weather bed,P2,Process,primary,LUNAR8,Wind.wav,by_pack/LUNAR8/Wind.wav,177002
+sfx_weather_wind,World & Dungeon,Generic wind/weather bed,P2,Process,primary,LUNAR8,WindParticles.wav,by_pack/LUNAR8/WindParticles.wav,44604
+sfx_weather_wind,World & Dungeon,Generic wind/weather bed,P2,Process,secondary,LOOPS30,noise_01.ogg,by_pack/LOOPS30/noise_01.ogg,274225

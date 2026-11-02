@@ -15,8 +15,16 @@ class_name Minimap
 #   • red circle    = hostile mobs   ("Mob" group, Behavior HOSTILE)
 #   • yellow circle = friendly mobs  ("Mob" group, Behavior PASSIVE)
 #   • orange circle = bonfires       ("Bonfire" group; flags stay green)
+#   • robot icon    = Automatica     ("LuaNPC" group; tooltip = robot name)
+#   • station icon  = crafting stations ("CraftingStation" group)
+#   • furnace icon  = furnaces        ("TouchInteractable", obj_type furnace)
+#   • colour icon   = Color Crafters  ("ColorCrafter" group)
 #   • portal icon   = dungeon portals ("DungeonPortal"; tooltip = dungeon name)
 #   - teal diamond  = permanent world waypoints ("WorldWaypoint")
+# On the expanded overworld map, tapping/clicking a robot or dungeon-portal
+# icon recalls the player to a safe tile beside it (same effect as a waypoint).
+# The placed-interactable markers are queried from their groups on every
+# redraw, so placing/removing one updates both map sizes within one frame tick.
 #
 # ── Merged dungeon map ───────────────────────────────────────────────
 # When Global.world_node is a DungeonWorld, this SAME control renders the
@@ -65,8 +73,22 @@ const C_PLAYER  := Color(1.00, 1.00, 1.00)
 const C_ENEMY   := Color(0.90, 0.20, 0.20)   # HOSTILE mobs
 const C_FRIEND  := Color(1.00, 0.95, 0.20)   # PASSIVE/friendly mobs (bright yellow)
 const C_BONFIRE := Color(1.00, 0.55, 0.12)   # bonfire respawn markers (orange)
-const C_LUA     := Color(0.72, 0.48, 1.00)   # Automatica/LUA stations (violet)
-const LUA_LEGEND: String = "LUA"
+const C_LUA     := Color(0.72, 0.48, 1.00)   # Automatica stations (violet)
+const C_STATION := Color(0.30, 0.86, 1.00)   # crafting stations (cyan)
+const C_FURNACE := Color(1.00, 0.46, 0.18)   # furnaces (hot orange)
+const C_COLOR   := Color(0.96, 0.38, 0.86)   # Color Crafters (magenta)
+const AUTOMATICA_LEGEND: String = "Automatica"
+const CRAFTING_STATION_LEGEND: String = "Crafting Station"
+const FURNACE_LEGEND: String = "Furnace"
+const COLOR_CRAFTER_LEGEND: String = "Color Crafter"
+
+# Existing item artwork doubles as the map icons. The Automatica item icon is
+# the robot head, so the marker is recognisable as the same companion the
+# player places from the hotbar (and matches its inventory portrait).
+const AUTOMATICA_ITEM: ItemData = preload("res://resources/items/lua.tres")
+const CRAFTING_STATION_ITEM: ItemData = preload("res://resources/items/crafting_station.tres")
+const FURNACE_ITEM: ItemData = preload("res://resources/items/furnace.tres")
+const COLOR_CRAFTER_ITEM: ItemData = preload("res://resources/items/color_crafter.tres")
 const C_GREEN   := Color(0.25, 0.85, 0.35)   # flags
 
 # Dungeon content (see the merged-map note at the top): the grid is drawn from
@@ -76,6 +98,8 @@ const C_DUN_FLOOR: Color = Color(0.13, 0.14, 0.18, 1.0)
 const C_KNOWLEDGE: Color = Color(0.30, 0.80, 0.95, 1.0)   # knowledge altar
 const C_QUIZ:      Color = Color(0.80, 0.45, 0.95, 1.0)   # quiz altar
 const C_EXIT:      Color = Color(0.90, 0.75, 0.25, 1.0)   # exit (once cleared)
+const C_DUNGEON_HALO: Color = Color(0.98, 0.84, 0.32, 1.0) # every portal
+const C_DUNGEON_NEXT: Color = Color(0.42, 1.00, 0.72, 1.0) # recommended next
 const C_WAYPOINT:  Color = Color(0.32, 0.95, 0.84, 1.0)   # world waypoint towers
 const C_WAYPOINT_SOURCE: Color = Color(0.55, 0.70, 0.72, 1.0)
 
@@ -86,6 +110,11 @@ const C_CAVE_FLOOR: Color = Color(0.12, 0.13, 0.16, 1.0)
 const C_CAVE_EXIT:  Color = Color(0.45, 0.95, 0.70, 1.0)
 
 const PORTAL_TEX: Texture2D = preload("res://sprites/map/dungeon_portal_icon.png")
+# Proper altar artwork for the dungeon minimap. These regions match
+# KnowledgeAltar/QuizAltar's world sprites.
+const DUNGEON_ATLAS: Texture2D = preload("res://sprites/dungeon/SandEE_alpha_dungeontilesets.png")
+const KNOWLEDGE_ICON_REGION: Rect2 = Rect2(288, 96, 32, 32)
+const QUIZ_ICON_REGION: Rect2 = Rect2(352, 96, 32, 32)
 
 var _expanded: bool = false
 var _owns_ui:  bool = false
@@ -111,6 +140,7 @@ var _sample_world_id: int = -1
 var _sample_ground: TileMapLayer = null
 var _sample_water: TileMapLayer = null
 var _sample_structs: TileMapLayer = null
+var _sample_blocks: Dictionary = {}
 var _player_tile: Vector2i = Vector2i(1 << 20, 1 << 20)
 var _pan: Vector2i = Vector2i.ZERO
 var _view_center: Vector2i = Vector2i(1 << 20, 1 << 20)
@@ -137,6 +167,13 @@ var _waypoint_press_pos: Vector2 = Vector2.ZERO
 var _waypoint_pressed: bool = false
 var _waypoint_ignore_until_ms: int = 0
 var _last_waypoint_touch_ms: int = -10000
+# Expanded overworld map tap-to-travel state. Touch and emulated mouse can both
+# report one tap; the short guard prevents a second teleport/close on the same
+# gesture.
+var _map_touch_pressed: bool = false
+var _map_touch_start: Vector2 = Vector2.ZERO
+var _map_touch_moved: bool = false
+var _map_ignore_mouse_until_ms: int = 0
 
 # Sampled tile colour, cached per (texture, atlas coord) so the per-tile
 # texture pixel read happens once, not every refresh.
@@ -257,6 +294,13 @@ func _mark_explored() -> void:
 
 # ── Input ───────────────────────────────────────────────────────────────
 func _input(event: InputEvent) -> void:
+	# Swallow the emulated-mouse half of a touch tap that already travelled, so
+	# it cannot reopen the collapsed map or start a second teleport.
+	var now := Time.get_ticks_msec()
+	if now < _map_ignore_mouse_until_ms \
+			and (event is InputEventMouseButton or event is InputEventMouseMotion):
+		get_viewport().set_input_as_handled()
+		return
 	# Escape/Back closes the expanded map like any other overlay.
 	if _expanded and event.is_action_pressed("escape"):
 		get_viewport().set_input_as_handled()
@@ -323,6 +367,35 @@ func _input(event: InputEvent) -> void:
 		_zoom_by(1.0 / ZOOM_STEP if zin else ZOOM_STEP)
 		get_viewport().set_input_as_handled()
 		return
+	# Android touch: a short tap on a marker travels there. Mouse emulation still
+	# drives the drag-to-pan path below; this branch only owns tap selection.
+	if event is InputEventScreenTouch:
+		var touch := event as InputEventScreenTouch
+		if touch.pressed:
+			_map_touch_pressed = true
+			_map_touch_start = touch.position
+			_map_touch_moved = false
+		else:
+			var moved: bool = _map_touch_moved \
+				or touch.position.distance_to(_map_touch_start) > 24.0
+			_map_touch_pressed = false
+			if not moved:
+				if not _expanded_panel_rect().has_point(touch.position):
+					_map_ignore_mouse_until_ms = Time.get_ticks_msec() + 250
+					_set_expanded(false)
+				else:
+					_try_map_marker_teleport(touch.position)
+			elif not _expanded_panel_rect().has_point(touch.position):
+				_map_ignore_mouse_until_ms = Time.get_ticks_msec() + 250
+				_set_expanded(false)
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventScreenDrag:
+		if _map_touch_pressed \
+				and (event as InputEventScreenDrag).position.distance_to(_map_touch_start) > 12.0:
+			_map_touch_moved = true
+		# Leave the event unhandled so the emulated mouse motion can pan.
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var at := get_viewport().get_mouse_position()
 		if event.pressed:
@@ -333,17 +406,21 @@ func _input(event: InputEvent) -> void:
 			_drag_pan    = _pan
 		else:
 			_dragging = false
-			# Only the margin outside the fullscreen panel closes on a tap. The
-			# panel itself contains the map, legend, and the explicit X button.
-			if not _drag_moved and not _expanded_panel_rect().has_point(at):
-				_set_expanded(false)
+			if not _drag_moved:
+				# Only the margin outside the fullscreen panel closes on a tap.
+				# Inside the panel, a tap on an Automatica/dungeon icon travels;
+				# clicking anywhere else leaves the map open.
+				if not _expanded_panel_rect().has_point(at):
+					_set_expanded(false)
+				else:
+					_try_map_marker_teleport(at)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _dragging:
 		var cell_px: Vector2 = _map_cell_px(_expanded_map_rect())
-		var now := get_viewport().get_mouse_position()
-		if now.distance_to(_drag_start) > 6.0:
+		var mouse_now := get_viewport().get_mouse_position()
+		if mouse_now.distance_to(_drag_start) > 6.0:
 			_drag_moved = true
-		var d: Vector2 = now - _drag_mouse
+		var d: Vector2 = mouse_now - _drag_mouse
 		_pan = _drag_pan - Vector2i(roundi(d.x / cell_px.x), roundi(d.y / cell_px.y))
 		_force_sample = true
 		queue_redraw()
@@ -417,6 +494,7 @@ func _world_waypoint_teleport_busy() -> bool:
 func _set_expanded(on: bool) -> void:
 	if on == _expanded:
 		return
+	SFX.play_ui("sfx_map_waypoint", 0 if on else 1, -5.0)
 	if on and _world_waypoint_teleport_busy():
 		return
 	_expanded = on
@@ -463,10 +541,14 @@ func _start_terrain_sample(vc: Vector2i) -> void:
 	_sample_ground  = null
 	_sample_water   = null
 	_sample_structs = null
+	_sample_blocks  = {}
 	if world != null:
 		_sample_ground  = world.get_node_or_null("Ground") as TileMapLayer
 		_sample_water   = world.get_node_or_null("Water") as TileMapLayer
 		_sample_structs = world.get_node_or_null("Structures") as TileMapLayer
+		var blocks: Variant = world.get("_placed_blocks")
+		if blocks is Dictionary:
+			_sample_blocks = blocks as Dictionary
 	_sample_center = vc
 	_sample_world_id = _world_instance_id()
 	_sample_rows_done = 0
@@ -481,7 +563,7 @@ func _continue_terrain_sample() -> void:
 	var end_row: int = mini(_sample_rows_done + SAMPLE_ROWS_PER_FRAME, GRID)
 	for gy in range(_sample_rows_done, end_row):
 		_sample_world_row(gy, _sample_center, _sample_ground,
-			_sample_water, _sample_structs)
+			_sample_water, _sample_structs, _sample_blocks)
 	_sample_rows_done = end_row
 	if _sample_rows_done >= GRID:
 		_tex.update(_terrain)
@@ -490,13 +572,19 @@ func _continue_terrain_sample() -> void:
 		_redraw_accum = REDRAW_SEC
 
 func _sample_world_row(gy: int, center: Vector2i,
-		ground: TileMapLayer, water: TileMapLayer, structs: TileMapLayer) -> void:
+		ground: TileMapLayer, water: TileMapLayer, structs: TileMapLayer,
+		blocks: Dictionary) -> void:
 	var half: int = GRID / 2
 	for gx in range(GRID):
 		var cell: Vector2i = center + Vector2i(
 			roundi((gx - half) / _zoom), roundi((gy - half) / _zoom))
 		var c: Color = C_VOID
-		if structs != null and structs.get_cell_source_id(cell) != -1:
+		var placed_col := Global.placed_block_map_color(blocks.get(cell))
+		if placed_col.a > 0.0:
+			# Player development wins over the terrain under it, matching how
+			# the world draws a placed block on top of ground/water.
+			c = placed_col
+		elif structs != null and structs.get_cell_source_id(cell) != -1:
 			c = _tile_color(structs, cell)
 		elif water != null and water.get_cell_source_id(cell) != -1:
 			c = _tile_color(water, cell)
@@ -519,13 +607,17 @@ func _sample_terrain() -> void:
 	var ground: TileMapLayer     = null
 	var water:  TileMapLayer     = null
 	var structs: TileMapLayer    = null
+	var blocks: Dictionary       = {}
 	if world != null:
 		ground  = world.get_node_or_null("Ground") as TileMapLayer
 		water   = world.get_node_or_null("Water") as TileMapLayer
 		structs = world.get_node_or_null("Structures") as TileMapLayer
+		var block_map: Variant = world.get("_placed_blocks")
+		if block_map is Dictionary:
+			blocks = block_map as Dictionary
 	for gy in range(GRID):
 		# Zoomed in -> fewer world tiles across the same grid (repeat cells).
-		_sample_world_row(gy, _view_center, ground, water, structs)
+		_sample_world_row(gy, _view_center, ground, water, structs, blocks)
 	_tex.update(_terrain)
 
 # Dungeon terrain: read the generator grid directly (walls/floor), converted
@@ -558,13 +650,23 @@ func _sample_cave(info: Dictionary) -> void:
 	var w: int = int(info["w"])
 	var h: int = int(info["h"])
 	var gh := Vector2i(w / 2, h / 2)
+	var blocks: Dictionary = {}
+	var world: Node = Global.world_node
+	if world != null:
+		var block_map: Variant = world.get("_placed_blocks")
+		if block_map is Dictionary:
+			blocks = block_map as Dictionary
 	for gy in range(GRID):
 		for gx in range(GRID):
 			var cell: Vector2i = _view_center + Vector2i(
 				roundi((gx - half) / _zoom), roundi((gy - half) / _zoom))
 			var gc: Vector2i = cell + gh
 			var c: Color = C_VOID
-			if gc.x >= 0 and gc.y >= 0 and gc.x < w and gc.y < h:
+			# Cave blocks are keyed by the centred world cell, matching `cell`.
+			var placed_col := Global.placed_block_map_color(blocks.get(cell))
+			if placed_col.a > 0.0:
+				c = placed_col
+			elif gc.x >= 0 and gc.y >= 0 and gc.x < w and gc.y < h:
 				c = C_CAVE_FLOOR if _cave_floor(info, gc) else C_CAVE_WALL
 			if not Global.explored_cave_tiles.has(gc):
 				c = c.lerp(C_FOG, 0.62)
@@ -672,20 +774,26 @@ func _expanded_legend_rect() -> Rect2:
 func _map_close_rect() -> Rect2:
 	var s: float = Global.ui_scale
 	var panel := _expanded_panel_rect()
-	var sz: float = minf(36.0 * s, minf(panel.size.x, panel.size.y) * 0.12)
+	var close_w: float = minf(maxf(96.0, 84.0 * s), panel.size.x * 0.30)
+	var close_h: float = minf(maxf(44.0, 38.0 * s), panel.size.y * 0.12)
 	return Rect2(
-		Vector2(panel.end.x - sz - 12.0 * s, panel.position.y + 10.0 * s),
-		Vector2(sz, sz))
+		Vector2(panel.end.x - close_w - 12.0 * s, panel.position.y + 10.0 * s),
+		Vector2(close_w, close_h))
 
 
 func _draw_map_close_button(s: float) -> void:
 	var r := _map_close_rect()
 	draw_rect(r, Color(0.04, 0.06, 0.12, 0.96), true)
 	draw_rect(r, C_BORDER, false, 1.5 * s)
-	var c := r.get_center()
-	var d: float = minf(7.0 * s, r.size.x * 0.22)
-	draw_line(c - Vector2(d, d), c + Vector2(d, d), C_TITLE, 2.0 * s)
-	draw_line(c + Vector2(d, -d), c + Vector2(-d, d), C_TITLE, 2.0 * s)
+	var font: Font = ThemeDB.fallback_font
+	var fs: int = Global.ui_font_size(11)
+	var label := "CLOSE"
+	var text_w: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT,
+		-1, fs).x
+	draw_string(font,
+		Vector2(r.position.x + (r.size.x - text_w) * 0.5,
+			r.position.y + r.size.y * 0.5 + fs * 0.36),
+		label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, C_TITLE)
 
 # ── Drawing ─────────────────────────────────────────────────────────────
 # --- World waypoint map ------------------------------------------------
@@ -741,7 +849,7 @@ func _draw_waypoint_expanded() -> void:
 	draw_string(font, Vector2(panel.position.x + pad, title_y),
 		"WORLD WAYPOINTS", HORIZONTAL_ALIGNMENT_LEFT, -1,
 		Global.ui_font_size(16), C_TITLE)
-	var hint := "tap a tower  -  M / X to close"
+	var hint := "tap a tower  -  CLOSE / M to close"
 	var hint_w: float = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1,
 		Global.ui_font_size(11)).x
 	var close_rect := _map_close_rect()
@@ -770,6 +878,27 @@ func _draw_waypoint_expanded() -> void:
 	_draw_waypoint_legend_sidebar(font, s)
 
 
+# Automatica stations are useful navigation landmarks on the world overview.
+# Draw their robot icon and name before the tower markers so waypoint diamonds
+# stay selectable on top.
+func _draw_waypoint_automatica(panel: Rect2, world_rect: Rect2, font: Font, s: float) -> void:
+	if world_rect.size.x <= 0.0 or world_rect.size.y <= 0.0:
+		return
+	for lua in get_tree().get_nodes_in_group("LuaNPC"):
+		if not (lua is Node2D) or not is_instance_valid(lua):
+			continue
+		var n2d := lua as Node2D
+		var pos: Vector2 = panel.position + (
+			(n2d.global_position - world_rect.position) / world_rect.size) * panel.size
+		var margin := 10.0 * s
+		pos.x = clampf(pos.x, panel.position.x + margin, panel.end.x - margin)
+		pos.y = clampf(pos.y, panel.position.y + margin, panel.end.y - margin)
+		_draw_icon_at(pos, 14.0 * s, AUTOMATICA_ITEM.icon, C_LUA)
+		_draw_map_name_label(font, _automatica_map_name(lua), pos + Vector2(0, 9.0 * s),
+			panel, s)
+
+
+
 func _draw_world_waypoint_markers(panel: Rect2, s: float, font: Font) -> void:
 	_waypoint_hitboxes.clear()
 	var world: Node = Global.world_node
@@ -778,6 +907,7 @@ func _draw_world_waypoint_markers(panel: Rect2, s: float, font: Font) -> void:
 	var world_rect: Rect2 = world.call("waypoint_world_rect") as Rect2
 	if world_rect.size.x <= 0.0 or world_rect.size.y <= 0.0:
 		return
+	_draw_waypoint_automatica(panel, world_rect, font, s)
 	var source_node: Node2D = null
 	var nodes: Array = []
 	for node in get_tree().get_nodes_in_group("WorldWaypoint"):
@@ -883,9 +1013,77 @@ func _try_select_waypoint(at: Vector2) -> bool:
 	var world: Node = Global.world_node
 	if world != null and world.has_method("teleport_to_world_waypoint"):
 		if bool(world.call("teleport_to_world_waypoint", str(best["id"]))):
+			SFX.play_ui("sfx_map_waypoint", 2)
 			_set_expanded(false)
 			return true
 	return false
+
+
+# ── Expanded-map travel icons ────────────────────────────────────────
+# Automatica and dungeon-portal icons are tappable on the overworld map. The
+# hit test mirrors the draw projection and picks the nearest icon so Android's
+# generous touch radius cannot select a marker the player did not touch.
+func _map_marker_at(at: Vector2) -> Dictionary:
+	if not _expanded or _waypoint_mode:
+		return {}
+	if _dungeon() != null or not _cave_info().is_empty():
+		return {}
+	var map_rect: Rect2 = _expanded_map_rect()
+	if not map_rect.has_point(at):
+		return {}
+	var cell_px := _map_cell_px(map_rect)
+	var ppt: Vector2 = cell_px * _zoom
+	var center: Vector2 = map_rect.position + map_rect.size * 0.5
+	var s: float = Global.ui_scale
+	var best: Dictionary = {}
+	var best_d := 20.0 * s
+	for lua in get_tree().get_nodes_in_group("LuaNPC"):
+		if not (lua is Node2D) or not is_instance_valid(lua):
+			continue
+		var pos: Vector2 = center + ((lua as Node2D).global_position / TILE \
+			- Vector2(_view_center)) * ppt
+		if not map_rect.has_point(pos):
+			continue
+		var d := at.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = {"node": lua, "label": _automatica_map_name(lua), "pos": pos}
+	for portal in get_tree().get_nodes_in_group("DungeonPortal"):
+		if not (portal is Node2D) or not is_instance_valid(portal):
+			continue
+		var isz: float = 13.0 * s
+		var pos: Vector2 = center + ((portal as Node2D).global_position / TILE \
+			- Vector2(_view_center)) * ppt
+		pos.x = clampf(pos.x, map_rect.position.x + isz, map_rect.end.x - isz)
+		pos.y = clampf(pos.y, map_rect.position.y + isz, map_rect.end.y - isz)
+		if not map_rect.has_point(pos):
+			continue
+		var d := at.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = {"node": portal, "label": _portal_name(portal), "pos": pos}
+	return best
+
+
+func _try_map_marker_teleport(at: Vector2) -> bool:
+	var hit := _map_marker_at(at)
+	if hit.is_empty():
+		return false
+	var target: Variant = hit["node"]
+	if not is_instance_valid(target):
+		return false
+	var world: Node = Global.world_node
+	if world == null or not is_instance_valid(world) \
+			or not world.has_method("teleport_to_map_marker"):
+		return false
+	if not bool(world.call("teleport_to_map_marker", target, str(hit["label"]))):
+		return false
+	SFX.play_ui("sfx_map_waypoint", 2)
+	# The touch event and its emulated mouse release arrive back-to-back; ignore
+	# the mouse half so the closed map cannot immediately reopen or re-teleport.
+	_map_ignore_mouse_until_ms = Time.get_ticks_msec() + 250
+	_set_expanded(false)
+	return true
 
 
 func _waypoint_handle_input(event: InputEvent) -> bool:
@@ -968,7 +1166,7 @@ func _draw_expanded() -> void:
 	var title_y: float = panel.position.y + pad + Global.ui_font_size(16)
 	draw_string(font, Vector2(panel.position.x + pad, title_y),
 		title, HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(16), C_TITLE)
-	var hint := "drag to pan  -  M / X to close"
+	var hint := "drag to pan  -  CLOSE / M to close"
 	var hint_w: float = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1,
 		Global.ui_font_size(11)).x
 	var close_rect := _map_close_rect()
@@ -999,6 +1197,26 @@ func _legend_portal_item(font: Font, x: float, y: float, s: float, label: String
 		HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11), C_TITLE)
 
 
+# Shared icon marker art: a coloured ring keeps the tiny item sprite legible
+# against any terrain colour, while the sprite itself identifies the object.
+func _draw_icon_at(pos: Vector2, size: float, tex: Texture2D, ring: Color) -> void:
+	draw_circle(pos, size * 0.62, ring)
+	draw_circle(pos, size * 0.53, C_PANEL)
+	if tex == null:
+		return
+	var inner: float = size * 0.86
+	draw_texture_rect(tex, Rect2(pos - Vector2(inner, inner) * 0.5,
+		Vector2(inner, inner)), false)
+
+
+func _legend_world_icon(font: Font, x: float, y: float, s: float,
+		tex: Texture2D, ring: Color, label: String) -> void:
+	var isz: float = 14.0 * s
+	_draw_icon_at(Vector2(x + isz * 0.62, y - isz * 0.2), isz, tex, ring)
+	draw_string(font, Vector2(x + isz * 1.24 + 5 * s, y + 4 * s), label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, Global.ui_font_size(11), C_TITLE)
+
+
 func _draw_map_legend_sidebar(font: Font, s: float) -> void:
 	var rect := _expanded_legend_rect()
 	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
@@ -1014,18 +1232,33 @@ func _draw_map_legend_sidebar(font: Font, s: float) -> void:
 		y += 24.0 * s
 		_legend_item(font, x, y, s, C_CAVE_EXIT, "Entrance / Exit")
 		return
+	# Ten rows must fit the sidebar even on a short Android landscape screen.
+	# The row height shrinks toward a readable minimum when vertical space is
+	# tight, instead of letting the last icon spill past the legend background.
+	var rows: float = 10.0
+	var reserved: float = 12.0 * s + Global.ui_font_size(12) + 22.0 * s
+	var row: float = clampf((rect.size.y - reserved - 6.0 * s) / rows,
+		17.0 * s, 21.0 * s)
 	_legend_item(font, x, y, s, C_PLAYER, "You")
-	y += 24.0 * s
+	y += row
 	_legend_item(font, x, y, s, C_ENEMY, "Enemies")
-	y += 24.0 * s
+	y += row
 	_legend_item(font, x, y, s, C_FRIEND, "Friendly")
-	y += 24.0 * s
+	y += row
 	_legend_item(font, x, y, s, C_BONFIRE, "Bonfires")
-	y += 24.0 * s
-	_legend_item(font, x, y, s, C_LUA, LUA_LEGEND)
-	y += 24.0 * s
+	y += row
+	_legend_world_icon(font, x, y, s, AUTOMATICA_ITEM.icon, C_LUA, AUTOMATICA_LEGEND)
+	y += row
+	_legend_world_icon(font, x, y, s, CRAFTING_STATION_ITEM.icon, C_STATION,
+		CRAFTING_STATION_LEGEND)
+	y += row
+	_legend_world_icon(font, x, y, s, FURNACE_ITEM.icon, C_FURNACE, FURNACE_LEGEND)
+	y += row
+	_legend_world_icon(font, x, y, s, COLOR_CRAFTER_ITEM.icon, C_COLOR,
+		COLOR_CRAFTER_LEGEND)
+	y += row
 	_legend_portal_item(font, x, y, s, "Dungeon")
-	y += 24.0 * s
+	y += row
 	_legend_waypoint(font, x, y, s, "World Waypoint")
 
 
@@ -1081,6 +1314,62 @@ func _map_cell_px(map_rect: Rect2) -> Vector2:
 	return Vector2(map_rect.size.x / float(GRID), map_rect.size.y / float(GRID))
 
 
+# Furnaces are ObjectItem nodes in the broad TouchInteractable group (shared
+# with chests/stations). Both the exported obj_type and the item id identify
+# them, so restored/older saves still get a map marker.
+func _is_furnace(node: Node) -> bool:
+	if node == null or not is_instance_valid(node):
+		return false
+	if str(node.get("obj_type")) == "furnace":
+		return true
+	var data: ItemData = node.get("item_data") as ItemData
+	return data != null and data.item_id() == "furnace"
+
+
+# Live map registry for placed automation interactables. This is intentionally
+# rebuilt from the scene groups on every draw: no placement signal can be
+# missed, removed objects disappear immediately, and saved/restored objects
+# appear without a separate registration path.
+func _world_interactable_markers() -> Array:
+	var out: Array = []
+	var seen: Dictionary = {}
+	for n in get_tree().get_nodes_in_group("CraftingStation"):
+		if not (n is Node2D) or not is_instance_valid(n):
+			continue
+		seen[n.get_instance_id()] = true
+		out.append({
+			"node": n,
+			"label": CRAFTING_STATION_LEGEND,
+			"icon": CRAFTING_STATION_ITEM.icon,
+			"ring": C_STATION,
+		})
+	for n in get_tree().get_nodes_in_group("TouchInteractable"):
+		if not (n is Node2D) or not is_instance_valid(n):
+			continue
+		if seen.has(n.get_instance_id()) or not _is_furnace(n):
+			continue
+		seen[n.get_instance_id()] = true
+		out.append({
+			"node": n,
+			"label": FURNACE_LEGEND,
+			"icon": FURNACE_ITEM.icon,
+			"ring": C_FURNACE,
+		})
+	for n in get_tree().get_nodes_in_group("ColorCrafter"):
+		if not (n is Node2D) or not is_instance_valid(n):
+			continue
+		if seen.has(n.get_instance_id()):
+			continue
+		seen[n.get_instance_id()] = true
+		out.append({
+			"node": n,
+			"label": COLOR_CRAFTER_LEGEND,
+			"icon": COLOR_CRAFTER_ITEM.icon,
+			"ring": C_COLOR,
+		})
+	return out
+
+
 func _draw_entities(map_rect: Rect2, s: float) -> void:
 	var p: Node2D = Global.player_node as Node2D
 	if p == null:
@@ -1102,6 +1391,12 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 		for grp in [["Bonfire", C_BONFIRE], ["Flag", C_GREEN]]:
 			for b in get_tree().get_nodes_in_group(grp[0]):
 				_marker(map_rect, center, ppt, b, grp[1], 3.0 * s)
+		# Placed automation interactables are scanned live on every redraw, so
+		# a station/furnace/Color Crafter pops onto the map as soon as it exists
+		# and vanishes when mined or dismantled.
+		for entry in _world_interactable_markers():
+			_icon_marker(map_rect, center, ppt, entry["node"],
+				entry["icon"] as Texture2D, entry["ring"] as Color, 16.0 * s)
 		for d in get_tree().get_nodes_in_group("DungeonPortal"):
 			_portal_marker(map_rect, center, ppt, d, s)
 		# Persistent world-waypoint towers keep the same teal diamond as the
@@ -1111,15 +1406,61 @@ func _draw_entities(map_rect: Rect2, s: float) -> void:
 				var wpos: Vector2 = center + ((w as Node2D).global_position / TILE - Vector2(_view_center)) * ppt
 				if map_rect.has_point(wpos):
 					_draw_waypoint_diamond(wpos, 4.5 * s, C_WAYPOINT)
-	# Automatica/LUA stations use the same entity-marker convention and the
-	# violet colour shared with the LUA legend.
+	# Automatica robots use their own sprite icon; the violet ring keeps the
+	# same legend colour the map used before so they remain easy to scan.
 	for lua in get_tree().get_nodes_in_group("LuaNPC"):
-		_marker(map_rect, center, ppt, lua, C_LUA, 2.8 * s)
+		_icon_marker(map_rect, center, ppt, lua, AUTOMATICA_ITEM.icon, C_LUA, 16.0 * s)
+	if _expanded:
+		_draw_automatica_name_labels(map_rect, center, ppt, s)
 	var ppos: Vector2 = center + (p.global_position / TILE - Vector2(_view_center)) * ppt
 	if not _expanded:
 		ppos = center
 	draw_circle(ppos, 3.5 * s, C_PLAYER)
 	draw_arc(ppos, 3.5 * s, 0.0, TAU, 16, C_BORDER, 1.0 * s)
+
+# Names make the robot icons useful at a glance: "LUA 0" is not enough when
+# several Automatica stations are working in different parts of the world.
+func _automatica_map_name(node: Node) -> String:
+	if node != null and is_instance_valid(node) and node.has_method("get_display_name"):
+		var name := str(node.call("get_display_name")).strip_edges()
+		if not name.is_empty():
+			return name
+	return AUTOMATICA_LEGEND
+
+
+func _draw_automatica_name_labels(map_rect: Rect2, center: Vector2,
+		ppt: Vector2, s: float) -> void:
+	var font: Font = ThemeDB.fallback_font
+	for lua in get_tree().get_nodes_in_group("LuaNPC"):
+		if not (lua is Node2D) or not is_instance_valid(lua):
+			continue
+		var pos: Vector2 = center + (
+			((lua as Node2D).global_position / TILE - Vector2(_view_center)) * ppt)
+		if not map_rect.has_point(pos):
+			continue
+		_draw_map_name_label(font, _automatica_map_name(lua),
+			pos + Vector2(0, 9.0 * s), map_rect, s)
+
+
+# Small opaque caption under a map icon. Clamped inside `bounds` so names near
+# the map edge never spill into the legend or the rest of the HUD.
+func _draw_map_name_label(font: Font, text: String, anchor: Vector2,
+		bounds: Rect2, s: float) -> void:
+	if text.is_empty() or bounds.size.x <= 0.0 or bounds.size.y <= 0.0:
+		return
+	var fs := Global.ui_font_size(9)
+	var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var pad := 3.0 * s
+	var w := tw + pad * 2.0
+	var h := float(fs) + 3.0 * s
+	var pos := Vector2(anchor.x - w * 0.5, anchor.y)
+	pos.x = clampf(pos.x, bounds.position.x + 2.0 * s,
+		maxf(bounds.position.x + 2.0 * s, bounds.end.x - w - 2.0 * s))
+	pos.y = clampf(pos.y, bounds.position.y + 2.0 * s,
+		maxf(bounds.position.y + 2.0 * s, bounds.end.y - h - 2.0 * s))
+	draw_rect(Rect2(pos, Vector2(w, h)), Color(0.04, 0.06, 0.11, 0.82), true)
+	draw_string(font, Vector2(pos.x + pad, pos.y + fs - 1.0 * s), text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, C_TITLE)
 
 # Dungeon markers: knowledge altar (cyan), quiz altar (purple), exit (gold,
 # only once cleared) and the player (drawn by the caller). Positions are grid
@@ -1128,15 +1469,28 @@ func _draw_dungeon_entities(map_rect: Rect2, center: Vector2, ppt: Vector2, s: f
 	var g: DungeonGenerator = dun.generator
 	var gh := Vector2i(g.width / 2, g.height / 2)
 	var mission: DungeonMissionData = dun.get("_mission") as DungeonMissionData
+	# Pulse the current dungeon objective (knowledge, quiz, miniboss or exit)
+	# before the altar art so the route's destination is obvious on the map.
+	if dun.has_method("guide_target"):
+		var guide: Dictionary = dun.call("guide_target") as Dictionary
+		if not guide.is_empty():
+			var guide_pos: Vector2 = guide.get("position", Vector2.INF) as Vector2
+			if guide_pos != Vector2.INF:
+				_grid_halo(map_rect, center, ppt, s,
+					dun.world_to_grid(guide_pos), gh)
 	if mission != null and mission.is_boss():
 		pass   # no altars in the two-room finale
 	elif mission != null and mission.is_extra():
 		# Extra dungeons contain two Quiz Altars and no Knowledge Altar.
-		_grid_dot(map_rect, center, ppt, s, g.knowledge_altar_pos, gh, C_QUIZ)
-		_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos, gh, C_QUIZ)
+		_grid_icon(map_rect, center, ppt, s, g.knowledge_altar_pos, gh,
+			QUIZ_ICON_REGION, C_QUIZ)
+		_grid_icon(map_rect, center, ppt, s, g.quiz_altar_pos, gh,
+			QUIZ_ICON_REGION, C_QUIZ)
 	else:
-		_grid_dot(map_rect, center, ppt, s, g.knowledge_altar_pos, gh, C_KNOWLEDGE)
-		_grid_dot(map_rect, center, ppt, s, g.quiz_altar_pos, gh, C_QUIZ)
+		_grid_icon(map_rect, center, ppt, s, g.knowledge_altar_pos, gh,
+			KNOWLEDGE_ICON_REGION, C_KNOWLEDGE)
+		_grid_icon(map_rect, center, ppt, s, g.quiz_altar_pos, gh,
+			QUIZ_ICON_REGION, C_QUIZ)
 	if dun._exit_marker != null and dun._exit_marker._active:
 		# The exit is repositioned beside whoever completed the quiz.
 		var exit_grid: Vector2i = dun.world_to_grid(dun._exit_marker.global_position)
@@ -1158,6 +1512,38 @@ func _grid_dot(map_rect: Rect2, center: Vector2, ppt: Vector2, s: float,
 		return
 	draw_circle(pos, 3.0 * s, col)
 
+
+# Dungeon altars use their real atlas art on the minimap, not a generic dot.
+# The coloured ring keeps the open-book / quiz-orb sprite readable on any floor.
+func _grid_icon(map_rect: Rect2, center: Vector2, ppt: Vector2, s: float,
+		grid_pos: Vector2i, gh: Vector2i, region: Rect2, ring: Color) -> void:
+	var wt: Vector2 = Vector2(grid_pos) - Vector2(gh) + Vector2(0.5, 0.5)
+	var pos: Vector2 = center + (wt - Vector2(_view_center)) * ppt
+	if not map_rect.has_point(pos):
+		return
+	var size: float = 16.0 * s
+	draw_circle(pos, size * 0.62, ring)
+	draw_circle(pos, size * 0.53, C_PANEL)
+	var inner: float = size * 0.86
+	draw_texture_rect_region(DUNGEON_ATLAS,
+		Rect2(pos - Vector2(inner, inner) * 0.5, Vector2(inner, inner)), region)
+
+## Pulsing objective halo on the in-dungeon map. Reuses the overworld guide's
+## teal so the route and the map agree on what "next" means.
+func _grid_halo(map_rect: Rect2, center: Vector2, ppt: Vector2, s: float,
+		grid_pos: Vector2i, gh: Vector2i) -> void:
+	var wt: Vector2 = Vector2(grid_pos) - Vector2(gh) + Vector2(0.5, 0.5)
+	var pos: Vector2 = center + (wt - Vector2(_view_center)) * ppt
+	if not map_rect.has_point(pos):
+		return
+	var wave: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.004)
+	var r: float = 12.0 * s + 2.0 * s * wave
+	draw_circle(pos, r, Color(C_DUNGEON_NEXT.r, C_DUNGEON_NEXT.g,
+		C_DUNGEON_NEXT.b, 0.10 + 0.08 * wave))
+	draw_arc(pos, r, 0.0, TAU, 28,
+		Color(C_DUNGEON_NEXT.r, C_DUNGEON_NEXT.g, C_DUNGEON_NEXT.b,
+			0.55 + 0.30 * wave), 2.0 * s)
+
 func _marker(map_rect: Rect2, center: Vector2, cell_px: Vector2, node: Node, col: Color, r: float) -> void:
 	if not (node is Node2D) or not is_instance_valid(node):
 		return
@@ -1166,6 +1552,16 @@ func _marker(map_rect: Rect2, center: Vector2, cell_px: Vector2, node: Node, col
 		return
 	draw_circle(pos, r, col)
 
+
+func _icon_marker(map_rect: Rect2, center: Vector2, cell_px: Vector2, node: Node,
+		tex: Texture2D, ring: Color, size: float) -> void:
+	if not (node is Node2D) or not is_instance_valid(node):
+		return
+	var pos: Vector2 = center + ((node as Node2D).global_position / TILE - Vector2(_view_center)) * cell_px
+	if not map_rect.has_point(pos):
+		return
+	_draw_icon_at(pos, size, tex, ring)
+
 func _portal_marker(map_rect: Rect2, center: Vector2, cell_px: Vector2, node: Node, s: float) -> void:
 	if not (node is Node2D) or not is_instance_valid(node):
 		return
@@ -1173,6 +1569,18 @@ func _portal_marker(map_rect: Rect2, center: Vector2, cell_px: Vector2, node: No
 	var pos: Vector2 = center + ((node as Node2D).global_position / TILE - Vector2(_view_center)) * cell_px
 	pos.x = clampf(pos.x, map_rect.position.x + isz, map_rect.end.x - isz)
 	pos.y = clampf(pos.y, map_rect.position.y + isz, map_rect.end.y - isz)
+	# Every dungeon entrance gets a pulsing halo so it reads as a major
+	# destination; the route guide's recommended next one is teal and larger.
+	var idx_raw: Variant = node.get("dungeon_index")
+	var idx: int = int(idx_raw) if idx_raw != null else 0
+	var is_next: bool = idx > 0 and idx == Global.next_guided_dungeon_index()
+	var ring: Color = C_DUNGEON_NEXT if is_next else C_DUNGEON_HALO
+	var wave: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.004)
+	var halo_r: float = isz * ((0.70 if is_next else 0.62) + 0.10 * wave)
+	draw_circle(pos, halo_r, Color(ring.r, ring.g, ring.b, 0.16 + 0.10 * wave))
+	draw_arc(pos, halo_r, 0.0, TAU, 24,
+		Color(ring.r, ring.g, ring.b, 0.72 + 0.22 * wave),
+		(2.4 if is_next else 1.5) * s)
 	draw_texture_rect(PORTAL_TEX, Rect2(pos - Vector2(isz, isz) * 0.5, Vector2(isz, isz)), false)
 
 # Nearest icon under the cursor → its tooltip text (portals = dungeon name).
@@ -1187,15 +1595,26 @@ func _hovered_icon() -> Dictionary:
 	var best_d: float = 14.0 * Global.ui_scale
 	var best: Dictionary = {}
 	var entries: Array = []
+	var overworld: bool = _dungeon() == null and _cave_info().is_empty()
 	for d in get_tree().get_nodes_in_group("DungeonPortal"):
-		entries.append({"node": d, "text": _portal_name(d), "icon": true})
+		entries.append({"node": d, "text": _portal_name(d), "icon": true, "travel": overworld})
+	# Dungeon altar icons are drawn from the generator grid, but their world
+	# nodes share the same cell centre, so the normal projection works here.
+	if _dungeon() != null:
+		for k in get_tree().get_nodes_in_group("KnowledgeAltar"):
+			entries.append({"node": k, "text": "Knowledge Altar", "icon": true})
+		for q in get_tree().get_nodes_in_group("QuizAltar"):
+			entries.append({"node": q, "text": "Quiz Altar", "icon": true})
 	for m in get_tree().get_nodes_in_group("Mob"):
 		entries.append({"node": m, "text": _mob_name(m), "icon": false})
 	for lua in get_tree().get_nodes_in_group("LuaNPC"):
-		var lua_name := "LUA"
-		if lua.has_method("get_display_name"):
-			lua_name = str(lua.call("get_display_name"))
-		entries.append({"node": lua, "text": lua_name, "icon": false})
+		entries.append({"node": lua, "text": _automatica_map_name(lua),
+			"icon": false, "travel": overworld})
+	# These markers are only drawn on the overworld map, so don't let cached
+	# overworld objects add phantom hover targets to a cave/dungeon map.
+	if _dungeon() == null and _cave_info().is_empty():
+		for entry in _world_interactable_markers():
+			entries.append({"node": entry["node"], "text": entry["label"], "icon": false})
 	for wp in get_tree().get_nodes_in_group("WorldWaypoint"):
 		entries.append({"node": wp, "text": str(wp.get("display_name")), "icon": false})
 	for grp in [["Bonfire", "Bonfire"], ["Flag", "Flag"]]:
@@ -1214,7 +1633,8 @@ func _hovered_icon() -> Dictionary:
 		var d2: float = mouse.distance_to(pos)
 		if d2 < best_d:
 			best_d = d2
-			best = {"text": e["text"], "pos": pos}
+			best = {"text": e["text"], "pos": pos,
+				"travel": bool(e.get("travel", false))}
 	return best
 
 func _tooltip(font: Font, s: float) -> void:
@@ -1222,6 +1642,8 @@ func _tooltip(font: Font, s: float) -> void:
 	if h.is_empty():
 		return
 	var text: String = str(h["text"])
+	if bool(h.get("travel", false)):
+		text += "  (%s to travel)" % ("tap" if Global.is_mobile() else "click")
 	var fs: int = Global.ui_font_size(12)
 	var pad: float = 6.0 * s
 	var tw: float = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x

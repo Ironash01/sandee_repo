@@ -14,6 +14,7 @@ var checks := 0
 
 const TEST_ACCOUNT_A := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 const TEST_ACCOUNT_B := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+const CODE_SAFETY: GDScript = preload("res://scripts/code_safety.gd")
 
 
 class SwingProbe:
@@ -55,6 +56,39 @@ class CursorProbe:
 
 	func _cursor_over(_at: Vector2 = Vector2.INF) -> bool:
 		return true
+
+
+class MinimapInteractableProbe:
+	extends Node2D
+	var obj_type: String = ""
+	var item_data: ItemData = null
+
+
+class MapBlockProbe:
+	extends Node2D
+	var item_data: ItemData = null
+
+
+class NamedAutomaticaProbe:
+	extends Node2D
+	var display_name: String = "Automatica 1"
+
+	func get_display_name() -> String:
+		return display_name
+
+
+class RespawnGameProbe:
+	extends Node
+	var dungeon_spawn: Vector2 = Vector2(120, 240)
+	var world_spawn: Vector2 = Vector2(16, 32)
+	var world_exited: bool = false
+
+	func get_dungeon_respawn_position() -> Vector2:
+		return dungeon_spawn
+
+	func get_world_spawn_position() -> Vector2:
+		world_exited = true
+		return world_spawn
 
 
 class CursorPortalProbe:
@@ -101,10 +135,22 @@ class FakeWaypointNode:
 class FakeWorldNode:
 	extends Node
 	var teleported_id := ""
+	var teleported_marker: Node = null
+	var teleported_marker_label := ""
 
 	func teleport_to_world_waypoint(id: String) -> bool:
 		teleported_id = id
 		return true
+
+	func teleport_to_map_marker(target: Node, label: String) -> bool:
+		teleported_marker = target
+		teleported_marker_label = label
+		return true
+
+
+class MapPortalProbe:
+	extends Node2D
+	var dungeon_index: int = 1
 
 
 class ExitGameProbe:
@@ -130,6 +176,10 @@ class BuildWorldProbe:
 		return self
 
 
+class AutoWorldProbe:
+	extends Node2D
+	var _placed_blocks: Dictionary = {}
+
 class AutoNextOverworld:
 	extends Node2D
 	var ensure_calls := 0
@@ -140,6 +190,27 @@ class AutoNextOverworld:
 
 	func ensure_current_dungeon_entrances() -> void:
 		ensure_calls += 1
+
+
+class GuidedDungeonWorldProbe:
+	extends Node2D
+	var target: Vector2 = Vector2(2400.0, 1800.0)
+
+	func get_guided_dungeon_target() -> Vector2:
+		return target
+
+	func cell_is_water(_cell: Vector2i) -> bool:
+		return false
+
+
+class TutorialCampWorldProbe:
+	extends Node2D
+
+	func world_to_cell(pos: Vector2) -> Vector2i:
+		return Vector2i(floori(pos.x / 32.0), floori(pos.y / 32.0))
+
+	func can_place_at(_cell: Vector2i) -> bool:
+		return true
 
 
 func _ready() -> void:
@@ -171,9 +242,14 @@ func _run() -> void:
 	_test_friendly_mobs()
 	await _test_bestiary()
 	await _test_save_and_progress()
+	await _test_autosave_indicator()
+	_test_mission_indicator()
 	_test_account_isolation()
 	await _test_tutorial_state_and_dialogue()
 	await _test_guided_tutorial_v3()
+	await _test_tutorial_cave_ore()
+	await _test_tutorial_travel_dialogue()
+	_test_opening_ui_reveal()
 	await _test_triggers()
 	await _test_pause_and_build()
 	await _test_pause_menu_short_layout()
@@ -181,10 +257,15 @@ func _run() -> void:
 	_test_world_eligibility()
 	_test_dungeon_generation()
 	await _test_dungeon_altar_coverage()
+	await _test_quiz_knowledge_lock_and_guide()
+	await _test_overworld_dungeon_guidance()
 	await _test_first_dungeon_tutorial()
 	await _test_dungeon_progression_and_sides()
+	_test_mission_log_and_tracker()
+	_test_altar_sprites_and_dialogue()
 	_test_damage_and_spawn_constants()
 	await _test_damage_application()
+	await _test_respawn_rules()
 	await _test_safe_zones()
 	await _test_grass_clearance()
 	await _test_cave_persistence()
@@ -197,8 +278,10 @@ func _run() -> void:
 	await _test_fish_and_automatica()
 	await _test_headless_fish_loot()
 	await _test_rare_chest_generation()
-	_test_minimap_lua_legend()
+	await _test_minimap_markers()
 	await _test_knowledge_altar_pages()
+	await _test_knowledge_altar_explicit_read()
+	await _test_tutorial_click_disambiguation()
 	await _test_mission_events()
 	_test_tool_stacking_and_wood_mission()
 	await _test_stat_hud_layout()
@@ -206,7 +289,9 @@ func _run() -> void:
 	await _test_smelting_recipes()
 	await _test_held_damage_display()
 	await _test_mining_tool_switch()
+	await _test_chain_mining()
 	await _test_pickaxe_blockers()
+	await _test_pickaxe_object_priority()
 	await _test_cave_pickup()
 	await _test_pixie_loot()
 	await _test_worm_water_guard()
@@ -214,6 +299,9 @@ func _run() -> void:
 	await _test_ui_back_stack()
 	await _test_ui_back_actual()
 	await _test_inventory_hotbar()
+	await _test_modal_hotbar()
+	await _test_modal_layout_above_hotbar()
+	await _test_crafting_requirement_sources()
 	await _test_chest_inventory_panel()
 	_test_cloud_save_identity()
 	await _test_sync_loading()
@@ -221,15 +309,22 @@ func _run() -> void:
 	_test_display_frame_cap()
 	_test_removed_debug_surfaces()
 	_test_ui_scaling()
+	_test_music_manager()
+	_test_scene_transition_loading()
 	await _test_android_input_and_safe_area()
 	await _test_pc_controls_overlay()
 	await _test_settings_tour()
+	await _test_settings_persistence()
 	await _test_android_tooltip_suppression()
 	await _test_android_keyboard_layout()
 	await _test_ambient_birds()
 	await _test_automatica_api()
 	await _test_automatica_build_queue()
+	await _test_automatica_fixes()
+	await _test_automatica_projectile_parry()
+	await _test_code_safety()
 	await _test_algorithmica_templates()
+	await _test_automation_missions()
 	await _test_quiz_reward_ui()
 	await _test_quiz_compiler_layout()
 	await _test_altar_mobile_layout()
@@ -240,6 +335,7 @@ func _run() -> void:
 	_test_tree_canopy_occupancy()
 	_test_decorative_structures()
 	_test_waypoints()
+	await _test_map_marker_travel()
 	_cleanup_test_account_dir(TEST_ACCOUNT_A)
 	_cleanup_test_account_dir(TEST_ACCOUNT_B)
 	Global.clear_active_account("qa_done")
@@ -264,17 +360,19 @@ func _test_registry() -> void:
 	var side_ids: Array = []
 	for m in Global.missions:
 		ids.append(str(m.get("id", "")))
-		if not m.has("dungeon_index") and not bool(m.get("side", false)):
+		if not m.has("dungeon_index") and not bool(m.get("side", false)) \
+				and not bool(m.get("hidden", false)):
 			gameplay_ids.append(str(m.get("id", "")))
 		if bool(m.get("side", false)):
 			side_ids.append(str(m.get("id", "")))
 	check(not ids.has("defeat_wolves"), "retired Kill Wolves mission is absent")
-	check(gameplay_ids.size() == 28, "28 overworld missions (25 + 3 diamond equipment)")
+	check(gameplay_ids.size() == 24, "24 Automation missions replace the overworld flow")
 	check(gameplay_ids.size() >= 3
-		and gameplay_ids[gameplay_ids.size() - 3] == "craft_diamond_sword"
-		and gameplay_ids[gameplay_ids.size() - 2] == "craft_diamond_pickaxe"
-		and gameplay_ids[gameplay_ids.size() - 1] == "craft_diamond_axe",
-		"diamond equipment missions are the final three core overworld missions")
+		and gameplay_ids[0] == "auto_boot"
+		and gameplay_ids[11] == "auto_combat"
+		and gameplay_ids[12] == "algo_boot"
+		and gameplay_ids[gameplay_ids.size() - 1] == "algo_crystal_run",
+		"the Automation flow is 12 Automatica then 12 Algorithmica missions")
 	check(side_ids.size() == 20 and _unique_count(side_ids) == side_ids.size()
 		and _unique_count(ids) == ids.size(),
 		"20 unique side missions are registered without duplicate ids")
@@ -365,6 +463,7 @@ func _test_bestiary() -> void:
 	var anims_ok := true
 	var walk_frames_ok := true
 	var hostility_ok := true
+	var health_bars_ok := true
 	for path in scenes:
 		var scene: PackedScene = load(path) as PackedScene
 		if scene == null:
@@ -386,11 +485,22 @@ func _test_bestiary() -> void:
 		var expected_hostile: bool = bool(scenes[path])
 		if Global.is_hostile_mob(mob) != expected_hostile:
 			hostility_ok = false
+		if mob.has_method("_hp_bar_y") and mob.has_method("_sprite_top"):
+			var bar_y := float(mob.call("_hp_bar_y"))
+			var sprite_top := float(mob.call("_sprite_top"))
+			if bar_y > sprite_top - 2.0:
+				health_bars_ok = false
+			var label: Variant = mob.get("_name_label")
+			if label != null and is_instance_valid(label) \
+					and float(label.get("vertical_offset")) >= bar_y:
+				health_bars_ok = false
 		mob.queue_free()
 		await get_tree().process_frame
 	check(anims_ok, "each Bestiary creature has four-direction idle/walk animations")
 	check(walk_frames_ok, "each walk cycle uses four gait frames")
 	check(hostility_ok, "new hostile creatures report hostile and friendlies do not")
+	check(health_bars_ok,
+		"Bestiary and dungeon mobs draw health bars above their tall sprites")
 
 	# A real death must reach both halves of the feature: the Bestiary study
 	# state and the actual loot spawner.
@@ -486,6 +596,47 @@ func _test_bestiary() -> void:
 			has_drop = true
 	check(has_tab and has_entry and has_health and has_drop,
 		"Bestiary tab shows a studied creature, its health and its drops")
+
+	# The left column is a Button list inside a ScrollContainer. On mobile the
+	# wheel does not exist, so a touch drag starting on a row must scroll the
+	# list while a short tap still selects that row.
+	for entry in BestiaryCatalog.entries():
+		var best_data := entry as MobCombatData
+		if best_data != null:
+			Global.bestiary_record_seen(best_data.bestiary_id)
+	await get_tree().process_frame
+	ui.call("_refresh_bestiary")
+	await get_tree().process_frame
+	var best_scroll := ui.get("_best_left_scroll") as ScrollContainer
+	var drag_ok := false
+	var tap_ok := false
+	if best_scroll != null:
+		best_scroll.scroll_vertical = 0
+		var touch_pos := best_scroll.get_global_rect().get_center()
+		var touch := InputEventScreenTouch.new()
+		touch.index = 7
+		touch.position = touch_pos
+		touch.pressed = true
+		ui.call("_input", touch)
+		var drag := InputEventScreenDrag.new()
+		drag.index = 7
+		drag.position = touch_pos + Vector2(0, -120)
+		drag.relative = Vector2(0, -40)
+		ui.call("_input", drag)
+		await get_tree().process_frame
+		drag_ok = best_scroll.scroll_vertical > 0
+		var selected_before := str(ui.get("_best_selected_id"))
+		ui.call("_on_bestiary_entry_pressed", "rune_sentinel")
+		tap_ok = str(ui.get("_best_selected_id")) == selected_before
+		var release := InputEventScreenTouch.new()
+		release.index = 7
+		release.position = touch_pos + Vector2(0, -120)
+		release.pressed = false
+		ui.call("_input", release)
+	check(drag_ok,
+		"Bestiary left list scrolls with a touch drag on mobile")
+	check(tap_ok,
+		"dragging the Bestiary list does not select the row under the finger")
 	layer.queue_free()
 	await get_tree().process_frame
 
@@ -524,6 +675,7 @@ func _test_save_and_progress() -> void:
 	moved["progress"] = 1
 	wood["progress"] = 7
 	Global.cleared_dungeons[77] = true
+	Global.last_cleared_dungeon_index = 77
 	Global.dungeon_stars[77] = 2
 	Global.dungeon_quiz_hints[77] = 4
 	Global.dungeon_quiz_penalties[77] = 2
@@ -532,6 +684,8 @@ func _test_save_and_progress() -> void:
 	Global.load_game(slot)
 	check(int(wood.get("progress", -1)) == 7, "partial progress survives save/load")
 	check(bool(moved.get("completed", false)), "completion survives save/load")
+	check(Global.last_cleared_dungeon_index == 77,
+		"the last cleared dungeon survives save/load for next-dungeon guidance")
 	check(Global.dungeon_stars_for(77) == 2,
 		"per-dungeon blue-star awards survive save/load")
 	check(Global.dungeon_quiz_hints_for(77) == 4
@@ -625,8 +779,105 @@ func _test_save_and_progress() -> void:
 	Global.dungeon_stars.erase(77)
 	Global.dungeon_quiz_hints.erase(77)
 	Global.dungeon_quiz_penalties.erase(77)
+	var deleted_world: Array = []
+	var on_world_deleted := func(deleted_slot: int, uid: String, checksum: String) -> void:
+		deleted_world.append({"slot": deleted_slot, "uid": uid, "checksum": checksum})
+	Global.world_deleted.connect(on_world_deleted)
 	Global.delete_world(slot)
+	Global.world_deleted.disconnect(on_world_deleted)
+	check(deleted_world.size() == 1
+		and int((deleted_world[0] as Dictionary)["slot"]) == slot
+		and str((deleted_world[0] as Dictionary)["uid"]).length() >= 16
+		and not FileAccess.file_exists(path),
+		"deleting a world emits its stable UID/checksum for cloud tombstones")
+	CloudSync.set("_deleted_uids", {})
 	Global.reset_bestiary_state()
+
+
+func _test_autosave_indicator() -> void:
+	var indicator_src := FileAccess.get_file_as_string("res://scripts/autosave_indicator.gd")
+	var spinner_src := FileAccess.get_file_as_string("res://scripts/autosave_spinner.gd")
+	var global_src := FileAccess.get_file_as_string("res://scripts/global.gd")
+	check(FileAccess.get_file_as_string("res://project.godot").contains(
+			'AutosaveUI="*res://scripts/autosave_indicator.gd"')
+		and AutosaveUI is CanvasLayer
+		and indicator_src.contains("Global.save_started")
+		and indicator_src.contains("Global.save_finished")
+		and spinner_src.contains("draw_arc")
+		and spinner_src.contains("_angle"),
+		"autosave indicator is a persistent CanvasLayer with a circular spinner")
+	check(global_src.contains("signal save_started(slot: int)")
+		and global_src.contains("signal save_finished(slot: int, success: bool)")
+		and global_src.contains("save_started.emit(slot)")
+		and global_src.contains("save_finished.emit(slot, true)")
+		and global_src.contains("save_finished.emit(slot, false)"),
+		"save pipeline emits start and success/failure finish signals")
+	# Exercise the real autoload indicator through those signals.
+	AutosaveUI.visible = false
+	AutosaveUI.set("_saving", false)
+	AutosaveUI.set("_min_elapsed", true)
+	Global.save_started.emit(999)
+	check(AutosaveUI.visible and AutosaveUI.indicator_text() == "Autosaving..."
+		and AutosaveUI.spinner_control() != null,
+		"autosave notification appears at the top while saving")
+	Global.save_finished.emit(999, true)
+	await get_tree().create_timer(AutosaveUI.MIN_VISIBLE_SEC + 0.2).timeout
+	check(not AutosaveUI.visible,
+		"autosave notification clears after the minimum visible time")
+	AutosaveUI.visible = false
+
+
+func _test_mission_indicator() -> void:
+	var indicator_src := FileAccess.get_file_as_string(
+		"res://scripts/mission_completion_indicator.gd")
+	check(FileAccess.get_file_as_string("res://project.godot").contains(
+			'MissionToastUI="*res://scripts/mission_completion_indicator.gd"')
+		and MissionToastUI is CanvasLayer
+		and indicator_src.contains("Global.mission_completed")
+		and indicator_src.contains("AUTOSAVE_STACK_GAP")
+		and indicator_src.contains("MISSION COMPLETE"),
+		"mission-complete toast is a persistent top-centre CanvasLayer")
+
+	MissionToastUI.reset()
+	Global.mission_completed.emit("auto_boot")
+	check(MissionToastUI.visible
+		and MissionToastUI.indicator_text() == "Boot Sequence"
+		and MissionToastUI.indicator_subtext().contains("AUTOMATICA")
+		and MissionToastUI.indicator_subtext().contains("MISSION COMPLETE"),
+		"Automatica mission completion shows a top-centre toast")
+
+	# A second completion queues behind the first instead of replacing it.
+	Global.mission_completed.emit("side_wolf_slayer")
+	check(MissionToastUI.queue_size() == 1
+		and MissionToastUI.indicator_text() == "Boot Sequence",
+		"simultaneous mission completions queue instead of overwriting")
+	MissionToastUI.finish_current()
+	check(MissionToastUI.visible
+		and MissionToastUI.indicator_text() == "Pack Breaker"
+		and MissionToastUI.indicator_subtext().contains("SIDE MISSION"),
+		"side-mission completion follows in the toast queue")
+	MissionToastUI.finish_current()
+	check(not MissionToastUI.visible and MissionToastUI.queue_size() == 0,
+		"the mission toast clears after the last queued mission")
+
+	var py_idx: int = Global.first_main_dungeon_index("python")
+	Global.mission_completed.emit("dungeon_%d" % py_idx)
+	check(py_idx > 0 and MissionToastUI.visible
+		and MissionToastUI.indicator_subtext().contains("PYTHON DUNGEON"),
+		"Python dungeon completion is labelled PYTHON DUNGEON")
+	MissionToastUI.finish_current()
+
+	var lua_idx: int = Global.first_main_dungeon_index("lua")
+	Global.mission_completed.emit("dungeon_%d" % lua_idx)
+	check(lua_idx > 0 and MissionToastUI.visible
+		and MissionToastUI.indicator_subtext().contains("LUA DUNGEON"),
+		"Lua dungeon completion is labelled LUA DUNGEON")
+	MissionToastUI.finish_current()
+
+	Global.mission_completed.emit("move")
+	check(not MissionToastUI.visible and MissionToastUI.queue_size() == 0,
+		"hidden legacy objectives do not show a mission toast")
+	MissionToastUI.reset()
 
 
 func _test_account_isolation() -> void:
@@ -739,6 +990,7 @@ func _test_tutorial_state_and_dialogue() -> void:
 			"starter_kit_v3": true,
 			"automatica_awarded": true,
 			"camp_cells_v3": {"furnace": [3, 4]},
+			"opening_ui_step": "dungeon_quiz",
 		}
 		Global.save_game(slot)
 		Global.tutorial_stage = 0
@@ -748,10 +1000,21 @@ func _test_tutorial_state_and_dialogue() -> void:
 		check(Global.tutorial_version == 3 and Global.tutorial_stage == 8
 			and not Global.tutorial_completed
 			and bool(Global.tutorial_flags.get("starter_kit_v3", false))
-			and bool(Global.tutorial_flags.get("automatica_awarded", false)),
-			"guided tutorial version, step and one-time reward flags survive save/load")
+			and bool(Global.tutorial_flags.get("automatica_awarded", false))
+			and str(Global.tutorial_flags.get("opening_ui_step", "")) == "dungeon_quiz",
+			"guided tutorial version, step, reward and HUD-reveal flags survive save/load")
 		check(FileAccess.get_file_as_string(Global.save_file_path(slot)).contains("tutorial_flags"),
 			"tutorial reward flags are persisted in the world save")
+
+		# The permanent normal-HUD graduation must survive a reload too.
+		Global.tutorial_stage = 10
+		Global.tutorial_completed = false
+		Global.tutorial_flags = {TutorialUiReveal.COMPLETE_FLAG: true}
+		Global.save_game(slot)
+		Global.tutorial_flags.clear()
+		Global.load_game(slot)
+		check(bool(Global.tutorial_flags.get(TutorialUiReveal.COMPLETE_FLAG, false)),
+			"opening HUD completion persists across save/load")
 
 		# A previous guided-tutorial generation must not be replayed inside the
 		# v3 flow. Existing items, missions and dungeon progress stay untouched.
@@ -843,6 +1106,25 @@ func _test_guided_tutorial_v3() -> void:
 		and steps.has("move_one") and steps.has("move_two") and steps.has("tree_chop") \
 		and steps.has("craft_station") and steps.has("dungeon_knowledge")
 	check(order_ok, "guided tutorial v3 orders dungeon, Automatica build/combat, programming and exploration")
+
+	# The Automatica lesson has a second, mission-focused half. It must teach
+	# the tracker/log and only expose the mission HUD while doing so.
+	var tutorial_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	var mission_src := FileAccess.get_file_as_string("res://scripts/mission_ui.gd")
+	check(tutorial_src.contains("_tick_automatica_missions")
+		and tutorial_src.contains("automatica_missions_done")
+		and tutorial_src.contains("_automatica_mission_lines")
+		and tutorial_src.contains("_automatica_mission_hint")
+		and tutorial_src.contains("_mission_view_all_button")
+		and tutorial_src.contains("_set_game_mission_focus")
+		and tutorial_src.contains("VIEW ALL MISSIONS")
+		and mission_src.contains("tutorial_view_all_button"),
+		"Automatica tutorial teaches the mission tracker and verifies the log was opened")
+	check(FileAccess.get_file_as_string("res://scenes/game_instance.gd").contains(
+			"apply_tutorial_mission_focus")
+		and FileAccess.get_file_as_string("res://scripts/global.gd").contains(
+			"mission_log_open_count"),
+		"Automatica mission lesson exposes only the mission HUD and tracks log opens")
 
 	# Starting kit: all three wooden tools and exactly 10 bread, granted once.
 	var old_hotbar: Array = Global.Hotbar.duplicate(true)
@@ -1047,8 +1329,10 @@ func _test_guided_tutorial_v3() -> void:
 			"dungeon route markers stay on floor and end at the actual Quiz Altar")
 		var route_src := FileAccess.get_file_as_string("res://scripts/tutorial_route_guide.gd")
 		check(not route_src.contains("draw_string")
-			and not route_src.contains("str(i + 1)"),
-			"dungeon route guide uses plain dots without numbers or text")
+			and not route_src.contains("str(i + 1)")
+			and not route_src.contains("C_FILL")
+			and route_src.contains("draw_circle(p, point_r"),
+			"dungeon route guide uses only small dots without numbers or text")
 		route_guide.queue_free()
 		p.queue_free()
 		Global.player_node = old_player
@@ -1090,6 +1374,10 @@ func _test_guided_tutorial_v3() -> void:
 	check(guide_src.contains("_world.call(\"placed_node\"")
 		and guide_src.contains("Making room to rebuild it"),
 		"camp furnace recovery re-adopts restored stations before reporting failure")
+	check(guide_src.contains("centre_x") and guide_src.contains("half_room")
+		and guide_src.contains("content.position.y + 6.0 * s")
+		and not guide_src.contains("content.position.y + 118.0 * s"),
+		"GUIDED START centres on screen and shrinks clear of the top-right HUD")
 
 	# Calling the deferred recall on an off-tree overworld must not reach
 	# get_tree().create_timer() (the null-tree crash reported in world.gd).
@@ -1108,18 +1396,20 @@ func _test_guided_tutorial_v3() -> void:
 	Global.player_node = old_off_player
 	await get_tree().process_frame
 
-	# An open hint must keep the quiz tutorial on NEXT; only after the hint is
-	# dismissed may it advance to RUN / answer selection.
+	# An open hint must keep the quiz tutorial on NEXT; after the hint is
+	# revealed the player types the ghost answer and only then runs it.
 	var hint_branch := guide_src.find("if hint_open:")
 	var demo_branch := guide_src.find(
 		"var demo_done := bool(Global.tutorial_flags.get(\"quiz_hint_demo\"")
 	check(hint_branch >= 0 and demo_branch > hint_branch
 		and guide_src.contains("Tap NEXT to hide the hint.")
-		and guide_src.contains("Tap RUN to check the hinted code.")
+		and guide_src.contains("Tap RUN to check your typed answer.")
+		and guide_src.contains("Type the ghost answer shown in the code box.")
 		and guide_src.contains("tutorial_hint_run_failed")
 		and guide_src.contains("tutorial_code_text")
-		and guide_src.contains("Tap HINT to prepare the code."),
-		"dungeon quiz tutorial hints then runs; NEXT follows a failed hinted run")
+		and guide_src.contains("tutorial_code_editor")
+		and guide_src.contains("Tap HINT to see the ghost answer."),
+		"dungeon quiz tutorial shows ghost text and never types the answer for the player")
 
 	# Leaving a cave before the interaction must not complete the lesson, and
 	# the verified interaction unlocks the normal exit completion.
@@ -1163,6 +1453,18 @@ func _test_guided_tutorial_v3() -> void:
 		and guide_src.contains("combat_mode(true)")
 		and guide_src.contains("output.contains(\"Algorithmica ready\")"),
 		"Automatica lessons verify the real build, combat and Algorithmica run results")
+	check(guide_src.contains("_automatica_explanation_lines")
+		and guide_src.contains("Automaticas are automated robots for you to experiment on.")
+		and guide_src.contains("run Lua code inside them")
+		and guide_src.contains("automatica_build_done")
+		and guide_src.contains("automatica_explanation_done"),
+		"Automatica lesson explains what the robot is after the build run")
+	check(guide_src.contains("_algorithmica_explanation_lines")
+		and guide_src.contains("Algorithmica is the automated crafting and smelting panel")
+		and guide_src.contains("run Python code inside it")
+		and guide_src.contains("algorithmica_run_done")
+		and guide_src.contains("algorithmica_explanation_done"),
+		"Algorithmica lesson explains what the panel is after the Python run")
 	check(lua_editor_src.contains("build_line(-15, -8, 16, -8)")
 		and guide_src.contains("Automatica can do tasks for you")
 		and guide_src.contains("automatica_combat_kit"),
@@ -1173,6 +1475,100 @@ func _test_guided_tutorial_v3() -> void:
 		and guide_src.contains("is_combat")
 		and guide_src.contains("_find_second_automatica"),
 		"the combat lesson guides the player through tool assignment and combat_mode(true)")
+
+	# Tutorial camp structures are protected for the whole onboarding, so the
+	# furnace/station cannot be mined and immediately rebuilt by the director.
+	var old_protected_completed: bool = Global.tutorial_completed
+	var old_protected_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_protected_selected: int = Global.hotbar_selected
+	Global.Hotbar.resize(Global.HOTBAR_SIZE)
+	Global.Hotbar.fill(null)
+	Global.Hotbar[0] = {"data": load("res://resources/items/iron_pickaxe.tres"), "quantity": 1}
+	Global.set_hotbar_selection(0)
+	var camp_block: Node = load("res://scenes/objects/PlaceableBlock.tscn").instantiate()
+	camp_block.set("item_data", load("res://resources/items/stone.tres"))
+	add_child(camp_block)
+	await get_tree().process_frame
+	camp_block.add_to_group("TutorialCamp")
+	Global.tutorial_completed = false
+	camp_block.call("_try_start_breaking")
+	check(not bool(camp_block.get("_breaking")),
+		"tutorial camp blocks reject break attempts during onboarding")
+	camp_block.set("_breaking", true)
+	camp_block.set("_break_duration", 1.0)
+	camp_block.call("_add_break_progress", 99.0)
+	check(is_instance_valid(camp_block) and not bool(camp_block.get("_breaking")),
+		"tutorial camp blocks cannot accumulate break progress")
+	var camp_furnace: Node = load("res://scenes/objects/ObjectItem.tscn").instantiate()
+	camp_furnace.set("item_data", load("res://resources/items/furnace.tres"))
+	camp_furnace.add_to_group("TutorialCamp")
+	camp_furnace.call("_try_start_breaking")
+	check(not bool(camp_furnace.get("_breaking")),
+		"the tutorial furnace rejects break attempts during onboarding")
+	Global.tutorial_completed = true
+	camp_block.call("_try_start_breaking")
+	check(bool(camp_block.get("_breaking")),
+		"camp blocks become breakable after the tutorial finishes")
+	camp_block.call("_cancel_breaking")
+	camp_block.queue_free()
+	camp_furnace.free()
+	Global.tutorial_completed = old_protected_completed
+	Global.Hotbar = old_protected_hotbar
+	Global.set_hotbar_selection(old_protected_selected)
+	await get_tree().process_frame
+
+
+func _test_tutorial_cave_ore() -> void:
+	var guide_script: Script = load("res://scripts/tutorial_guide.gd")
+	var near_px := float(guide_script.get_script_constant_map().get(
+		"CAVE_ORE_NEAR_ENTRANCE_PX", 256.0))
+	var old_world: Node = Global.world_node
+	var old_player: Node = Global.player_node
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+
+	var cave := CaveWorld.new()
+	add_child(cave)
+	cave.setup(246810, Vector2.ZERO)
+	Global.world_node = cave
+	var player := CharacterBody2D.new()
+	player.add_to_group("Player")
+	add_child(player)
+	Global.player_node = player
+	player.global_position = cave.call("get_player_spawn_position")
+	Global.Hotbar.resize(Global.HOTBAR_SIZE)
+	Global.Hotbar.fill(null)
+	Global.Hotbar[0] = {"data": load("res://resources/items/wooden_pickaxe.tres"), "quantity": 1}
+	Global.set_hotbar_selection(0)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+
+	var guide: Node = guide_script.new()
+	add_child(guide)
+	var ore: Dictionary = guide.call("_nearest_cave_ore", "cave")
+	var gen = cave.get("generator")
+	var tm := cave.get("_tilemap") as TileMapLayer
+	var entrance_tile: Vector2i = gen.get("entrance_tile") as Vector2i
+	var half := Vector2i(int(gen.get("size")) / 2, int(gen.get("size")) / 2)
+	var entrance_pos: Vector2 = tm.to_global(tm.map_to_local(entrance_tile - half))
+	var ore_pos: Vector2 = ore.get("pos", Vector2.INF) as Vector2
+	var ore_data := load(str(ore.get("item", ""))) as ItemData
+	var ore_cell: Vector2i = ore.get("cell", Vector2i(-1, -1)) as Vector2i
+	check(not ore.is_empty() and ore_pos != Vector2.INF
+		and ore_pos.distance_to(entrance_pos) <= near_px + 0.5
+		and ore_data != null and ore_data.min_pickaxe_level <= 1
+		and ore_cell.x >= 0 and ore_cell.y >= 0
+		and int(gen.grid[ore_cell.x][ore_cell.y]) != 0,
+		"tutorial cave ore target stays near the entrance and is mineable with the starter pickaxe")
+
+	guide.queue_free()
+	cave.queue_free()
+	player.queue_free()
+	Global.world_node = old_world if is_instance_valid(old_world) else null
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	Global.Hotbar = old_hotbar
+	Global.set_hotbar_selection(old_selected)
+	await get_tree().process_frame
 
 
 func _test_stat_hud_layout() -> void:
@@ -1494,7 +1890,7 @@ func _test_triggers() -> void:
 		quiz.setup(lua_mission)
 		quiz.set("_compiler_q", lua_question)
 		quiz.set("_accept_results", true)
-		quiz.call("_start_quiz")
+		quiz.call("_start_quiz", true)
 		quiz.call("_on_quiz_executed")
 		await get_tree().create_timer(0.6).timeout
 		check(bool(Global._find_mission("run_program").get("completed", false)),
@@ -1522,7 +1918,7 @@ func _test_pause_and_build() -> void:
 		var altar := QuizAltar.new()
 		add_child(altar)
 		altar.setup(mission)
-		altar.call("_start_quiz")
+		altar.call("_start_quiz", true)
 		await get_tree().process_frame
 		var opened: bool = Global.any_ui_open()
 		var paused_while_open: bool = get_tree().paused
@@ -1558,6 +1954,32 @@ func _test_pause_and_build() -> void:
 	check(Global.block_mode, "build mode enables after leaving a dungeon")
 	Global.toggle_build_mode()
 	check(not Global.block_mode, "build mode disables again in the overworld")
+
+	# Build mode must not leak from the title/menu or loading screen into a new
+	# world. With PnC enabled a stale build mode makes move clicks place blocks.
+	var reset_events: Array = []
+	var on_build_reset := func(active: bool) -> void: reset_events.append(active)
+	Global.block_mode_changed.connect(on_build_reset)
+	Global.block_mode = true
+	Global.reset_build_mode_for_world()
+	Global.block_mode_changed.disconnect(on_build_reset)
+	check(not Global.block_mode and reset_events.size() == 1
+		and not bool(reset_events[0]),
+		"world-load reset clears a stale build mode and syncs the HUD")
+
+	# Ctrl is global input, but outside a live game it must not latch build mode
+	# on the title/menu for the next world.
+	get_viewport().gui_release_focus()
+	var old_game: Node = Global.game_node
+	Global.game_node = null
+	Global.block_mode = false
+	var ctrl := InputEventKey.new()
+	ctrl.keycode = KEY_CTRL
+	ctrl.pressed = true
+	Global._input(ctrl)
+	check(not Global.block_mode,
+		"Ctrl cannot enable build mode outside a live game")
+	Global.game_node = old_game
 
 
 func _test_world_eligibility() -> void:
@@ -1707,6 +2129,203 @@ func _test_dungeon_altar_coverage() -> void:
 	check(altars_after == altars_before,
 		"re-running altar spawn does not duplicate dungeon altars")
 	dun.queue_free()
+	await get_tree().process_frame
+
+
+func _test_quiz_knowledge_lock_and_guide() -> void:
+	Global.reset_pause_state()
+	Global.block_mode = false
+	var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(
+		Global.first_main_dungeon_index("python"))
+	if mission == null or mission.entry() == null:
+		check(false, "main dungeon with a knowledge entry is available for guide/lock tests")
+		return
+	var entry := mission.entry()
+	var old_learned: Dictionary = Global.learned_entries.duplicate(true)
+	var old_cleared: Dictionary = Global.cleared_dungeons.duplicate(true)
+	var old_last_clear: int = Global.last_cleared_dungeon_index
+	Global.learned_entries.erase(entry.id())
+	Global._rebuild_learned_keywords()
+	Global.cleared_dungeons.erase(mission.dungeon_index)
+	Global.knowledge_updated.emit()
+
+	var altar := QuizAltar.new()
+	add_child(altar)
+	altar.setup(mission)
+	altar.set("_player_nearby", true)
+	check(bool(altar.call("is_locked")) and bool(altar.get("_locked")),
+		"quiz altar locks until its linked knowledge entry is learned")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	altar.call("_input", click)
+	check(not bool(altar.call("tutorial_is_open")),
+		"clicking a locked quiz altar does not open the quiz")
+	altar.call("_start_quiz")
+	check(not bool(altar.call("tutorial_is_open")),
+		"point-and-click's direct quiz open path also respects the knowledge lock")
+	Global.learned_entries[entry.id()] = true
+	Global._rebuild_learned_keywords()
+	Global.knowledge_updated.emit()
+	check(not bool(altar.call("is_locked")) and not bool(altar.get("_locked")),
+		"learning the knowledge entry unlocks the quiz altar")
+	altar.call("_input", click)
+	check(bool(altar.call("tutorial_is_open")),
+		"the unlocked quiz altar opens normally")
+	altar.call("_close_quiz")
+	altar.queue_free()
+	await get_tree().process_frame
+
+	# The world-owned guide must always have an objective: knowledge first,
+	# then the quiz altar, with the route ending on the real target.
+	var overworld := AutoNextOverworld.new()
+	add_child(overworld)
+	var dun := DungeonWorld.new()
+	add_child(dun)
+	dun.setup(mission.dungeon_index, mission, 33391 + mission.dungeon_index,
+		overworld, Vector2.ZERO)
+	await get_tree().process_frame
+	var old_player: Node = Global.player_node
+	var old_world: Node = Global.world_node
+	var old_tutorial_done: bool = Global.tutorial_completed
+	var p := CharacterBody2D.new()
+	p.add_to_group("Player")
+	add_child(p)
+	p.global_position = dun.call("get_player_spawn_pos") as Vector2
+	Global.player_node = p
+	Global.world_node = dun
+	Global.tutorial_completed = true
+	Global.learned_entries.erase(entry.id())
+	Global._rebuild_learned_keywords()
+	var guide := dun.get_node_or_null("DungeonGuide") as Node
+	check(guide != null and guide.is_in_group("DungeonGuide"),
+		"every dungeon owns a persistent circle-route guide")
+	var target: Dictionary = dun.call("guide_target") as Dictionary
+	check(str(target.get("label", "")) == "Knowledge Altar",
+		"dungeon guide points to the Knowledge Altar before the entry is learned")
+	Global.learned_entries[entry.id()] = true
+	Global._rebuild_learned_keywords()
+	target = dun.call("guide_target") as Dictionary
+	check(str(target.get("label", "")) == "Quiz Altar",
+		"dungeon guide moves to the Quiz Altar after learning")
+	if guide != null:
+		guide.call("_refresh")
+		var route: Node = guide.get("_route") as Node
+		var points: Array = route.get("_points") as Array
+		var endpoint_ok := not points.is_empty() \
+			and (points[points.size() - 1] as Vector2).distance_to(
+				target.get("position", Vector2.INF) as Vector2) < 2.0
+		var floor_ok := true
+		for point in points:
+			var cell: Vector2i = dun.call("world_to_grid", point as Vector2) as Vector2i
+			if not bool(dun.call("grid_cell_is_floor", cell)):
+				floor_ok = false
+		check(endpoint_ok and floor_ok and points.size() > 1,
+			"persistent dungeon route stays on floor and ends at its current objective")
+
+	Global.player_node = old_player
+	Global.world_node = old_world
+	Global.tutorial_completed = old_tutorial_done
+	p.queue_free()
+	dun.queue_free()
+	overworld.queue_free()
+	await get_tree().process_frame
+	Global.learned_entries = old_learned
+	Global._rebuild_learned_keywords()
+	Global.cleared_dungeons = old_cleared
+	Global.last_cleared_dungeon_index = old_last_clear
+	Global.knowledge_updated.emit()
+	Global.reset_pause_state()
+
+
+func _test_overworld_dungeon_guidance() -> void:
+	var old_last: int = Global.last_cleared_dungeon_index
+	var py_idx: int = Global.first_main_dungeon_index("python")
+	var lua_idx: int = Global.first_main_dungeon_index("lua")
+	check(py_idx > 0 and lua_idx > 0,
+		"both language tracks expose a live first dungeon for overworld guidance")
+	if py_idx > 0 and lua_idx > 0:
+		Global.last_cleared_dungeon_index = py_idx
+		check(Global.next_guided_dungeon_language() == "lua"
+			and Global.next_guided_dungeon_index() == Global.current_main_dungeon_index("lua")
+			and Global.next_guided_dungeon_name() == "Lua Dungeon",
+			"clearing a Python dungeon points the overworld guide at Lua next")
+		Global.last_cleared_dungeon_index = lua_idx
+		check(Global.next_guided_dungeon_language() == "python"
+			and Global.next_guided_dungeon_index() == Global.current_main_dungeon_index("python")
+			and Global.next_guided_dungeon_name() == "Python Dungeon",
+			"clearing a Lua dungeon points the overworld guide at Python next")
+	Global.last_cleared_dungeon_index = old_last
+
+	var constants: Dictionary = load("res://scripts/minimap.gd").get_script_constant_map()
+	check(constants.has("C_DUNGEON_HALO") and constants.has("C_DUNGEON_NEXT")
+		and constants["C_DUNGEON_HALO"] != constants["C_DUNGEON_NEXT"],
+		"minimap reserves distinct halo colours for dungeons and the recommended next")
+	var minimap_src := FileAccess.get_file_as_string("res://scripts/minimap.gd")
+	check(minimap_src.contains("next_guided_dungeon_index")
+		and minimap_src.contains("C_DUNGEON_HALO")
+		and minimap_src.contains("draw_arc(pos, halo_r"),
+		"overworld minimap halos every dungeon and emphasizes the next one")
+	check(minimap_src.contains("func _grid_halo")
+		and minimap_src.contains('dun.call("guide_target")'),
+		"dungeon minimap pulses the route guide's current objective")
+	var world_src := FileAccess.get_file_as_string("res://scripts/world.gd")
+	check(world_src.contains("func get_guided_dungeon_target")
+		and world_src.contains("OverworldDungeonGuide"),
+		"overworld owns a persistent guide to the recommended dungeon entrance")
+	var tutorial_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(tutorial_src.contains("_ensure_dungeon_route(altar)")
+		and tutorial_src.contains("TutorialRouteGuide.build_points"),
+		"tutorial knowledge and quiz steps share the same floor-route builder")
+
+	# Runtime check: the guide builds the trail, labelled marker and compass,
+	# retargets a moved entrance, and hides while the tutorial owns guidance.
+	Global.reset_pause_state()
+	var old_world: Node = Global.world_node
+	var old_player: Node = Global.player_node
+	var old_tutorial: bool = Global.tutorial_completed
+	var probe := GuidedDungeonWorldProbe.new()
+	add_child(probe)
+	var p := CharacterBody2D.new()
+	p.add_to_group("Player")
+	add_child(p)
+	p.global_position = Vector2(100.0, 100.0)
+	Global.world_node = probe
+	Global.player_node = p
+	Global.tutorial_completed = true
+	var guide: Node2D = load("res://scripts/overworld_dungeon_guide.gd").new() as Node2D
+	probe.add_child(guide)
+	await get_tree().process_frame
+	guide.call("_refresh")
+	await get_tree().process_frame
+	var route: Node = guide.get("_route") as Node
+	var marker: Node2D = guide.get("_marker") as Node2D
+	var arrow: Node2D = guide.get("_arrow") as Node2D
+	check(route != null and route.visible
+		and (route.get("_points") as Array).size() > 1,
+		"overworld guide draws a multi-dot trail toward the next dungeon")
+	check(marker != null and marker.visible
+		and marker.global_position.distance_to(probe.target) < 1.0,
+		"overworld guide labels the recommended dungeon entrance")
+	check(arrow != null and arrow.visible,
+		"overworld guide adds a distance compass for far entrances")
+	probe.target = Vector2(-900.0, 600.0)
+	guide.call("_refresh")
+	var moved_points: Array = route.get("_points") as Array
+	check(not moved_points.is_empty()
+		and (moved_points[moved_points.size() - 1] as Vector2).distance_to(
+			probe.target) < 1.0,
+		"overworld guide retargets a moved dungeon entrance")
+	Global.tutorial_completed = false
+	guide.call("_refresh")
+	check(not route.visible and not marker.visible and not arrow.visible,
+		"overworld guide hides while the scripted tutorial owns guidance")
+	guide.queue_free()
+	p.queue_free()
+	probe.queue_free()
+	Global.world_node = old_world
+	Global.player_node = old_player
+	Global.tutorial_completed = old_tutorial
 	await get_tree().process_frame
 
 
@@ -2072,6 +2691,146 @@ func _unique_count(values: Array) -> int:
 	return seen.size()
 
 
+func _test_mission_log_and_tracker() -> void:
+	var visible_missions: Array = []
+	var missing_meta: Array = []
+	var missing_fields: Array = []
+	for m_value in Global.missions:
+		var m := m_value as Dictionary
+		if bool(m.get("hidden", false)):
+			continue
+		visible_missions.append(m)
+		var id := str(m.get("id", ""))
+		var details: Dictionary = MissionDetails.details_for(m)
+		if not m.has("dungeon_index"):
+			var catalog: Dictionary = MissionDetails.SIDE if bool(m.get("side", false)) \
+				else MissionDetails.MAIN
+			if not catalog.has(id):
+				missing_meta.append(id)
+		for field in ["task", "description", "why", "learn", "rewards"]:
+			if str(details.get(field, "")).strip_edges().is_empty():
+				missing_fields.append("%s.%s" % [id, field])
+	check(not visible_missions.is_empty() and missing_meta.is_empty(),
+		"every visible main, dungeon and side mission has Mission Details content")
+	check(missing_fields.is_empty(),
+		"every mission log row has a task, description, purpose, lesson and rewards")
+
+	var main_details := MissionDetails.details_for(Global._find_mission("auto_boot"))
+	var side_details := MissionDetails.details_for(Global._find_mission("side_chest_collector"))
+	check(str(main_details.get("rewards", "")) == MissionDetails.MAIN_REWARDS
+		and str(side_details.get("rewards", "")) == MissionDetails.SIDE_REWARDS,
+		"main and side mission logs list their yellow quest star reward")
+	var first_dungeon_idx: int = Global.first_main_dungeon_index("lua")
+	var dungeon_mission := Global._find_mission("dungeon_%d" % first_dungeon_idx)
+	var dungeon_details := MissionDetails.details_for(dungeon_mission)
+	check(str(dungeon_details.get("rewards", "")).contains("blue")
+		and str(dungeon_details.get("learn", "")).contains("Encyclopedia"),
+		"dungeon log rows list blue stars and the encyclopedia lesson they unlock")
+
+	# Force one known mission complete so the completed-group placement is
+	# deterministic regardless of earlier test progress.
+	var sample_mission := Global._find_mission("auto_boot")
+	var old_sample_completed := bool(sample_mission.get("completed", false))
+	sample_mission["completed"] = true
+
+	var log_ui := load("res://scripts/mission_log_ui.gd").new() as CanvasLayer
+	log_ui.call("_build_ui")
+	var body := log_ui.get("_body") as VBoxContainer
+	var sections := 0
+	var sections_have_entries := true
+	var all_collapsed := true
+	var group_headers: Array = []
+	var current_group := ""
+	var sample_after_completed := false
+	var sample_in_active_group := false
+	if body != null:
+		for child in body.get_children():
+			if child is EncyclopediaSection:
+				var sec := child as EncyclopediaSection
+				sections += 1
+				if sec.expanded:
+					all_collapsed = false
+				if current_group.begins_with("COMPLETED MISSIONS"):
+					if sec.section_id == "auto_boot":
+						sample_after_completed = true
+				elif sec.section_id == "auto_boot":
+					sample_in_active_group = true
+				var entry_rows := 0
+				for row in sec.body().get_children():
+					if row is VBoxContainer:
+						entry_rows += 1
+				if entry_rows < 5:
+					sections_have_entries = false
+			elif child is Label:
+				var text := (child as Label).text
+				if text.begins_with("MAIN MISSIONS") or text.begins_with("DUNGEONS") \
+						or text.begins_with("SIDE MISSIONS") \
+						or text.begins_with("COMPLETED MISSIONS"):
+					group_headers.append(text)
+					current_group = text
+	var has_main := false
+	var has_dungeons := false
+	var has_side := false
+	for header_value in group_headers:
+		var header := str(header_value)
+		if header.begins_with("MAIN MISSIONS"):
+			has_main = true
+		elif header.begins_with("DUNGEONS"):
+			has_dungeons = true
+		elif header.begins_with("SIDE MISSIONS"):
+			has_side = true
+	check(sections == visible_missions.size(),
+		"the mission log lists all %d visible missions" % visible_missions.size())
+	check(has_main and has_dungeons and has_side
+		and group_headers.back().begins_with("COMPLETED MISSIONS")
+		and sample_after_completed and not sample_in_active_group
+		and sections_have_entries and all_collapsed,
+		"mission log groups active missions, then puts completed missions at the bottom")
+	var expand_ok := false
+	if body != null:
+		for child in body.get_children():
+			if child is EncyclopediaSection:
+				var sec := child as EncyclopediaSection
+				sec.set_expanded(true, false)
+				expand_ok = sec.body().visible and sec.body().get_child_count() >= 6
+				break
+	check(expand_ok, "mission rows expand like the encyclopedia to reveal their details")
+	sample_mission["completed"] = old_sample_completed
+	log_ui.free()
+
+	var tracker_src := FileAccess.get_file_as_string("res://scripts/mission_ui.gd")
+	check(tracker_src.contains("const SIDE_TRACKER_LIMIT := 2")
+		and tracker_src.contains("Global.active_side_missions(SIDE_TRACKER_LIMIT)")
+		and tracker_src.contains("VIEW ALL MISSIONS")
+		and tracker_src.contains("MISSION_LOG_SCRIPT.new()"),
+		"the tracker shows two side missions and opens the full mission log")
+
+
+func _test_altar_sprites_and_dialogue() -> void:
+	var knowledge_consts: Dictionary = (
+		load("res://scripts/knowledge_altar.gd") as Script).get_script_constant_map()
+	var quiz_consts: Dictionary = (
+		load("res://scripts/quiz_altar.gd") as Script).get_script_constant_map()
+	var minimap_consts: Dictionary = (
+		load("res://scripts/minimap.gd") as Script).get_script_constant_map()
+	var knowledge_region: Rect2 = knowledge_consts.get("SPRITE_REGION", Rect2())
+	var quiz_region: Rect2 = quiz_consts.get("SPRITE_REGION", Rect2())
+	check(knowledge_region == Rect2(288, 96, 32, 32)
+		and quiz_region == Rect2(352, 96, 32, 32)
+		and minimap_consts.get("KNOWLEDGE_ICON_REGION") == knowledge_region
+		and minimap_consts.get("QUIZ_ICON_REGION") == quiz_region,
+		"Knowledge and Quiz Altars use their proper atlas art on the map and in the world")
+
+	var guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(guide_src.contains("\"dungeon_knowledge\":")
+		and guide_src.contains("first room holds the Knowledge Altar")
+		and guide_src.contains("\"dungeon_quiz\":")
+		and guide_src.contains("final room")
+		and guide_src.contains("glowing orb")
+		and guide_src.contains("Programming Encyclopedia"),
+		"Py-San explains where and why the dungeon lesson and quiz are inside the dungeon")
+
+
 func _test_damage_and_spawn_constants() -> void:
 	check(DungeonExplosion.DAMAGE == 10.0, "trap explosion halved to 10")
 	check(DungeonProjectile.DAMAGE == 20.0, "flare projectile halved to 20")
@@ -2139,6 +2898,43 @@ func _test_damage_application() -> void:
 		protected_bolt.queue_free()
 	stub.queue_free()
 	await get_tree().process_frame
+
+
+func _test_respawn_rules() -> void:
+	var old_game: Node = Global.game_node
+	var old_has_spawn: bool = Global.has_spawn_point
+	var old_spawn: Vector2 = Global.spawn_point
+	var probe := RespawnGameProbe.new()
+	add_child(probe)
+	Global.game_node = probe
+	Global.has_spawn_point = false
+	Global.spawn_point = Vector2.ZERO
+	var dungeon_spawn := Global._get_respawn_position()
+	check(dungeon_spawn == probe.dungeon_spawn and not probe.world_exited,
+		"dying in a dungeon keeps the run alive and respawns at its entrance")
+	# A bonfire is an overworld respawn point; it must not pull a dungeon death
+	# out to the surface.
+	Global.has_spawn_point = true
+	Global.spawn_point = Vector2(999, 999)
+	var dungeon_with_bonfire := Global._get_respawn_position()
+	check(dungeon_with_bonfire == probe.dungeon_spawn,
+		"an overworld bonfire does not override a dungeon entrance respawn")
+	# Outside a dungeon (caves/overworld), the Game still exits to the world
+	# spawn and returns its position.
+	Global.has_spawn_point = false
+	probe.dungeon_spawn = Vector2.INF
+	var overworld_spawn := Global._get_respawn_position()
+	check(probe.world_exited and overworld_spawn == probe.world_spawn,
+		"cave and overworld deaths still use the world spawn")
+	Global.game_node = old_game
+	Global.has_spawn_point = old_has_spawn
+	Global.spawn_point = old_spawn
+	probe.queue_free()
+	await get_tree().process_frame
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	check(game_src.contains("func get_dungeon_respawn_position")
+		and game_src.contains("get_player_spawn_pos()"),
+		"dungeon respawn uses the generated entrance-room spawn position")
 
 
 func _test_safe_zones() -> void:
@@ -2266,6 +3062,9 @@ func _test_cave_persistence() -> void:
 	pixie_probe.global_position = Vector2(10, 20)
 	check(cave_probe.state_key() != pixie_probe.state_key(),
 		"cave and pixie entrances never share a state key")
+	check(str(cave_probe.call("_entrance_prompt_title")) == "Large Cave Entrance"
+		and str(pixie_probe.call("_entrance_prompt_title")) == "Pixie Cave Entrance",
+		"cave entrance prompts use Large Cave for caves and Pixie Cave for pixie entrances")
 	cave_probe.free()
 	pixie_probe.free()
 
@@ -3244,6 +4043,9 @@ func _test_algorithmica_color() -> void:
 		"craft_color consumes exactly one Cactus per block")
 	check(Global.count_item(red) == 2,
 		"craft_color produces the requested red block count")
+	check(bool(Global._find_mission("algo_boot").get("completed", false))
+		and int(Global._find_mission("algo_color_starter").get("progress", 0)) >= 2,
+		"station programs trigger Algorithmica missions")
 
 	Global.Hotbar.fill(null)
 	Global.Inventory.fill(null)
@@ -3394,18 +4196,35 @@ func _test_cactus_and_worm() -> void:
 
 
 func _test_fish_and_automatica() -> void:
+	var charlie: ItemData = load("res://resources/items/charlie.tres")
+	var allan: ItemData = load("res://resources/items/allan.tres")
 	var glep: ItemData = load("res://resources/items/glep_glorp.tres")
 	var pim: ItemData = load("res://resources/items/pimpim.tres")
+	var cooked_charlie: ItemData = load("res://resources/items/cooked_charlie.tres")
+	var cooked_allan: ItemData = load("res://resources/items/cooked_allan.tres")
 	var cooked_glep: ItemData = load("res://resources/items/cooked_glep_glorp.tres")
 	var cooked_pim: ItemData = load("res://resources/items/cooked_pimpim.tres")
-	check(glep.item_name == "Glep" and glep.item_id() == "glep_glorp",
-		"Glep fish display name is corrected without changing its scripting id")
-	check(pim.item_name == "Pim" and pim.item_id() == "pimpim",
-		"Pim fish display name is corrected without changing its scripting id")
-	check(cooked_glep.item_name == "Cooked Glep" and cooked_glep.item_id() == "cooked_glep_glorp",
-		"cooked Glep keeps its stable id")
-	check(cooked_pim.item_name == "Cooked Pim" and cooked_pim.item_id() == "cooked_pimpim",
-		"cooked Pim keeps its stable id")
+	check(charlie.item_name == "Yellow Carp" and charlie.item_id() == "charlie"
+		and charlie.description.contains("always laxed"),
+		"Charlie is renamed Yellow Carp without changing its stable scripting id")
+	check(pim.item_name == "Anglefish" and pim.item_id() == "pimpim"
+		and pim.description.contains("Weirdly triangular"),
+		"Pim is renamed Anglefish while keeping its stable scripting id")
+	check(glep.item_name == "Eelfish" and glep.item_id() == "glep_glorp"
+		and glep.description.contains("Not an actual eel"),
+		"Glep is renamed Eelfish while keeping its stable scripting id")
+	check(allan.item_name == "Scuttlefish" and allan.item_id() == "allan"
+		and allan.description.contains("Related to shrimps"),
+		"Allan is renamed Scuttlefish without changing its stable scripting id")
+	check(cooked_charlie.item_name == "Cooked Yellow Carp"
+		and cooked_allan.item_name == "Cooked Scuttlefish"
+		and cooked_glep.item_name == "Cooked Eelfish"
+		and cooked_pim.item_name == "Cooked Anglefish"
+		and cooked_charlie.item_id() == "cooked_charlie"
+		and cooked_allan.item_id() == "cooked_allan"
+		and cooked_glep.item_id() == "cooked_glep_glorp"
+		and cooked_pim.item_id() == "cooked_pimpim",
+		"cooked fish names follow their new species names with stable ids")
 
 	var automatica: ItemData = load("res://resources/items/lua.tres")
 	check(automatica.item_name == "Automatica" and automatica.item_id() == "lua",
@@ -3580,13 +4399,106 @@ func _test_rare_chest_generation() -> void:
 	Global.world_node = old_world if is_instance_valid(old_world) else null
 
 
-func _test_minimap_lua_legend() -> void:
+func _test_minimap_markers() -> void:
 	var constants: Dictionary = load("res://scripts/minimap.gd").get_script_constant_map()
-	check(constants.has("C_LUA") and str(constants.get("LUA_LEGEND", "")) == "LUA",
-		"minimap exposes a LUA legend matching the Automatica marker colour")
+	var automatica_item := constants.get("AUTOMATICA_ITEM") as ItemData
+	check(automatica_item != null
+			and automatica_item.item_name == "Automatica"
+			and automatica_item.icon != null
+			and str(constants.get("AUTOMATICA_LEGEND", "")) == "Automatica",
+		"minimap draws the Automatica sprite icon under an Automatica legend")
+	check(constants.has("C_STATION") and constants.has("C_FURNACE")
+			and constants.has("C_COLOR")
+			and constants["C_STATION"] != constants["C_FURNACE"]
+			and constants["C_FURNACE"] != constants["C_COLOR"],
+		"crafting stations, furnaces and Color Crafters have distinct map colours")
+
 	var minimap := Minimap.new()
-	check(minimap != null, "minimap still instantiates with the LUA legend")
-	minimap.free()
+	add_child(minimap)
+	minimap.set_process(false)
+	var baseline: int = (minimap.call("_world_interactable_markers") as Array).size()
+	var station := Node2D.new()
+	add_child(station)
+	station.add_to_group("CraftingStation")
+	var furnace := MinimapInteractableProbe.new()
+	add_child(furnace)
+	furnace.obj_type = "furnace"
+	furnace.add_to_group("TouchInteractable")
+	var color := Node2D.new()
+	add_child(color)
+	color.add_to_group("ColorCrafter")
+	# Furnace filtering must not turn every other TouchInteractable (chests,
+	# stations) into a second furnace marker.
+	var chest := MinimapInteractableProbe.new()
+	add_child(chest)
+	chest.add_to_group("TouchInteractable")
+
+	var markers: Array = minimap.call("_world_interactable_markers")
+	var labels: Array = []
+	for marker in markers:
+		labels.append(str(marker["label"]))
+	check(markers.size() == baseline + 3
+			and labels.has("Crafting Station")
+			and labels.has("Furnace")
+			and labels.has("Color Crafter"),
+		"minimap lists placed stations, furnaces and Color Crafters")
+
+	var extra := Node2D.new()
+	add_child(extra)
+	extra.add_to_group("ColorCrafter")
+	check((minimap.call("_world_interactable_markers") as Array).size() == baseline + 4,
+		"a newly placed interactable appears on the live map without a signal")
+	extra.queue_free()
+	await get_tree().process_frame
+	check((minimap.call("_world_interactable_markers") as Array).size() == baseline + 3,
+		"a removed interactable disappears from the live map")
+
+	# The map previews must include player development, not just terrain. The
+	# shared helper colours each placed block from its own item art, so stone,
+	# wood, doors, torches, machines and colour-crafted blocks stay distinct.
+	var stone_item: ItemData = load("res://resources/items/stone.tres") as ItemData
+	var wood_item: ItemData = load("res://resources/items/wood.tres") as ItemData
+	var stone_probe := MapBlockProbe.new()
+	var wood_probe := MapBlockProbe.new()
+	stone_probe.item_data = stone_item
+	wood_probe.item_data = wood_item
+	add_child(stone_probe)
+	add_child(wood_probe)
+	var stone_col := Global.placed_block_map_color(
+		{"node": stone_probe, "name": "Stone"})
+	var wood_col := Global.placed_block_map_color(
+		{"node": wood_probe, "name": "Wood"})
+	check(stone_col.a > 0.99 and wood_col.a > 0.99 and stone_col != wood_col,
+		"placed blocks get distinct minimap colours from their item artwork")
+	var empty_col := Global.placed_block_map_color({})
+	check(empty_col.a <= 0.0, "empty cells stay transparent on the placed-block layer")
+	stone_probe.queue_free()
+	wood_probe.queue_free()
+
+	var named_auto := NamedAutomaticaProbe.new()
+	named_auto.display_name = "LUA 7"
+	add_child(named_auto)
+	check(str(minimap.call("_automatica_map_name", named_auto)) == "LUA 7",
+		"map labels use an Automatica's custom display name")
+	named_auto.queue_free()
+
+	var minimap_src := FileAccess.get_file_as_string("res://scripts/minimap.gd")
+	var world_src := FileAccess.get_file_as_string("res://scripts/world.gd")
+	check(minimap_src.contains("Global.placed_block_map_color(blocks.get(cell))")
+		and minimap_src.contains("func _sample_cave(info: Dictionary)")
+		and minimap_src.contains("_draw_automatica_name_labels")
+		and minimap_src.contains("_draw_waypoint_automatica"),
+		"minimap and waypoint previews draw placed blocks and Automatica names")
+	check(world_src.contains("Global.placed_block_map_color(placed)")
+		and world_src.contains("build_waypoint_map_image"),
+		"world waypoint preview overlays player-placed blocks on its terrain image")
+
+	minimap.queue_free()
+	station.queue_free()
+	furnace.queue_free()
+	color.queue_free()
+	chest.queue_free()
+	await get_tree().process_frame
 
 
 func _point_in_room(cell: Vector2i, room: Dictionary) -> bool:
@@ -3658,6 +4570,128 @@ func _test_knowledge_altar_pages() -> void:
 	await get_tree().process_frame
 	Global.learned_entries = old_learned
 	Global.knowledge_updated.emit()
+
+
+func _test_knowledge_altar_explicit_read() -> void:
+	Global.reset_pause_state()
+	var old_learned: Dictionary = Global.learned_entries.duplicate(true)
+	var old_unseen: Dictionary = Global.unseen_entries.duplicate(true)
+	var entries: Array = Global.knowledge_entries.values()
+	if entries.is_empty():
+		check(false, "knowledge database available for explicit-read probe")
+		return
+	var entry := entries[0] as KnowledgeEntry
+	Global.learned_entries.erase(entry.id())
+	Global.unseen_entries.erase(entry.id())
+
+	var altar := KnowledgeAltar.new()
+	add_child(altar)
+	altar.global_position = Vector2(320.0, 240.0)
+	altar.set("_entry", entry)
+	altar.set("_player_nearby", true)
+	await get_tree().process_frame
+
+	# A click near the altar but not on it must not open the panel.
+	var away := InputEventMouseButton.new()
+	away.button_index = MOUSE_BUTTON_LEFT
+	away.pressed = true
+	away.position = Vector2(40.0, 40.0)
+	altar.call("_input", away)
+	var panel: Control = altar.get("_panel") as Control
+	check(panel == null or not panel.visible,
+		"a nearby click away from the Knowledge Altar does not open it")
+
+	# Opening it must not count as reading it; only Continue does.
+	var reads: Array = []
+	var on_read := func(read_entry: KnowledgeEntry) -> void:
+		reads.append(read_entry.id())
+	altar.entry_read.connect(on_read)
+	var on_altar := InputEventMouseButton.new()
+	on_altar.button_index = MOUSE_BUTTON_LEFT
+	on_altar.pressed = true
+	on_altar.position = altar.global_position
+	altar.call("_input", on_altar)
+	panel = altar.get("_panel") as Control
+	check(panel != null and panel.visible,
+		"clicking the Knowledge Altar itself opens the lesson")
+	check(not Global.has_learned_entry(entry.id()) and reads.is_empty(),
+		"opening the Knowledge Altar does not mark it as read")
+	altar.call("_finish")
+	check(Global.has_learned_entry(entry.id()) and reads.size() == 1,
+		"Continue explicitly records the entry and emits one read event")
+	altar.entry_read.disconnect(on_read)
+	altar.queue_free()
+	await get_tree().process_frame
+	Global.learned_entries = old_learned
+	Global.unseen_entries = old_unseen
+	Global._rebuild_learned_keywords()
+	Global.knowledge_updated.emit()
+	var guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(guide_src.contains("dungeon_altar_read_%d")
+		and guide_src.contains("_bind_knowledge_altar_reads")
+		and not guide_src.contains("if entry != null and Global.has_learned_entry"),
+		"the tutorial requires an explicit altar read instead of a pre-learned entry")
+	Global.reset_pause_state()
+
+
+func _test_tutorial_click_disambiguation() -> void:
+	var old_player: Node = Global.player_node
+	var first: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	var second: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	add_child(first)
+	add_child(second)
+	await get_tree().process_frame
+	first.global_position = Vector2(100.0, 100.0)
+	second.global_position = Vector2(140.0, 100.0)
+	var click_near_second := Vector2(134.0, 100.0)
+	check(not bool(first.call("_is_nearest_lua_station", click_near_second))
+		and bool(second.call("_is_nearest_lua_station", click_near_second)),
+		"overlapping Automatica stations resolve the click to the nearest one")
+	var first_robot := first.get_node("Robot") as Node2D
+	var second_robot := second.get_node("Robot") as Node2D
+	first_robot.global_position = Vector2(100.0, 140.0)
+	second_robot.global_position = Vector2(140.0, 140.0)
+	var click_near_second_robot := Vector2(134.0, 140.0)
+	check(not bool(first.call("_is_nearest_lua_robot", click_near_second_robot))
+		and bool(second.call("_is_nearest_lua_robot", click_near_second_robot)),
+		"overlapping combat robots resolve the click to the nearest body")
+	first.queue_free()
+	second.queue_free()
+	await get_tree().process_frame
+
+	# Camp placement reserves the player's ring and the guides' footprints.
+	var guide: Node = load("res://scripts/tutorial_guide.gd").new()
+	add_child(guide)
+	var world := TutorialCampWorldProbe.new()
+	add_child(world)
+	var player := Node2D.new()
+	add_child(player)
+	Global.player_node = player
+	player.global_position = Vector2.ZERO
+	guide.set("_world", world)
+	guide.set("_spawn", Vector2.ZERO)
+	var npc := Node2D.new()
+	add_child(npc)
+	npc.global_position = Vector2(160.0, 160.0)   # tile (5,5)
+	guide.set("_npc_nodes", [npc])
+	var placed: Vector2i = guide.call("_find_camp_cell", Vector2i(5, 5), {}) as Vector2i
+	check(placed != Vector2i(-9999, -9999)
+		and maxi(absi(placed.x - 5), absi(placed.y - 5)) >= 2,
+		"camp stations keep clear of a guide's tile")
+	var base_placed: Vector2i = guide.call("_find_camp_cell", Vector2i(0, 0), {}) as Vector2i
+	check(base_placed != Vector2i(-9999, -9999)
+		and maxi(absi(base_placed.x), absi(base_placed.y)) >= 2,
+		"camp stations keep clear of the player's tile")
+	var player_src := FileAccess.get_file_as_string("res://scripts/player.gd")
+	check(player_src.contains("func _pnc_interact_distance")
+		and player_src.contains("var best_d: float = INF"),
+		"point-and-click resolves overlapping interactables by cursor distance")
+	guide.queue_free()
+	world.queue_free()
+	npc.queue_free()
+	player.queue_free()
+	Global.player_node = old_player
+	await get_tree().process_frame
 
 
 func _test_mission_events() -> void:
@@ -4096,6 +5130,30 @@ func _test_mining_tool_switch() -> void:
 	block.queue_free()
 	await get_tree().process_frame
 
+	# High-tier pickaxes must never one-tap ordinary blocks: the old 0.1 s
+	# floor was shorter than one click's 0.5 s of work. The shared formula now
+	# keeps a real minimum, while harder blocks still take longer.
+	Global.Hotbar[2] = {"data": load("res://resources/items/iron_pickaxe.tres"), "quantity": 1}
+	Global.set_hotbar_selection(2)
+	var stone_block: Node = load("res://scenes/objects/PlaceableBlock.tscn").instantiate()
+	stone_block.set("item_data", load("res://resources/items/stone.tres"))
+	add_child(stone_block)
+	await get_tree().process_frame
+	stone_block.set("_player_nearby", true)
+	stone_block.set("_hovered", true)
+	stone_block.call("_try_start_breaking")
+	var iron_stone_seconds: float = float(stone_block.get("_break_duration"))
+	stone_block.call("_add_break_progress", 0.5)
+	check(iron_stone_seconds >= Global.MIN_PLAYER_BREAK_SECONDS
+		and is_instance_valid(stone_block)
+		and float(stone_block.get("_break_progress")) < 1.0,
+		"an iron pickaxe no longer one-taps ordinary blocks")
+	check(Global.mining_break_seconds(5.0, 5) >= Global.MIN_PLAYER_BREAK_SECONDS
+		and Global.mining_break_seconds(10.0, 5) > Global.mining_break_seconds(7.0, 5),
+		"higher hardness still takes longer than the minimum break time")
+	stone_block.queue_free()
+	await get_tree().process_frame
+
 	Global.set_hotbar_selection(0)
 	var tree: Node = load("res://scenes/objects/Tree.tscn").instantiate()
 	add_child(tree)
@@ -4127,6 +5185,106 @@ func _test_mining_tool_switch() -> void:
 	Global.world_node = old_world if is_instance_valid(old_world) else null
 	swing_probe.queue_free()
 	await get_tree().process_frame
+
+
+func _test_chain_mining() -> void:
+	var old_world: Node = Global.world_node
+	var old_player: Node = Global.player_node
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+	var old_pnc: bool = Global.pnc_hold_active
+	var old_touch_active: bool = Global.mouse_override_active()
+	var old_touch_pos: Vector2 = Global.mouse_override_pos()
+	Global.world_node = null
+	Global.pnc_hold_active = false
+	Global.clear_touch_mouse()
+	Global.Hotbar.resize(Global.HOTBAR_SIZE)
+	Global.Hotbar.fill(null)
+	Global.Hotbar[0] = {"data": load("res://resources/items/iron_pickaxe.tres"), "quantity": 1}
+	Global.set_hotbar_selection(0)
+	var player := CharacterBody2D.new()
+	player.add_to_group("Player")
+	add_child(player)
+	Global.player_node = player
+	player.global_position = Vector2.ZERO
+
+	# Placed block: keep the button held, break the current block, then move the
+	# pinned cursor onto the next block. It must start without a new click.
+	var first: Node = load("res://scenes/objects/PlaceableBlock.tscn").instantiate()
+	first.set("item_data", load("res://resources/items/stone.tres"))
+	add_child(first)
+	first.global_position = Vector2.ZERO
+	var second: Node = load("res://scenes/objects/PlaceableBlock.tscn").instantiate()
+	second.set("item_data", load("res://resources/items/stone.tres"))
+	add_child(second)
+	second.global_position = Vector2(32, 0)
+	await get_tree().process_frame
+	first.set("_player_nearby", true)
+	second.set("_player_nearby", true)
+	first.set_process(true)
+	second.set_process(true)
+	Global.pnc_hold_active = true
+	Global.set_touch_mouse(first.global_position)
+	await get_tree().process_frame
+	check(bool(first.get("_breaking")),
+		"holding the mine button starts the placed block under the cursor")
+	first.call("_add_break_progress", 999.0)
+	await get_tree().process_frame
+	Global.set_touch_mouse(second.global_position)
+	await get_tree().process_frame
+	check(bool(second.get("_breaking")),
+		"held mining continues into the next placed block under the cursor")
+	Global.pnc_hold_active = false
+	await get_tree().process_frame
+	check(not bool(second.get("_breaking")),
+		"releasing the mine button stops the chained placed block")
+	second.queue_free()
+	player.queue_free()
+	await get_tree().process_frame
+
+	# Cave wall: the same held-button chain applies to generated stone/ore.
+	var cave := CaveWorld.new()
+	add_child(cave)
+	cave.setup(135790, Vector2.ZERO)
+	Global.world_node = cave
+	var player2 := CharacterBody2D.new()
+	player2.add_to_group("Player")
+	add_child(player2)
+	Global.player_node = player2
+	var gen = cave.get("generator")
+	var tm := cave.get("_tilemap") as TileMapLayer
+	var width := int(gen.get("size"))
+	var height := int(gen.get("size"))
+	var target_cell := Vector2i(-9999, -9999)
+	for x in range(1, width - 1):
+		for y in range(1, height - 1):
+			if int(gen.grid[x][y]) == CaveGenerator.Tile.STONE:
+				target_cell = Vector2i(x, y)
+				break
+		if target_cell.x != -9999:
+			break
+	var half := Vector2i(width / 2, height / 2)
+	var target_map_cell := target_cell - half
+	var entrance_map_cell: Vector2i = (gen.get("entrance_tile") as Vector2i) - half
+	player2.global_position = tm.to_global(tm.map_to_local(target_map_cell))
+	Global.pnc_hold_active = true
+	Global.set_touch_mouse(player2.global_position)
+	cave.set("_mine_tile", entrance_map_cell)
+	cave.call("_finish_break")
+	check(target_cell.x != -9999 and bool(cave.get("_mining"))
+		and cave.get("_mine_tile") == target_map_cell,
+		"held mining continues into the cave wall under the cursor")
+	cave.call("_cancel_mining")
+	cave.queue_free()
+	player2.queue_free()
+	await get_tree().process_frame
+
+	Global.pnc_hold_active = old_pnc
+	Global.restore_mouse_override(old_touch_active, old_touch_pos)
+	Global.Hotbar = old_hotbar
+	Global.set_hotbar_selection(old_selected)
+	Global.player_node = old_player if is_instance_valid(old_player) else null
+	Global.world_node = old_world if is_instance_valid(old_world) else null
 
 
 func _test_pickaxe_blockers() -> void:
@@ -4225,6 +5383,43 @@ func _test_pickaxe_blockers() -> void:
 	Global.world_node = old_world if is_instance_valid(old_world) else null
 
 
+func _test_pickaxe_object_priority() -> void:
+	var old_hotbar: Array = Global.Hotbar.duplicate(true)
+	var old_selected: int = Global.hotbar_selected
+	Global.Hotbar.fill(null)
+	var pick: ItemData = load("res://resources/items/wooden_pickaxe.tres")
+	var axe: ItemData = load("res://resources/items/woodenaxe.tres")
+	var sword: ItemData = load("res://resources/items/woodensword.tres")
+	var chest: ItemData = load("res://resources/items/chest.tres")
+	var station: ItemData = load("res://resources/items/crafting_station.tres")
+	var hard_ore: ItemData = load("res://resources/items/crystal_diamond_ore.tres")
+
+	Global.Hotbar[0] = {"data": pick, "quantity": 1}
+	Global.hotbar_selected = 0
+	check(Global.held_item_can_mine(chest) and not Global.held_item_can_mine(hard_ore),
+		"pickaxe takes destroy priority over opening mineable objects")
+
+	Global.Hotbar[0] = {"data": axe, "quantity": 1}
+	check(Global.held_item_can_mine(station) and not Global.held_item_can_mine(chest),
+		"axe takes destroy priority on wooden objects only")
+
+	Global.Hotbar[0] = {"data": sword, "quantity": 1}
+	check(not Global.held_item_can_mine(chest) and not Global.held_item_can_mine(station),
+		"non-mining tools keep normal interaction priority")
+
+	var npc: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	add_child(npc)
+	check(npc.has_method("_break") and npc.has_method("set_world_cell"),
+		"Automatica stations support pickaxe demolition")
+	npc.queue_free()
+	await get_tree().process_frame
+	Global.Hotbar.fill(null)
+	for i in range(mini(old_hotbar.size(), Global.Hotbar.size())):
+		Global.Hotbar[i] = old_hotbar[i]
+	Global.hotbar_selected = old_selected
+	Global.Hotbar_updated.emit()
+
+
 func _test_cave_pickup() -> void:
 	var old_world := Global.world_node
 	var old_player := Global.player_node
@@ -4265,6 +5460,29 @@ func _test_cave_pickup() -> void:
 		"cave drop enters pickup range")
 	check(Global.count_item(item) == 2,
 		"cave underfoot drop is collected with its full quantity")
+
+	# Full inventory: warn once (one full-inventory sound) instead of retrying
+	# add_item() every frame, then collect automatically when a slot opens.
+	Global.Hotbar.fill(null)
+	Global.Inventory.fill(null)
+	for i in range(Global.Hotbar.size()):
+		Global.Hotbar[i] = {"data": item, "quantity": Global.MAX_STACK}
+	for i in range(Global.Inventory.size()):
+		Global.Inventory[i] = {"data": item, "quantity": Global.MAX_STACK}
+	var wood_item: ItemData = load("res://resources/items/wood.tres")
+	var full_drop: Node = load("res://scenes/ui/InventoryItem.tscn").instantiate()
+	full_drop.call("set_item_data", wood_item, 1)
+	cave.add_child(full_drop)
+	full_drop.global_position = player.global_position
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check(is_instance_valid(full_drop) and bool(full_drop.get("_full_notified")),
+		"a full inventory warns once instead of retrying the pickup every frame")
+	Global.Inventory[0] = null
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check(not is_instance_valid(full_drop) and Global.count_item(wood_item) == 1,
+		"a waiting drop is collected automatically when inventory space opens")
 	cave.queue_free()
 	await get_tree().process_frame
 
@@ -4430,6 +5648,13 @@ func _test_ui_back_stack() -> void:
 # lightweight panels that can be built without a world/player; heavier altars
 # are covered by their own pause/teardown tests.
 func _test_ui_back_actual() -> void:
+	var close_probe: Button = Global.make_close_button()
+	check(close_probe.text == "CLOSE"
+		and close_probe.custom_minimum_size.x >= 84.0
+		and close_probe.custom_minimum_size.y >= 44.0,
+		"all modal interfaces use the shared readable CLOSE button")
+	close_probe.free()
+
 	var crafting: Control = load("res://scripts/crafting_menu.gd").new() as Control
 	add_child(crafting)
 	await get_tree().process_frame
@@ -4457,7 +5682,10 @@ func _test_ui_back_actual() -> void:
 	check(color_close != null and color_close.visible and color_panel != null
 		and color_panel.get_global_rect().encloses(color_close.get_global_rect())
 		and Global.any_ui_open(),
-		"color crafter shows an X button inside its paused panel")
+		"color crafter shows a CLOSE button inside its paused panel")
+	check(color_close != null and color_close.text == "CLOSE"
+		and color_close.custom_minimum_size.y >= 44.0,
+		"color crafter uses a readable CLOSE button")
 	if color_close != null:
 		color_close.emit_signal("pressed")
 	check(not color.visible and not Global.any_ui_open(),
@@ -4507,7 +5735,7 @@ func _test_ui_back_actual() -> void:
 	inventory.call("_close")
 	await get_tree().process_frame
 	check(not inv_layer.visible and inv_events == [false] and not Global.any_ui_open(),
-		"inventory X button restores the HUD/hotbar via one close signal")
+		"inventory CLOSE button restores the HUD/hotbar via one close signal")
 	inv_events.clear()
 	inv_layer.visible = true
 	Global.open_ui()
@@ -4650,7 +5878,7 @@ func _test_inventory_hotbar() -> void:
 	check(Global.Hotbar[0] != null and int(Global.Hotbar[0]["quantity"]) == 3
 		and Global.hotbar_selected == 2,
 		"opening the inventory preserves hotbar contents and selected slot")
-	check(is_equal_approx(Global.hotbar_hud_height(), 76.0),
+	check(is_equal_approx(Global.hotbar_hud_height(), 98.0),
 		"the desktop hotbar reports its full bottom HUD band")
 
 	var target_slot: Control = null
@@ -4725,7 +5953,7 @@ func _test_inventory_hotbar() -> void:
 	Global.mobile_platform_override = 1
 	Global.inventory_toggled.emit(true)
 	check(hotbar_canvas.visible and hotbar_canvas.layer == 13
-		and is_equal_approx(Global.hotbar_hud_height(), 80.0),
+		and is_equal_approx(Global.hotbar_hud_height(), 102.0),
 		"mobile inventory keeps the hotbar visible with its own touch-sized band")
 	Global.inventory_toggled.emit(false)
 
@@ -4759,6 +5987,309 @@ func _test_inventory_hotbar() -> void:
 	Global.Inventory = old_inventory
 	Global.set_hotbar_selection(old_selected)
 	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+
+# Crafting station, furnace and Color Crafter are item-driven modals: the
+# background HUD hides, but the persistent hotbar must stay visible above their
+# panels and their content must reserve its bottom band.
+func _test_modal_hotbar() -> void:
+	var old_override: int = Global.mobile_platform_override
+	var old_scale: float = Global.ui_scale
+	var old_viewport: Vector2 = Global.ui_viewport_size
+	var old_insets: Vector4 = Global.ui_safe_insets
+	Global.mobile_platform_override = 0
+	Global.ui_scale = 1.0
+	Global.ui_viewport_size = Vector2(1280, 720)
+	Global.ui_safe_insets = Vector4.ZERO
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+	Global.reset_pause_state()
+
+	var hotbar: Control = load("res://scenes/ui/Hotbar.tscn").instantiate() as Control
+	add_child(hotbar)
+	await get_tree().process_frame
+	var hotbar_canvas: CanvasLayer = hotbar.get_node("CanvasLayer") as CanvasLayer
+	var reserve: float = Global.hotbar_modal_reserve()
+	check(is_equal_approx(reserve, Global.hotbar_hud_height() + 12.0),
+		"item-driven modals reserve the hotbar band plus its breathing gap")
+
+	# ── Crafting station ──
+	var crafting: Control = load("res://scripts/crafting_menu.gd").new() as Control
+	add_child(crafting)
+	await get_tree().process_frame
+	var craft_scroll: ScrollContainer = crafting.get("_main_scroll") as ScrollContainer
+	var craft_prog: ScrollContainer = crafting.get("_prog_scroll") as ScrollContainer
+	check(craft_scroll != null and is_equal_approx(craft_scroll.offset_bottom, -reserve)
+		and craft_prog != null and is_equal_approx(craft_prog.offset_bottom, -reserve),
+		"crafting station reserves the hotbar band above its content")
+	crafting.call("show_menu")
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 10
+		and bool(hotbar.get("_modal_hud_open")),
+		"crafting station keeps the hotbar visible above its panel")
+	crafting.call("hide_menu")
+	check(hotbar_canvas.visible and not bool(hotbar.get("_modal_hud_open")),
+		"closing the crafting station restores the normal hotbar")
+	crafting.queue_free()
+	await get_tree().process_frame
+
+	# ── Furnace (including its Algorithmica overlay) ──
+	var smelting: Control = load("res://scripts/smelting_menu.gd").new() as Control
+	add_child(smelting)
+	await get_tree().process_frame
+	var furnace_scroll: ScrollContainer = smelting.get("_content_scroll") as ScrollContainer
+	var furnace_panel: Control = smelting.get("_panel") as Control
+	var furnace_panel_scroll: ScrollContainer = null
+	if furnace_panel != null:
+		furnace_panel_scroll = furnace_panel.get("_panel_scroll") as ScrollContainer
+	check(furnace_scroll != null and is_equal_approx(furnace_scroll.offset_bottom, -reserve)
+		and furnace_panel_scroll != null
+		and is_equal_approx(furnace_panel_scroll.offset_bottom, -reserve),
+		"furnace and its Algorithmica panel reserve the hotbar band")
+	smelting.call("show_menu")
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 10
+		and bool(hotbar.get("_modal_hud_open")),
+		"furnace keeps the hotbar visible above its panel")
+	smelting.call("hide_menu")
+	check(hotbar_canvas.visible and not bool(hotbar.get("_modal_hud_open")),
+		"closing the furnace restores the normal hotbar")
+	smelting.queue_free()
+	await get_tree().process_frame
+
+	# ── Color Crafter ──
+	var color: Control = load("res://scripts/color_crafter_menu.gd").new() as Control
+	add_child(color)
+	await get_tree().process_frame
+	var color_scroll: ScrollContainer = color.get("_panel_scroll") as ScrollContainer
+	check(color_scroll != null and is_equal_approx(color_scroll.offset_bottom, -reserve),
+		"Color Crafter reserves the hotbar band above its content")
+	color.call("open")
+	check(hotbar_canvas.visible and hotbar_canvas.layer == 10
+		and bool(hotbar.get("_modal_hud_open")),
+		"Color Crafter keeps the hotbar visible above its panel")
+	color.call("hide_menu")
+	check(hotbar_canvas.visible and not bool(hotbar.get("_modal_hud_open")),
+		"closing the Color Crafter restores the normal hotbar")
+	color.queue_free()
+	await get_tree().process_frame
+
+	# ── Unrelated full-screen modal ──
+	Global.modal_hud_changed.emit(true)
+	check(not hotbar_canvas.visible,
+		"editors/documentation/map still hide the persistent hotbar")
+	Global.modal_hud_changed.emit(false)
+	check(hotbar_canvas.visible,
+		"closing an unrelated modal restores the persistent hotbar")
+
+	hotbar.queue_free()
+	await get_tree().process_frame
+	Global.reset_pause_state()
+	Global.mobile_platform_override = old_override
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_viewport
+	Global.ui_safe_insets = old_insets
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+
+# The item-driven modals reserve the real HUD band above the hotbar. On a
+# short phone viewport the crafting-station panel can still be taller than that
+# band, so its scroll viewport must stop above the HP/SP stack and the panel
+# must be finger-scrollable rather than sitting behind the hotbar.
+func _test_modal_layout_above_hotbar() -> void:
+	var old_viewport: Vector2i = get_viewport().size
+	var old_ui_viewport: Vector2 = Global.ui_viewport_size
+	var old_override: int = Global.mobile_platform_override
+	var old_scale: float = Global.ui_scale
+	var old_insets: Vector4 = Global.ui_safe_insets
+	get_viewport().size = Vector2i(800, 600)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Global.mobile_platform_override = 1
+	Global.refresh_ui_scale(true)
+	await get_tree().process_frame
+
+	var hotbar: Control = load("res://scenes/ui/Hotbar.tscn").instantiate() as Control
+	add_child(hotbar)
+	var craft_layer := CanvasLayer.new()
+	craft_layer.layer = 2
+	add_child(craft_layer)
+	var craft: Control = load("res://scenes/ui/CraftingMenu.tscn").instantiate() as Control
+	craft_layer.add_child(craft)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	craft.call("show_menu")
+	for i in range(3):
+		await get_tree().process_frame
+
+	var scroll: ScrollContainer = craft.get("_main_scroll") as ScrollContainer
+	var panel: Control = craft.get("_main_panel") as Control
+	var stats_hud: Control = hotbar.get("_stat_container") as Control
+	var scroll_end: float = scroll.get_global_rect().end.y if scroll != null else -1.0
+	var hotbar_top: float = stats_hud.get_global_rect().position.y if stats_hud != null else -1.0
+	check(scroll != null and panel != null and stats_hud != null
+		and scroll_end <= hotbar_top + 0.5,
+		"crafting station scroll stops above the hotbar's HP/SP band")
+	check(scroll != null and scroll.clip_contents
+		and scroll.get_v_scroll_bar().max_value > scroll.get_v_scroll_bar().page,
+		"a short-screen crafting station becomes scrollable")
+
+	var drag_point := Vector2.INF
+	if scroll != null:
+		var rect := scroll.get_global_rect()
+		for gy in range(int(rect.position.y) + 4, int(rect.end.y) - 4, 8):
+			for gx in range(int(rect.position.x) + 4, int(rect.end.x) - 4, 8):
+				var p := Vector2(float(gx), float(gy))
+				if not bool(craft.call("_touch_scroll_blocked_at", p, scroll)):
+					drag_point = p
+					break
+			if drag_point != Vector2.INF:
+				break
+	if scroll != null:
+		scroll.scroll_vertical = 0
+	var touch := InputEventScreenTouch.new()
+	touch.index = 13
+	touch.position = drag_point
+	touch.pressed = true
+	craft.call("_input", touch)
+	var drag := InputEventScreenDrag.new()
+	drag.index = 13
+	drag.position = drag_point + Vector2(0, -120)
+	drag.relative = Vector2(0, -50)
+	craft.call("_input", drag)
+	await get_tree().process_frame
+	check(drag_point != Vector2.INF and scroll != null and scroll.scroll_vertical > 0,
+		"crafting station follows a finger drag on mobile")
+
+	craft.call("hide_menu")
+	craft_layer.queue_free()
+	hotbar.queue_free()
+	Global.reset_pause_state()
+	await get_tree().process_frame
+	get_viewport().size = old_viewport
+	await get_tree().create_timer(0.15).timeout
+	Global.mobile_platform_override = old_override
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_ui_viewport
+	Global.ui_safe_insets = old_insets
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+
+
+func _test_crafting_requirement_sources() -> void:
+	var old_viewport: Vector2i = get_viewport().size
+	var old_ui_viewport: Vector2 = Global.ui_viewport_size
+	var old_scale: float = Global.ui_scale
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_override: int = Global.mobile_platform_override
+	Global.mobile_platform_override = 0
+	Global.reset_pause_state()
+	get_viewport().size = Vector2i(1280, 720)
+	# Let Global's 0.10 s viewport-scale watcher settle BEFORE the menu exists;
+	# rebuilding the menu mid-test would free the row labels under the hover.
+	await get_tree().create_timer(0.16).timeout
+
+	var layer := CanvasLayer.new()
+	layer.layer = 2
+	add_child(layer)
+	var craft: Control = load("res://scenes/ui/CraftingMenu.tscn").instantiate() as Control
+	layer.add_child(craft)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	craft.call("show_menu")
+	craft.call("_on_category", "Blocks")
+	var filtered: Array = craft.get("_filtered")
+	var pick := -1
+	for i in range(filtered.size()):
+		var recipe: CraftingRecipe = filtered[i] as CraftingRecipe
+		if recipe != null and recipe.ingredient_2 != null:
+			pick = i
+			break
+	check(pick >= 0, "crafting menu exposes a multi-ingredient recipe for source hints")
+	if pick < 0:
+		craft.call("hide_menu")
+		layer.queue_free()
+		await get_tree().process_frame
+		get_viewport().size = old_viewport
+		await get_tree().create_timer(0.16).timeout
+		Global.mobile_platform_override = old_override
+		Global.ui_scale = old_scale
+		Global.ui_viewport_size = old_ui_viewport
+		Global.ui_safe_insets = old_insets
+		Global.reset_pause_state()
+		return
+
+	var recipe: CraftingRecipe = filtered[pick] as CraftingRecipe
+	craft.call("_on_select", pick)
+	await get_tree().process_frame
+	var row1 := craft.get("_detail_ing1") as HBoxContainer
+	var row2 := craft.get("_detail_ing2") as HBoxContainer
+	var name1 := row1.get_meta("name", null) as Label
+	var name2 := row2.get_meta("name", null) as Label
+	check(name1 != null and name2 != null
+			and name1.text == recipe.ingredient_1.item_name
+			and name2.text == recipe.ingredient_2.item_name,
+		"crafting requirements list each ingredient's name")
+	var inv_craft_src := FileAccess.get_file_as_string("res://scripts/inventory_ui.gd")
+	check(inv_craft_src.contains("_build_craft_icon_row(s, true)")
+		and inv_craft_src.contains("name_lbl.text = data.item_name"),
+		"inventory crafting requirements list each ingredient's name too")
+
+	var missing: Array[String] = []
+	for recipe_value in craft.get("_recipes"):
+		var rec := recipe_value as CraftingRecipe
+		if rec == null:
+			continue
+		for item_value in [rec.ingredient_1, rec.ingredient_2]:
+			var item := item_value as ItemData
+			if item != null and ItemSource.where_to_get(item).is_empty():
+				missing.append(item.item_name)
+	check(missing.is_empty(),
+		"every crafting ingredient has a where-to-get hint")
+
+	var tip := craft.get("_source_tip") as Control
+	var tip_label := craft.get("_source_tip_label") as Label
+	name1.mouse_entered.emit()
+	await get_tree().process_frame
+	check(tip != null and tip.visible and tip_label != null
+			and tip_label.text.contains("Where to get it")
+			and tip_label.text.contains(str(name1.get_meta("source_text", ""))),
+		"PC hover on a requirement name shows where to get it")
+	name1.mouse_exited.emit()
+	await get_tree().process_frame
+	check(tip != null and not tip.visible,
+		"leaving a requirement name hides its source hint")
+
+	# Android has no hover; a press-and-hold on the same name opens the hint.
+	Global.mobile_platform_override = 1
+	var press := InputEventScreenTouch.new()
+	press.index = 4
+	press.position = name1.get_global_rect().get_center()
+	press.pressed = true
+	craft.call("_on_requirement_name_gui_input", press, name1)
+	check(craft.get("_source_hold_timer") != null
+			and not (craft.get("_source_hold_timer") as Timer).is_stopped(),
+		"Android press-and-hold starts the requirement source timer")
+	craft.call("_on_source_hold_timeout")
+	await get_tree().process_frame
+	check(tip != null and tip.visible and tip_label != null
+			and tip_label.text.contains("Where to get it"),
+		"Android press-and-hold shows where to get a requirement")
+	var release := InputEventScreenTouch.new()
+	release.index = 4
+	release.position = press.position
+	release.pressed = false
+	craft.call("_on_requirement_name_gui_input", release, name1)
+	await get_tree().process_frame
+	check(tip != null and not tip.visible,
+		"releasing an Android requirement hold hides the source hint")
+
+	craft.call("hide_menu")
+	layer.queue_free()
+	await get_tree().process_frame
+	get_viewport().size = old_viewport
+	await get_tree().create_timer(0.16).timeout
+	Global.mobile_platform_override = old_override
+	Global.ui_scale = old_scale
+	Global.ui_viewport_size = old_ui_viewport
+	Global.ui_safe_insets = old_insets
+	Global.reset_pause_state()
 
 
 func _test_chest_inventory_panel() -> void:
@@ -4797,6 +6328,9 @@ func _test_chest_inventory_panel() -> void:
 	var header_title: Label = ui.get("_chest_title") as Label
 	var trash_row: HBoxContainer = ui.get("_trash_row") as HBoxContainer
 	var inv_body: HBoxContainer = ui.get("_inv_body") as HBoxContainer
+	var main_scroll: ScrollContainer = ui.get("_main_scroll") as ScrollContainer
+	var inv_stack: Control = ui.get("_inv_stack") as Control
+	var inv_panel: Control = ui.get("_inv_panel") as Control
 	check(bool((ui.get("_chest_section") as Control).visible)
 		and (ui.get("_chest_slots") as Array).size() == 8
 		and header_title != null and header_title.text == "Chest",
@@ -4808,6 +6342,11 @@ func _test_chest_inventory_panel() -> void:
 	check(inv_body != null
 		and inv_body.size_flags_vertical == Control.SIZE_SHRINK_BEGIN,
 		"the player grid moves up when the chest drawer is open")
+	check(inv_stack != null and inv_panel != null and main_scroll != null
+		and inv_stack.custom_minimum_size.y >= float(ui.get("_inv_stack_base_h"))
+		and inv_stack.custom_minimum_size.y
+			>= inv_panel.get_combined_minimum_size().y - 0.5,
+		"the inventory canvas grows to fit a docked chest instead of clipping it")
 
 	# A plain click/tap only selects/inspects; it must not take the stack.
 	var chest_slot_0: Control = (ui.get("_chest_slots") as Array)[0] as Control
@@ -4910,6 +6449,63 @@ func _test_chest_inventory_panel() -> void:
 	check(chest_slots[2] == null,
 		"dragging a chest stack to delete removes it from the chest")
 
+	# ── Mobile finger scrolling ──
+	# Headless has no phone-sized viewport, so exercise the drag handler against
+	# a real ScrollContainer with overflowing content. It must scroll empty /
+	# background areas while leaving occupied item slots to drag-and-drop.
+	var old_mobile: int = Global.mobile_platform_override
+	Global.mobile_platform_override = 1
+	Global.Inventory[0] = {"data": wood, "quantity": 1}
+	Global.Inventory_updated.emit()
+	await get_tree().process_frame
+	var occupied_slot: Control = (ui.get("_slots") as Array)[0] as Control
+	check(bool(ui.call("_inventory_scroll_blocked_at",
+		occupied_slot.get_global_rect().get_center())),
+		"a finger drag on an occupied item slot is not hijacked by scrolling")
+
+	var fake_scroll := ScrollContainer.new()
+	fake_scroll.position = Vector2(2000, 2000)
+	fake_scroll.size = Vector2(400, 200)
+	var fake_content := Control.new()
+	fake_content.custom_minimum_size = Vector2(400, 900)
+	fake_scroll.add_child(fake_content)
+	add_child(fake_scroll)
+	await get_tree().process_frame
+	var real_scroll: ScrollContainer = ui.get("_main_scroll") as ScrollContainer
+	ui.set("_main_scroll", fake_scroll)
+	var fake_rect := fake_scroll.get_global_rect()
+	var drag_point := Vector2.INF
+	for gy in range(int(fake_rect.position.y), int(fake_rect.end.y), 8):
+		for gx in range(int(fake_rect.position.x), int(fake_rect.end.x), 8):
+			var p := Vector2(float(gx), float(gy))
+			if not bool(ui.call("_inventory_scroll_blocked_at", p)):
+				drag_point = p
+				break
+		if drag_point != Vector2.INF:
+			break
+	var touch := InputEventScreenTouch.new()
+	touch.index = 11
+	touch.position = drag_point
+	touch.pressed = true
+	ui.call("_input", touch)
+	var drag := InputEventScreenDrag.new()
+	drag.index = 11
+	drag.position = drag_point + Vector2(0, -80)
+	drag.relative = Vector2(0, -40)
+	ui.call("_input", drag)
+	await get_tree().process_frame
+	check(drag_point != Vector2.INF and fake_scroll.scroll_vertical > 0,
+		"mobile inventory/chest scrolls with a finger drag")
+	var scroll_release := InputEventScreenTouch.new()
+	scroll_release.index = 11
+	scroll_release.position = drag_point + Vector2(0, -80)
+	scroll_release.pressed = false
+	ui.call("_input", scroll_release)
+	ui.set("_main_scroll", real_scroll)
+	fake_scroll.queue_free()
+	Global.mobile_platform_override = old_mobile
+	await get_tree().process_frame
+
 	ui.call("detach_chest")
 	check(inv_body.size_flags_vertical == Control.SIZE_EXPAND_FILL,
 		"closing the chest restores the normal inventory layout")
@@ -4943,6 +6539,35 @@ func _test_cloud_save_identity() -> void:
 	check(CloudSync.classify_sync(uid_a, 1, "sum1",
 		{"world_uid": "", "revision": 0, "checksum": "sum0"}) == "pending",
 		"legacy cloud metadata is not auto-overwritten")
+
+	# Deletion tombstones: a local delete becomes a cloud row, and other devices
+	# remove their matching local copy instead of re-uploading it.
+	var cloud_sync_src := FileAccess.get_file_as_string("res://scripts/cloud_sync.gd")
+	var supabase_src := FileAccess.get_file_as_string("res://scripts/supabase_client.gd")
+	var migration := ProjectSettings.globalize_path(
+		"res://../supabase/migrations/20261029120000_cloud_save_deletions.sql")
+	check(cloud_sync_src.contains("_on_world_deleted")
+		and cloud_sync_src.contains("_apply_remote_deletions")
+		and cloud_sync_src.contains("_flush_pending_deletions")
+		and supabase_src.contains("record_save_deletion")
+		and supabase_src.contains("list_save_deletions")
+		and supabase_src.contains("expected_world_uid")
+		and FileAccess.file_exists(migration),
+		"cloud deletion propagates through UID tombstones instead of local-only removal")
+	CloudSync.set("_deleted_uids", {uid_a: true})
+	check(CloudSync.is_world_deleted(uid_a)
+		and not CloudSync.is_world_deleted(uid_b),
+		"cloud tombstones are matched by stable world UID")
+	CloudSync.set("_deleted_uids", {})
+	var pending_path := str(CloudSync.call("_pending_deletions_path", TEST_ACCOUNT_A))
+	CloudSync.call("_save_pending_deletions", TEST_ACCOUNT_A,
+		[{"slot": 2, "world_uid": uid_a, "checksum": "sum2"}])
+	var pending_rows: Array = CloudSync.call("_load_pending_deletions", TEST_ACCOUNT_A) as Array
+	check(pending_rows.size() == 1
+		and str((pending_rows[0] as Dictionary).get("world_uid", "")) == uid_a,
+		"offline world deletions persist in the account's pending queue")
+	if not pending_path.is_empty():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(pending_path))
 
 func _test_android_config() -> void:
 	var presets := FileAccess.get_file_as_string("res://export_presets.cfg")
@@ -4979,6 +6604,7 @@ func _test_android_input_and_safe_area() -> void:
 	var old_player: Node = Global.player_node
 	var old_move: Vector2 = Global.mobile_move
 	var old_shift: bool = Global.mobile_shift
+	var old_sprint: bool = Global.mobile_sprint
 	var old_pnc: bool = Global.pnc_hold_active
 	var old_size: Vector2 = Global.ui_viewport_size
 	var old_insets: Vector4 = Global.ui_safe_insets
@@ -4991,6 +6617,7 @@ func _test_android_input_and_safe_area() -> void:
 	Global.player_node = probe
 	Global.mobile_move = Vector2.RIGHT
 	Global.mobile_shift = true
+	Global.set_mobile_sprint(true)
 	Global.pnc_hold_active = true
 	var cancelled_events: Array = []
 	var on_cancel := func() -> void: cancelled_events.append(true)
@@ -4998,13 +6625,14 @@ func _test_android_input_and_safe_area() -> void:
 	Global.cancel_gameplay_input()
 	check(probe.cancelled == 1 and cancelled_events.size() == 1
 		and Global.mobile_move == Vector2.ZERO and not Global.mobile_shift
-		and not Global.pnc_hold_active,
+		and not Global.mobile_sprint and not Global.pnc_hold_active,
 		"opening an interface cancels PNC, held touch movement and sprint")
 	Global.gameplay_input_cancelled.disconnect(on_cancel)
 	probe.queue_free()
 	Global.player_node = old_player if is_instance_valid(old_player) else null
 	Global.mobile_move = old_move
 	Global.mobile_shift = old_shift
+	Global.set_mobile_sprint(old_sprint)
 	Global.pnc_hold_active = old_pnc
 
 	# UI hit-testing must use the event's own viewport position. Android's
@@ -5125,6 +6753,16 @@ func _test_android_input_and_safe_area() -> void:
 			action_hits = false
 	check(action_hits,
 		"Android BUILD/SPRINT/INTERACT are recognised as UI hit targets")
+	# INTERACT is disabled whenever no nearby target exists. Its disabled
+	# stylebox must stay circular too, or the button reads as a rounded box.
+	var interact_disabled := interact_btn.get_theme_stylebox("disabled") as StyleBoxFlat
+	var interact_radius := int(interact_btn.size.x * 0.5)
+	check(interact_disabled != null
+		and interact_disabled.corner_radius_top_left >= interact_radius - 1
+		and interact_disabled.corner_radius_top_right >= interact_radius - 1
+		and interact_disabled.corner_radius_bottom_left >= interact_radius - 1
+		and interact_disabled.corner_radius_bottom_right >= interact_radius - 1,
+		"Android INTERACT keeps its circular style while disabled")
 	# The explicit HUD registry must work even if the generic CanvasLayer root
 	# cache has not picked up MobileUI yet (the original leak path).
 	var roots: Array = Global.get("_ui_roots")
@@ -5154,6 +6792,30 @@ func _test_android_input_and_safe_area() -> void:
 	check(Global.is_mouse_event_over_ui(tagged_press),
 		"secondary UI bridge presses are always treated as UI")
 
+	# A new touch must map from its own position, never the previous tap cached
+	# in Global.mouse_world(); build mode was placing on that stale tile.
+	Global.set_touch_mouse(Vector2(11, 22))
+	var touch_press := InputEventScreenTouch.new()
+	touch_press.index = 3
+	touch_press.position = Vector2(120, 80)
+	touch_press.pressed = true
+	var map_probe := Node2D.new()
+	add_child(map_probe)
+	var mapped := Global.mouse_event_world(map_probe, touch_press)
+	var expected := get_viewport().get_canvas_transform().affine_inverse() \
+		* touch_press.position
+	check(mapped.is_equal_approx(expected) and not mapped.is_equal_approx(Vector2(11, 22)),
+		"touch events map from their own position, not the stale touch cursor")
+	map_probe.queue_free()
+	Global.clear_touch_mouse()
+	var world_src := FileAccess.get_file_as_string("res://scripts/world.gd")
+	var cave_src := FileAccess.get_file_as_string("res://scripts/cave_world.gd")
+	var pixie_src := FileAccess.get_file_as_string("res://scripts/pixie_cave_world.gd")
+	check(world_src.contains("Global.mouse_event_world(self, event)")
+		and cave_src.contains("Global.mouse_event_world(self, event)")
+		and pixie_src.contains("Global.mouse_event_world(self, event)"),
+		"all build-mode worlds place from the current touch event")
+
 	# A: PnC off, auto-sprint off — stick visible, BUILD right, SPRINT shown.
 	var metrics: Dictionary = mobile.call("_layout_metrics", Global.ui_scale)
 	var left_pad: float = metrics["left_pad"]
@@ -5168,13 +6830,25 @@ func _test_android_input_and_safe_area() -> void:
 		and absf(build_btn.get_global_rect().get_center().x
 			- right_build_center) < 1.0,
 		"Android A: joystick on, BUILD right, SPRINT visible")
-	# B: PnC off, auto-sprint on — stick visible, BUILD right, SPRINT hidden.
+	# SPRINT is a latched toggle, not a hold button. It must not turn into the
+	# Shift modifier used by shift-click mining/interactions.
+	Global.mobile_shift = false
+	Global.set_mobile_sprint(false)
+	sprint_btn.button_pressed = true
+	check(Global.mobile_sprint and sprint_btn.button_pressed
+		and not Global.mobile_shift and not Global.is_shift_held(),
+		"Android SPRINT latches sprint without becoming Shift")
+	sprint_btn.button_pressed = false
+	check(not Global.mobile_sprint and not sprint_btn.button_pressed,
+		"Android SPRINT tap again turns sprint off")
+	# B: PnC off, auto-sprint on — auto-sprint only applies to PnC movement, so
+	# the manual SPRINT button must remain available.
 	Global.point_and_click_auto_sprint = true
 	mobile.call("_set_controls_enabled", true)
-	check(stick.visible and build_btn.visible and not sprint_btn.visible
+	check(stick.visible and build_btn.visible and sprint_btn.visible
 		and absf(build_btn.get_global_rect().get_center().x
 			- right_build_center) < 1.0,
-		"Android B: auto-sprint hides SPRINT and keeps BUILD right")
+		"Android B: auto-sprint leaves manual SPRINT visible when PnC is off")
 	# C: PnC on, auto-sprint off — stick hidden, BUILD takes the left slot,
 	# SPRINT shown again.
 	Global.point_and_click = true
@@ -5199,6 +6873,7 @@ func _test_android_input_and_safe_area() -> void:
 		"Android shows the joystick and SPRINT again in manual mode")
 	Global.point_and_click = old_pnc_scheme
 	Global.point_and_click_auto_sprint = old_auto_sprint
+	Global.set_mobile_sprint(old_sprint)
 	mobile.call("_set_controls_enabled", true)
 	var mobile_root: Control = mobile.get("_root") as Control
 	if mobile_root != null:
@@ -5291,9 +6966,104 @@ func _test_android_input_and_safe_area() -> void:
 	Global.hotbar_selected = old_selected
 	Global.mobile_move = old_move_for_hotbar
 	Global.hotbar_selection_changed.emit(Global.hotbar_selected)
+
+	# A second finger on BUILD/SPRINT/INTERACT must activate the button directly.
+	# The held joystick touch owns the GUI mouse focus, so the old synthetic
+	# mouse press was delivered back to the joystick and the action never fired.
+	var old_block_mode: bool = Global.block_mode
+	var old_in_dungeon: bool = Global.is_in_dungeon
+	var old_sprint_multi: bool = Global.mobile_sprint
+	var old_pnc_multi: bool = Global.point_and_click
+	var old_auto_multi: bool = Global.point_and_click_auto_sprint
+	Global.is_in_dungeon = false
+	Global.block_mode = false
+	Global.point_and_click = false
+	Global.point_and_click_auto_sprint = false
+	Global.set_mobile_sprint(false)
+	mobile_root.visible = true
+	mobile.call("_reset_touch_state")
+	mobile.call("_set_controls_enabled", true)
+	await get_tree().process_frame
+	# Headless runs use a 64x64 viewport, which places the action cluster on top
+	# of the joystick. Move the two buttons under test to a clear strip so the
+	# touch routing, not the tiny test viewport, is what this probe exercises.
+	build_btn.position = Vector2(320, 200)
+	build_btn.size = Vector2(64, 64)
+	sprint_btn.position = Vector2(400, 200)
+	sprint_btn.size = Vector2(64, 64)
+	var build_pos := build_btn.get_global_rect().get_center()
+	var sprint_pos := sprint_btn.get_global_rect().get_center()
+	primary = InputEventScreenTouch.new()
+	primary.index = 31
+	primary.position = stick.get_global_rect().get_center()
+	primary.pressed = true
+	mobile.call("_input", primary)
+	var build_touch := InputEventScreenTouch.new()
+	build_touch.index = 32
+	build_touch.position = build_pos
+	build_touch.pressed = true
+	mobile.call("_input", build_touch)
+	check(int(mobile.get("_action_touch_id")) == 32
+		and (mobile.get("_bridged_touches") as Dictionary).is_empty()
+		and int(mobile.get("_primary_touch")) == 31,
+		"secondary action touch is tracked directly without a synthetic mouse press")
+	var build_up := InputEventScreenTouch.new()
+	build_up.index = 32
+	build_up.position = build_pos
+	build_up.pressed = false
+	mobile.call("_input", build_up)
+	check(Global.block_mode,
+		"BUILD can be pressed with a second finger while the joystick stays held")
+	var sprint_before := Global.mobile_sprint
+	var sprint_touch := InputEventScreenTouch.new()
+	sprint_touch.index = 33
+	sprint_touch.position = sprint_pos
+	sprint_touch.pressed = true
+	mobile.call("_input", sprint_touch)
+	var sprint_up := InputEventScreenTouch.new()
+	sprint_up.index = 33
+	sprint_up.position = sprint_pos
+	sprint_up.pressed = false
+	mobile.call("_input", sprint_up)
+	check(Global.mobile_sprint != sprint_before,
+		"SPRINT toggles with a second finger while the joystick stays held")
+	primary = InputEventScreenTouch.new()
+	primary.index = 31
+	primary.position = stick.get_global_rect().get_center()
+	primary.pressed = false
+	mobile.call("_input", primary)
+	mobile_root.visible = false
+	Global.is_in_dungeon = old_in_dungeon
+	Global.block_mode = old_block_mode
+	Global.block_mode_changed.emit(old_block_mode)
+	Global.set_mobile_sprint(old_sprint_multi)
+	Global.point_and_click = old_pnc_multi
+	Global.point_and_click_auto_sprint = old_auto_multi
+	mobile.call("_reset_touch_state")
+
 	mobile.queue_free()
 	await get_tree().process_frame
 	Global.reset_pause_state()
+
+	# A PnC-enabled setting is loaded before MobileUI exists. Its initial build
+	# must apply the saved scheme immediately instead of showing the joystick
+	# until the next point_and_click_changed signal.
+	var startup_pnc: bool = Global.point_and_click
+	var startup_auto: bool = Global.point_and_click_auto_sprint
+	Global.point_and_click = true
+	Global.point_and_click_auto_sprint = false
+	var startup_mobile: Node = load("res://scripts/mobile_ui.gd").new()
+	add_child(startup_mobile)
+	await get_tree().process_frame
+	var startup_stick: Control = startup_mobile.get("_stick") as Control
+	var startup_build: Control = startup_mobile.get("_btn_build") as Control
+	check(startup_stick != null and not startup_stick.visible
+		and startup_build != null and startup_build.visible,
+		"mobile HUD applies a saved PnC setting on its initial build")
+	startup_mobile.queue_free()
+	Global.point_and_click = startup_pnc
+	Global.point_and_click_auto_sprint = startup_auto
+	await get_tree().process_frame
 
 
 # Android touch play has no tooltip popups. Verify both the floating item
@@ -5329,12 +7099,13 @@ func _test_pc_controls_overlay() -> void:
 	var movement := overlay.get("_movement_cluster") as Control
 	var action := overlay.get("_action_cluster") as Control
 	check(overlay.visible and movement != null and action != null
-		and movement.position.x < float(sv.size.x) * 0.5
+		and movement.position.x > float(sv.size.x) * 0.5
 		and action.position.x > float(sv.size.x) * 0.5
 		and movement.position.y > float(sv.size.y) * 0.6
 		and action.position.y > float(sv.size.y) * 0.6
-		and movement.position.x + movement.size.x < action.position.x,
-		"PC controls cluster along the bottom left/right, clear of the hotbar")
+		and movement.position.x + movement.size.x < action.position.x
+		and action.position.x + action.size.x <= float(sv.size.x),
+		"PC controls cluster together on the bottom-right, clear of the hotbar")
 	check(movement.size.x <= 240.0 and action.size.x <= 360.0
 		and movement.size.y <= 180.0 and action.size.y <= 200.0,
 		"the bottom control clusters are compact and panel-free")
@@ -5564,6 +7335,104 @@ func _test_settings_tour() -> void:
 	await get_tree().process_frame
 
 
+func _test_settings_persistence() -> void:
+	var path: String = Global.DISPLAY_PATH
+	var had_file: bool = FileAccess.file_exists(path)
+	var backup: String = FileAccess.get_file_as_string(path) if had_file else ""
+	var old_master: float = Global.master_volume
+	var old_music: float = Global.music_volume
+	var old_sfx: float = Global.sfx_volume
+	var old_camera: float = Global.camera_zoom
+	var old_pause: bool = Global.pause_on_inventory
+	var old_quest: bool = Global.quest_opaque_bg
+	var old_fullscreen: bool = Global.fullscreen
+	var old_vsync: bool = Global.vsync_enabled
+	var old_pnc: bool = Global.point_and_click
+	var old_auto: bool = Global.point_and_click_auto_sprint
+
+	Global.set_master_volume(0.93)
+	Global.set_music_volume(0.61)
+	Global.set_sfx_volume(0.72)
+	Global.set_camera_zoom(2.4)
+	Global.set_pause_on_inventory(false)
+	Global.set_quest_opaque_bg(false)
+	var cfg := ConfigFile.new()
+	var saved_ok := cfg.load(path) == OK
+	check(saved_ok
+		and is_equal_approx(float(cfg.get_value("audio", "master_volume", -1)), 0.93)
+		and is_equal_approx(float(cfg.get_value("audio", "music_volume", -1)), 0.61)
+		and is_equal_approx(float(cfg.get_value("audio", "sfx_volume", -1)), 0.72)
+		and is_equal_approx(float(cfg.get_value("display", "camera_zoom", -1)), 2.4)
+		and not bool(cfg.get_value("gameplay", "pause_on_inventory", true))
+		and not bool(cfg.get_value("gameplay", "quest_opaque_bg", true)),
+		"audio, camera and gameplay settings are saved to settings.cfg")
+
+	# Changing the in-memory values and reloading must restore the saved ones.
+	Global.master_volume = 0.1
+	Global.music_volume = 0.1
+	Global.sfx_volume = 0.1
+	Global.camera_zoom = 1.0
+	Global.pause_on_inventory = true
+	Global.quest_opaque_bg = true
+	Global.load_display_settings()
+	check(is_equal_approx(Global.master_volume, 0.93)
+		and is_equal_approx(Global.music_volume, 0.61)
+		and is_equal_approx(Global.sfx_volume, 0.72)
+		and is_equal_approx(Global.camera_zoom, 2.4)
+		and not Global.pause_on_inventory and not Global.quest_opaque_bg,
+		"main-menu and in-game settings load the same saved values")
+
+	# A fresh install (no settings file) uses the requested audio defaults.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	Global.load_display_settings()
+	check(is_equal_approx(Global.master_volume, 0.90)
+		and is_equal_approx(Global.music_volume, 0.70)
+		and is_equal_approx(Global.sfx_volume, 0.80),
+		"fresh settings default to 90% master, 70% music and 80% SFX")
+	var master_idx := AudioServer.get_bus_index("Master")
+	var music_idx := AudioServer.get_bus_index("Music")
+	var sfx_idx := AudioServer.get_bus_index("SFX")
+	check(master_idx != -1 and music_idx != -1 and sfx_idx != -1
+		and absf(db_to_linear(AudioServer.get_bus_volume_db(master_idx)) - 0.90) < 0.01
+		and absf(db_to_linear(AudioServer.get_bus_volume_db(music_idx)) - 0.70) < 0.01
+		and absf(db_to_linear(AudioServer.get_bus_volume_db(sfx_idx)) - 0.80) < 0.01,
+		"fresh audio defaults are applied to the Master, Music and SFX buses")
+
+	var panel_src := FileAccess.get_file_as_string("res://scripts/settings_panel.gd")
+	var main_src := FileAccess.get_file_as_string("res://scripts/main_menu_ver.gd")
+	var pause_src := FileAccess.get_file_as_string("res://scripts/pause_menu.gd")
+	check(main_src.contains("SETTINGS_PANEL_SCRIPT")
+		and pause_src.contains("SETTINGS_PANEL_SCRIPT")
+		and panel_src.contains("Global.set_master_volume(value)")
+		and panel_src.contains("Global.set_music_volume(value)")
+		and panel_src.contains("Global.set_sfx_volume(value)")
+		and panel_src.contains("Global.set_camera_zoom(value)"),
+		"main-menu and in-game settings share the same persisted controls")
+
+	# Restore the exact user settings file and live values.
+	if had_file:
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		if f != null:
+			f.store_string(backup)
+			f.close()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	Global.master_volume = old_master
+	Global.music_volume = old_music
+	Global.sfx_volume = old_sfx
+	Global.camera_zoom = old_camera
+	Global.pause_on_inventory = old_pause
+	Global.quest_opaque_bg = old_quest
+	Global.fullscreen = old_fullscreen
+	Global.vsync_enabled = old_vsync
+	Global.point_and_click = old_pnc
+	Global.point_and_click_auto_sprint = old_auto
+	Global.apply_audio_volumes()
+	Global.camera_zoom_changed.emit(old_camera)
+	Global.quest_bg_changed.emit(old_quest)
+	Global.point_and_click_changed.emit(old_pnc)
+
+
 func _test_android_tooltip_suppression() -> void:
 	var old_override: int = Global.mobile_platform_override
 	var old_tip: Variant = Global.get("_item_tooltip")
@@ -5735,7 +7604,7 @@ return_to_spawn()
 craft_example()
 attack()
 drop_item(1)
-mine("Stone", 4)
+mine("stone_block")
 rename("Birdy")
 input_slot(1)
 put_input("Wood", 1)
@@ -5805,6 +7674,20 @@ print(station_output_count)
 	check(algo_missing.is_empty(),
 		"the Algorithmica reference matches both Python host bases")
 
+	# Combat Automaticas swing on their own cooldown, never as a mirror of the
+	# player's swing. The per-robot jitter also prevents squad lockstep.
+	var npc_src := FileAccess.get_file_as_string("res://scripts/lua_npc.gd")
+	check(not npc_src.contains("swing_performed")
+		and not npc_src.contains("_on_player_swung")
+		and not npc_src.contains("_connect_player_swing")
+		and npc_src.contains("randf_range(0.15, COMBAT_ATTACK_CD)")
+		and npc_src.contains("COMBAT_ATTACK_CD + randf_range(-0.20, 0.25)")
+		and npc_src.contains("_combat_atk_cd = maxf(0.35"),
+		"Automatica combat swings independently of the player and other robots")
+	check(npc_src.contains("return Global.is_hostile_mob(m)")
+		and not npc_src.contains("get_script_constant_map().get(\"COMBAT_DATA\")"),
+		"Automatica hunting recognises instance-property enemies from the Bestiary")
+
 
 func _test_automatica_build_queue() -> void:
 	# Build helpers emit a whole loop of place_item() calls in one Lua frame.
@@ -5843,18 +7726,462 @@ func _test_automatica_build_queue() -> void:
 	await get_tree().process_frame
 
 
+func _test_automatica_fixes() -> void:
+	var old_world: Node = Global.world_node
+	var npc: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	add_child(npc)
+	await get_tree().process_frame
+
+	# Renaming is capped at 12 characters in BOTH the Lua rename function and
+	# the editor field, so a script and the UI cannot create different limits.
+	npc.call("rename_to", "  ABCDEFGHIJKLMNOP  ")
+	check(str(npc.call("get_display_name")) == "ABCDEFGHIJKL",
+		"rename() trims and caps Automatica names at 12 characters")
+	npc.call("_on_lua_rename_signal", "ABCDEFGHIJKLMNOP")
+	check(str(npc.call("get_display_name")) == "ABCDEFGHIJKL",
+		"the Lua rename signal path also caps Automatica names at 12 characters")
+	var lua_editor: Control = load("res://scenes/ui/LuaEditorUI.tscn").instantiate() as Control
+	npc.add_child(lua_editor)
+	await get_tree().process_frame
+	var name_edit: LineEdit = lua_editor.get("_name_edit") as LineEdit
+	check(name_edit != null and name_edit.max_length == 12,
+		"the Lua editor rename field enforces the same 12-character limit")
+
+	# The Automatica editor mirrors Algorithmica's tabbed editor: CODE with an
+	# inline output log, INVENTORY for the robot's slots, and ENCYCLOPEDIA.
+	var tabs: TabContainer = lua_editor.get("_tabs") as TabContainer
+	var out_log: Node = lua_editor.get("_output") as Node
+	var encycl: Node = lua_editor.get("_encycl") as Node
+	check(tabs != null and tabs.get_tab_count() == 3
+		and tabs.get_tab_title(0) == "CODE"
+		and tabs.get_tab_title(1) == "INVENTORY"
+		and tabs.get_tab_title(2) == "ENCYCLOPEDIA"
+		and out_log != null and tabs.get_tab_control(0).is_ancestor_of(out_log)
+		and tabs.get_tab_control(2) == encycl,
+		"the Automatica editor uses Algorithmica's tabbed code/reference layout")
+
+	# The header toggle must clearly switch to the reference and back, and a
+	# closed station must never reopen on the encyclopedia tab.
+	var enc_btn: Button = lua_editor.get("_enc_btn") as Button
+	lua_editor.call("_toggle_encyclopedia")
+	check(enc_btn != null and tabs.current_tab == encycl.get_index()
+		and enc_btn.text.contains("CODE"),
+		"the Automatica Encyclopedia toggle clearly enters the reference")
+	lua_editor.call("close_panel")
+	lua_editor.call("open_panel")
+	check(tabs.current_tab == 0 and enc_btn.text.contains("ENCYCLOPEDIA"),
+		"reopening the Automatica station starts on CODE, not the encyclopedia")
+	lua_editor.call("close_panel")
+
+	# Combat is a two-way toggle now, and a combat follower exposes its own
+	# click target so it can be interacted with away from its station.
+	var combat_btn: Button = lua_editor.get("_combat_btn") as Button
+	var robot_click: Area2D = npc.get("_robot_click_area") as Area2D
+	check(robot_click != null and not robot_click.input_pickable
+		and combat_btn != null and combat_btn.visible \
+		and not combat_btn.text.contains("EXIT"),
+		"a normal Automatica exposes COMBAT and no follower click area")
+	lua_editor.call("_toggle_combat")
+	check(bool(npc.call("is_combat")) and robot_click.input_pickable \
+		and combat_btn.text.contains("EXIT"),
+		"COMBAT sends the robot out and enables interacting with the follower")
+	npc.call("_on_lua_combat_mode", false)
+	check(not bool(npc.call("is_combat")) and not robot_click.input_pickable \
+		and not bool(npc.get("_beacon_pulse")),
+		"combat_mode(false) returns the Automatica to its blue station form")
+	lua_editor.call("_update_combat_ui")
+	check(not combat_btn.text.contains("EXIT"),
+		"the editor combat label reflects a Lua-driven exit")
+	lua_editor.call("_toggle_combat")
+	check(bool(npc.call("is_combat")), "COMBAT can be entered again after an exit")
+	lua_editor.call("_toggle_combat")
+	check(not bool(npc.call("is_combat")) and not combat_btn.text.contains("EXIT"),
+		"EXIT COMBAT turns a combat Automatica back into a blue one")
+	lua_editor.queue_free()
+	await get_tree().process_frame
+
+	# Automatica Management shows an explicit NORMAL/COMBAT badge, separate
+	# from the live action status and combat HP.
+	var pause_menu: Control = load("res://scripts/pause_menu.gd").new() as Control
+	add_child(pause_menu)
+	await get_tree().process_frame
+	var normal_row: Control = pause_menu.call("_make_lua_row", npc) as Control
+	var normal_mode := false
+	for label_node in normal_row.find_children("*", "Label", true, false):
+		if (label_node as Label).text == "NORMAL":
+			normal_mode = true
+	check(normal_mode, "Automatica Management labels a blue Automatica NORMAL")
+	npc.call("_on_lua_combat_mode", true)
+	var combat_row: Control = pause_menu.call("_make_lua_row", npc) as Control
+	var combat_mode := false
+	for label_node in combat_row.find_children("*", "Label", true, false):
+		if (label_node as Label).text == "COMBAT":
+			combat_mode = true
+	check(combat_mode, "Automatica Management labels a fighting Automatica COMBAT")
+	npc.call("_on_lua_combat_mode", false)
+	normal_row.free()
+	combat_row.free()
+	pause_menu.queue_free()
+	await get_tree().process_frame
+
+	var iron_ore: ItemData = load("res://resources/items/iron_ore.tres")
+	var stone: ItemData = load("res://resources/items/stone.tres")
+	var ironbar: ItemData = load("res://resources/items/ironbar.tres")
+	var wood: ItemData = load("res://resources/items/wood.tres")
+	var birch: ItemData = load("res://resources/items/birch_wood.tres")
+
+	check(npc.call("_find_item_data_by_name", "Iron Ore") == iron_ore
+		and npc.call("_find_item_data_by_name", "stone") == stone,
+		"Automatica item lookup covers the full catalogue")
+	check(str(npc.call("_normalize_block_ref", "stone_block")) == "stone"
+		and str(npc.call("_normalize_block_ref", "birch wood")) == "birch_wood"
+		and str(npc.call("_normalize_block_ref", "Wheat (Grown)")) == "wheat_grown"
+		and str(npc.call("_normalize_block_ref", "wheat_grown_block")) == "wheat_grown",
+		"block references normalize spaces/punctuation and the optional _block suffix")
+
+	# The encyclopedia must expose a copy-ready reference for every placeable
+	# block, generated from the same ItemData catalogue mine() matches.
+	var block_section: Dictionary = {}
+	for section in APIReference.encyclopedia_sections():
+		if str((section as Dictionary).get("id", "")) == APIReference.SECTION_AUTOMATICA_BLOCKS:
+			block_section = section as Dictionary
+			break
+	var block_entries: Array = block_section.get("entries", []) as Array
+	var expected_refs: Dictionary = {}
+	for data in Global.list_all_items():
+		if data != null and data.is_placeable and not data.place_scene_path.is_empty():
+			var ref: String = APIReference.block_reference(data.item_id())
+			if not ref.is_empty():
+				expected_refs[ref] = true
+	var listed_refs: Dictionary = {}
+	for entry in block_entries:
+		var sig: String = str((entry as Dictionary).get("sig", ""))
+		if sig.begins_with("mine(\"") and sig.ends_with("\")"):
+			var entry_ref: String = sig.trim_prefix("mine(\"").trim_suffix("\")")
+			listed_refs[entry_ref] = true
+	check(not block_section.is_empty()
+		and block_entries.size() == expected_refs.size()
+		and block_entries.size() >= 20,
+		"Programming Encyclopedia lists every mineable block reference")
+	check(listed_refs.has("stone_block")
+		and listed_refs.has("birch_wood_block")
+		and listed_refs.has("wheat_grown_block")
+		and not bool(block_section.get("start_expanded", true)),
+		"mineable block names are copy-ready and collapsed by default")
+
+	var fake := AutoWorldProbe.new()
+	add_child(fake)
+	Global.world_node = fake
+	var stone_block: Node2D = load("res://scenes/objects/PlaceableBlock.tscn").instantiate()
+	stone_block.set("item_data", stone)
+	fake.add_child(stone_block)
+	stone_block.global_position = Vector2(32, 0)
+	var birch_block: Node2D = load("res://scenes/objects/PlaceableBlock.tscn").instantiate()
+	birch_block.set("item_data", birch)
+	fake.add_child(birch_block)
+	birch_block.global_position = Vector2(64, 0)
+	fake.set("_placed_blocks", {
+		Vector2i(1, 0): {"name": "Stone", "node": stone_block},
+		Vector2i(2, 0): {"name": "Birch Wood", "node": birch_block},
+	})
+	npc.global_position = Vector2.ZERO
+	npc.set("_work_radius_px", 640.0)
+	var stone_cell: Variant = npc.call("_nearest_named_block", "stone_block")
+	var birch_cell: Variant = npc.call("_nearest_named_block", "birch wood")
+	check(stone_cell == Vector2i(1, 0) and birch_cell == Vector2i(2, 0),
+		"mine() resolves snake_case block references")
+
+	# mine() owns an always-visible world ring (the player's ring is hidden
+	# while the Lua editor panel is open), and its fill time scales with tool.
+	var mining_ring: Node = npc.get("_mining_ring") as Node
+	var base_mine_sec: float = float(npc.call("_robot_mining_seconds", stone_block))
+	npc.set("_tool", {"data": load("res://resources/items/wooden_pickaxe.tres"), "quantity": 1})
+	var pick_mine_sec: float = float(npc.call("_robot_mining_seconds", stone_block))
+	npc.set("_tool", {})
+	check(mining_ring != null and int(mining_ring.get("z_index")) == 4000
+		and base_mine_sec > 0.0 and pick_mine_sec > 0.0
+		and pick_mine_sec < base_mine_sec,
+		"mine() shows a break ring whose fill time scales with the tool")
+
+	# A* routing: a solid wall between the robot and the target must produce a
+	# path around it rather than a straight-line stall.
+	var wall := StaticBody2D.new()
+	var wall_col := CollisionShape2D.new()
+	var wall_shape := RectangleShape2D.new()
+	wall_shape.size = Vector2(32, 128)
+	wall_col.shape = wall_shape
+	wall.add_child(wall_col)
+	fake.add_child(wall)
+	wall.global_position = Vector2(144, 0)
+	await get_tree().physics_frame
+	var nav_result: Variant = npc.call("_nav_find_path",
+		Vector2.ZERO, Vector2(256, 0), 44.0)
+	var nav_path: PackedVector2Array = nav_result
+	var nav_reaches: bool = not nav_path.is_empty() \
+		and nav_path[nav_path.size() - 1].distance_to(Vector2(256, 0)) <= 44.0
+	check(nav_reaches, "mine() navigation plans around a solid wall")
+	wall.queue_free()
+	await get_tree().process_frame
+
+	# move(0, -1) must be real movement, not a helper sentinel.
+	var robot: Node2D = npc.get_node("Robot") as Node2D
+	robot.position = Vector2.ZERO
+	npc.set("_robot_vel", Vector2.ZERO)
+	npc.set("_work_radius_px", 640.0)
+	npc.call("_on_lua_move", Vector2(0, -1))
+	check((npc.get("_robot_vel") as Vector2).is_equal_approx(Vector2(0, -1))
+		and is_equal_approx(float(npc.get("_work_radius_px")), 640.0),
+		"move(0, -1) remains a normal movement call")
+	npc.set("_robot_vel", Vector2.ZERO)
+
+	# input_slot captures the selected slot at call time.
+	npc.set("_station_queue", [])
+	npc.set("_is_working", true)
+	npc.set("_selected_slot", 0)
+	npc.call("_on_lua_input_slot", 5)
+	npc.set("_selected_slot", 1)
+	var station_queue: Array = npc.get("_station_queue") as Array
+	check(station_queue.size() == 1
+		and int((station_queue[0] as Dictionary)["arg"].get("slot", -1)) == 0,
+		"input_slot captures its build slot before the job runs")
+	npc.set("_station_queue", [])
+	npc.set("_is_working", false)
+
+	# withdraw queues behind a running job instead of being dropped.
+	npc.set("_withdraw_queue", [])
+	npc.set("_is_working", true)
+	npc.call("_on_lua_withdraw", "Iron Ore", 5)
+	check((npc.get("_withdraw_queue") as Array).size() == 1,
+		"withdraw queues while the Automatica is busy")
+	npc.set("_withdraw_queue", [])
+	npc.set("_is_working", false)
+
+	# mine() also queues, preserving the block reference and call order.
+	npc.set("_pending_sentinel_queue", [])
+	npc.set("_tool", {"data": wood, "quantity": 1})
+	npc.set("_is_working", true)
+	npc.call("_on_lua_mine", "stone_block")
+	var sentinel_queue: Array = npc.get("_pending_sentinel_queue") as Array
+	check(sentinel_queue.size() == 1
+		and str((sentinel_queue[0] as Dictionary).get("action", "")) == "mine"
+		and str((sentinel_queue[0] as Dictionary).get("name", "")) == "stone_block",
+		"mine queues with its normalized block reference while busy")
+	npc.set("_pending_sentinel_queue", [])
+	npc.set("_tool", {})
+	npc.set("_is_working", false)
+
+	# Non-placeable items never occupy build slots.
+	var palette: Array = npc.get("_build_palette") as Array
+	for i in range(palette.size()):
+		palette[i] = null
+	npc.set("_npc_inventory", [])
+	npc.call("_npc_add_to_palette", ironbar, 2)
+	var npc_inventory: Array = npc.get("_npc_inventory") as Array
+	check(palette[0] == null and npc_inventory.size() == 1
+		and (npc_inventory[0] as Dictionary)["data"] == ironbar
+		and int((npc_inventory[0] as Dictionary)["quantity"]) == 2,
+		"non-placeable outputs go to robot inventory, not build slots")
+
+	# drop_item caps at the actual stack quantity.
+	palette[0] = {"data": wood, "quantity": 2}
+	npc.set("_selected_slot", 0)
+	var drop_stack: Dictionary = npc.call("_take_drop_stack", 9) as Dictionary
+	check(int(drop_stack.get("quantity", 0)) == 2 and palette[0] == null,
+		"drop_item caps its quantity at the real stack size")
+
+	# A full chest is still readable/withdrawable; only deposit needs space.
+	var chest: Node = load("res://scenes/objects/ChestBlock.tscn").instantiate()
+	add_child(chest)
+	chest.call("setup", load("res://resources/items/chest.tres"))
+	var chest_slots: Array = chest.get("slots") as Array
+	for i in range(chest_slots.size()):
+		chest_slots[i] = {"data": wood, "quantity": 32}
+	npc.global_position = Vector2.ZERO
+	chest.global_position = Vector2.ZERO
+	var with_space: Variant = npc.call("_nearest_chest_in_radius", true)
+	var any_chest: Variant = npc.call("_nearest_chest_in_radius", false)
+	var with_item: Variant = npc.call("_nearest_chest_with_item", wood)
+	check(with_space == null and any_chest == chest and with_item == chest,
+		"full chests remain readable and withdrawable")
+	chest.queue_free()
+	await get_tree().process_frame
+
+	# Deposit includes the build palette, not only the general inventory.
+	var deposit_chest: Node = load("res://scenes/objects/ChestBlock.tscn").instantiate()
+	add_child(deposit_chest)
+	deposit_chest.call("setup", load("res://resources/items/chest.tres"))
+	var deposit_slots: Array = deposit_chest.get("slots") as Array
+	for i in range(deposit_slots.size()):
+		deposit_slots[i] = null
+	palette[0] = {"data": wood, "quantity": 3}
+	npc.set("_npc_inventory", [])
+	npc.set("_last_modify_ms", -1000000)
+	await npc.call("_deposit_to_chest", deposit_chest)
+	var deposited := false
+	for slot in deposit_slots:
+		if slot != null and (slot as Dictionary)["data"] == wood \
+				and int((slot as Dictionary)["quantity"]) == 3:
+			deposited = true
+	check(deposited and palette[0] == null,
+		"deposit_chest includes build-palette blocks")
+
+	deposit_chest.queue_free()
+	fake.queue_free()
+	npc.queue_free()
+	Global.world_node = old_world if is_instance_valid(old_world) else null
+	await get_tree().process_frame
+
+
+func _test_automatica_projectile_parry() -> void:
+	var old_player: Node = Global.player_node
+	var player := CharacterBody2D.new()
+	player.add_to_group("Player")
+	add_child(player)
+	player.global_position = Vector2(200.0, 200.0)
+	Global.player_node = player
+
+	var npc: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	add_child(npc)
+	await get_tree().process_frame
+	npc.call("setup", load("res://resources/items/lua.tres"))
+	npc.global_position = Vector2(150.0, 200.0)
+	var robot := npc.get_node("Robot") as Node2D
+	robot.global_position = npc.global_position
+	npc.set("_combat", true)
+	npc.set("_combat_parry_cd", 0.0)
+
+	var bolt := DungeonProjectile.new()
+	add_child(bolt)
+	bolt.global_position = Vector2(210.0, 200.0)
+	bolt.direction = Vector2.LEFT
+	check(bolt.is_in_group("DungeonProjectile"),
+		"dungeon bolts join the projectile group Automatica detects")
+	npc.call("_tick_projectile_parry", player)
+	check(bool(bolt.get("_parried")),
+		"a combat Automatica automatically parries an incoming flare bolt")
+
+	# The reflex has a short cooldown so a row of vents cannot be fully ignored
+	# and one robot cannot erase every bolt in the same instant.
+	var second := DungeonProjectile.new()
+	add_child(second)
+	second.global_position = Vector2(210.0, 200.0)
+	second.direction = Vector2.LEFT
+	npc.call("_tick_projectile_parry", player)
+	check(not bool(second.get("_parried")),
+		"Automatica auto-parry respects its cooldown")
+	npc.set("_combat_parry_cd", 0.0)
+	npc.call("_tick_projectile_parry", player)
+	check(bool(second.get("_parried")),
+		"Automatica auto-parry resumes after the cooldown")
+
+	# Bolts already flying away are not treated as threats.
+	var away := DungeonProjectile.new()
+	add_child(away)
+	away.global_position = Vector2(270.0, 200.0)
+	away.direction = Vector2.RIGHT
+	npc.set("_combat_parry_cd", 0.0)
+	npc.call("_tick_projectile_parry", player)
+	check(not bool(away.get("_parried")),
+		"a bolt travelling away is not parried")
+
+	# Only combat followers defend; a blue station does nothing.
+	npc.set("_combat", false)
+	var idle_bolt := DungeonProjectile.new()
+	add_child(idle_bolt)
+	idle_bolt.global_position = Vector2(210.0, 200.0)
+	idle_bolt.direction = Vector2.LEFT
+	npc.set("_combat_parry_cd", 0.0)
+	npc.call("_tick_projectile_parry", player)
+	check(not bool(idle_bolt.get("_parried")),
+		"a non-combat Automatica does not parry projectiles")
+
+	if is_instance_valid(bolt):
+		bolt.queue_free()
+	if is_instance_valid(second):
+		second.queue_free()
+	if is_instance_valid(away):
+		away.queue_free()
+	if is_instance_valid(idle_bolt):
+		idle_bolt.queue_free()
+	npc.queue_free()
+	player.queue_free()
+	Global.player_node = old_player
+	await get_tree().process_frame
+
+
+func _test_code_safety() -> void:
+	# Obvious non-terminating Lua loops are blocked before the synchronous
+	# interpreter can freeze the main thread.
+	check(not CODE_SAFETY.lua_issue("while true do end").is_empty(),
+		"Lua while-true loops without an exit are rejected")
+	check(not CODE_SAFETY.lua_issue("while 1 do print('x') end").is_empty(),
+		"Lua while-constant loops without an exit are rejected")
+	check(CODE_SAFETY.lua_issue("while true do break end").is_empty()
+		and CODE_SAFETY.lua_issue("while true do if ready then break end end").is_empty()
+		and CODE_SAFETY.lua_issue("while false do end").is_empty(),
+		"Lua loops with a real loop-level break or a false condition are allowed")
+	check(not CODE_SAFETY.lua_issue(
+			"while true do\n  while inner do break end\nend").is_empty(),
+		"a nested Lua loop break does not excuse an infinite outer loop")
+	check(CODE_SAFETY.lua_issue(
+			"-- while true do end\nprint('while true do end')").is_empty(),
+		"Lua comments and strings cannot trigger a false infinite-loop warning")
+	check(not CODE_SAFETY.lua_issue("for i = 1, 1000000000 do end").is_empty()
+		and CODE_SAFETY.lua_issue("for i = 1, 10 do print(i) end").is_empty(),
+		"Lua numeric for loops reject huge ranges but allow normal ranges")
+	check(not CODE_SAFETY.lua_issue("repeat\n  print('x')\nuntil false").is_empty()
+		and CODE_SAFETY.lua_issue("repeat\n  break\nuntil false").is_empty(),
+		"Lua repeat-until-false loops require a break/return")
+
+	# Python equivalents (the transpiled host runs synchronously too).
+	check(not CODE_SAFETY.python_issue("while True:\n    pass").is_empty()
+		and not CODE_SAFETY.python_issue("while 1:\n    print('x')").is_empty(),
+		"Python while-true loops without an exit are rejected")
+	check(CODE_SAFETY.python_issue("while True:\n    break").is_empty()
+		and CODE_SAFETY.python_issue("while True:\n    if ready:\n        break").is_empty()
+		and CODE_SAFETY.python_issue("while False:\n    pass").is_empty(),
+		"Python loops with a real break or a false condition are allowed")
+	check(not CODE_SAFETY.python_issue(
+			"while True:\n    for x in items:\n        break").is_empty(),
+		"a nested Python loop break does not excuse an infinite outer loop")
+	check(not CODE_SAFETY.python_issue(
+			"for i in range(1000000000):\n    pass").is_empty()
+		and CODE_SAFETY.python_issue("for i in range(10):\n    pass").is_empty(),
+		"Python numeric ranges reject huge ranges but allow normal ranges")
+	check(CODE_SAFETY.python_issue(
+			"# while True:\nprint('while True:')").is_empty(),
+		"Python comments and strings cannot trigger a false infinite-loop warning")
+
+	# Every player-facing runner must call the guard before executing.
+	var lua_src := FileAccess.get_file_as_string("res://scripts/lua_editor_ui.gd")
+	var py_src := FileAccess.get_file_as_string("res://scripts/python_state.gd")
+	var quiz_src := FileAccess.get_file_as_string("res://scripts/quiz_altar.gd")
+	var station_src := FileAccess.get_file_as_string(
+		"res://scripts/crafting_station_object.gd")
+	check(lua_src.contains("CODE_SAFETY.lua_issue")
+		and py_src.contains("CODE_SAFETY.python_issue")
+		and quiz_src.contains("CODE_SAFETY.lua_issue")
+		and quiz_src.contains("CODE_SAFETY.python_issue")
+		and station_src.contains("CODE_SAFETY.lua_issue"),
+		"player-facing Lua/Python runners reject unsafe programs before execution")
+
+
 func _test_algorithmica_templates() -> void:
 	var craft_script: GDScript = load("res://scripts/crafting_menu.gd")
 	var furnace_script: GDScript = load("res://scripts/furnace_programming_panel.gd")
 	var craft_consts: Dictionary = craft_script.get_script_constant_map()
 	var furnace_consts: Dictionary = furnace_script.get_script_constant_map()
 	var station_template: String = str(craft_consts.get("STATION_TEMPLATE", ""))
+	var color_template: String = str(craft_consts.get("COLOR_TEMPLATE", ""))
 	var furnace_template: String = str(furnace_consts.get("FURNACE_TEMPLATE", ""))
 	var tutorial_template: String = str(furnace_consts.get("TUTORIAL_TEMPLATE", ""))
 	check(station_template.contains('set_recipe("Planks")')
 		and station_template.contains("craft(1)")
 		and station_template.contains("take_output()"),
 		"the Algorithmica station template is a complete craft program")
+	check(color_template.contains("craft_color(255, 0, 0, 2)")
+		and color_template.contains("take_output()"),
+		"the Algorithmica color template is a complete craft_color program")
 	check(furnace_template.contains('feed("iron_ore"')
 		and furnace_template.contains('fuel("charcoal"')
 		and furnace_template.contains("smelt(5)")
@@ -5862,16 +8189,68 @@ func _test_algorithmica_templates() -> void:
 		"the Algorithmica furnace template is a complete smelt program")
 	check(tutorial_template.strip_edges() == 'print("Algorithmica ready")',
 		"the tutorial starter is ready-to-run code, not a commented example")
+	var default_hint: String = str(furnace_consts.get("DEFAULT_FURNACE_HINT", ""))
+	check(not station_template.contains("#") and not color_template.contains("#")
+		and not furnace_template.contains("#") and not default_hint.contains("#"),
+		"Algorithmica starter textboxes contain no comments")
+
+	# The encyclopedia carries the same three templates as selectable code
+	# blocks, so players can reference them even without opening a machine.
+	var template_entries: Array = APIReference.algorithmica_template_entries()
+	var template_section: Dictionary = {}
+	for section in APIReference.encyclopedia_sections():
+		if str((section as Dictionary).get("id", "")) == APIReference.SECTION_ALGORITHMICA_TEMPLATES:
+			template_section = section as Dictionary
+			break
+	var template_codes: Dictionary = {}
+	for entry in template_entries:
+		template_codes[str((entry as Dictionary).get("id", ""))] = str(
+			(entry as Dictionary).get("code", ""))
+	check(template_entries.size() == 4
+		and APIReference.templates_for("Crafting Station").size() == 2
+		and APIReference.templates_for("Furnace").size() == 2
+		and not template_section.is_empty()
+		and (template_section.get("entries", []) as Array).size() == 4
+		and str(template_codes.get("algorithmica.template.station", "")).contains("craft(1)")
+		and str(template_codes.get("algorithmica.template.furnace", "")).contains("smelt(5)")
+		and str(template_codes.get("algorithmica.template.furnace_food", "")).contains("sheep_meat")
+		and str(template_codes.get("algorithmica.template.color", "")).contains("craft_color("),
+		"the Programming Encyclopedia lists station, furnace, food and color templates")
 
 	var craft_src := FileAccess.get_file_as_string("res://scripts/crafting_menu.gd")
 	var furnace_src := FileAccess.get_file_as_string(
 		"res://scripts/furnace_programming_panel.gd")
 	var tutorial_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
-	check(craft_src.contains('_make_action_btn("TEMPLATE"')
-		and craft_src.contains("_on_load_template")
-		and furnace_src.contains('template_btn.text = "TEMPLATE"')
-		and furnace_src.contains("_load_template"),
-		"both Algorithmica editors expose a TEMPLATE example button")
+	var template_list_src := FileAccess.get_file_as_string(
+		"res://scripts/algorithmica_template_list.gd")
+	check(craft_src.contains("TEMPLATE_LIST")
+		and craft_src.contains('TEMPLATE_LIST.build("Crafting Station"')
+		and furnace_src.contains("TEMPLATE_LIST")
+		and furnace_src.contains('TEMPLATE_LIST.build("Furnace"')
+		and template_list_src.contains('"TEMPLATES"')
+		and template_list_src.contains("APIReference.templates_for"),
+		"both Algorithmica editors expose Automatica-style named template lists")
+	var ref_src := FileAccess.get_file_as_string(
+		"res://scripts/algorithmica_reference.gd")
+	check(craft_src.contains("ALGORITHMICA_REFERENCE")
+		and craft_src.contains("_prog_tabs")
+		and craft_src.contains('"ENCYCLOPEDIA"')
+		and furnace_src.contains("ALGORITHMICA_REFERENCE")
+		and furnace_src.contains("_tabs")
+		and furnace_src.contains('"ENCYCLOPEDIA"')
+		and ref_src.contains("APIReference.encyclopedia_sections()"),
+		"both Algorithmica editors expose the shared encyclopedia tab")
+	var reference: Control = load("res://scripts/algorithmica_reference.gd").new() as Control
+	add_child(reference)
+	await get_tree().process_frame
+	var section_count := 0
+	for child in reference.find_children("*", "", true, false):
+		if child is EncyclopediaSection:
+			section_count += 1
+	check(section_count == APIReference.encyclopedia_sections().size(),
+		"the Algorithmica encyclopedia lists all reference sections")
+	reference.queue_free()
+	await get_tree().process_frame
 	check(tutorial_src.contains("algorithmica_template_ready")
 		and furnace_src.contains("algorithmica_template_ready"),
 		"the tutorial marks the furnace editor for the ready-to-run starter")
@@ -5889,6 +8268,37 @@ func _test_algorithmica_templates() -> void:
 	check(str(panel.call("tutorial_code_text")).strip_edges()
 		== 'print("Algorithmica ready")',
 		"the tutorial furnace opens with ready-to-run print code")
+
+	# Item suggestions must exclude dev-only blocks and must not steal focus
+	# from the code editor, otherwise Backspace/Delete cannot remove lines.
+	panel.call("_open_name_popup")
+	var name_list: ItemList = panel.get("_name_list") as ItemList
+	var name_popup: PopupPanel = panel.get("_name_popup") as PopupPanel
+	var dev_ids: Dictionary = {}
+	var public_ids: Dictionary = {}
+	for data in Global.list_all_items():
+		if data.is_dev_item:
+			dev_ids[data.item_id()] = true
+		else:
+			public_ids[data.item_id()] = true
+	var dev_only_ids: Dictionary = {}
+	for id in dev_ids:
+		if not public_ids.has(id):
+			dev_only_ids[id] = true
+	var has_dev := false
+	var has_public := false
+	if name_list != null:
+		for i in range(name_list.item_count):
+			var id := str(name_list.get_item_metadata(i))
+			if dev_only_ids.has(id):
+				has_dev = true
+			if id == "iron_ore":
+				has_public = true
+	check(name_list != null and name_popup != null and not has_dev and has_public
+		and name_popup.unfocusable and name_list.focus_mode == Control.FOCUS_NONE,
+		"furnace item suggestions hide dev blocks and leave keyboard focus in the editor")
+	if name_popup != null:
+		name_popup.hide()
 	panel.call("_load_template")
 	var loaded: String = str(panel.call("tutorial_code_text"))
 	check(loaded.contains('feed("iron_ore"') and loaded.contains("smelt(5)"),
@@ -5910,6 +8320,73 @@ func _test_algorithmica_templates() -> void:
 	await get_tree().process_frame
 
 
+func _test_automation_missions() -> void:
+	var old_missions: Array = Global.missions.duplicate(true)
+	Global._init_missions()
+	var stone: ItemData = load("res://resources/items/stone.tres")
+	var wood: ItemData = load("res://resources/items/wood.tres")
+	var planks: ItemData = load("res://resources/items/plains_planks.tres")
+	var ironbar: ItemData = load("res://resources/items/ironbar.tres")
+
+	Global.record_auto_run()
+	Global.record_auto_rename()
+	for _i in range(10):
+		Global.record_auto_tree()
+	Global.record_auto_work_cycle()
+	Global.record_auto_withdraw(wood, 16)
+	Global.record_auto_chest_contents()
+	Global.record_auto_build("line", 12)
+	Global.record_auto_build("rect", 20)
+	Global.record_auto_build("ring", 20)
+	Global.record_auto_build("wave", 16)
+	Global.record_auto_build("stairs", 12)
+	Global.record_auto_build("spiral", 30)
+	for _i in range(10):
+		Global.record_auto_mined(stone)
+	Global.record_auto_combat_mode()
+	Global.begin_lua_combat_attack()
+	for _i in range(3):
+		Global.add_mission_progress("side_pixie_slayer", 1)
+	Global.end_lua_combat_attack()
+
+	Global.record_algo_station_run({
+		"recipe_read": true, "output_count_read": true, "crafted_total": 16,
+		"output_before": true, "output_after": true,
+	})
+	Global.record_algo_craft(planks, 16)
+	Global.record_algo_take_output(planks, 16)
+	Global.record_algo_color(255, 0, 0, 2)
+	Global.record_algo_color(0, 255, 0, 2)
+	Global.record_algo_color(0, 0, 255, 2)
+	Global.record_algo_color(255, 255, 0, 10)
+	Global.record_algo_feed(5)
+	Global.record_algo_fuel(3)
+	Global.record_algo_smelt_iron(5)
+	Global.record_algo_take_output(ironbar, 5)
+	Global.record_algo_furnace_run(4, true, true)
+	Global.record_algo_furnace_run(10, false, false)
+	Global.record_algo_crystal_smelt(6)
+
+	var expected: Array = [
+		"auto_boot", "auto_nameplate", "auto_timber", "auto_work_cycle",
+		"auto_chest_logistics", "auto_line", "auto_frame", "auto_ring",
+		"auto_pattern", "auto_spiral", "auto_miner", "auto_combat",
+		"algo_boot", "algo_recipe_reader", "algo_planks", "algo_batch",
+		"algo_output_audit", "algo_color_starter", "algo_color_wheel",
+		"algo_palette", "algo_furnace_primer", "algo_furnace_status",
+		"algo_iron_line", "algo_crystal_run",
+	]
+	var missing: Array = []
+	for id in expected:
+		var m: Dictionary = Global._find_mission(id)
+		if m.is_empty() or not bool(m.get("completed", false)):
+			missing.append(id)
+	check(missing.is_empty(), "all 24 Automation missions trigger and complete")
+
+	Global.missions = old_missions
+	Global.mission_updated.emit()
+
+
 func _test_quiz_reward_ui() -> void:
 	check(QuizAltar.stars_for_penalties(0) == 3
 		and QuizAltar.stars_for_penalties(1) == 2
@@ -5917,6 +8394,28 @@ func _test_quiz_reward_ui() -> void:
 		and QuizAltar.stars_for_penalties(3) == 0
 		and QuizAltar.stars_for_penalties(9) == 0,
 		"quiz penalties award 3 / 2 / 1 / 0 blue stars and never go negative")
+
+	# Summaries are generated from each mission's authored lesson, not a shared
+	# generic block, so different dungeons produce different bullets.
+	var print_mission := Global.get_dungeon_mission_for_index(1)
+	var vars_mission := Global.get_dungeon_mission_for_index(26)
+	var print_points: Array = DungeonLearningSummary.points_for(print_mission,
+		{"hints_used": 0})
+	var vars_points: Array = DungeonLearningSummary.points_for(vars_mission,
+		{"hints_used": 2})
+	var print_joined := "\n".join(PackedStringArray(print_points))
+	var vars_joined := "\n".join(PackedStringArray(vars_points))
+	check(print_mission != null and vars_mission != null
+		and print_points.size() >= 4 and vars_points.size() >= 4
+		and print_joined != vars_joined
+		and print_joined.to_lower().contains("print")
+		and vars_joined.to_lower().contains("variable")
+		and vars_joined.contains("2 hints"),
+		"dungeon learning summaries use each mission's own lesson and hint count")
+	var boss_mission := Global.get_dungeon_mission_for_index(Global.boss_dungeon_index())
+	var boss_points: Array = DungeonLearningSummary.points_for(boss_mission, {})
+	check("\n".join(PackedStringArray(boss_points)).contains("Hitman"),
+		"the final dungeon explains its Hitman combat lesson")
 
 	var mission: DungeonMissionData = null
 	for m in Global.dungeon_missions.values():
@@ -5932,7 +8431,7 @@ func _test_quiz_reward_ui() -> void:
 	var altar := QuizAltar.new()
 	add_child(altar)
 	altar.setup(mission)
-	altar.call("_start_quiz")
+	altar.call("_start_quiz", true)
 	await get_tree().process_frame
 	check(altar.get("_hint_btn") != null,
 		"quiz altar exposes a top-right hint button")
@@ -6012,7 +8511,8 @@ func _test_quiz_reward_ui() -> void:
 				mc_cleared = false
 	check(mc_cleared, "NEXT clears the MCQ answer highlight")
 
-	# The hint cycle must also preserve compiler code and allow a second reveal.
+	# The hint cycle must show only ghost text in the editor; the player types
+	# the answer themselves and their code survives Hint/Next.
 	var keep_q := DungeonQuestion.new()
 	keep_q.type = DungeonQuestion.Type.COMPILER
 	keep_q.language = "lua"
@@ -6026,11 +8526,20 @@ func _test_quiz_reward_ui() -> void:
 	await get_tree().process_frame
 	await get_tree().create_timer(0.3).timeout
 	var code_entry := altar.get("_code_entry") as CodeEdit
-	code_entry.text = "print(\"wrong\")"
+	code_entry.text = ""
+	var default_placeholder: String = code_entry.placeholder_text
+	var hint_text := str(altar.call("_hint_text_for", keep_q))
+	check(hint_text.contains("ghost text") and not hint_text.contains("filled in"),
+		"compiler hint text explains ghost text instead of claiming the answer is filled in")
 	altar.call("_on_hint_button_pressed")
-	var code_filled: bool = code_entry.text == "print(\"kept\")" \
-		and str(altar.call("tutorial_code_text")) == "print(\"kept\")" \
+	var ghost_shown: bool = code_entry.text.is_empty() \
+		and code_entry.placeholder_text == "print(\"kept\")" \
+		and str(altar.call("tutorial_code_text")).is_empty() \
 		and not bool(altar.get("_running"))
+	check(ghost_shown,
+		"compiler HINT shows the answer as ghost text without filling the editor")
+	# The player types the answer; a failed run then makes NEXT available.
+	code_entry.text = "print(\"kept\")"
 	altar.set("_captured_output", "wrong")
 	altar.call("_grade_compiler", keep_q)
 	check(bool(altar.call("tutorial_hint_run_failed")),
@@ -6039,14 +8548,16 @@ func _test_quiz_reward_ui() -> void:
 	altar.call("_on_hint_button_pressed")
 	await get_tree().create_timer(0.3).timeout
 	var code_kept: bool = code_entry.text == "print(\"kept\")"
+	var placeholder_restored: bool = code_entry.placeholder_text == default_placeholder
 	altar.call("_on_hint_button_pressed")
 	await get_tree().create_timer(0.3).timeout
 	altar.call("_on_hint_button_pressed")
 	await get_tree().create_timer(0.3).timeout
-	check(code_filled and code_kept and code_entry.text == "print(\"kept\")"
+	check(code_kept and placeholder_restored
+		and code_entry.text == "print(\"kept\")"
 		and int(altar.get("_hints_used")) == 2
 		and not bool(altar.get("_hint_open")),
-		"Hint/Next fills and preserves compiler code without auto-running it")
+		"Hint/Next preserves player-typed code and restores the normal placeholder")
 
 	# A wrong submission records exactly one penalty per call and can drive the
 	# score to zero without blocking completion.
@@ -6061,7 +8572,8 @@ func _test_quiz_reward_ui() -> void:
 		"each wrong code submission records one star penalty")
 	Global.dungeon_quiz_penalties.erase(mission.dungeon_index)
 
-	# Results screen: achievements, 3-star layout and Done returns to world.
+	# Results screen: achievements, 3-star layout and Done opens the learning
+	# summary; Continue is the only path back to the overworld.
 	altar.set("_answered", 2)
 	altar.call("_show_reward_screen", 2)
 	await get_tree().process_frame
@@ -6089,8 +8601,24 @@ func _test_quiz_reward_ui() -> void:
 	Global.game_node = probe
 	altar.call("_on_reward_done")
 	await get_tree().process_frame
+	var summary_root := altar.get("_summary_root") as Control
+	var continue_found := false
+	if summary_root != null:
+		for child in summary_root.find_children("*", "Button", true, false):
+			if (child as Button).text == "CONTINUE":
+				continue_found = true
+	check(bool(altar.get("_summary_visible"))
+		and not bool(altar.get("_reward_visible"))
+		and continue_found and probe.exit_calls == 0,
+		"results Done opens What You've Learned before returning to the world")
+	altar.call("_on_reward_done")
+	await get_tree().process_frame
+	check(probe.exit_calls == 0 and bool(altar.get("_summary_visible")),
+		"duplicate results Done cannot skip or duplicate the learning summary")
+	altar.call("_on_summary_continue")
+	await get_tree().process_frame
 	check(probe.exit_calls == 1,
-		"quiz results Done teleports back to the overworld")
+		"learning summary Continue returns to the overworld exactly once")
 	Global.game_node = old_game if is_instance_valid(old_game) else null
 	probe.queue_free()
 	altar.queue_free()
@@ -6341,14 +8869,14 @@ func _test_ui_scaling() -> void:
 	check(is_zero_approx(Global.keyboard_height_in_viewport(0.0, 2.25, 648.0)),
 		"a hidden keyboard reports zero viewport height")
 
-	# Algorithmica/quiz editors use the stricter rule: only a DOCKED keyboard
-	# (activity resized via adjustResize) may move the panel. A floating keyboard
-	# stays at full viewport height and must not lift the whole editor; a hidden
-	# or stale height must bring it back down.
+	# Algorithmica/quiz editors lift for BOTH keyboard styles: a docked keyboard
+	# resizes the activity, while a floating keyboard overlays a full-size
+	# viewport. Both still cover the focused text field, so both use the reported
+	# keyboard height. A hidden or stale height must bring it back down.
 	check(is_equal_approx(Global.editor_keyboard_inset(300.0, 348.0, 648.0, true), 300.0),
 		"a docked keyboard shrinks Algorithmica panels")
-	check(is_zero_approx(Global.editor_keyboard_inset(300.0, 648.0, 648.0, true)),
-		"a floating keyboard leaves the whole Algorithmica panel in place")
+	check(is_equal_approx(Global.editor_keyboard_inset(300.0, 648.0, 648.0, true), 300.0),
+		"a floating keyboard also lifts Algorithmica panels")
 	check(is_zero_approx(Global.editor_keyboard_inset(0.0, 648.0, 648.0, true)),
 		"a hidden keyboard clears the Algorithmica panel inset")
 	check(is_zero_approx(Global.editor_keyboard_inset(300.0, 348.0, 648.0, false)),
@@ -6366,8 +8894,8 @@ func _test_ui_scaling() -> void:
 	check(is_zero_approx(Global.keyboard_panel_inset()),
 		"hidden keyboard leaves the live Algorithmica panel at the bottom")
 	Global.keyboard_height_override = 300.0
-	check(is_zero_approx(Global.keyboard_panel_inset()),
-		"floating keyboard keeps the live Algorithmica panel full-screen")
+	check(is_equal_approx(Global.keyboard_panel_inset(), 300.0),
+		"floating keyboard lifts the live Algorithmica panel above it")
 	Global.ui_viewport_size = Vector2(1152, 348)
 	check(is_equal_approx(Global.keyboard_panel_inset(), 300.0),
 		"docked keyboard lifts the live Algorithmica panel by its covered height")
@@ -6422,6 +8950,8 @@ func _test_ui_scaling() -> void:
 	var tracker_panel := tracker.get("_panel") as Control
 	check(tracker_panel != null and tracker_panel.position.y >= 124.0,
 		"mission tracker starts below the pause button instead of overlapping it")
+	check(tracker.call("tutorial_view_all_button") != null,
+		"mission tracker exposes VIEW ALL for the Automatica mission lesson")
 	tracker.free()
 	Global.ui_pause_bottom = old_pause_bottom
 	Global.ui_viewport_size = old_tracker_viewport
@@ -6436,8 +8966,9 @@ func _test_ui_scaling() -> void:
 		"the obsolete user-facing UI scale control is gone")
 	check(settings_src.contains("Automatic Sprint")
 		and settings_src.contains("set_point_and_click_auto_sprint")
-		and settings_src.contains("auto_btn.disabled = not Global.point_and_click"),
-		"Controls settings expose and gate the PNC automatic-sprint option")
+		and not settings_src.contains("auto_btn.disabled = not Global.point_and_click")
+		and not settings_src.contains("auto_btn.disabled = not on"),
+		"Controls settings expose automatic sprint regardless of the active movement scheme")
 	check(not global_src.contains('save_data["ui_scale"]')
 		and not global_src.contains('data.has("ui_scale")')
 		and not global_src.contains("ui_scale_set"),
@@ -6446,6 +8977,85 @@ func _test_ui_scaling() -> void:
 		and global_src.contains("point_and_click_auto_sprint_changed")
 		and global_src.contains('"point_and_click_auto_sprint", point_and_click_auto_sprint'),
 		"PNC automatic-sprint preference is loaded and saved globally")
+
+func _test_music_manager() -> void:
+	var manager_src := FileAccess.get_file_as_string("res://scripts/music_manager.gd")
+	var constants: Dictionary = load("res://scripts/music_manager.gd").get_script_constant_map()
+	var tracks: Dictionary = constants.get("TRACKS", {}) as Dictionary
+	var gaps: Dictionary = constants.get("GAPS", {}) as Dictionary
+	var dungeon: Array = tracks.get("dungeon", []) as Array
+	var day: Array = tracks.get("overworld_day", []) as Array
+	var night: Array = tracks.get("overworld_night", []) as Array
+	var cave: Array = tracks.get("cave", []) as Array
+	var menu: Array = tracks.get("menu", []) as Array
+	var all_exist := true
+	for pool in tracks.values():
+		for path in (pool as Array):
+			if not ResourceLoader.exists(str(path)):
+				all_exist = false
+	check(all_exist and dungeon.size() == 4
+		and dungeon.has("res://bgm/dungeon_1.mp3")
+		and dungeon.has("res://bgm/dungeon_2.mp3")
+		and dungeon.has("res://bgm/dungeon_3.mp3")
+		and dungeon.has("res://bgm/dungeon_4.mp3")
+		and day.size() == 2 and night.size() == 2
+		and cave.size() == 2 and menu.size() == 1,
+		"BGM manager defines menu, day/night, cave and four dungeon variations")
+	check(gaps.has("dungeon") and gaps.has("overworld_day")
+		and gaps.has("overworld_night") and gaps.has("cave"),
+		"Minecraft-style quiet gaps are configured for every rotating context")
+	check(manager_src.contains("_rng.randi_range")
+		and manager_src.contains("_last_track")
+		and manager_src.contains("_schedule_next")
+		and manager_src.contains("TWEEN_PAUSE_PROCESS"),
+		"BGM picks random tracks without immediate repeats and fades across pauses")
+	check(FileAccess.get_file_as_string("res://project.godot").contains(
+			'Music="*res://scripts/music_manager.gd"')
+		and AudioServer.get_bus_index("Music") != -1,
+		"Music autoload creates the Music bus used by the volume slider")
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	check(game_src.contains('Music.play_context("dungeon")')
+		and game_src.contains('Music.play_context("cave")')
+		and game_src.contains("Music.play_overworld()"),
+		"world transitions switch the ambient music context")
+	check(FileAccess.get_file_as_string("res://scripts/main_menu_ver.gd").contains(
+			'Music.play_context("menu")')
+		and FileAccess.get_file_as_string("res://scripts/startup_mode.gd").contains(
+			'Music.play_context("menu")'),
+		"startup and title menu request the menu music context")
+	# No-back-to-back rule, exercised through the live autoload helper.
+	var old_last: String = Music.current_track()
+	Music.set("_last_track", "res://bgm/dungeon_1.mp3")
+	var repeat_free := true
+	for _i in 12:
+		if str(Music.call("_pick_track", dungeon)) == "res://bgm/dungeon_1.mp3":
+			repeat_free = false
+	Music.set("_last_track", old_last)
+	check(repeat_free, "dungeon variation selection avoids the previous track")
+
+
+func _test_scene_transition_loading() -> void:
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	check(game_src.count("reset_build_mode_for_world()") >= 2,
+		"world start and loading completion clear stale build mode")
+	var start := game_src.find("func _run_scene_transition")
+	var end := game_src.find("func _on_inventory_visibility_changed", start)
+	var body := game_src.substr(start, end - start) if start >= 0 and end > start else ""
+	check(not body.is_empty() and body.contains("ProgressBar.new()")
+		and body.contains("Building the world...")
+		and body.contains("bar.value = 100.0")
+		and body.contains('label.text = "Ready"'),
+		"cave, Pixie Cave and dungeon transitions show a scaled loading bar")
+	check(body.contains("TWEEN_PAUSE_PROCESS")
+		and body.contains("layer.process_mode = Node.PROCESS_MODE_ALWAYS"),
+		"transition cleanup still fades out when a callback opens a paused dialogue")
+	check(game_src.contains('"Entering pixie cave..."')
+		and game_src.contains('"Leaving pixie cave..."')
+		and game_src.contains('"Entering dungeon..."')
+		and game_src.contains('"Leaving dungeon..."')
+		and body.contains("int(360 * s)"),
+		"transition labels distinguish cave/Pixie Cave/dungeon and follow UI scale")
+
 
 func _test_title_panorama() -> void:
 	var script: GDScript = load("res://scripts/title_panorama.gd") as GDScript
@@ -6476,6 +9086,67 @@ func _test_title_panorama() -> void:
 		"title panoramas are rendered from dungeons and cycle per launch")
 	tp.queue_free()
 	await get_tree().process_frame
+
+	# Title mark: website logo + app icon palette flanked by Py-San and LUA.
+	var logo_src := FileAccess.get_file_as_string("res://scripts/title_logo.gd")
+	var logo_consts: Dictionary = load("res://scripts/title_logo.gd").get_script_constant_map()
+	var extended_ees := str(logo_consts.get("EXTENDED_EES", ""))
+	check(logo_src.contains("PY_SAN_TEX") and logo_src.contains("LUA_TEX")
+		and logo_src.contains("WEB_LOGO")
+		and not logo_src.contains("APP_ICON")
+		and logo_src.contains('"Sand"') and logo_src.contains('"EE"')
+		and logo_src.contains("C_ACCENT")
+		and float(logo_consts.get("EASTER_EGG_CHANCE", 0.0)) == 0.2
+		and extended_ees == "EEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+		and logo_src.contains("randf() < EASTER_EGG_CHANCE"),
+		"title logo keeps the website mark/palette and has a 1-in-5 long-E variant")
+	check(not logo_src.contains("ALPHA"),
+		"title logo no longer shows the ALPHA subtitle")
+	var logo_script: GDScript = load("res://scripts/title_logo.gd") as GDScript
+	var logo := logo_script.new() as Control
+	logo.set("force_extended", 0)
+	add_child(logo)
+	await get_tree().process_frame
+	var pysan_rect := logo.get_child(0) as TextureRect
+	var centre := logo.get_child(1) as VBoxContainer
+	var lua_rect := logo.get_child(2) as TextureRect
+	var logo_row := centre.get_child(0) as HBoxContainer if centre != null else null
+	var word_row := logo_row.get_child(0) as HBoxContainer if logo_row != null else null
+	var sand_label := word_row.get_child(0) as Label if word_row != null else null
+	var ee_label := word_row.get_child(1) as Label if word_row != null else null
+	var subtitle_row := centre.get_child(1) as HBoxContainer if centre != null else null
+	var web_rect := subtitle_row.get_child(0) as TextureRect if subtitle_row != null else null
+	check(logo.get_child_count() == 3
+		and pysan_rect != null and pysan_rect.texture != null
+		and lua_rect != null and lua_rect.texture != null
+		and web_rect != null and web_rect.texture != null
+		and sand_label != null and sand_label.text == "Sand"
+		and ee_label != null and ee_label.text == "EE",
+		"title logo shows Py-San, LUA, wordmark and website mark without the icon S")
+	var normal_font_size := ee_label.get_theme_font_size("font_size") if ee_label != null else 0
+	logo.queue_free()
+	await get_tree().process_frame
+
+	# The 1-in-5 variant: long green E-run, still fitting beside both guides.
+	var egg_logo := logo_script.new() as Control
+	egg_logo.set("force_extended", 1)
+	add_child(egg_logo)
+	await get_tree().process_frame
+	var egg_centre := egg_logo.get_child(1) as VBoxContainer
+	var egg_word_row := (egg_centre.get_child(0) as HBoxContainer).get_child(0) as HBoxContainer
+	var egg_ee := egg_word_row.get_child(1) as Label
+	var egg_sand := egg_word_row.get_child(0) as Label
+	check(egg_ee != null and egg_ee.text == extended_ees
+		and egg_sand != null and egg_sand.text == "Sand"
+		and egg_ee.get_theme_font_size("font_size") < normal_font_size
+		and egg_logo.get_child_count() == 3,
+		"long-E title variant fits beside Py-San and LUA at a smaller font size")
+	egg_logo.queue_free()
+	await get_tree().process_frame
+	var menu_src := FileAccess.get_file_as_string("res://scripts/main_menu_ver.gd")
+	var startup_src := FileAccess.get_file_as_string("res://scripts/startup_mode.gd")
+	check(menu_src.contains("TITLE_LOGO_SCRIPT") and startup_src.contains("TITLE_LOGO_SCRIPT"),
+		"both title screens use the branded logo component")
 
 
 func _test_interpreters() -> void:
@@ -6599,6 +9270,7 @@ func _test_control_scheme_parity() -> void:
 	var old_pause: bool = Global.pause_menu_open
 	var old_pending: bool = Global.has_pending_pos
 	var old_pending_pos: Vector2 = Global.pending_player_pos
+	var old_mobile_override: int = Global.mobile_platform_override
 
 	_release_parity_moves()
 	Global.reset_pause_state()
@@ -6661,6 +9333,98 @@ func _test_control_scheme_parity() -> void:
 	Global.pnc_hold_active = false
 	player.set("_pnc_hold_click", false)
 	pnc_input.queue_free()
+	await get_tree().process_frame
+
+	# Mobile is not excluded from the point-and-click input branch. A mobile
+	# tap with a pickaxe held must walk/act through PnC, and a tap on a nearby
+	# station must open it rather than fall through to the swing/mining path.
+	Global.mobile_platform_override = 1
+	Global.point_and_click = true
+	Global.block_mode = false
+	Global.pause_menu_open = false
+	Global.player_is_dead = false
+	Global.clear_touch_mouse()
+	var mobile_probe := PncInteractProbe.new()
+	mobile_probe.global_position = player.global_position + Vector2(30, 0)
+	add_child(mobile_probe)
+	mobile_probe.add_to_group("Chest")
+	await get_tree().process_frame
+	var mobile_tap := InputEventMouseButton.new()
+	mobile_tap.button_index = MOUSE_BUTTON_LEFT
+	mobile_tap.pressed = true
+	mobile_tap.position = get_viewport().get_canvas_transform() * mobile_probe.global_position
+	player.set("_attack_held", false)
+	player.call("_input", mobile_tap)
+	check(Global.is_mobile() and mobile_probe.opened == 1
+		and not bool(player.get("_attack_held")),
+		"mobile tap with a pickaxe opens a nearby station instead of mining")
+	mobile_probe.queue_free()
+	await get_tree().process_frame
+	var mobile_move_tap := InputEventMouseButton.new()
+	mobile_move_tap.button_index = MOUSE_BUTTON_LEFT
+	mobile_move_tap.pressed = true
+	mobile_move_tap.position = get_viewport().get_canvas_transform() \
+		* (player.global_position + Vector2(140, 0))
+	player.call("_pnc_cancel")
+	player.call("_input", mobile_move_tap)
+	check(bool(player.get("_pnc_active"))
+		and str(player.get("_pnc_pending")) == "",
+		"mobile point-and-click taps on the ground issue a move order")
+	player.call("_pnc_cancel")
+
+	# A solid wall with no walkable standing tile beside it must be rejected
+	# immediately, not walked into until the stuck timeout.
+	var wall_body := StaticBody2D.new()
+	wall_body.collision_layer = 1
+	wall_body.collision_mask = 0
+	for cx in range(5, 10):
+		for cy in range(1, 6):
+			var wall_shape := CollisionShape2D.new()
+			var wall_rect := RectangleShape2D.new()
+			wall_rect.size = Vector2(32, 32)
+			wall_shape.shape = wall_rect
+			wall_shape.position = Vector2(cx * 32 + 16, cy * 32 + 16)
+			wall_body.add_child(wall_shape)
+	add_child(wall_body)
+	await get_tree().physics_frame
+	var wall_target := Vector2(7 * 32 + 16, 3 * 32 + 16)
+	check(not bool(player.call("_pnc_has_walkable_approach",
+		wall_target, 48.0)), "a thick solid wall has no walkable approach")
+	player.call("_pnc_handle_click", wall_target)
+	check(not bool(player.get("_pnc_active"))
+		and str(player.get("_pnc_pending")) == "",
+		"PnC rejects a solid wall with no possible walking path")
+	wall_body.queue_free()
+	await get_tree().physics_frame
+	await get_tree().process_frame
+
+	# A combat Automatica floats with the player, but it is still an interact
+	# target: tapping the follower must open its editor so it can be turned back
+	# into a normal blue Automatica. Its body must still not read as solid
+	# mineable ground.
+	var combat_npc: Node = load("res://scenes/objects/LuaNPC.tscn").instantiate()
+	combat_npc.call("setup", load("res://resources/items/lua.tres"))
+	combat_npc.global_position = player.global_position + Vector2(44, 0)
+	add_child(combat_npc)
+	combat_npc.set_physics_process(false)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	combat_npc.set("_combat", true)
+	combat_npc.set("_player_nearby", true)
+	var combat_robot: Node2D = combat_npc.get_node("Robot") as Node2D
+	var combat_target: Variant = player.call("_pnc_interact_target_at",
+		combat_npc.global_position)
+	var combat_robot_target: Variant = player.call("_pnc_interact_target_at",
+		combat_robot.global_position)
+	var combat_point: bool = bool(player.call("_pnc_point_has_target",
+		combat_robot.global_position))
+	check(combat_target == combat_npc and combat_robot_target == combat_npc,
+		"PnC interacts with a floating combat Automatica")
+	check(not combat_point,
+		"a combat Automatica's body is not treated as mineable ground")
+	combat_npc.queue_free()
+	await get_tree().process_frame
+	Global.mobile_platform_override = old_mobile_override
 	await get_tree().process_frame
 
 	# Wolves are not click-to-attack targets: the tap becomes a move order.
@@ -6783,6 +9547,7 @@ func _test_control_scheme_parity() -> void:
 	# real interact radius, then replay a left-click that made the player swing.
 	var interact_probe := PncInteractProbe.new()
 	interact_probe.global_position = player.global_position + Vector2(240, 0)
+	interact_probe.set("_player_nearby", false)
 	add_child(interact_probe)
 	interact_probe.add_to_group("Chest")
 	await get_tree().process_frame
@@ -6790,6 +9555,10 @@ func _test_control_scheme_parity() -> void:
 	Global.block_mode = false
 	Global.pause_menu_open = false
 	Global.player_is_dead = false
+	var pnc_consts: Dictionary = player.get_script().get_script_constant_map()
+	check(float(pnc_consts.get("PNC_INTERACT_STOP", 0.0)) >= 48.0
+		and FileAccess.get_file_as_string("res://scripts/player.gd").contains("_pnc_target_near"),
+		"PNC uses the object's own proximity range instead of a tiny anchor radius")
 	var interact_click := interact_probe.global_position + Vector2(0, -20)
 	player.call("_pnc_handle_click", interact_click)
 	check(str(player.get("_pnc_pending")) == "interact"
@@ -6798,6 +9567,26 @@ func _test_control_scheme_parity() -> void:
 		and player.get("_pnc_interact_point") == interact_click
 		and not bool(player.get("_pnc_hold_click")),
 		"PNC stores the interactable's origin and click point instead of replaying a swing")
+
+	# A nearby chest/object must open immediately, even at the edge of its own
+	# proximity Area2D, instead of pathing into the object.
+	interact_probe.remove_from_group("Chest")
+	var near_probe := PncInteractProbe.new()
+	near_probe.global_position = player.global_position + Vector2(60, 0)
+	add_child(near_probe)
+	near_probe.add_to_group("Chest")
+	await get_tree().process_frame
+	Global.point_and_click = true
+	player.call("_pnc_handle_click", near_probe.global_position + Vector2(0, -8))
+	check(near_probe.opened == 1 and not bool(player.get("_pnc_active"))
+		and player.get("_pnc_interact_target") == null,
+		"PNC opens a nearby chest immediately instead of trying to reach it")
+	player.call("_pnc_cancel")
+	near_probe.queue_free()
+	await get_tree().process_frame
+	# Re-arm the distant probe for the existing walk-then-open test below.
+	interact_probe.add_to_group("Chest")
+	player.call("_pnc_handle_click", interact_click)
 
 	# The synthetic replay is for the target only; it must never make the player
 	# latch a held attack (the old continuous-swing bug).
@@ -6903,6 +9692,27 @@ func _test_control_scheme_parity() -> void:
 		"tap sprint uses the same sprint state and animation")
 	Global.mobile_shift = false
 
+	# Android SPRINT is a latched toggle, separate from shift-click Shift.
+	Global.point_and_click = false
+	player.call("_pnc_cancel")
+	Global.stamina = 100.0
+	player.set("_stamina_exhausted", false)
+	Global.mobile_move = Vector2.RIGHT
+	Global.set_mobile_sprint(true)
+	player.call("get_input", 0.016)
+	player.call("_update_animation")
+	var toggle_joystick := _movement_snapshot(player)
+	check(bool(toggle_joystick["sprint"])
+		and (toggle_joystick["vel"] as Vector2).length() > 100.0
+		and str(toggle_joystick["anim"]).begins_with("sprint_"),
+		"mobile SPRINT toggle sprints joystick movement")
+	Global.set_mobile_sprint(false)
+	player.call("get_input", 0.016)
+	var toggle_off := _movement_snapshot(player)
+	Global.mobile_move = Vector2.ZERO
+	check(not bool(toggle_off["sprint"]),
+		"mobile SPRINT toggle off returns to walking")
+
 	# Optional point-and-click auto-sprint: PNC orders sprint without Shift, but
 	# direct WASD/joystick control still requires Shift and stamina gates apply.
 	Global.point_and_click_auto_sprint = true
@@ -6944,6 +9754,19 @@ func _test_control_scheme_parity() -> void:
 	var auto_off := _movement_snapshot(player)
 	check(not bool(auto_off["sprint"]),
 		"turning automatic sprint off returns PNC movement to walking")
+
+	# With auto-sprint off, the visible SPRINT toggle still drives PnC movement.
+	Global.set_mobile_sprint(true)
+	player.call("_pnc_cancel")
+	player.set("_pnc_active", true)
+	player.set("_pnc_dest", player.global_position + Vector2(1000, 0))
+	player.set("_pnc_last_pos", player.global_position)
+	player.set("_pnc_last_progress_ms", Time.get_ticks_msec())
+	player.call("get_input", 0.016)
+	var manual_toggle_pnc := _movement_snapshot(player)
+	check(bool(manual_toggle_pnc["sprint"]),
+		"mobile SPRINT toggle works with point-and-click movement")
+	Global.set_mobile_sprint(false)
 
 	Global.point_and_click_auto_sprint = true
 	Global.stamina = 0.0
@@ -7138,6 +9961,7 @@ func _test_control_scheme_parity() -> void:
 	Global.pause_menu_open = old_pause
 	Global.has_pending_pos = old_pending
 	Global.pending_player_pos = old_pending_pos
+	Global.mobile_platform_override = old_mobile_override
 	Global.Hotbar = old_hotbar
 	Global.Inventory = old_inventory
 	Global.set_hotbar_selection(old_selected)
@@ -7188,6 +10012,299 @@ func _test_pause_menu_short_layout() -> void:
 	Global.ui_safe_insets = old_insets
 	Global.ui_scale = old_scale
 	Global.reset_pause_state()
+
+
+func _test_tutorial_travel_dialogue() -> void:
+	var guide_script := load("res://scripts/tutorial_guide.gd") as Script
+	var steps: Array = guide_script.get_script_constant_map().get("STEPS", []) as Array
+	var old_world: Node = Global.world_node
+	var old_stage: int = Global.tutorial_stage
+	var old_flags: Dictionary = Global.tutorial_flags.duplicate(true)
+	var old_in_dungeon: bool = Global.is_in_dungeon
+	Global.world_node = null
+	Global.is_in_dungeon = false
+	Global.tutorial_flags.clear()
+	var guide: Node = guide_script.new() as Node
+	add_child(guide)
+
+	guide.set("_current_step", steps.find("welcome"))
+	var welcome: Array = guide.call("_step_lines") as Array
+	var welcome_text := ""
+	for line_value in welcome:
+		welcome_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(welcome_text.contains("learn to code in Lua and Python")
+		and welcome_text.contains("tackle lessons inside dungeons")
+		and welcome_text.contains("explore the whole world"),
+		"the opening dialogue introduces Lua/Python, dungeon lessons and world exploration")
+
+	guide.set("_current_step", steps.find("dungeon_travel"))
+	guide.set("_travel_lang", "lua")
+	var dungeon_lines: Array = guide.call("_step_lines") as Array
+	var dungeon_text := ""
+	for line_value in dungeon_lines:
+		dungeon_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(dungeon_text.contains("Lua dungeon entrance")
+		and dungeon_text.contains("Knowledge Altar")
+		and dungeon_text.contains("Quiz Altar"),
+		"dungeon travel dialogue explains the destination and why before teleporting")
+
+	guide.set("_current_step", steps.find("cave_regular"))
+	var cave_lines: Array = guide.call("_step_lines") as Array
+	var cave_text := ""
+	for line_value in cave_lines:
+		cave_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(cave_text.contains("cave entrance") and cave_text.contains("ore"),
+		"regular cave travel dialogue explains where and why before teleporting")
+
+	guide.set("_current_step", steps.find("cave_pixie"))
+	var pixie_lines: Array = guide.call("_step_lines") as Array
+	var pixie_text := ""
+	for line_value in pixie_lines:
+		pixie_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(pixie_text.contains("Pixie Cave") and pixie_text.contains("crystal ores"),
+		"Pixie Cave travel dialogue explains the destination and its danger")
+
+	guide.set("_current_step", steps.find("waypoint"))
+	var waypoint_lines: Array = guide.call("_step_lines") as Array
+	var waypoint_text := ""
+	for line_value in waypoint_lines:
+		waypoint_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(waypoint_text.contains("Skyglass Waypoints")
+		and waypoint_text.contains("travel network"),
+		"waypoint dialogue explains the travel network before relocating the player")
+
+	guide.set("_current_step", steps.find("algorithmica"))
+	var algo_lines: Array = guide.call("_step_lines") as Array
+	var algo_text := ""
+	for line_value in algo_lines:
+		algo_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(algo_text.contains("starter camp") and algo_text.contains("ALGORITHMICA"),
+		"Algorithmica dialogue explains the camp return and the furnace lesson")
+
+	var auto_explain: Array = guide.call("_automatica_explanation_lines") as Array
+	var auto_explain_text := ""
+	for line_value in auto_explain:
+		auto_explain_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(auto_explain.size() == 2
+		and auto_explain_text.contains("Automaticas are automated robots for you to experiment on")
+		and auto_explain_text.contains("run Lua code inside them"),
+		"Automatica ends its lesson with a two-box robot explanation")
+
+	var algo_explain: Array = guide.call("_algorithmica_explanation_lines") as Array
+	var algo_explain_text := ""
+	for line_value in algo_explain:
+		algo_explain_text += " " + str((line_value as Dictionary).get("text", ""))
+	check(algo_explain.size() == 2
+		and algo_explain_text.contains("Algorithmica is the automated crafting and smelting panel")
+		and algo_explain_text.contains("run Python code inside it"),
+		"Algorithmica ends its lesson with a two-box panel explanation")
+
+	var guide_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(guide_src.contains("Travel happens after this step's dialogue is dismissed")
+		and guide_src.contains("_begin_cave_travel(want_pixie)"),
+		"cave travel is deferred until its explanation dialogue is finished")
+
+	# The GUIDED START card must not sit over inventory/station tabs while a
+	# panel is open, even though the verifier calls _set_objective repeatedly.
+	Global.reset_pause_state()
+	var panel_guide: Node = guide_script.new() as Node
+	add_child(panel_guide)
+	panel_guide.call("_build_ui")
+	await get_tree().process_frame
+	var objective := panel_guide.get("_objective_panel") as Control
+	panel_guide.set("_finished", false)
+	panel_guide.call("_set_objective", "Open the CRAFT tab.", false)
+	check(objective != null and objective.visible,
+		"tutorial objective card is visible during normal play")
+	Global.open_ui()
+	panel_guide.call("_set_objective", "Open the CRAFT tab.", false)
+	check(objective != null and not objective.visible,
+		"tutorial objective card hides while the inventory or another panel is open")
+	Global.close_ui()
+	panel_guide.call("_on_modal_hud_changed", false)
+	check(objective != null and objective.visible,
+		"tutorial objective card returns after the panel closes")
+	panel_guide.queue_free()
+	guide.queue_free()
+	Global.world_node = old_world if is_instance_valid(old_world) else null
+	Global.tutorial_stage = old_stage
+	Global.tutorial_flags = old_flags
+	Global.is_in_dungeon = old_in_dungeon
+	Global.reset_pause_state()
+	await get_tree().process_frame
+
+
+func _test_opening_ui_reveal() -> void:
+	check(TutorialUiReveal.tier_for_step("welcome") == TutorialUiReveal.Tier.MOVEMENT
+		and TutorialUiReveal.tier_for_step("move_two") == TutorialUiReveal.Tier.MOVEMENT
+		and TutorialUiReveal.tier_for_step("basic_placement") == TutorialUiReveal.Tier.TOOLS
+		and TutorialUiReveal.tier_for_step("tree_chop") == TutorialUiReveal.Tier.TOOLS
+		and TutorialUiReveal.tier_for_step("dungeon_2") == TutorialUiReveal.Tier.DUNGEON
+		and TutorialUiReveal.tier_for_step("cave_regular") == TutorialUiReveal.Tier.ALL
+		and TutorialUiReveal.tier_for_step("algorithmica") == TutorialUiReveal.Tier.ALL,
+		"opening HUD reveal maps movement/tools/dungeons, then never hides later lessons")
+
+	var guide_script := load("res://scripts/tutorial_guide.gd") as Script
+	var steps: Array = guide_script.get_script_constant_map().get("STEPS", []) as Array
+	var move_stage: int = steps.find("move_one")
+	var tools_stage: int = steps.find("axe_select")
+	var dungeon_stage: int = steps.find("dungeon_travel")
+	var auto_stage: int = steps.find("automatica")
+	var completed_flags := {TutorialUiReveal.COMPLETE_FLAG: true}
+	check(move_stage >= 0 and tools_stage > move_stage and dungeon_stage > tools_stage
+		and auto_stage > dungeon_stage,
+		"guided tutorial exposes ordered movement, tools and dungeon stages")
+	check(TutorialUiReveal.tier_for_progress(move_stage, false, {}, 0)
+			== TutorialUiReveal.Tier.MOVEMENT
+		and TutorialUiReveal.tier_for_progress(tools_stage, false, {}, 0)
+			== TutorialUiReveal.Tier.TOOLS
+		and TutorialUiReveal.tier_for_progress(dungeon_stage, false, {}, 0)
+			== TutorialUiReveal.Tier.DUNGEON
+		and TutorialUiReveal.tier_for_progress(auto_stage, false, {}, 1)
+			== TutorialUiReveal.Tier.ALL
+		and TutorialUiReveal.tier_for_progress(0, true, {}, 0)
+			== TutorialUiReveal.Tier.ALL
+		and TutorialUiReveal.tier_for_progress(0, false, completed_flags, 0)
+			== TutorialUiReveal.Tier.ALL
+		and TutorialUiReveal.tier_for_progress(0, false, {}, 2)
+			== TutorialUiReveal.Tier.ALL,
+		"opening HUD reveal advances by milestone and graduates permanently")
+
+	# Exercise the real HUD node refs without booting a generated world.
+	var old_stage: int = Global.tutorial_stage
+	var old_completed: bool = Global.tutorial_completed
+	var old_flags: Dictionary = Global.tutorial_flags.duplicate(true)
+	var old_cleared: Dictionary = Global.cleared_dungeons.duplicate(true)
+	var hud := load("res://scenes/game_instance.gd").new() as Node2D
+	var hotbar := Control.new()
+	var mission := Control.new()
+	var stars := Control.new()
+	var minimap := Control.new()
+	var lua_status := Control.new()
+	hud.add_child(hotbar)
+	hud.add_child(mission)
+	hud.add_child(stars)
+	hud.add_child(minimap)
+	hud.add_child(lua_status)
+	hud.set("_hotbar", hotbar)
+	hud.set("_mission_ui", mission)
+	hud.set("_star_summary", stars)
+	hud.set("_minimap", minimap)
+	hud.set("_lua_status", lua_status)
+	Global.cleared_dungeons.clear()
+	Global.tutorial_flags.clear()
+	Global.tutorial_completed = false
+	Global.tutorial_stage = move_stage
+	hud.call("apply_opening_tutorial_ui", "move_one")
+	check(not hotbar.visible and not mission.visible and not stars.visible
+			and not minimap.visible and not lua_status.visible,
+		"Basic Movement hides every non-essential gameplay HUD element")
+	hud.call("apply_opening_tutorial_ui", "axe_select")
+	check(hotbar.visible and not mission.visible and not minimap.visible
+			and not lua_status.visible,
+		"tools lesson reveals the hotbar but not the map or mission tracker")
+	hud.call("apply_opening_tutorial_ui", "dungeon_travel")
+	check(hotbar.visible and not mission.visible and not stars.visible
+			and minimap.visible and not lua_status.visible,
+		"dungeon lesson reveals the map but keeps missions hidden during onboarding")
+	hud.call("apply_opening_tutorial_ui", "automatica")
+	check(hotbar.visible and not mission.visible and not stars.visible
+			and minimap.visible and lua_status.visible
+			and bool(Global.tutorial_flags.get(TutorialUiReveal.COMPLETE_FLAG, false)),
+		"later lessons reveal the normal HUD but missions stay hidden until the tutorial ends")
+	hud.call("apply_tutorial_mission_focus", true)
+	check(mission.visible and stars.visible and not hotbar.visible
+			and not minimap.visible and not lua_status.visible,
+		"Automatica mission lesson hides every HUD element except missions and stars")
+	hud.call("apply_tutorial_mission_focus", false)
+	check(hotbar.visible and not mission.visible and not stars.visible
+			and minimap.visible and lua_status.visible,
+		"leaving the mission lesson re-hides missions until onboarding ends")
+	Global.tutorial_completed = true
+	hud.call("apply_opening_tutorial_ui", "finish")
+	check(mission.visible and stars.visible,
+		"finishing the tutorial reveals the mission tracker and star total")
+	Global.tutorial_stage = old_stage
+	Global.tutorial_completed = old_completed
+	Global.tutorial_flags = old_flags
+	Global.cleared_dungeons = old_cleared
+	hud.free()
+
+	# The GUIDED START card must sit on the screen centre, not the left edge,
+	# while still shrinking to clear the top-right HUD column on narrow screens.
+	var old_layout_vp: Vector2 = Global.ui_viewport_size
+	var old_layout_scale: float = Global.ui_scale
+	var old_layout_insets: Vector4 = Global.ui_safe_insets
+	var layout_guide: Node = guide_script.new()
+	add_child(layout_guide)
+	layout_guide.call("_build_ui")
+	await get_tree().process_frame
+	Global.ui_viewport_size = Vector2(1877, 593)
+	Global.ui_scale = 1.0
+	Global.ui_safe_insets = Vector4.ZERO
+	layout_guide.call("_layout_ui")
+	var objective_panel := layout_guide.get("_objective_panel") as Control
+	var objective_centre: float = objective_panel.position.x + objective_panel.size.x * 0.5 \
+		if objective_panel != null else -1.0
+	check(objective_panel != null
+		and absf(objective_centre - 938.5) <= 2.0
+		and objective_panel.position.x >= 8.0,
+		"GUIDED START card is centred horizontally on screen")
+	Global.ui_viewport_size = old_layout_vp
+	Global.ui_scale = old_layout_scale
+	Global.ui_safe_insets = old_layout_insets
+	ThemeDB.fallback_font_size = Global.ui_font_size(float(Global.UI_FALLBACK_FONT_BASE))
+	layout_guide.queue_free()
+
+	# The real hotbar draws through a nested CanvasLayer, so verify the reveal
+	# drives that canvas rather than only the root Control.
+	var hotbar_ui := load("res://scenes/ui/Hotbar.tscn").instantiate() as Control
+	add_child(hotbar_ui)
+	await get_tree().process_frame
+	var hotbar_canvas := hotbar_ui.get_node_or_null("CanvasLayer") as CanvasLayer
+	hotbar_ui.call("set_tutorial_hidden", true)
+	check(hotbar_canvas != null and not hotbar_canvas.visible,
+		"opening reveal hides the hotbar's nested CanvasLayer")
+	hotbar_ui.call("set_tutorial_hidden", false)
+	check(hotbar_canvas != null and hotbar_canvas.visible,
+		"tool lesson restores the hotbar's nested CanvasLayer")
+	hotbar_ui.queue_free()
+	await get_tree().process_frame
+
+	var hotbar_src := FileAccess.get_file_as_string("res://scripts/hotbar.gd")
+	check(hotbar_src.contains("func set_tutorial_hidden")
+		and hotbar_src.contains("not _tutorial_hidden and hotbar_canvas_should_show"),
+		"hotbar combines opening reveal with inventory/modal visibility rules")
+
+	var game_src := FileAccess.get_file_as_string("res://scenes/game_instance.gd")
+	check(game_src.contains("func apply_opening_tutorial_ui")
+		and game_src.contains("_apply_opening_ui_tier")
+		and game_src.contains("_set_hud_control_visible(_hotbar, tools)")
+		and game_src.contains("_set_hud_control_visible(_minimap, dungeon)")
+		and game_src.contains("_set_hud_control_visible(_mission_ui, missions)")
+		and game_src.contains("tutorial_completed or _tutorial_mission_focus")
+		and game_src.contains("_set_hud_control_visible(_lua_status, all_hud)")
+		and game_src.contains('set_tutorial_hidden')
+		and game_src.contains('set_tutorial_ui_reveal'),
+		"game HUD applies scoped opening reveal to hotbar, map, missions and LUA status")
+	var tutorial_src := FileAccess.get_file_as_string("res://scripts/tutorial_guide.gd")
+	check(tutorial_src.contains("func _apply_ui_reveal")
+		and tutorial_src.contains("TutorialUiReveal.tier_for_step")
+		and tutorial_src.contains("_set_current_step")
+		and tutorial_src.contains("_finish_tutorial")
+		and tutorial_src.contains("_apply_ui_reveal()"),
+		"tutorial guide applies HUD reveal on setup, step changes and completion")
+	var mobile_src := FileAccess.get_file_as_string("res://scripts/mobile_ui.gd")
+	check(mobile_src.contains("func set_tutorial_ui_reveal")
+		and mobile_src.contains("_tutorial_build_visible")
+		and mobile_src.contains("_tutorial_interact_visible")
+		and mobile_src.contains("_tutorial_sprint_visible"),
+		"Android controls reveal BUILD/INTERACT progressively without breaking PnC")
+	var controls_src := FileAccess.get_file_as_string("res://scripts/controls_overlay.gd")
+	check(controls_src.contains("func set_tutorial_hidden")
+		and controls_src.contains("_tutorial_hidden")
+		and controls_src.contains("or _tutorial_hidden"),
+		"PC controls guide stays hidden until the opening tutorial needs it")
 
 
 func _test_tutorial_help_and_cursors() -> void:
@@ -7301,6 +10418,7 @@ func _test_tutorial_help_and_cursors() -> void:
 	var old_tut_stage: int = Global.tutorial_stage
 	var old_tut_completed: bool = Global.tutorial_completed
 	var old_tut_version: int = Global.tutorial_version
+	var old_tut_flags: Dictionary = Global.tutorial_flags.duplicate(true)
 	Global.reset_pause_state()
 	Global.tutorial_stage = 0
 	Global.tutorial_completed = false
@@ -7350,6 +10468,7 @@ func _test_tutorial_help_and_cursors() -> void:
 	Global.tutorial_stage = old_tut_stage
 	Global.tutorial_completed = old_tut_completed
 	Global.tutorial_version = old_tut_version
+	Global.tutorial_flags = old_tut_flags
 	Global.reset_pause_state()
 
 	# ?? Help panel content and pause-menu integration ????????????????
@@ -7885,7 +11004,7 @@ func _test_waypoints() -> void:
 	check(reopened and not bool(mm.get("_expanded"))
 		and mm.get("_map_layer") == null
 		and not bool(mm.get("_hud_hidden_by_map")),
-		"the fullscreen map X button closes it and restores the HUD layer")
+		"the fullscreen map CLOSE button closes it and restores the HUD layer")
 	Global.ui_viewport_size = old_ui_viewport
 	Global.ui_safe_insets = old_ui_insets
 	remove_child(mm)
@@ -7893,6 +11012,111 @@ func _test_waypoints() -> void:
 	Global.world_node = old_world
 	fake_world.free()
 	Global.reset_pause_state()
+
+
+func _test_map_marker_travel() -> void:
+	var old_world: Node = Global.world_node
+	var old_ui_viewport: Vector2 = Global.ui_viewport_size
+	var old_scale: float = Global.ui_scale
+	var old_insets: Vector4 = Global.ui_safe_insets
+	var old_override: int = Global.mobile_platform_override
+	var fake_world := FakeWorldNode.new()
+	add_child(fake_world)
+	Global.world_node = fake_world
+	Global.ui_viewport_size = Vector2(1280, 720)
+	Global.ui_scale = 1.25
+	Global.ui_safe_insets = Vector4.ZERO
+	Global.reset_pause_state()
+	var world_src := FileAccess.get_file_as_string("res://scripts/world.gd")
+	check(world_src.contains("func teleport_to_map_marker")
+		and world_src.contains("_safe_landing_near_tile(cell, 10)"),
+		"map-marker travel uses the world's safe-landing teleport path")
+
+	var auto := Node2D.new()
+	auto.name = "TravelAutomatica"
+	auto.global_position = Vector2(64, 0)
+	add_child(auto)
+	auto.add_to_group("LuaNPC")
+	var portal := MapPortalProbe.new()
+	portal.name = "TravelDungeon"
+	portal.global_position = Vector2(-64, 0)
+	add_child(portal)
+	portal.add_to_group("DungeonPortal")
+
+	var mm := Minimap.new()
+	add_child(mm)
+	mm.set_process(false)
+	mm.set("_view_center", Vector2i.ZERO)
+	mm.call("_set_expanded", true)
+	await get_tree().process_frame
+	var map_rect: Rect2 = mm.call("_expanded_map_rect") as Rect2
+	var center: Vector2 = map_rect.get_center()
+	var ppt: Vector2 = (mm.call("_map_cell_px", map_rect) as Vector2) \
+		* float(mm.get("_zoom"))
+	var auto_pos: Vector2 = center + (auto.global_position / Minimap.TILE) * ppt
+	var auto_hit: Dictionary = mm.call("_map_marker_at", auto_pos) as Dictionary
+	check(not auto_hit.is_empty() and auto_hit.get("node") == auto
+		and str(auto_hit.get("label", "")) == "Automatica",
+		"expanded map hit-tests Automatica icons")
+	var auto_travel := bool(mm.call("_try_map_marker_teleport", auto_pos))
+	check(auto_travel and fake_world.teleported_marker == auto
+		and fake_world.teleported_marker_label == "Automatica"
+		and not bool(mm.get("_expanded")),
+		"tapping an Automatica icon teleports and closes the map")
+
+	# Android touch path for the dungeon portal icon.
+	mm.call("_set_expanded", true)
+	await get_tree().process_frame
+	map_rect = mm.call("_expanded_map_rect") as Rect2
+	center = map_rect.get_center()
+	ppt = (mm.call("_map_cell_px", map_rect) as Vector2) * float(mm.get("_zoom"))
+	var portal_pos: Vector2 = center + (portal.global_position / Minimap.TILE) * ppt
+	var portal_hit: Dictionary = mm.call("_map_marker_at", portal_pos) as Dictionary
+	var portal_label := str(portal_hit.get("label", ""))
+	check(not portal_hit.is_empty() and portal_hit.get("node") == portal
+		and not portal_label.is_empty(),
+		"expanded map hit-tests dungeon portal icons")
+	Global.mobile_platform_override = 1
+	var press := InputEventScreenTouch.new()
+	press.index = 3
+	press.position = portal_pos
+	press.pressed = true
+	mm.call("_input", press)
+	var release := InputEventScreenTouch.new()
+	release.index = 3
+	release.position = portal_pos
+	release.pressed = false
+	mm.call("_input", release)
+	await get_tree().process_frame
+	check(fake_world.teleported_marker == portal
+		and fake_world.teleported_marker_label == portal_label
+		and not bool(mm.get("_expanded")),
+		"tapping a dungeon icon on Android teleports and closes the map")
+
+	# Empty map taps must not teleport or dismiss the map.
+	mm.set("_map_ignore_mouse_until_ms", 0)
+	mm.call("_set_expanded", true)
+	await get_tree().process_frame
+	map_rect = mm.call("_expanded_map_rect") as Rect2
+	var before_marker: Node = fake_world.teleported_marker
+	var empty_at: Vector2 = map_rect.position + Vector2(4, 4)
+	check(not bool(mm.call("_try_map_marker_teleport", empty_at))
+		and fake_world.teleported_marker == before_marker
+		and bool(mm.get("_expanded")),
+		"tapping empty map space keeps the map open")
+
+	mm.call("_set_expanded", false)
+	mm.queue_free()
+	auto.queue_free()
+	portal.queue_free()
+	fake_world.queue_free()
+	Global.world_node = old_world if is_instance_valid(old_world) else null
+	Global.mobile_platform_override = old_override
+	Global.ui_viewport_size = old_ui_viewport
+	Global.ui_scale = old_scale
+	Global.ui_safe_insets = old_insets
+	Global.reset_pause_state()
+	await get_tree().process_frame
 
 
 func _saved_missions_version(path: String) -> int:

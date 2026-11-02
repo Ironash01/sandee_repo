@@ -286,6 +286,7 @@ func _try_fire(delta: float) -> void:
 		_fire_at(p.global_position)
 
 func _fire_at(target: Vector2) -> void:
+	SFX.play("sfx_hitman_specials", global_position, -3.0, 1.0, 0)
 	var proj: Node = PROJECTILE_SCRIPT.new()
 	proj.set("direction", (target - global_position).normalized())
 	# Per-instance damage + wall collision (the obstacle flare keeps its 40 and
@@ -424,6 +425,7 @@ func _tick_stuck(delta: float) -> void:
 # Blow up where we stand: an explosion effect that deals 25% of the max HP of
 # everything in range (the player + other mobs), then free the hitman.
 func _self_destruct() -> void:
+	SFX.play("sfx_hitman_specials", global_position, -1.0, 1.0, 3)
 	died.emit()
 	var ex: Node2D = EXPLOSION_SCRIPT.new() as Node2D
 	if ex != null:
@@ -498,6 +500,7 @@ func take_hit(damage: float, _source_pos: Vector2, _apply_knockback: bool = true
 	damage = COMBAT_DATA.damage_taken(damage)
 	_mob_health = maxf(0.0, _mob_health - damage)
 	_last_damage_ms = Time.get_ticks_msec()
+	SFX.play("sfx_mob_hitman", global_position, -3.0, 1.0, 1)
 	modulate = Color(1.0, 0.4, 0.4, 1.0)
 	var tw := create_tween()
 	tw.tween_interval(1.0)
@@ -531,6 +534,7 @@ func _add_name_label() -> void:
 
 # Killed by the sword — a normal death (no self-destruct blast).
 func _die() -> void:
+	SFX.play("sfx_mob_hitman", global_position, -2.0, 1.0, 2)
 	died.emit()
 	defeated.emit()
 	var world: Node = Global.world_node

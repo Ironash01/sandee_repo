@@ -174,6 +174,7 @@ func _try_start_breaking() -> void:
 		_break_elapsed  = 0.0
 		_break_progress = 0.0
 	_breaking = true
+	SFX.play("sfx_tree_chop_fall", global_position, -4.0, 1.0, 0)
 	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
 		Global.player_node.call("swing_held_item")
 	queue_redraw()
@@ -286,6 +287,7 @@ func _destroy() -> void:
 	CrashLogger.event("WORLD", "tree felled type=%s at=(%.1f, %.1f)" % [
 		tree_type, global_position.x, global_position.y])
 	_breaking = false
+	SFX.play("sfx_tree_chop_fall", global_position, -2.0, 1.0, 1)
 	# Use the global reference rather than get_parent() to avoid coupling to scene structure.
 	var world: Node = Global.world_node
 	# Leaf/wood debris burst coloured like the tree, spawned under the world so

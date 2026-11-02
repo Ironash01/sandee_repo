@@ -1,0 +1,3629 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SandEE 8-bit SFX audition</title>
+<style>
+:root {
+  --bg: #14150f;
+  --panel: #1e2016;
+  --panel-2: #272a1c;
+  --ink: #ece7d2;
+  --muted: #a9a58e;
+  --accent: #d8c56a;
+  --green: #7fbf6a;
+  --amber: #d9a441;
+  --red: #d06b5a;
+  --line: #3a3d2a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(circle at 20% 0%, #292c1d 0, var(--bg) 55%);
+  color: var(--ink);
+  font: 15px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+header {
+  position: sticky; top: 0; z-index: 5;
+  padding: 18px 22px 14px;
+  background: rgba(20,21,15,.94);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .02em; }
+.sub { color: var(--muted); font-size: 12.5px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; align-items: center; }
+select, button {
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 10px; font: inherit; font-size: 13px;
+}
+button { cursor: pointer; }
+button:hover, select:hover { border-color: var(--accent); }
+main { max-width: 1120px; margin: 0 auto; padding: 18px 18px 60px; }
+.cue {
+  background: linear-gradient(180deg, var(--panel), #191b12);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; margin: 0 0 14px;
+}
+.cue-head { display: flex; gap: 14px; justify-content: space-between; align-items: flex-start; }
+.cue h2 { margin: 0 0 3px; font-size: 16px; font-weight: 650; }
+.ids { color: var(--muted); font-size: 11.5px; }
+code { color: var(--accent); }
+.pri {
+  flex: none; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  padding: 3px 7px; border-radius: 999px; border: 1px solid currentColor;
+}
+.p0 { color: var(--red); }
+.p1 { color: var(--amber); }
+.p2 { color: var(--green); }
+.clip {
+  display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 12px;
+  align-items: center; padding: 9px 0; border-top: 1px solid #2b2e1e;
+}
+.clip:first-of-type { margin-top: 10px; }
+.clip-meta { min-width: 0; display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.role {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+  padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted);
+}
+.role.primary { color: var(--accent); border-color: #6a6134; }
+.pack { color: var(--green); font-size: 11.5px; }
+.file { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+audio { width: 100%; height: 30px; }
+.empty { color: var(--muted); }
+.hint { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+@media (max-width: 720px) {
+  .clip { grid-template-columns: 1fr; }
+  audio { height: 34px; }
+  header { padding: 14px 14px 12px; }
+  main { padding: 14px 12px 50px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>SandEE · 8-bit SFX audition</h1>
+  <div class="sub">232 candidate clips for 90 cue families. Audition copies only; nothing here is imported into the Godot project.</div>
+  <div class="controls">
+    <select id="priority">
+      <option value="">All priorities</option>
+      <option value="P0">P0 only</option>
+      <option value="P1">P1 only</option>
+      <option value="P2">P2 only</option>
+    </select>
+    <select id="category">
+      <option value="">All categories</option>
+      <option value="Combat &amp; Mobs">Combat &amp; Mobs</option><option value="Crafting &amp; Automation">Crafting &amp; Automation</option><option value="Items &amp; Interactables">Items &amp; Interactables</option><option value="Player">Player</option><option value="Tools &amp; World">Tools &amp; World</option><option value="UI &amp; Progression">UI &amp; Progression</option><option value="World &amp; Dungeon">World &amp; Dungeon</option>
+    </select>
+    <button id="stop">Stop all</button>
+    <span class="sub" id="count"></span>
+  </div>
+</header>
+<main>
+  <p class="hint">Tip: click a player to audition; starting one clip pauses the others. Files are grouped by cue. Primary = first choice; Secondary = fallback/layer source.</p>
+  
+    <section class="cue" data-priority="P0" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Footsteps by surface</h2>
+          <div class="ids"><code>sfx_player_footsteps</code> · Player · Direct + pitch</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Footstep1/Wav/Footstep1__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Footstep1/Wav/Footstep1__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Footstep1/Wav/Footstep1__003.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Footstep1/Wav/Footstep1__003.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Footstep1/Wav/Footstep1__006.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Footstep1/Wav/Footstep1__006.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Footstep1/Wav/Footstep1__009.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Footstep1/Wav/Footstep1__009.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Footsteps/sfx_movement_footsteps1a.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Footsteps/sfx_movement_footsteps1b.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1b.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Footsteps/sfx_movement_footsteps5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps5.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Sprint start / stamina empty</h2>
+          <div class="ids"><code>sfx_player_sprint</code> · Player · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Footstep1/Wav/Footstep1__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Footstep1/Wav/Footstep1__002.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Footsteps/sfx_movement_footstepsloop3_fast.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Footsteps/sfx_movement_footstepsloop3_fast.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Player takes damage</h2>
+          <div class="ids"><code>sfx_player_hurt</code> · Player · Layer</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Damage Sounds/sfx_damage_hit1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Damage%20Sounds/sfx_damage_hit1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Damage Sounds/sfx_damage_hit3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Damage%20Sounds/sfx_damage_hit3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Damage Sounds/sfx_damage_hit5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Damage%20Sounds/sfx_damage_hit5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__003.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__003.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Player death</h2>
+          <div class="ids"><code>sfx_player_death</code> · Player · Direct</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Hero_Death_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Hero_Death_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Human/sfx_deathscream_human1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Human/sfx_deathscream_human1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Human/sfx_deathscream_human5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Human/sfx_deathscream_human5.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Player respawns</h2>
+          <div class="ids"><code>sfx_player_respawn</code> · Player · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Achievement_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Achievement_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Eat food / drink</h2>
+          <div class="ids"><code>sfx_player_eat</code> · Player · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Pickup/Wav/Pickup__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Pickup/Wav/Pickup__001.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Use Life/Stamina crystal</h2>
+          <div class="ids"><code>sfx_player_crystal</code> · Player · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Achievement_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Achievement_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Player">
+      <div class="cue-head">
+        <div>
+          <h2>Low-health heartbeat</h2>
+          <div class="ids"><code>sfx_player_low_health</code> · Player · Direct</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Alarms/Low health Alarms/sfx_lowhealth_alarmloop1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Alarms/Low%20health%20Alarms/sfx_lowhealth_alarmloop1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Alarms/Low health Alarms/sfx_lowhealth_alarmloop2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Alarms/Low%20health%20Alarms/sfx_lowhealth_alarmloop2.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Sword/tool swing</h2>
+          <div class="ids"><code>sfx_tool_swing</code> · Tools &amp; World · Direct + pitch</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_sword1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_sword1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_sword2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_sword2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_sword3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_sword3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_dagger.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_dagger.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Pew/Wav/Pew__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Pew/Wav/Pew__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Tool hits a target</h2>
+          <div class="ids"><code>sfx_tool_impact</code> · Tools &amp; World · Layer</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact10.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact10.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Punch1/Wav/Punch1__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Punch1/Wav/Punch1__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Punch2/Wav/Punch2__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Punch2/Wav/Punch2__001.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Block breaks</h2>
+          <div class="ids"><code>sfx_block_break</code> · Tools &amp; World · Layer</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_hard1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_hard1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_hard3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_hard3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_hard5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_hard5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Explosion1/Wav/Explosion1__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Explosion1/Wav/Explosion1__001.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Block placed</h2>
+          <div class="ids"><code>sfx_block_place</code> · Tools &amp; World · Direct + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Footstep1/Wav/Footstep1__005.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Footstep1/Wav/Footstep1__005.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Tree chopped and falls</h2>
+          <div class="ids"><code>sfx_tree_chop_fall</code> · Tools &amp; World · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_sword1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_sword1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_soft1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_soft1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Debris1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Debris1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Grass cut</h2>
+          <div class="ids"><code>sfx_grass_cut</code> · Tools &amp; World · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_dagger.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_dagger.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Rustle1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Rustle1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Walk through grass</h2>
+          <div class="ids"><code>sfx_grass_rustle</code> · Tools &amp; World · Process</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Rustle1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Rustle1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Rustle2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Rustle2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Footsteps/sfx_movement_footsteps1a.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Till, plant, water, harvest</h2>
+          <div class="ids"><code>sfx_farming</code> · Tools &amp; World · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Footsteps/sfx_movement_footsteps1a.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">WaterSplash.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/WaterSplash.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Build mode toggle</h2>
+          <div class="ids"><code>sfx_build_mode</code> · Tools &amp; World · Direct</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_select1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_select1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Menu/Wav/Menu__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Menu/Wav/Menu__001.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Invalid placement</h2>
+          <div class="ids"><code>sfx_placement_error</code> · Tools &amp; World · Direct</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_negative1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_negative1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Menu/Wav/Menu__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Menu/Wav/Menu__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Tools &amp; World">
+      <div class="cue-head">
+        <div>
+          <h2>Inventory or chest full</h2>
+          <div class="ids"><code>sfx_inventory_full</code> · Tools &amp; World · Direct + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Item pickup</h2>
+          <div class="ids"><code>sfx_item_pickup</code> · Items &amp; Interactables · Direct</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Pickup_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Pickup_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Pickup_02.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Pickup_02.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Pickup_04.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Pickup_04.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Coins/sfx_coin_single1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Coins/sfx_coin_single1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Coins/sfx_coin_single3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Coins/sfx_coin_single3.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Item drop</h2>
+          <div class="ids"><code>sfx_item_drop</code> · Items &amp; Interactables · Direct + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction8.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction8.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Pickup/Wav/Pickup__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Pickup/Wav/Pickup__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Inventory open / close</h2>
+          <div class="ids"><code>sfx_inventory_open_close</code> · Items &amp; Interactables · Direct</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Open_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Open_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Open_01.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Open_01.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_select2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_select2.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Hotbar select / scroll</h2>
+          <div class="ids"><code>sfx_hotbar</code> · Items &amp; Interactables · Direct</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_move1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_move1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Menu_Navigate_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Menu_Navigate_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Move/stack/delete item</h2>
+          <div class="ids"><code>sfx_item_move</code> · Items &amp; Interactables · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_move2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_move2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Menu_Navigate_01.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Menu_Navigate_01.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Chest open/close</h2>
+          <div class="ids"><code>sfx_chest</code> · Items &amp; Interactables · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Open_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Open_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Coins/sfx_coin_cluster1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Coins/sfx_coin_cluster1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Door open/close</h2>
+          <div class="ids"><code>sfx_door</code> · Items &amp; Interactables · Direct</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact2.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Bonfire ignite/extinguish/toggle</h2>
+          <div class="ids"><code>sfx_bonfire</code> · Items &amp; Interactables · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_soft1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_soft1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">FIRE</span>
+            <span class="file">fire.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/FIRE/fire.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Torch place/remove</h2>
+          <div class="ids"><code>sfx_torch</code> · Items &amp; Interactables · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_soft2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_soft2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">FIRE</span>
+            <span class="file">fire.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/FIRE/fire.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Fishing cast, bite, reel, catch</h2>
+          <div class="ids"><code>sfx_fishing</code> · Items &amp; Interactables · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">WaterSplash.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/WaterSplash.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Map/waypoint interactions</h2>
+          <div class="ids"><code>sfx_map_waypoint</code> · Items &amp; Interactables · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Teleport1/Wav/Teleport1__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Teleport1/Wav/Teleport1__001.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Items &amp; Interactables">
+      <div class="cue-head">
+        <div>
+          <h2>Water splash / bucket</h2>
+          <div class="ids"><code>sfx_water</code> · Items &amp; Interactables · Process</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">WaterSplash.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/WaterSplash.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction5.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>UI hover/click/back/tab/toggle/slider</h2>
+          <div class="ids"><code>sfx_ui_interaction</code> · UI &amp; Progression · Direct</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_move1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_move1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_select1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_select1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Menu_Navigate_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Menu_Navigate_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Menu_Navigate_02.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Menu_Navigate_02.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Success/error/notification</h2>
+          <div class="ids"><code>sfx_ui_result</code> · UI &amp; Progression · Direct</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Achievement_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Achievement_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Lose_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Lose_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Menu open/close, pause/unpause</h2>
+          <div class="ids"><code>sfx_menu_pause</code> · UI &amp; Progression · Direct</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Pause Sounds/sfx_sounds_pause1_in.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Pause%20Sounds/sfx_sounds_pause1_in.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Pause Sounds/sfx_sounds_pause1_out.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Pause%20Sounds/sfx_sounds_pause1_out.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Pause Sounds/sfx_sounds_pause3_in.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Pause%20Sounds/sfx_sounds_pause3_in.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_select1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_select1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Save/load/delete</h2>
+          <div class="ids"><code>sfx_save_load</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Achievement_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Achievement_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Login, signup, logout, cloud sync</h2>
+          <div class="ids"><code>sfx_account_cloud</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Leaderboard refresh / star claim</h2>
+          <div class="ids"><code>sfx_leaderboard</code> · UI &amp; Progression · Direct</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_select3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_select3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Coins/sfx_coin_double1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Coins/sfx_coin_double1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Collect_Point_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Collect_Point_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Mission progress / mission complete / star</h2>
+          <div class="ids"><code>sfx_mission</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Achievement_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Achievement_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Achievement_01.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Achievement_01.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Fanfares/sfx_sounds_fanfare1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Fanfares/sfx_sounds_fanfare1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Coins/sfx_coin_cluster1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Coins/sfx_coin_cluster1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Knowledge or bestiary unlock</h2>
+          <div class="ids"><code>sfx_knowledge_bestiary</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Fanfares/sfx_sounds_fanfare2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Fanfares/sfx_sounds_fanfare2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Collect_Point_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Collect_Point_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Tutorial dialogue/advance/complete/skip</h2>
+          <div class="ids"><code>sfx_tutorial</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_select1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_select1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Menu_Navigate_03.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Menu_Navigate_03.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Code editor open/run/stop/success/error</h2>
+          <div class="ids"><code>sfx_code_editor</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button8.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button8.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Menu/Wav/Menu__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Menu/Wav/Menu__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Quiz open/correct/wrong/hint/run/complete</h2>
+          <div class="ids"><code>sfx_quiz</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button9.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button9.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Achievement_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Achievement_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Knowledge altar open/page/unlock</h2>
+          <div class="ids"><code>sfx_knowledge_altar</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Open_01.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Open_01.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="UI &amp; Progression">
+      <div class="cue-head">
+        <div>
+          <h2>Color select/craft</h2>
+          <div class="ids"><code>sfx_color_crafter</code> · UI &amp; Progression · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup8.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup8.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high3.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Crafting station open/close</h2>
+          <div class="ids"><code>sfx_station</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button10.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button10.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Open_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Open_00.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Recipe selected</h2>
+          <div class="ids"><code>sfx_recipe_select</code> · Crafting &amp; Automation · Direct</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Menu Sounds/sfx_menu_move3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Menu%20Sounds/sfx_menu_move3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button11.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button11.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Menu_Navigate_01.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Menu_Navigate_01.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Craft start/complete/fail</h2>
+          <div class="ids"><code>sfx_craft</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Craft_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Craft_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup9.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup9.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Input insert / output collect</h2>
+          <div class="ids"><code>sfx_station_io</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction9.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction9.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Coins/sfx_coin_single4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Coins/sfx_coin_single4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Pickup_01.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Pickup_01.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Furnace open/close, feed, fuel, smelt, fail</h2>
+          <div class="ids"><code>sfx_furnace</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_soft3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_soft3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">FIRE</span>
+            <span class="file">fire.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/FIRE/fire.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Lua station place/editor open/close</h2>
+          <div class="ids"><code>sfx_lua_station</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_poweron.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_poweron.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button11.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button11.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Open_01.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Open_01.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Automatica run start/success/error/stop</h2>
+          <div class="ids"><code>sfx_lua_run</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup10.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup10.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error8.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error8.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Menu/Wav/Menu__003.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Menu/Wav/Menu__003.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Robot movement/hover</h2>
+          <div class="ids"><code>sfx_robot_move</code> · Crafting &amp; Automation · Direct</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">machine_01.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/machine_01.ogg"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">machine_02.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/machine_02.ogg"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Robot chop/mine/place</h2>
+          <div class="ids"><code>sfx_robot_work</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_sword1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_sword1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">machine_03.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/machine_03.ogg"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Robot attack/hurt/death</h2>
+          <div class="ids"><code>sfx_robot_combat</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_sword2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_sword2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Robot/sfx_deathscream_robot1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Robot/sfx_deathscream_robot1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Punch2/Wav/Punch2__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Punch2/Wav/Punch2__001.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Robot deposit/withdraw/return/home</h2>
+          <div class="ids"><code>sfx_robot_logistics</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction10.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction10.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button12.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button12.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">machine_04.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/machine_04.ogg"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Robot error/no tool/invalid request</h2>
+          <div class="ids"><code>sfx_robot_error</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error9.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error9.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Menu/Wav/Menu__004.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Menu/Wav/Menu__004.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Algorithmica run start/success/error/reject</h2>
+          <div class="ids"><code>sfx_algorithmica</code> · Crafting &amp; Automation · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip8.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip8.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup11.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup11.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error10.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error10.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Menu/Wav/Menu__005.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Menu/Wav/Menu__005.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Crafting &amp; Automation">
+      <div class="cue-head">
+        <div>
+          <h2>Color craft</h2>
+          <div class="ids"><code>sfx_algorithmica_color</code> · Crafting &amp; Automation · Direct</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup12.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup12.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Negative Sounds/sfx_sounds_error11.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Negative%20Sounds/sfx_sounds_error11.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high4.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Wolf voice set</h2>
+          <div class="ids"><code>sfx_mob_wolf</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Roar1/Wav/Roar1__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Roar1/Wav/Roar1__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Punch1/Wav/Punch1__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Punch1/Wav/Punch1__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Alien/sfx_deathscream_alien1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Alien/sfx_deathscream_alien1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Pixie voice set</h2>
+          <div class="ids"><code>sfx_mob_pixie</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Powerup/Wav/Powerup__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Powerup/Wav/Powerup__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__004.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__004.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Desert Worm voice set</h2>
+          <div class="ids"><code>sfx_mob_worm</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Bass Drum/Wav/Bass Drum__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Bass%20Drum/Wav/Bass%20Drum__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Roar1/Wav/Roar1__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Roar1/Wav/Roar1__002.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_soft4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_soft4.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Headless Fish voice set</h2>
+          <div class="ids"><code>sfx_mob_headless_fish</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Space/Wav/Space__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Space/Wav/Space__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__004.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__004.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Alien/sfx_deathscream_alien2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Alien/sfx_deathscream_alien2.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Sheep voice set</h2>
+          <div class="ids"><code>sfx_mob_sheep</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__005.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__005.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Roar1/Wav/Roar1__003.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Roar1/Wav/Roar1__003.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Alien/sfx_deathscream_alien3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Alien/sfx_deathscream_alien3.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Hitman voice set</h2>
+          <div class="ids"><code>sfx_mob_hitman</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Punch2/Wav/Punch2__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Punch2/Wav/Punch2__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Roar1/Wav/Roar1__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Roar1/Wav/Roar1__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Human/sfx_deathscream_human2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Human/sfx_deathscream_human2.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Rune Sentinel voice set</h2>
+          <div class="ids"><code>sfx_mob_rune_sentinel</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact8.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact8.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Robot/sfx_deathscream_robot2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Robot/sfx_deathscream_robot2.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Brass Prowler voice set</h2>
+          <div class="ids"><code>sfx_mob_brass_prowler</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_mechanicalnoise4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_mechanicalnoise4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact9.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact9.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Pew/Wav/Pew__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Pew/Wav/Pew__002.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Cinder Ooze voice set</h2>
+          <div class="ids"><code>sfx_mob_cinder_ooze</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Explosion2/Wav/Explosion2__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Explosion2/Wav/Explosion2__001.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Space/Wav/Space__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Space/Wav/Space__002.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Alien/sfx_deathscream_alien3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Alien/sfx_deathscream_alien3.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Cipher Warden voice set</h2>
+          <div class="ids"><code>sfx_mob_cipher_warden</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Alarms/Alarms/sfx_alarm_loop2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Alarms/Alarms/sfx_alarm_loop2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Android/sfx_deathscream_android1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Android/sfx_deathscream_android1.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Gravebell Shambler voice set</h2>
+          <div class="ids"><code>sfx_mob_gravebell_shambler</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Roar1/Wav/Roar1__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Roar1/Wav/Roar1__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Emberfox Kit voice set</h2>
+          <div class="ids"><code>sfx_mob_emberfox_kit</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__006.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__006.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Powerup/Wav/Powerup__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Powerup/Wav/Powerup__002.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Death Screams/Alien/sfx_deathscream_alien4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Death%20Screams/Alien/sfx_deathscream_alien4.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Mossback Nib voice set</h2>
+          <div class="ids"><code>sfx_mob_mossback_nib</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Footsteps/sfx_movement_footsteps1a.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Footsteps/sfx_movement_footsteps1a.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Interactions/sfx_sounds_interaction6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Interactions/sfx_sounds_interaction6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Ouch/Wav/Ouch__007.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Ouch/Wav/Ouch__007.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Vesper Acolyte voice set</h2>
+          <div class="ids"><code>sfx_mob_vesper_acolyte</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Weird Sounds/sfx_sound_noise.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Weird%20Sounds/sfx_sound_noise.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Space/Wav/Space__003.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Space/Wav/Space__003.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Wisp companion voice set</h2>
+          <div class="ids"><code>sfx_mob_wisp</code> · Combat &amp; Mobs · Layer + pitch</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup13.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup13.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Powerup/Wav/Powerup__003.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Powerup/Wav/Powerup__003.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Mob spawn/despawn</h2>
+          <div class="ids"><code>sfx_mob_spawn_despawn</code> · Combat &amp; Mobs · Layer</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Teleport1/Wav/Teleport1__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Teleport1/Wav/Teleport1__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Hitman projectile, slam, self-destruct</h2>
+          <div class="ids"><code>sfx_hitman_specials</code> · Combat &amp; Mobs · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Cannon/sfx_wpn_cannon1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Cannon/sfx_wpn_cannon1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Medium Length/sfx_exp_medium1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Medium%20Length/sfx_exp_medium1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact10.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact10.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Explosion2/Wav/Explosion2__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Explosion2/Wav/Explosion2__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Dungeon flare/projectile/trap/explosion</h2>
+          <div class="ids"><code>sfx_dungeon_hazards</code> · Combat &amp; Mobs · Layer</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Lasers/sfx_wpn_laser1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Lasers/sfx_wpn_laser1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Lasers/sfx_wpn_laser4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Lasers/sfx_wpn_laser4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact11.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact11.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Medium Length/sfx_exp_medium2.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Medium%20Length/sfx_exp_medium2.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Explosion1/Wav/Explosion1__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Explosion1/Wav/Explosion1__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="Combat &amp; Mobs">
+      <div class="cue-head">
+        <div>
+          <h2>Parry projectile / safe-zone ward</h2>
+          <div class="ids"><code>sfx_parry_safezone</code> · Combat &amp; Mobs · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Weapons/Melee/sfx_wpn_sword3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Weapons/Melee/sfx_wpn_sword3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup13.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup13.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Alarms/Alarms/sfx_alarm_loop3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Alarms/Alarms/sfx_alarm_loop3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Punch1/Wav/Punch1__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Punch1/Wav/Punch1__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Enter/exit cave</h2>
+          <div class="ids"><code>sfx_cave_travel</code> · World &amp; Dungeon · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Opening Doors/sfx_movement_dooropen4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Opening%20Doors/sfx_movement_dooropen4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Wind.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Wind.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Cave entrance highlight/confirm</h2>
+          <div class="ids"><code>sfx_cave_portal</code> · World &amp; Dungeon · Layer</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Buttons/sfx_sounds_button13.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Buttons/sfx_sounds_button13.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high5.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Dungeon portal enter/exit</h2>
+          <div class="ids"><code>sfx_dungeon_portal</code> · World &amp; Dungeon · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal5.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Alarms/Alarms/sfx_alarm_loop4.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Alarms/Alarms/sfx_alarm_loop4.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Impacts/sfx_sounds_impact11.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Impacts/sfx_sounds_impact11.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Teleport2/Wav/Teleport2__001.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Teleport2/Wav/Teleport2__001.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P0" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Dungeon clear / star award</h2>
+          <div class="ids"><code>sfx_dungeon_clear</code> · World &amp; Dungeon · Layer</div>
+        </div>
+        <span class="pri p0">P0</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LRSF8</span>
+            <span class="file">Wav/Jingle_Win_00.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LRSF8/Wav/Jingle_Win_00.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Fanfares/sfx_sounds_fanfare3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Fanfares/sfx_sounds_fanfare3.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Coins/sfx_coin_cluster3.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Coins/sfx_coin_cluster3.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P1" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>World waypoint activate/travel</h2>
+          <div class="ids"><code>sfx_world_waypoint</code> · World &amp; Dungeon · Layer</div>
+        </div>
+        <span class="pri p1">P1</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Positive Sounds/sfx_sounds_powerup14.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Positive%20Sounds/sfx_sounds_powerup14.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Teleport2/Wav/Teleport2__002.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Teleport2/Wav/Teleport2__002.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Dungeon waypoint spawn/activate</h2>
+          <div class="ids"><code>sfx_dungeon_waypoint</code> · World &amp; Dungeon · Layer</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Movement/Portals and Transitions/sfx_movement_portal1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Movement/Portals%20and%20Transitions/sfx_movement_portal1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high6.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high6.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">PHX8</span>
+            <span class="file">Teleport1/Wav/Teleport1__003.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/PHX8/Teleport1/Wav/Teleport1__003.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Day/night transition</h2>
+          <div class="ids"><code>sfx_day_night</code> · World &amp; Dungeon · Layer</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">WindParticles.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/WindParticles.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Snowstorm start/end</h2>
+          <div class="ids"><code>sfx_snowstorm</code> · World &amp; Dungeon · Process</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Wind.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Wind.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">WindParticles.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/WindParticles.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">noise_02.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/noise_02.ogg"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Ambient bird chirps</h2>
+          <div class="ids"><code>sfx_ambient_birds</code> · World &amp; Dungeon · Generate</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/High Pitched Sounds/sfx_sounds_high1.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/High%20Pitched%20Sounds/sfx_sounds_high1.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Simple Bleeps/sfx_sounds_Blip7.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Simple%20Bleeps/sfx_sounds_Blip7.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">General Sounds/Neutral Sounds/sfx_sound_neutral8.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/General%20Sounds/Neutral%20Sounds/sfx_sound_neutral8.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Cave ambience</h2>
+          <div class="ids"><code>sfx_cave_ambience</code> · World &amp; Dungeon · Process</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">DUNGEON</span>
+            <span class="file">dungeon_ambient_1.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/DUNGEON/dungeon_ambient_1.ogg"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Wind.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Wind.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Dungeon ambience</h2>
+          <div class="ids"><code>sfx_dungeon_ambience</code> · World &amp; Dungeon · Process</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">DUNGEON</span>
+            <span class="file">dungeon_ambient_1.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/DUNGEON/dungeon_ambient_1.ogg"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">ambient_01.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/ambient_01.ogg"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">machine_05.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/machine_05.ogg"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Torch/bonfire ambience</h2>
+          <div class="ids"><code>sfx_fire_ambience</code> · World &amp; Dungeon · Process</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">FIRE</span>
+            <span class="file">fire.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/FIRE/fire.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">OGA512</span>
+            <span class="file">Explosions/Short/sfx_exp_short_soft5.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/OGA512/Explosions/Short/sfx_exp_short_soft5.wav"></audio>
+        </div>
+    </section>
+    <section class="cue" data-priority="P2" data-category="World &amp; Dungeon">
+      <div class="cue-head">
+        <div>
+          <h2>Generic wind/weather bed</h2>
+          <div class="ids"><code>sfx_weather_wind</code> · World &amp; Dungeon · Process</div>
+        </div>
+        <span class="pri p2">P2</span>
+      </div>
+      
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">Wind.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/Wind.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role primary">Primary</span>
+            <span class="pack">LUNAR8</span>
+            <span class="file">WindParticles.wav</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LUNAR8/WindParticles.wav"></audio>
+        </div>
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="role secondary">Secondary</span>
+            <span class="pack">LOOPS30</span>
+            <span class="file">noise_01.ogg</span>
+          </div>
+          <audio controls preload="none" src="by_pack/LOOPS30/noise_01.ogg"></audio>
+        </div>
+    </section>
+</main>
+<script>
+const cues = [...document.querySelectorAll('.cue')];
+const psel = document.getElementById('priority');
+const csel = document.getElementById('category');
+const count = document.getElementById('count');
+function apply() {
+  let n = 0;
+  for (const c of cues) {
+    const okP = !psel.value || c.dataset.priority === psel.value;
+    const okC = !csel.value || c.dataset.category === csel.value;
+    const show = okP && okC;
+    c.style.display = show ? '' : 'none';
+    if (show) n++;
+  }
+  count.textContent = n + ' cue' + (n === 1 ? '' : 's');
+}
+psel.addEventListener('change', apply);
+csel.addEventListener('change', apply);
+apply();
+document.querySelectorAll('audio').forEach(a => {
+  a.addEventListener('play', () => {
+    document.querySelectorAll('audio').forEach(o => { if (o !== a) o.pause(); });
+  });
+});
+document.getElementById('stop').addEventListener('click', () => {
+  document.querySelectorAll('audio').forEach(a => { a.pause(); a.currentTime = 0; });
+});
+</script>
+</body>
+</html>

@@ -8,8 +8,8 @@ class_name EncyclopediaSection
 # children of the header rather than siblings.
 #
 # Shared by the player inventory's Programming Encyclopedia tab and the LUA
-# robot editor's encyclopedia so both present the same four sections with the
-# same interaction. Purely presentational: it never executes or unlocks
+# robot editor's encyclopedia so both present the same accordion sections with
+# the same interaction. Purely presentational: it never executes or unlocks
 # anything, and it reads its content from APIReference / EncyclopediaData.
 
 signal expansion_changed(section_id: String, expanded: bool)
@@ -23,6 +23,9 @@ const C_HEADER_H := Color(0.15, 0.21, 0.38, 1.00)
 const C_ENTRY    := Color(0.55, 0.90, 1.00, 1.00)
 const C_FURNACE  := Color(1.00, 0.66, 0.34, 1.00)
 const C_STATION  := Color(0.45, 0.85, 1.00, 1.00)
+const C_CODE_BG  := Color(0.04, 0.06, 0.11, 1.00)
+const C_CODE     := Color(0.78, 0.96, 0.82, 1.00)
+const CODE_FONT: FontFile = preload("res://fonts/monogram-extended.ttf")
 
 var section_id: String = ""
 var expanded: bool = false
@@ -149,6 +152,35 @@ func add_entry(e: Dictionary, s: float) -> void:
 	desc.add_theme_color_override("font_color", C_MUTED)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(desc)
+
+	# Optional copy-ready code block (Algorithmica templates). Selectable so a
+	# player can copy the calls, and monospaced so indentation reads correctly.
+	var code: String = str(e.get("code", ""))
+	if not code.is_empty():
+		var code_panel := PanelContainer.new()
+		code_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var code_style := StyleBoxFlat.new()
+		code_style.bg_color     = C_CODE_BG
+		code_style.border_color = C_BORDER
+		code_style.set_border_width_all(maxi(1, int(s)))
+		code_style.set_corner_radius_all(maxi(2, int(3 * s)))
+		code_style.content_margin_left   = int(8 * s)
+		code_style.content_margin_right  = int(8 * s)
+		code_style.content_margin_top    = int(6 * s)
+		code_style.content_margin_bottom = int(6 * s)
+		code_panel.add_theme_stylebox_override("panel", code_style)
+
+		var code_label := RichTextLabel.new()
+		code_label.bbcode_enabled  = false
+		code_label.fit_content     = true
+		code_label.scroll_active   = false
+		code_label.selection_enabled = true
+		code_label.text = code
+		code_label.add_theme_font_override("normal_font", CODE_FONT)
+		code_label.add_theme_font_size_override("normal_font_size", Global.ui_font_size(11))
+		code_label.add_theme_color_override("default_color", C_CODE)
+		code_panel.add_child(code_label)
+		box.add_child(code_panel)
 
 	_body.add_child(box)
 

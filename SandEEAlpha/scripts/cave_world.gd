@@ -176,7 +176,10 @@ func _input(event: InputEvent) -> void:
 		return
 	if Global.block_mode:
 		if event.is_action_pressed("mouse_left"):
-			place_block()
+			var at: Vector2 = Global.mouse_event_world(self, event)
+			if Global.is_mobile():
+				Global.set_touch_mouse(at)
+			place_block(at)
 		return
 	# Left-click (hold): mining — needs press AND release, so this checks the
 	# raw mouse event rather than just is_action_pressed().
@@ -191,7 +194,7 @@ func _input(event: InputEvent) -> void:
 # Centralized here rather than a per-tile node/Area2D, same reasoning as
 # world.gd's grass cutting — tile-grid scale, not sprite-instance scale.
 # Pickaxe-gated exactly like placeable_block.gd's block breaking: duration
-# = block_level - pickaxe_level (min 0.1s), requires min_pickaxe_level.
+# = Global.mining_break_seconds(block_level, pickaxe_level), requires min_pickaxe_level.
 var _mine_tile:     Vector2i = Vector2i.ZERO
 var _mining:        bool     = false
 var _mine_elapsed:  float    = 0.0
@@ -241,7 +244,7 @@ func _try_start_mining() -> void:
 		_mine_elapsed = 0.0   # new target — drop any progress from the old tile
 		_destroy_mine_overlay(true)
 	_mine_tile     = mouse_cell
-	_mine_duration = maxf(0.1, float(item.block_level - pick_lvl))
+	_mine_duration = Global.mining_break_seconds(float(item.block_level), pick_lvl)
 	_mining        = true
 	if not is_instance_valid(_mine_overlay):
 		_spawn_mine_overlay(item, mouse_cell)
@@ -270,6 +273,12 @@ func _finish_break() -> void:
 	_break_tile(_mine_tile)
 	_mine_elapsed = 0.0
 	queue_redraw()
+	# Chain mining: if the button is still held and another wall/ore is under
+	# the cursor, start it immediately. If the cursor is over the newly carved
+	# floor, _try_start_mining() simply finds nothing.
+	if Global.is_left_action_held() \
+			and not Global.any_ui_open() and not Global.pause_menu_open:
+		_try_start_mining()
 
 func _spawn_mine_overlay(item: ItemData, cell: Vector2i) -> void:
 	if item == null:
@@ -349,7 +358,8 @@ func _update_mining(delta: float) -> void:
 
 # No visual feedback at all while mining (no progress bar) was the actual
 # bug behind "can't break blocks" reports — mining requires holding the
-# mouse down for block_level - pickaxe_level seconds (4s+ for stone with a
+# mouse down for Global.mining_break_seconds(block_level, pickaxe_level) seconds
+# (4s+ for stone with a wooden pickaxe), gated by min_pickaxe_level.
 # wooden pickaxe), and with zero on-screen indication a normal click (or
 # even a few seconds of holding without realizing more is needed) looks
 # indistinguishable from mining being completely broken. CaveWorld spans the
@@ -363,6 +373,7 @@ func _break_tile(cell: Vector2i) -> void:
 	var grid_pos: Vector2i = _cell_to_grid(cell)
 	if not _grid_in_bounds(grid_pos):
 		return
+	SFX.play("sfx_block_break", _tilemap.to_global(_tilemap.map_to_local(cell)), -2.0)
 	var tile_type: int = generator.grid[grid_pos.x][grid_pos.y]
 	var item: ItemData = _wall_items.get(tile_type)
 	generator.grid[grid_pos.x][grid_pos.y] = CaveGenerator.Tile.FLOOR
@@ -459,19 +470,24 @@ func _rebuild_ghost_sprite(item: Dictionary) -> void:
 	ghost_sprite.frame    = 0
 	ghost_sprite.position = Vector2.ZERO
 
-func place_block() -> void:
+func place_block(at_world: Vector2 = Vector2.INF) -> void:
 	# A DEAD player must not place blocks (see world.gd:place_block()).
 	if Global.player_is_dead:
 		return
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		return
-	var cell: Vector2i = _tilemap.local_to_map(_tilemap.to_local(Global.mouse_world(self)))
+	var target: Vector2 = at_world if at_world != Vector2.INF \
+		else Global.mouse_world(self)
+	var cell: Vector2i = _tilemap.local_to_map(_tilemap.to_local(target))
 	if not _is_cell_in_place_radius(cell):
+		SFX.play_ui("sfx_placement_error", 0, -4.0)
 		return
 	if _cell_blocked_by_player(cell):
+		SFX.play_ui("sfx_placement_error", 0, -4.0)
 		return
 	if _placed_blocks.has(cell) or _cell_is_wall(cell):
+		SFX.play_ui("sfx_placement_error", 0, -4.0)
 		return
 	var item_data: ItemData = item["data"] as ItemData
 	if item_data == null or item_data.place_scene_path == "":
@@ -498,6 +514,11 @@ func place_block() -> void:
 	obj.z_index  = int(world_pos.y / TILE_SIZE)
 	_fix_sprite_offset(obj)
 	_refresh_neighbor_u_collision(cell)
+	var audio_pos: Vector2 = _tilemap.to_global(world_pos)
+	if item_data.is_torch:
+		SFX.play("sfx_torch", audio_pos, -3.0, 1.0, 0)
+	else:
+		SFX.play("sfx_block_place", audio_pos, -3.0)
 	if item_data.has_place_animation and item_data.place_animation_name != "":
 		var ap: AnimationPlayer = obj.get_node_or_null("AnimationPlayer") as AnimationPlayer
 		if ap != null:

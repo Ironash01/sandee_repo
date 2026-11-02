@@ -20,6 +20,7 @@ const BIRCH_TREE_TEX:  Texture2D   = preload("res://sprites/tree/birch_tree.png"
 const SHADOW_TEXTURE:  Texture2D   = preload("res://sprites/shadow/shadow_base.png")
 const SWORD_SWING_SCRIPT: GDScript = preload("res://scripts/sword_swing_effect.gd")
 const AMBIENT_BIRDS_SCRIPT: GDScript = preload("res://scripts/ambient_birds.gd")
+const OVERWORLD_GUIDE_SCRIPT: GDScript = preload("res://scripts/overworld_dungeon_guide.gd")
 const GRASS_CUT_BURST_SCRIPT: GDScript = preload("res://scripts/grass_cut_burst.gd")
 const WHEAT_CROP_SCENE: PackedScene = preload("res://scenes/objects/WheatCrop.tscn")
 const WHEAT_SEEDS_ITEM: ItemData = preload("res://resources/items/wheat_seeds.tres")
@@ -596,6 +597,12 @@ func _input(event: InputEvent) -> void:
 		# themselves.
 		if Global.is_shift_held():
 			return
+		# Use the event's own position. Global.mouse_world() may still point at
+		# the previous tap while Android's emulated mouse click is delivered,
+		# which made build mode place on a stale predetermined tile.
+		var at: Vector2 = Global.mouse_event_world(self, event)
+		if Global.is_mobile():
+			Global.set_touch_mouse(at)
 		# Seeds are BUILD-MODE only: planting is a placement action, not a
 		# normal click. They are planted on a Tilled Ground cell and cannot be
 		# planted anywhere else (see _try_use_held_item, which ignores seeds).
@@ -603,10 +610,10 @@ func _input(event: InputEvent) -> void:
 		if held is Dictionary:
 			var seed_data: ItemData = (held as Dictionary)["data"] as ItemData
 			if seed_data != null and seed_data.is_seed:
-				if plant_crop_at_cursor():
+				if plant_crop_at_cursor(at):
 					Global.remove_item(seed_data)
 				return
-		place_block()
+		place_block(at)
 
 # Fired by the player's swing_performed signal (the swing plays in every
 # world backend; this overworld reacts to it): if a sword is held, cut the
@@ -734,6 +741,7 @@ func _cut_grass_row(p: Node2D) -> void:
 			first_color = _last_cut_grass_color
 	if first_cut != Vector2.INF:
 		_spawn_grass_cut_fx(first_cut, first_color)
+		SFX.play("sfx_grass_cut", first_cut, -4.0)
 	# Farming's seed source: one roll per swing (not per tuft, so a wide cut
 	# can't flood the world with seeds).
 	if first_cut != Vector2.INF and randf() < GRASS_SEED_DROP_CHANCE:
@@ -923,9 +931,12 @@ func place_water_at(cell: Vector2i) -> bool:
 	_note_water_cell_added(cell)
 	return true
 
-# Seeds click: plant wheat on the tilled soil under the cursor.
-func plant_crop_at_cursor() -> bool:
-	return plant_crop_at(_mouse_cell())
+# Seeds click: plant wheat on the tilled soil under the cursor. A world-space
+# override is passed by _input so a fresh touch never uses the previous tap.
+func plant_crop_at_cursor(at_world: Vector2 = Vector2.INF) -> bool:
+	var cell := _mouse_cell() if at_world == Vector2.INF \
+		else editable_layer.local_to_map(editable_layer.to_local(at_world))
+	return plant_crop_at(cell)
 
 func plant_crop_at(cell: Vector2i) -> bool:
 	if _crops.has(cell) and is_instance_valid(_crops[cell]):
@@ -943,6 +954,7 @@ func plant_crop_at(cell: Vector2i) -> bool:
 	if not _is_floor_block(cell):
 		return false
 	_spawn_crop(cell, 0.0)
+	SFX.play("sfx_farming", editable_layer.to_global(editable_layer.map_to_local(cell)), -3.0, 1.0, 1)
 	return true
 
 func _spawn_crop(cell: Vector2i, elapsed: float) -> void:
@@ -969,6 +981,7 @@ func _cut_crop_row(p: Node2D) -> void:
 		return
 	if bool(crop.call("harvest")):
 		_crops.erase(cell)
+		SFX.play("sfx_farming", crop.global_position, -2.0, 1.0, 3)
 
 
 # ── Walkable grass y-sort (dynamic, per-frame, O(25) dict lookups) ─────
@@ -1255,6 +1268,13 @@ func _deferred_foliage() -> void:
 			var di := int(idx)
 			if _dungeon_entrance_tiles.has(di):
 				_create_dungeon_waypoint(di)
+	# Persistent surface guidance to the recommended next dungeon. It lives
+	# under World, so cave/dungeon swaps hide it with the overworld, and it
+	# starts only after the scripted tutorial travel lesson.
+	var dungeon_guide: Node2D = OVERWORLD_GUIDE_SCRIPT.new() as Node2D
+	if dungeon_guide != null:
+		dungeon_guide.name = "OverworldDungeonGuide"
+		add_child(dungeon_guide)
 	_start_interaction_updater()
 	_start_despawn_timer()
 	_start_ambient_spawn_timer()
@@ -1626,6 +1646,9 @@ func _spawn_mob_at(tile: Vector2i, scene: PackedScene) -> void:
 		return
 	add_child(mob)
 	mob.global_position = world_pos
+	var p: Node2D = Global.player_node as Node2D
+	if p != null and p.global_position.distance_to(world_pos) < 520.0:
+		SFX.play("sfx_mob_spawn_despawn", world_pos, -12.0)
 	print("[Spawn] Spawned ", mob.name, " at tile=", tile, " pos=", world_pos)
 
 # ── Ambient spawn director ───────────────────────────────────────────
@@ -2228,6 +2251,12 @@ func place_block_at(cell: Vector2i, item_data: ItemData, count_mission: bool = t
 		obj.call("setup", item_data)
 	var world_pos: Vector2 = editable_layer.map_to_local(cell)
 	obj.position = world_pos
+	if count_mission:
+		var audio_pos: Vector2 = editable_layer.to_global(world_pos)
+		if item_data.is_torch:
+			SFX.play("sfx_torch", audio_pos, -3.0, 1.0, 0)
+		else:
+			SFX.play("sfx_block_place", audio_pos, -3.0)
 	# Floors render UNDER the world (fixed low z); everything else y-sorts.
 	obj.z_index  = FLOOR_Z if (item_data != null and item_data.is_floor) else int(world_pos.y / TILE_SIZE)
 	_fix_sprite_offset(obj)
@@ -2305,7 +2334,7 @@ func _on_hotbar_changed(_idx = 0) -> void:
 	_update_ghost()
 
 # ── Block placement ───────────────────────────────────────────────────
-func place_block() -> void:
+func place_block(at_world: Vector2 = Vector2.INF) -> void:
 	# A DEAD player must not place blocks: this runs from the WORLD's _input
 	# (not the player's), so the player being frozen/hidden during the respawn
 	# window doesn't stop it.
@@ -2314,17 +2343,22 @@ func place_block() -> void:
 	var item = Global.get_hotbar_item()
 	if not _is_placeable_item(item):
 		return
-	var mouse_pos := editable_layer.to_local(Global.mouse_world(self))
+	var target: Vector2 = at_world if at_world != Vector2.INF \
+		else Global.mouse_world(self)
+	var mouse_pos := editable_layer.to_local(target)
 	var cell      := editable_layer.local_to_map(mouse_pos)
 	if not _is_cell_in_place_radius(cell):
+		SFX.play_ui("sfx_placement_error", 0, -4.0)
 		return
 	if _cell_blocked_by_player(cell):
+		SFX.play_ui("sfx_placement_error", 0, -4.0)
 		return
 	# All the terrain/occupancy rules live in place_block_at() → can_place_at()
 	# so the Lua robot places under identical constraints.
 	var item_data: ItemData = item["data"] as ItemData
 	var obj: Node = place_block_at(cell, item_data)
 	if obj == null:
+		SFX.play_ui("sfx_placement_error", 0, -4.0)
 		return
 	Global.remove_item(item_data)
 	if item_data.item_name == "Torch" or item_data.item_name.to_lower().contains("torch"):
@@ -5525,14 +5559,22 @@ func build_waypoint_map_image(pixel_size: int = 256) -> ImageTexture:
 		for px in range(pixel_size):
 			var tx: int = int((float(px) + 0.5) / float(pixel_size) * width) - half_w
 			var ty: int = int((float(py) + 0.5) / float(pixel_size) * height) - half_h
-			var code := _cell_biome_type(Vector2i(tx, ty))
+			var tile := Vector2i(tx, ty)
+			var code := _cell_biome_type(tile)
 			var col: Color
 			match code:
 				0: col = Color(0.35, 0.56, 0.16, 1.0)
 				1: col = Color(0.76, 0.59, 0.31, 1.0)
 				2: col = Color(0.76, 0.82, 0.84, 1.0)
 				_: col = Color(0.10, 0.24, 0.36, 1.0)
-			if code != -1 and ((tx * 17 + ty * 31 + int(random_seed)) % 29 == 0):
+			# Player development belongs on the world overview too: overlay the
+			# exact placed-block colour after the biome sample so walls, floors,
+			# doors, machines and lights are visible on the waypoint map.
+			var placed: Variant = _placed_blocks.get(tile)
+			var placed_col := Global.placed_block_map_color(placed)
+			if placed_col.a > 0.0:
+				col = placed_col
+			elif code != -1 and ((tx * 17 + ty * 31 + int(random_seed)) % 29 == 0):
 				col = col.lightened(0.06)
 			img.set_pixel(px, py, col)
 	return ImageTexture.create_from_image(img)
@@ -6295,6 +6337,26 @@ func teleport_to_world_waypoint(waypoint_id: String) -> bool:
 	return true
 
 
+# Called by the expanded overworld map when the player taps an Automatica or
+# dungeon-portal icon. Uses the same safe-landing validation and recall effect
+# as world waypoints, so a tap never drops the player inside a solid block or a
+# dungeon entrance footprint.
+func teleport_to_map_marker(target: Node, marker_name: String = "that marker") -> bool:
+	if _waypoint_teleporting:
+		return false
+	if target == null or not is_instance_valid(target) or not (target is Node2D):
+		return false
+	var target_2d := target as Node2D
+	var cell := _tile_at_world(target_2d.global_position)
+	var dest := _safe_landing_near_tile(cell, 10)
+	if dest == Vector2.INF:
+		Global.notify("No safe landing spot near %s." % marker_name)
+		return false
+	_waypoint_teleporting = true
+	call_deferred("_run_waypoint_recall", dest)
+	return true
+
+
 func is_waypoint_teleporting() -> bool:
 	return _waypoint_teleporting
 
@@ -6433,6 +6495,16 @@ func remove_dungeon_entrance(dungeon_index: int) -> void:
 # entrance hasn't been placed. Internal debug helper.
 func get_dungeon_entrance_target(lang: String) -> Vector2:
 	var idx: int = Global.current_dungeon_index(lang)
+	if idx <= 0 or not _dungeon_entrance_tiles.has(idx) or Global.is_dungeon_cleared(idx):
+		return Vector2.INF
+	var tile: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i
+	return ground_layer.to_global(ground_layer.map_to_local(tile))
+
+## Overworld guide target: the dungeon Global recommends next (alternating the
+## Lua/Python main tracks from the last clear). One live entrance per language
+## still exists; this just chooses which one the trail/marker points at.
+func get_guided_dungeon_target() -> Vector2:
+	var idx: int = Global.next_guided_dungeon_index()
 	if idx <= 0 or not _dungeon_entrance_tiles.has(idx) or Global.is_dungeon_cleared(idx):
 		return Vector2.INF
 	var tile: Vector2i = _dungeon_entrance_tiles[idx] as Vector2i

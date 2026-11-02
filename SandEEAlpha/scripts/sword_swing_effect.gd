@@ -205,6 +205,9 @@ func _poll_hitbox() -> void:
 		if collider is Node and (collider as Node).has_method("take_hit"):
 			if not _hit_mobs.has(collider):
 				_hit_mobs.append(collider)
+				var hit_at: Vector2 = (collider as Node2D).global_position \
+					if collider is Node2D else global_position
+				SFX.play("sfx_tool_impact", hit_at, -3.0)
 				(collider as Node).call("take_hit", _damage, global_position)
 		elif collider is Area2D:
 			_try_parry(collider as Area2D)

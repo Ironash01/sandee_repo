@@ -116,6 +116,7 @@ func _check_initial_step() -> void:
 
 
 func _use() -> void:
+	SFX.play("sfx_dungeon_waypoint", global_position, -3.0, 1.0, 0)
 	if _using or _consumed:
 		return
 	var world := _world

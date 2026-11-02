@@ -1,7 +1,7 @@
-[gd_resource type="Resource" script_class="ItemData" format=3]
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://uxjhjfuov21e"]
 
-[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
-[ext_resource type="Texture2D" path="res://sprites/smiling_fishes.png" id="2_tex"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" uid="uid://d246d76a5od03" path="res://sprites/smiling_fishes.png" id="2_tex"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_fish"]
 atlas = ExtResource("2_tex")
@@ -9,9 +9,9 @@ region = Rect2(96, 32, 32, 32)
 
 [resource]
 script = ExtResource("1_item")
-item_name = "Cooked Pim"
+item_name = "Cooked Anglefish"
+description = "A cooked Anglefish. Still weirdly triangular. Eat it to restore 50 health."
 scripting_id = "cooked_pimpim"
-description = "A cooked violet fish. Still smiling, somehow. Eat it to restore 50 health."
 item_type = "consumable"
-icon = SubResource("AtlasTexture_fish")
 heal_amount = 50.0
+icon = SubResource("AtlasTexture_fish")

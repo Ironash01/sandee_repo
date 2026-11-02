@@ -258,7 +258,7 @@ func _build_settings_gameplay() -> void:
 	var pi_btn := CheckButton.new()
 	pi_btn.button_pressed = Global.pause_on_inventory
 	pi_btn.tooltip_text = pi_lbl.tooltip_text
-	pi_btn.toggled.connect(func(on: bool) -> void: Global.pause_on_inventory = on)
+	pi_btn.toggled.connect(func(on: bool) -> void: Global.set_pause_on_inventory(on))
 	pi_row.add_child(pi_btn)
 
 	var qb_row := HBoxContainer.new()
@@ -273,9 +273,7 @@ func _build_settings_gameplay() -> void:
 	var qb_btn := CheckButton.new()
 	qb_btn.button_pressed = Global.quest_opaque_bg
 	qb_btn.tooltip_text = qb_lbl.tooltip_text
-	qb_btn.toggled.connect(func(on: bool) -> void:
-		Global.quest_opaque_bg = on
-		Global.quest_bg_changed.emit(on))
+	qb_btn.toggled.connect(func(on: bool) -> void: Global.set_quest_opaque_bg(on))
 	qb_row.add_child(qb_btn)
 
 func _build_settings_controls() -> void:
@@ -309,19 +307,20 @@ func _build_settings_controls() -> void:
 		auto_lbl.text = "Automatic Sprint"
 		auto_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		auto_lbl.add_theme_font_size_override("font_size", Global.ui_type_size(Global.UI_TYPE_BODY))
-		auto_lbl.tooltip_text = "Sprint automatically while point-and-click movement is driving the player. Stamina drains normally and exhaustion still stops sprinting. WASD/joystick sprinting still uses Shift."
+		auto_lbl.tooltip_text = "Sprint automatically while point-and-click movement is driving the player. Stamina drains normally and exhaustion still stops sprinting. Keyboard/WASD still uses Shift; the mobile joystick uses the SPRINT toggle."
 		auto_row.custom_minimum_size.y = maxi(44, int(38 * s))
 		auto_row.add_child(auto_lbl)
 		var auto_btn := CheckButton.new()
 		auto_btn.button_pressed = Global.point_and_click_auto_sprint
-		auto_btn.disabled = not Global.point_and_click
+		# Keep this configurable even while PnC is off. It simply has no effect
+		# until click/tap movement is driving the player; disabling the row made
+		# the setting look broken and prevented pre-configuring it.
 		auto_btn.tooltip_text = auto_lbl.tooltip_text
 		auto_btn.toggled.connect(func(on: bool) -> void:
 			Global.set_point_and_click_auto_sprint(on))
 		auto_row.add_child(auto_btn)
 		pnc_btn.toggled.connect(func(on: bool) -> void:
-			Global.set_point_and_click(on)
-			auto_btn.disabled = not on)
+			Global.set_point_and_click(on))
 
 		var auto_hint := Label.new()
 		auto_hint.text = "Automatic sprint applies to click/tap movement only; stamina limits still apply."
@@ -482,22 +481,13 @@ func _add_slider_row(parent: Node, label_text: String, key: String,
 func _on_setting_changed(key: String, value: float) -> void:
 	match key:
 		"master_volume":
-			Global.master_volume = value
-			AudioServer.set_bus_volume_db(AudioServer.get_bus_index("Master"),
-				linear_to_db(maxf(value, 0.0001)))
+			Global.set_master_volume(value)
 		"music_volume":
-			Global.music_volume = value
-			var idx := AudioServer.get_bus_index("Music")
-			if idx != -1:
-				AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(value, 0.0001)))
+			Global.set_music_volume(value)
 		"sfx_volume":
-			Global.sfx_volume = value
-			var idx := AudioServer.get_bus_index("SFX")
-			if idx != -1:
-				AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(value, 0.0001)))
+			Global.set_sfx_volume(value)
 		"camera_zoom":
-			Global.camera_zoom = value
-			Global.camera_zoom_changed.emit(value)
+			Global.set_camera_zoom(value)
 	if key in _val_labels:
 		(_val_labels[key] as Label).text = _fmt(value, key)
 

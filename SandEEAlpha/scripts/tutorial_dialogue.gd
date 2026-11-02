@@ -246,6 +246,7 @@ func _on_ui_scale_changed(_s: float) -> void:
 	_layout()
 
 func show_conversation(lines: Array, done: Callable = Callable()) -> bool:
+	SFX.play_ui("sfx_tutorial", 0)
 	if _active or lines.is_empty():
 		return false
 	# Never stomp another modal (inventory, crafting, editor, pause menu).
@@ -386,10 +387,12 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _on_skip_button_pressed() -> void:
+	SFX.play_ui("sfx_tutorial", 3, -3.0)
 	if _active:
 		skip_requested.emit()
 
 func _finish() -> void:
+	SFX.play_ui("sfx_tutorial", 2)
 	if not _active:
 		return
 	var cb := _done_callback

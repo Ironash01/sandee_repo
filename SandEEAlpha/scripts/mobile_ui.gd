@@ -5,7 +5,7 @@ extends CanvasLayer
 # any gameplay logic:
 #   • a fixed-base touch joystick (lower-left) that feeds Global.mobile_move,
 #     which player.gd blends with the keyboard vector;
-#   • action buttons (lower-right): BUILD, SPRINT (hold), INTERACT (context)
+#   • action buttons (lower-right): BUILD, SPRINT (toggle), INTERACT (context)
 #     and DONE (keyboard dismiss)
 #   • tap-anywhere world interaction: unhandled touches are converted to the
 #     same mouse events the desktop code already consumes (position mapped
@@ -39,6 +39,14 @@ var _interact_scan: float = 0.0
 
 var _text_focus: bool = false
 
+# Opening-tutorial reveal flags. Movement starts with only the joystick/sprint;
+# BUILD appears when the tools/placement lesson needs it, INTERACT when the
+# dungeon altars need it. These do not replace the existing PnC/auto-sprint
+# rules — they only add a scoped visibility gate on top.
+var _tutorial_build_visible: bool = true
+var _tutorial_interact_visible: bool = true
+var _tutorial_sprint_visible: bool = true
+
 func _ready() -> void:
 	layer        = 9          # below the hotbar (10), above panels (2+)
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -54,6 +62,7 @@ func _ready() -> void:
 	Global.ui_scale_changed.connect(_on_ui_scale)
 	Global.point_and_click_changed.connect(_on_point_and_click_changed)
 	Global.point_and_click_auto_sprint_changed.connect(_on_auto_sprint_changed)
+	Global.mobile_sprint_changed.connect(_on_mobile_sprint_changed)
 	Global.gameplay_input_cancelled.connect(_reset_touch_state)
 
 func _exit_tree() -> void:
@@ -61,6 +70,7 @@ func _exit_tree() -> void:
 	Global.clear_mobile_hud_controls()
 	Global.mobile_move   = Vector2.ZERO
 	Global.mobile_shift  = false
+	Global.set_mobile_sprint(false)
 	Global.clear_touch_mouse()
 
 # Android can suspend us with a finger down. Releases are then never delivered,
@@ -102,8 +112,13 @@ func _build_controls() -> void:
 	_root.add_child(_btn_build)
 
 	_btn_shift = _mk_button("SPRINT", m["btn_size"], s)
-	_btn_shift.button_down.connect(func() -> void: Global.mobile_shift = true)
-	_btn_shift.button_up.connect(func() -> void: Global.mobile_shift = false)
+	# Latched sprint: tap once to sprint, tap again to walk. Do NOT feed
+	# mobile_shift — that would make every click a shift-click while active.
+	_btn_shift.toggle_mode = true
+	_btn_shift.button_pressed = Global.mobile_sprint
+	_btn_shift.tooltip_text = "Sprint is ON — tap to walk." if Global.mobile_sprint \
+		else "Tap to toggle sprint on or off."
+	_btn_shift.toggled.connect(_on_sprint_toggled)
 	_root.add_child(_btn_shift)
 
 	_btn_interact = _mk_button("INTERACT", m["interact_size"], s)
@@ -174,8 +189,12 @@ func _layout_action_controls() -> void:
 		interact_pos.y - btn_size - gap)
 	_place_circle(_btn_interact, interact_pos, interact_size,
 		Color(0.27, 0.58, 0.52, 0.96), Color(0.50, 0.95, 0.82, 1.0))
-	_place_circle(_btn_shift, sprint_pos, btn_size,
-		Color(0.22, 0.42, 0.66, 0.96), Color(0.55, 0.80, 1.0, 1.0))
+	# Sprint reads as a latched switch: green while ON, blue while OFF.
+	var sprint_fill := Color(0.18, 0.55, 0.30, 0.96) if Global.mobile_sprint \
+		else Color(0.22, 0.42, 0.66, 0.96)
+	var sprint_border := Color(0.55, 1.0, 0.60, 1.0) if Global.mobile_sprint \
+		else Color(0.55, 0.80, 1.0, 1.0)
+	_place_circle(_btn_shift, sprint_pos, btn_size, sprint_fill, sprint_border)
 
 	if Global.point_and_click:
 		# PnC hides the stick; BUILD occupies the same lower-left slot.
@@ -219,11 +238,19 @@ func _place_circle(btn: Button, pos: Vector2, diameter: float,
 	sb.content_margin_bottom = 0
 	var pressed := sb.duplicate() as StyleBoxFlat
 	pressed.bg_color = fill.lightened(0.10)
+	# INTERACT is disabled most of the time (no nearby target). Without an
+	# explicit disabled stylebox, Godot falls back to the rectangular default
+	# theme box and the button reads as a rounded rectangle instead of a circle.
+	var disabled := sb.duplicate() as StyleBoxFlat
+	disabled.bg_color = fill.darkened(0.28)
+	disabled.border_color = border.darkened(0.25)
 	btn.add_theme_stylebox_override("normal", sb)
 	btn.add_theme_stylebox_override("hover", sb)
 	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("disabled", disabled)
 	btn.add_theme_color_override("font_color", Color(0.88, 0.96, 1.0, 1.0))
 	btn.add_theme_color_override("font_pressed_color", Color(0.85, 1.0, 0.85, 1.0))
+	btn.add_theme_color_override("font_disabled_color", Color(0.62, 0.70, 0.82, 0.85))
 
 func _hotbar_bounds(s: float, vp: Vector2) -> Rect2:
 	var slot_px: float = maxf(36.0 * s, 44.0)
@@ -269,6 +296,18 @@ func _on_stick_released() -> void:
 
 func _on_build_pressed() -> void:
 	Global.toggle_build_mode()
+
+func _on_sprint_toggled(on: bool) -> void:
+	Global.set_mobile_sprint(on)
+
+func _on_mobile_sprint_changed(on: bool) -> void:
+	if _btn_shift == null or not is_instance_valid(_btn_shift):
+		return
+	if _btn_shift.button_pressed != on:
+		_btn_shift.set_pressed_no_signal(on)
+	_btn_shift.tooltip_text = "Sprint is ON — tap to walk." if on \
+		else "Tap to toggle sprint on or off."
+	_layout_action_controls()
 
 func _on_block_mode_changed(active: bool) -> void:
 	if _btn_build == null:
@@ -338,6 +377,7 @@ func _process(delta: float) -> void:
 		if focused:
 			Global.mobile_move  = Vector2.ZERO
 			Global.mobile_shift = false
+			Global.set_mobile_sprint(false)
 			if _stick != null and _stick.has_method("reset_stick"):
 				_stick.call("reset_stick")
 	if _btn_done != null and _btn_done.visible and not focused:
@@ -354,26 +394,47 @@ func _set_controls_enabled(on: bool) -> void:
 		# Joystick mode keeps it visible, and the saved preference is untouched.
 		_stick.visible = on and not Global.point_and_click
 	if _btn_build != null:
-		_btn_build.visible = on
+		_btn_build.visible = on and _tutorial_build_visible
 	if _btn_shift != null:
-		# Auto-sprint replaces the hold button entirely.
-		_btn_shift.visible = on and not Global.point_and_click_auto_sprint
+		# Auto-sprint replaces the manual toggle only while PnC is the active
+		# movement scheme. With PnC off it has no effect on joystick movement,
+		# so keep SPRINT available instead of leaving mobile with no sprint.
+		_btn_shift.visible = on and _tutorial_sprint_visible \
+			and not (Global.point_and_click and Global.point_and_click_auto_sprint)
 	if _btn_interact != null:
-		_btn_interact.visible = on
-		if not on:
+		_btn_interact.visible = on and _tutorial_interact_visible
+		if not on or not _tutorial_interact_visible:
 			_interact_target = null
 	if not on:
 		_reset_touch_state()
 	_layout_action_controls()
+
+
+## Opening-tutorial reveal only. The normal PnC/auto-sprint rules still decide
+## whether the joystick and sprint controls are shown.
+func set_tutorial_ui_reveal(build: bool, interact: bool, sprint: bool = true) -> void:
+	_tutorial_build_visible = build
+	_tutorial_interact_visible = interact
+	_tutorial_sprint_visible = sprint
+	_set_controls_enabled(not _text_focus)
+
+
+func tutorial_ui_reveal() -> Dictionary:
+	return {
+		"build": _tutorial_build_visible,
+		"interact": _tutorial_interact_visible,
+		"sprint": _tutorial_sprint_visible,
+	}
 
 # Hidden joystick must not leave stale movement behind; restore on disable.
 func _on_point_and_click_changed(_enabled: bool) -> void:
 	_reset_touch_state()
 	_set_controls_enabled(not _text_focus)
 
-func _on_auto_sprint_changed(_enabled: bool) -> void:
-	if _enabled:
+func _on_auto_sprint_changed(enabled: bool) -> void:
+	if enabled:
 		Global.mobile_shift = false
+		Global.set_mobile_sprint(false)
 	_set_controls_enabled(not _text_focus)
 
 # Godot emulates only the FIRST touch as a mouse. On Android that first touch
@@ -387,9 +448,17 @@ var _primary_pos: Vector2 = Vector2.ZERO
 # modal opening mid-gesture can release every synthetic button it owns.
 var _bridged_touches: Dictionary = {}
 var _bridged_ui: Dictionary = {}
+# A secondary finger parked on a mobile action button. Buttons cannot rely on
+# the synthetic mouse path here: the joystick's held primary touch owns the
+# viewport's mouse focus, so a bridged press would be captured by the joystick
+# instead of BUILD/INTERACT/SPRINT. Track the finger and activate on release.
+var _action_touch_id: int = -1
+var _action_touch_btn: Button = null
 
 func _reset_touch_state() -> void:
 	_release_bridged_touches()
+	_action_touch_id = -1
+	_action_touch_btn = null
 	# The primary touch is normally released by Godot's emulated mouse, but a
 	# release swallowed by a freshly opened modal would leave the virtual left
 	# button latched. Send an explicit release at its last position.
@@ -427,6 +496,24 @@ func _is_ui_touch(screen_pos: Vector2) -> bool:
 			return true
 	return Global.hotbar_slot_at(screen_pos) >= 0 or _over_stick(screen_pos)
 
+func _mobile_action_at(screen_pos: Vector2) -> Button:
+	for control in [_btn_build, _btn_shift, _btn_interact, _btn_done]:
+		var btn := control as Button
+		if btn != null and is_instance_valid(btn) and btn.is_visible_in_tree() \
+				and btn.get_global_rect().has_point(screen_pos):
+			return btn
+	return null
+
+func _activate_mobile_action(btn: Button) -> void:
+	if btn == null or not is_instance_valid(btn) or not btn.visible \
+			or btn.disabled:
+		return
+	if btn == _btn_shift and btn.toggle_mode:
+		# The setter emits toggled(), which keeps Global.mobile_sprint in sync.
+		btn.button_pressed = not btn.button_pressed
+	else:
+		btn.emit_signal("pressed")
+
 func _input(event: InputEvent) -> void:
 	# Never bridge secondary touches into a paused/modal UI world. Primary touch
 	# still reaches the GUI through Godot's normal touch->mouse emulation, so
@@ -453,6 +540,17 @@ func _input(event: InputEvent) -> void:
 			if _over_stick(t.position):
 				Global.guard_mobile_ui_touch()
 				return
+			# Action buttons are handled directly, exactly like the hotbar.
+			# The held joystick touch owns the GUI mouse focus, so a synthetic
+			# mouse press would never reach BUILD/SPRINT/INTERACT.
+			var action_btn := _mobile_action_at(t.position)
+			if action_btn != null:
+				if _action_touch_id == -1:
+					_action_touch_id = t.index
+					_action_touch_btn = action_btn
+				Global.guard_mobile_ui_touch()
+				get_viewport().set_input_as_handled()
+				return
 			# Hotbar taps are resolved directly. A synthetic mouse press can be
 			# captured by the joystick's active mouse focus and reset the stick,
 			# which made switching items while walking unreliable. Directly
@@ -474,6 +572,12 @@ func _input(event: InputEvent) -> void:
 			var over_ui := _is_ui_touch(t.position)
 			if over_ui:
 				Global.guard_mobile_ui_touch()
+				# The joystick's held primary touch owns the emulated mouse
+				# focus. Clear that focus with a harmless release so other UI
+				# controls (pause, dialogs, map buttons) receive the secondary
+				# finger's synthetic press instead of the joystick capturing it.
+				if _over_stick(_primary_pos):
+					_emit_mouse_button(_primary_pos, false)
 			else:
 				_set_world_pos(t.position)
 			_bridged_touches[t.index] = t.position
@@ -484,6 +588,16 @@ func _input(event: InputEvent) -> void:
 			if t.index == _primary_touch:
 				_primary_touch = -1
 				_primary_world = false
+				return
+			if t.index == _action_touch_id:
+				var action_btn := _action_touch_btn
+				_action_touch_id = -1
+				_action_touch_btn = null
+				if action_btn != null and is_instance_valid(action_btn) \
+						and action_btn.visible \
+						and action_btn.get_global_rect().has_point(t.position):
+					_activate_mobile_action(action_btn)
+				get_viewport().set_input_as_handled()
 				return
 			if _bridged_touches.has(t.index):
 				var ui_owned := bool(_bridged_ui.get(t.index, false))
@@ -499,6 +613,9 @@ func _input(event: InputEvent) -> void:
 			_primary_pos = d.position
 			if _primary_world and not Global.is_point_over_ui(d.position):
 				_set_world_pos(d.position)
+			return
+		if d.index == _action_touch_id:
+			get_viewport().set_input_as_handled()
 			return
 		if _bridged_touches.has(d.index):
 			_bridged_touches[d.index] = d.position

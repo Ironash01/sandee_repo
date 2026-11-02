@@ -88,6 +88,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 			chest.call("notify_contents_changed")
 		if ui.has_method("refresh_chest_slots"):
 			ui.call("refresh_chest_slots")
+		SFX.play_ui("sfx_item_move", 1, -3.0)
 		return
 
 	if source == "hotbar":
@@ -100,6 +101,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 			return
 		Global.Inventory[from_idx] = null
 		Global.Inventory_updated.emit()
+	SFX.play_ui("sfx_item_move", 1, -3.0)
 
 
 func _open_inventory_ui() -> Node:

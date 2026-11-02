@@ -5,11 +5,12 @@ class_name QuizAltar
 # embedded in the mission's `questions` (Array[DungeonQuestion], MCQ or COMPILER)
 # one at a time. Answering ALL of them correctly clears the dungeon: the reward
 # is granted, the mission/star state is recorded, and a results screen shows the
-# player's achievements and 0-3 blue stars. HINT reveals the current question's
-# hint (the button becomes NEXT to dismiss it); each hint or wrong code run
-# removes one star, except that hints are free in the first dungeon. Done
-# teleports back to the overworld, so quiz dungeons no longer use a physical
-# exit tile.
+# player's achievements and 0-3 blue stars. HINT shows the current question's
+# answer as ghost text (or highlights the MCQ choice); the player still types or
+# selects it. Each hint or wrong code run removes one star, except that hints are
+# free in the first dungeon. Done opens a dungeon-specific “What You've Learned”
+# summary; its Continue button then returns to the overworld, so quiz dungeons no
+# longer use a physical exit tile.
 #
 # Built entirely in code (no .tscn) like CavePortal — the dungeon generator
 # instantiates it with .new().
@@ -17,6 +18,7 @@ class_name QuizAltar
 signal cleared(dungeon_index: int)
 
 const TILE_SIZE := 32
+const CODE_SAFETY: GDScript = preload("res://scripts/code_safety.gd")
 
 const C_PANEL      := Color(0.08, 0.10, 0.20, 0.97)
 const C_BORDER     := Color(0.70, 0.40, 0.80, 1.00)
@@ -27,6 +29,38 @@ const C_OVERLAY    := Color(0.00, 0.00, 0.00, 0.60)
 const C_ERROR      := Color(1.00, 0.55, 0.55, 1.00)
 const C_OK         := Color(0.45, 0.95, 0.55, 1.00)
 const SPRITE_TEXTURE: Texture2D = preload("res://sprites/dungeon/SandEE_alpha_dungeontilesets.png")
+# The quiz orb altar art from the dungeon atlas. Keep this shared with the
+# minimap so the world object and its map icon never drift apart.
+const SPRITE_REGION: Rect2 = Rect2(352, 96, 32, 32)
+const LOCKED_GLOW_COLOR: Color = Color(0.72, 0.34, 0.20)
+
+# A gold padlock floats above a main-dungeon Quiz Altar until the dungeon's
+# Knowledge Altar entry has been learned. Purely visual; the click guard lives
+# in _input() so direct internal opens (tests/editor tooling) stay available.
+class LockBadge extends Node2D:
+	var _pulse: float = 0.0
+
+	func _ready() -> void:
+		z_as_relative = false
+		z_index = 3950
+		set_process(true)
+
+	func _process(delta: float) -> void:
+		_pulse += delta
+		queue_redraw()
+
+	func _draw() -> void:
+		var s: float = Global.ui_scale
+		var wave: float = 0.5 + 0.5 * sin(_pulse * 3.2)
+		var gold := Color(1.0, 0.82, 0.28, 0.88 + 0.10 * wave)
+		var body := Rect2(Vector2(-10.0, -1.0) * s, Vector2(20.0, 16.0) * s)
+		# Shackle + body + keyhole. The upper half-arc reads as a padlock even
+		# at the small world-space size used above a 32px altar sprite.
+		draw_arc(Vector2(0.0, -1.0 * s), 7.0 * s, PI, TAU, 18, gold, 3.0 * s)
+		draw_rect(body, Color(0.10, 0.08, 0.02, 0.92), true)
+		draw_rect(body, gold, false, 2.0 * s)
+		draw_circle(Vector2(0.0, 6.0 * s), 2.4 * s, gold)
+		draw_rect(Rect2(Vector2(-1.0, 6.0) * s, Vector2(2.0, 4.0) * s), gold, true)
 
 # ── Altar glow ─────────────────────────────────────────────────────
 # Small pulsing PointLight2D hugging the altar body (blooms via the dungeon's
@@ -46,6 +80,9 @@ var _index:         int = 0
 var _cleared:       bool = false
 var _glow:          PointLight2D = null
 var _glow_time:     float = 0.0
+var _sprite:        Sprite2D = null
+var _lock_badge:    LockBadge = null
+var _locked:        bool = false
 
 var _panel:        Control = null
 var _panel_scroll: ScrollContainer = null
@@ -61,6 +98,8 @@ var _hint_btn:   Button = null
 var _run_btn:    Button = null
 var _hint_panel: PanelContainer = null
 var _hint_label: Label = null
+# Default editor prompt restored when a ghost-answer hint is dismissed.
+var _editor_placeholder: String = ""
 var _answer_buttons: Array[Button] = []
 var _hints_used: int = 0
 var _hint_open:  bool = false
@@ -73,6 +112,9 @@ var _reward_root: Control = null
 var _reward_visible: bool = false
 var _reward_stars: int = 3
 var _done_btn: Button = null
+var _summary_root: Control = null
+var _summary_visible: bool = false
+var _continue_btn: Button = null
 var _exiting: bool = false
 
 # ── Compiler (COMPILER) state ─────────────────────────────────────
@@ -105,13 +147,21 @@ func _ready() -> void:
 	var tex := AtlasTexture.new()
 	tex.atlas = SPRITE_TEXTURE
 	# y=96 is the altar-art row in the dungeon atlas; y=128 is the floor row.
-	tex.region = Rect2(352, 96, 32, 32)
+	tex.region = SPRITE_REGION
 	var sprite := Sprite2D.new()
 	sprite.texture = tex
 	add_child(sprite)
+	_sprite = sprite
+	_lock_badge = LockBadge.new()
+	_lock_badge.position = Vector2(0.0, -44.0 * Global.ui_scale)
+	_lock_badge.visible = false
+	add_child(_lock_badge)
 
 	add_child(_build_solid_body())
 	_add_glow()
+	if not Global.knowledge_updated.is_connected(_on_knowledge_updated):
+		Global.knowledge_updated.connect(_on_knowledge_updated)
+	_refresh_lock_state()
 
 	var interact := Area2D.new()
 	var shape := CollisionShape2D.new()
@@ -131,10 +181,13 @@ func _ready() -> void:
 # The quiz panel is built at the current UI scale and cached — rebuild it in
 # place (keeping the current question) so a scale change applies live.
 func _on_ui_scale(_s: float) -> void:
+	if _lock_badge != null and is_instance_valid(_lock_badge):
+		_lock_badge.position = Vector2(0.0, -44.0 * Global.ui_scale)
 	if _panel == null or _exiting:
 		return
 	var was_visible: bool = _panel.visible
 	var was_reward: bool = _reward_visible
+	var was_summary: bool = _summary_visible
 	var saved_stars: int = _reward_stars
 	var saved_hints: int = _hints_used
 	var saved_penalties: int = _penalties
@@ -152,6 +205,7 @@ func _on_ui_scale(_s: float) -> void:
 	_run_btn = null; _compiler_grid = null
 	_hint_panel = null; _hint_label = null
 	_reward_root = null
+	_summary_root = null
 	_code_entry = null; _compiler_output = null; _error_label = null
 	if was_visible:
 		_panel = _build_panel()
@@ -161,11 +215,16 @@ func _on_ui_scale(_s: float) -> void:
 		_hints_used = saved_hints
 		_penalties = saved_penalties
 		_answered = saved_answered
-		if was_reward:
+		if was_summary:
+			_reward_visible = false
+			_summary_visible = false
+			_show_learning_summary()
+		elif was_reward:
 			_reward_stars = saved_stars
 			_show_reward_screen(saved_stars)
 		else:
 			_reward_visible = false
+			_summary_visible = false
 			_show_question()
 			if _code_entry != null and is_instance_valid(_code_entry):
 				_code_entry.text = saved_code
@@ -182,7 +241,9 @@ func _process(delta: float) -> void:
 	_update_compiler_columns()
 	if _glow != null:
 		_glow_time += delta
-		_glow.energy = GLOW_ENERGY_BASE + sin(_glow_time * GLOW_BLINK_SPEED) * GLOW_ENERGY_AMP
+		var level: float = GLOW_ENERGY_BASE + sin(_glow_time * GLOW_BLINK_SPEED) * GLOW_ENERGY_AMP
+		_glow.energy = level * (0.35 if _locked else 1.0)
+		_glow.color = LOCKED_GLOW_COLOR if _locked else GLOW_COLOR
 
 # Solid body so the player can't walk through the altar (it previously only had
 # a pass-through proximity Area2D). Layer 1 matches the player's collision mask.
@@ -215,6 +276,32 @@ func setup(m: DungeonMissionData) -> void:
 	mission = m
 	if mission != null:
 		_questions = mission.questions.duplicate()
+	if is_inside_tree():
+		_refresh_lock_state()
+
+## Main dungeons gate their Quiz Altar on the linked Knowledge Altar entry.
+## Extra dungeons have no Knowledge Altar, and the boss has no quiz content.
+func is_locked() -> bool:
+	if mission == null or mission.is_extra() or mission.is_boss():
+		return false
+	var entry := mission.entry()
+	return entry != null and not Global.has_learned_entry(entry.id())
+
+func _refresh_lock_state() -> void:
+	_locked = is_locked()
+	if _lock_badge != null and is_instance_valid(_lock_badge):
+		_lock_badge.visible = _locked
+		_lock_badge.position = Vector2(0.0, -44.0 * Global.ui_scale)
+	if _sprite != null and is_instance_valid(_sprite):
+		_sprite.modulate = Color(0.64, 0.57, 0.72, 1.0) if _locked \
+			else Color.WHITE
+
+func _on_knowledge_updated() -> void:
+	_refresh_lock_state()
+
+func _show_lock_feedback() -> void:
+	Global.notify("[color=#ffd77a]The Quiz Altar is sealed. Read the Knowledge Altar in the first room first.[/color]")
+	SFX.play_ui("sfx_quiz", 2, -2.0)
 
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("Player"):
@@ -223,7 +310,7 @@ func _on_body_entered(body: Node) -> void:
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("Player"):
 		_player_nearby = false
-		if _reward_visible:
+		if _reward_visible or _summary_visible:
 			return
 		if _panel != null and _panel.visible:
 			_panel.visible = false
@@ -231,7 +318,7 @@ func _on_body_exited(body: Node) -> void:
 
 func _input(event: InputEvent) -> void:
 	if _panel != null and _panel.visible:
-		if _reward_visible:
+		if _reward_visible or _summary_visible:
 			if event.is_action_pressed("escape"):
 				get_viewport().set_input_as_handled()
 			return
@@ -245,7 +332,16 @@ func _input(event: InputEvent) -> void:
 	if _cleared or not _player_nearby or Global.block_mode or Global.any_ui_open():
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# Match the Knowledge Altar: only the altar under the cursor opens, and
+		# the opening click is consumed before it can hit a newly built panel.
+		var at: Vector2 = Global.mouse_world(self)
+		if event is InputEventMouse:
+			at = get_viewport().get_canvas_transform().affine_inverse() \
+				* (event as InputEventMouse).position
+		if global_position.distance_to(at) > 40.0:
+			return
 		_start_quiz()
+		get_viewport().set_input_as_handled()
 
 ## ScrollContainer does not consume finger drags on Android. _input runs before
 ## GUI, so scroll the question body here while leaving taps/buttons untouched.
@@ -284,7 +380,11 @@ func _touch_over_button(pos: Vector2) -> bool:
 			return true
 	return false
 
-func _start_quiz() -> void:
+func _start_quiz(bypass_lock: bool = false) -> void:
+	if not bypass_lock and is_locked():
+		_show_lock_feedback()
+		return
+	SFX.play_ui("sfx_quiz", 0)
 	if mission != null and Global.is_dungeon_cleared(mission.dungeon_index):
 		return
 	if _panel == null:
@@ -292,8 +392,13 @@ func _start_quiz() -> void:
 	if _reward_root != null:
 		_reward_root.queue_free()
 		_reward_root = null
+	if _summary_root != null and is_instance_valid(_summary_root):
+		_summary_root.queue_free()
+	_summary_root = null
 	_reward_visible = false
+	_summary_visible = false
 	_done_btn = null
+	_continue_btn = null
 	_index = 0
 	_hints_used = 0
 	_penalties = 0
@@ -453,16 +558,14 @@ func _hint_text_for(q: DungeonQuestion) -> String:
 	if q == null:
 		return ""
 	if q.is_compiler():
-		var base := q.hint.strip_edges()
-		if base.is_empty():
-			base = "Expected output: %s" % q.answer_output
-		return base + "\nThe correct code is filled in. Press RUN to check it."
+		return "The answer is shown as faded ghost text in the code box.\nType it yourself, then press RUN."
 	# MCQ: the hint highlights the correct button, so keep the text short.
 	return "The correct answer is highlighted. Tap it when you are ready."
 
 
-## HINT prepares the current question's answer without submitting it:
-## * COMPILER: fills the editor with the expected print() program.
+## HINT previews the current question's answer without submitting it:
+## * COMPILER: shows the expected print() program as ghost/placeholder text;
+##   the editor content is never filled, so the player must type it.
 ## * MCQ: highlights the correct answer button.
 ## The player still presses RUN / the answer button manually.
 func _on_hint_button_pressed() -> void:
@@ -480,19 +583,22 @@ func _on_hint_button_pressed() -> void:
 
 func _reveal_hint() -> void:
 	var q: DungeonQuestion = _questions[_index]
+	SFX.play_ui("sfx_quiz", 2, -4.0)
 	_hints_used += 1
 	if mission != null:
 		_penalties += Global.record_quiz_hint(mission.dungeon_index)
 	_hint_open = true
 	_hint_run_failed = false
 	if q.is_compiler():
-		# Prepare the answer in the editor but do NOT run it. The player must
-		# still press RUN, so the hint never bypasses execution or grading.
+		# Only the placeholder shows the answer. The editor text stays empty (or
+		# keeps whatever the player already typed), so HINT can never submit or
+		# pre-fill an answer for them.
 		if _code_entry != null and is_instance_valid(_code_entry):
-			var answer: String = _hint_code_for(q)
-			_code_entry.text = answer
-			_code_entry.set_caret_line(0)
-			_code_entry.set_caret_column(answer.length())
+			_code_entry.placeholder_text = _hint_code_for(q)
+			# Make the ghost answer visible without stealing focus/opening the
+			# mobile keyboard; the player taps the editor when ready to type.
+			if _content_scroll != null and is_instance_valid(_content_scroll):
+				_content_scroll.call_deferred("ensure_control_visible", _code_entry)
 		if _error_label != null:
 			_error_label.text = ""
 	else:
@@ -516,7 +622,9 @@ func _hide_hint() -> void:
 	if _hint_btn != null:
 		_hint_btn.text = "HINT"
 		_hint_btn.disabled = false
-	# Compiler code stays in the editor so the player can run it manually.
+	# Restore the normal prompt; the player's typed code is untouched.
+	if _code_entry != null and is_instance_valid(_code_entry):
+		_code_entry.placeholder_text = _editor_placeholder
 	# MCQ highlighting is dismissed with the hint panel.
 	_clear_answer_highlight()
 
@@ -577,7 +685,10 @@ func _build_compiler_controls(q: DungeonQuestion) -> void:
 	entry.set_script(CODE_EDIT_SCRIPT)
 	entry.custom_minimum_size = Vector2(int(320 * s), int(150 * s))
 	entry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	entry.placeholder_text = "-- write your %s code here\nprint(\"...\")" % lang
+	_editor_placeholder = "-- write your %s code here\nprint(\"...\")" % lang
+	entry.placeholder_text = _editor_placeholder
+	entry.add_theme_color_override("font_placeholder_color",
+		Color(0.58, 0.70, 0.88, 0.58))
 	entry.text = q.starter_code
 	entry.add_theme_font_override("font", CODE_FONT)
 	entry.add_theme_font_size_override("font_size", Global.ui_font_size(14))
@@ -726,6 +837,15 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	if code.is_empty():
 		_set_status("✘ Write some code first.", C_ERROR)
 		return
+	var unsafe := ""
+	if q.language == "python":
+		unsafe = CODE_SAFETY.python_issue(code)
+	elif q.language == "lua":
+		unsafe = CODE_SAFETY.lua_issue(code)
+	if not unsafe.is_empty():
+		CrashLogger.code(q.language, "QUIZ_BLOCKED", unsafe)
+		_set_status("✗ " + unsafe, C_ERROR)
+		return
 	CrashLogger.code(q.language, "QUIZ_RUN", "question=%s chars=%d\n%s" % [
 		(q.question.left(80) if q != null else "?"), code.length(), code])
 	_set_status("", C_MUTED)   # a fresh run clears the previous error line
@@ -749,7 +869,19 @@ func _run_compiler(q: DungeonQuestion, code: String) -> void:
 	_set_run_busy(true)
 	# LuaState is the game's Lua compiler (the GDExtension the Lua robot uses).
 	if _lua_state == null:
-		_lua_state = LuaState.new()
+		if not ClassDB.class_exists("LuaState"):
+			_running = false
+			_accept_results = false
+			_set_run_busy(false)
+			_set_status("Lua execution is unavailable in this build.", C_ERROR)
+			return
+		_lua_state = ClassDB.instantiate("LuaState") as Node
+		if _lua_state == null:
+			_running = false
+			_accept_results = false
+			_set_run_busy(false)
+			_set_status("Lua execution is unavailable in this build.", C_ERROR)
+			return
 		add_child(_lua_state)
 		_lua_state.connect("signal_print", _on_quiz_print)
 		_lua_state.connect("code_executed", _on_quiz_executed)
@@ -848,12 +980,14 @@ func _set_run_busy(busy: bool) -> void:
 func _record_incorrect_submission() -> void:
 	if mission == null:
 		return
+	SFX.play_ui("sfx_quiz", 2, -2.0)
 	_penalties += Global.record_quiz_mistake(mission.dungeon_index)
 
 func _grade_compiler(q: DungeonQuestion) -> void:
 	if q == null:
 		return
 	if _normalize_text(_captured_output) == _normalize_text(q.answer_output):
+		SFX.play_ui("sfx_quiz", 1)
 		_set_status("✔ Correct!", C_OK)
 		_index += 1
 		_answered += 1
@@ -875,6 +1009,7 @@ func _grade_compiler(q: DungeonQuestion) -> void:
 # answer_output (normalized comparison) — the old LONG behaviour under COMPILER.
 func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 	if _normalize_text(code) == _normalize_text(q.answer_output):
+		SFX.play_ui("sfx_quiz", 1)
 		_set_status("✔ Correct!", C_OK)
 		_index += 1
 		_answered += 1
@@ -896,6 +1031,7 @@ func _grade_code_text(q: DungeonQuestion, code: String) -> void:
 # matches the question's correct_index.
 func _grade(q: DungeonQuestion, input_text: String) -> void:
 	if q.correct_option_index() == input_text.to_int():
+		SFX.play_ui("sfx_quiz", 1)
 		_feedback.text = "✔ Correct!"
 		_feedback.add_theme_color_override("font_color", Color(0.45, 0.95, 0.55, 1.0))
 		_index += 1
@@ -953,6 +1089,10 @@ func _show_reward_screen(stars: int) -> void:
 	_touch_scroll_accum = 0.0
 	if _reward_root != null and is_instance_valid(_reward_root):
 		_reward_root.queue_free()
+	if _summary_root != null and is_instance_valid(_summary_root):
+		_summary_root.queue_free()
+	_summary_root = null
+	_summary_visible = false
 	_reward_visible = true
 	_reward_stars = clampi(stars, 0, 3)
 	_panel_scroll.visible = false
@@ -1118,9 +1258,188 @@ func _reward_row(parent: VBoxContainer, label_text: String, value_text: String) 
 
 
 func _on_reward_done() -> void:
+	if _exiting or _summary_visible:
+		return
+	var points: Array = DungeonLearningSummary.points_for(mission, {
+		"hints_used": _hints_used,
+		"penalties": _penalties,
+		"answered": _answered,
+		"questions": _questions.size(),
+		"stars": _reward_stars,
+	})
+	if points.is_empty():
+		# A dungeon with no authored learning content keeps the old Done flow.
+		_exit_after_results()
+		return
+	_show_learning_summary(points)
+
+# Replaces the results panel with the “What You’ve Learned” summary. The
+# dungeon was already completed/rewarded before the results screen opened, so
+# this screen is presentation-only and cannot duplicate progression.
+func _show_learning_summary(points: Array = []) -> void:
+	if _panel == null:
+		_exit_after_results()
+		return
+	if points.is_empty():
+		points = DungeonLearningSummary.points_for(mission, {
+			"hints_used": _hints_used,
+			"penalties": _penalties,
+			"answered": _answered,
+			"questions": _questions.size(),
+			"stars": _reward_stars,
+		})
+	if _summary_root != null and is_instance_valid(_summary_root):
+		_summary_root.queue_free()
+	_summary_root = null
+	_summary_visible = true
+	_reward_visible = false
+	if _reward_root != null and is_instance_valid(_reward_root):
+		_reward_root.visible = false
+	_panel_scroll.visible = false
+	if _hint_btn != null:
+		_hint_btn.visible = false
+	if _run_btn != null:
+		_run_btn.visible = false
+	if _close_btn != null:
+		_close_btn.visible = false
+
+	var s: float = Global.ui_scale
+	var root := Control.new()
+	root.name = "LearningSummary"
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.process_mode = Node.PROCESS_MODE_ALWAYS
+	_panel.add_child(root)
+	_summary_root = root
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.58)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	Global.apply_safe_area(scroll)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	root.add_child(scroll)
+
+	var center := CenterContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	center.custom_minimum_size = Global.ui_content_rect().size
+	scroll.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Global.ui_fit_min_size(Vector2(600, 440))
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = C_PANEL
+	ps.border_color = C_BORDER
+	ps.set_border_width_all(int(2 * s))
+	ps.set_corner_radius_all(int(8 * s))
+	ps.content_margin_left = int(26 * s)
+	ps.content_margin_right = int(26 * s)
+	ps.content_margin_top = int(20 * s)
+	ps.content_margin_bottom = int(20 * s)
+	panel.add_theme_stylebox_override("panel", ps)
+	center.add_child(panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", int(9 * s))
+	panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "WHAT YOU'VE LEARNED"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", Global.ui_font_size(22))
+	title.add_theme_color_override("font_color", C_TITLE)
+	vbox.add_child(title)
+
+	var mission_name := mission.mission_name if mission != null else "Dungeon"
+	if mission_name.strip_edges().is_empty():
+		mission_name = "Dungeon %d" % (mission.dungeon_index if mission != null else 0)
+	var name_lbl := Label.new()
+	name_lbl.text = mission_name
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	name_lbl.add_theme_color_override("font_color", C_MUTED)
+	vbox.add_child(name_lbl)
+
+	var div := ColorRect.new()
+	div.color = Color(0.45, 0.25, 0.55, 1.0)
+	div.custom_minimum_size = Vector2(0, int(1 * s))
+	vbox.add_child(div)
+
+	# Bullets scroll inside the panel; Continue stays pinned below the scroll so
+	# a small Android screen can never hide the exit control.
+	var body_scroll := ScrollContainer.new()
+	body_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	vbox.add_child(body_scroll)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", int(7 * s))
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body_scroll.add_child(body)
+
+	for point in points:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", int(8 * s))
+		body.add_child(row)
+		var bullet := Label.new()
+		bullet.text = "•"
+		bullet.custom_minimum_size = Vector2(int(12 * s), 0)
+		bullet.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+		bullet.add_theme_color_override("font_color", C_OK)
+		row.add_child(bullet)
+		var text := Label.new()
+		text.text = str(point)
+		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		text.add_theme_font_size_override("font_size", Global.ui_font_size(12))
+		text.add_theme_color_override("font_color", C_QUESTION)
+		row.add_child(text)
+
+	var footer := Label.new()
+	footer.text = "Review these ideas in the Programming Encyclopedia before your next dungeon."
+	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	footer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	footer.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+	footer.add_theme_color_override("font_color", C_MUTED)
+	body.add_child(footer)
+
+	var cont := Button.new()
+	_continue_btn = cont
+	cont.text = "CONTINUE"
+	cont.custom_minimum_size = Vector2(int(260 * s), int(42 * s))
+	cont.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cont.add_theme_font_size_override("font_size", Global.ui_font_size(13))
+	var cb := StyleBoxFlat.new()
+	cb.bg_color = Color(0.15, 0.42, 0.22, 1.0)
+	cb.border_color = C_BORDER
+	cb.set_border_width_all(int(1 * s))
+	cb.set_corner_radius_all(int(4 * s))
+	cont.add_theme_stylebox_override("normal", cb)
+	cont.add_theme_stylebox_override("hover", cb)
+	cont.add_theme_stylebox_override("pressed", cb)
+	cont.add_theme_color_override("font_color", Color(0.80, 1.0, 0.82, 1.0))
+	cont.pressed.connect(_on_summary_continue)
+	vbox.add_child(cont)
+
+func _on_summary_continue() -> void:
+	_exit_after_results()
+
+# The single completion exit path, shared by Done-without-summary and Continue.
+# Rewards/mission/stars were recorded before the results screen, so this only
+# closes the UI and performs the original overworld transition exactly once.
+func _exit_after_results() -> void:
 	if _exiting:
 		return
 	_exiting = true
+	if _summary_root != null and is_instance_valid(_summary_root):
+		_summary_root.visible = false
 	if _reward_root != null and is_instance_valid(_reward_root):
 		_reward_root.visible = false
 	if _panel != null:
@@ -1200,7 +1519,7 @@ func _build_panel() -> Control:
 
 	_hint_btn = Button.new()
 	_hint_btn.text = "HINT"
-	_hint_btn.tooltip_text = "Prepare this question's answer: fill the code or highlight the correct choice. NEXT dismisses the hint. Each hint costs one blue star except in the first dungeon."
+	_hint_btn.tooltip_text = "Show this question's answer as ghost text or highlight the correct choice. You still type/select it yourself. NEXT dismisses the hint. Each hint costs one blue star except in the first dungeon."
 	_hint_btn.custom_minimum_size = Vector2(int(76 * s), int(30 * s))
 	_hint_btn.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	var hb := StyleBoxFlat.new()
@@ -1308,7 +1627,7 @@ func _build_panel() -> Control:
 	content_vbox.add_child(_feedback)
 
 	_close_btn = Button.new()
-	_close_btn.text = "Close"
+	_close_btn.text = "CLOSE"
 	_close_btn.custom_minimum_size = Vector2(int(120 * s), int(36 * s))
 	_close_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_close_btn.pressed.connect(_close_quiz)
@@ -1319,7 +1638,7 @@ func _build_panel() -> Control:
 func _close_quiz() -> void:
 	# The reward summary must be reviewed and dismissed with Done; it is the
 	# only path back to the overworld for quiz dungeons.
-	if _reward_visible:
+	if _reward_visible or _summary_visible:
 		return
 	# Closing mid-quiz leaves progress untouched; reopening (_input → _start_quiz)
 	# resets to question 1 so the player can pick up or restart at will.
@@ -1330,9 +1649,9 @@ func _close_quiz() -> void:
 ## Esc is a back action, but typed code is unsaved. Refuse quietly and let the
 ## player use the deliberate Close button if they mean to discard it.
 func _escape_close() -> void:
-	if _reward_visible:
-		# Results are mandatory; keep the modal back entry alive for any later
-		# Back press even though request_ui_back() popped it before calling here.
+	if _reward_visible or _summary_visible:
+		# Results/summary are mandatory; keep the modal back entry alive for any
+		# later Back press even though request_ui_back() popped it before this.
 		if _panel != null and _panel.visible:
 			Global.register_ui_back(_panel, Callable(self, "_escape_close"))
 		return
@@ -1383,6 +1702,11 @@ func tutorial_code_text() -> String:
 	if _code_entry == null or not is_instance_valid(_code_entry):
 		return ""
 	return _code_entry.text.strip_edges()
+
+func tutorial_code_editor() -> Control:
+	if _code_entry == null or not is_instance_valid(_code_entry):
+		return null
+	return _code_entry
 
 func tutorial_question_label() -> Control:
 	return _q_text

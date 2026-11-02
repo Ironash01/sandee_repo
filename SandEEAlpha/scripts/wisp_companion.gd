@@ -101,6 +101,7 @@ func _ready() -> void:
 	_last_position = global_position
 	_has_last_position = true
 	snap_to_player()
+	SFX.play("sfx_mob_wisp", global_position, -10.0)
 
 func _build_visuals() -> void:
 	_collision = CollisionShape2D.new()
@@ -492,3 +493,4 @@ func _apply_light_profile(kind: String) -> void:
 func _on_player_spawned(_spawn_position: Vector2) -> void:
 	_apply_light_profile(_context_for_world())
 	snap_to_player()
+	SFX.play("sfx_mob_wisp", global_position, -10.0, 1.1)

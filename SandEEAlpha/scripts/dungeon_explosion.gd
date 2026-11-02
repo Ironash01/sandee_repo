@@ -26,6 +26,7 @@ var damage_mobs: bool = false
 
 func _ready() -> void:
 	z_index = 45
+	SFX.play("sfx_dungeon_hazards", global_position, -2.0, 1.0, 3)
 	_add_sprite()
 	_add_glow()
 	# DEFERRED: add_child() runs _ready() BEFORE the spawner assigns

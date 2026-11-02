@@ -19,7 +19,7 @@ var _world_ref:     Node     = null
 
 # ── Shift-click breaking (respects the mining mechanic) ───────────
 # Shift + left-click doesn't INSTANTLY destroy anymore — it runs the same
-# hold-to-break mechanic as placed blocks: duration = block_level -
+# hold-to-break mechanic as placed blocks: duration = Global.mining_break_seconds(
 # pickaxe_level (min 0.1s), gated by min_pickaxe_level. Mirrors
 # placeable_block.gd's breaking so the furnace breaks at the same speed/tier
 # rules a mined block does. Break progress also accepts fresh shift-clicks
@@ -120,7 +120,7 @@ func _process(delta: float) -> void:
 	if not _breaking:
 		return
 	if not _player_nearby \
-			or not Global.is_shift_held() \
+			or (not Global.is_shift_held() and not Global.held_item_can_mine(item_data)) \
 			or not Global.is_left_action_held():
 		_cancel_breaking()
 		return
@@ -150,6 +150,9 @@ func _on_area_2d_body_exited(body: CharacterBody2D) -> void:
 # Adds damage (in seconds of break work) from a held frame's delta or a
 # fresh shift-click's flat CLICK_BREAK_SECONDS, then breaks when full.
 func _add_break_progress(seconds: float) -> void:
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
@@ -199,8 +202,9 @@ func _cursor_over(at: Vector2 = Vector2.INF) -> bool:
 	var m: Vector2 = Global.mouse_world(self) if at == Vector2.INF else at
 	return m.x >= lo.x and m.x <= hi.x and m.y >= lo.y and m.y <= hi.y
 
-# Left-click (nearby) opens the standalone smelting menu; Shift + left-click
-# mines this interactable off the wall (respecting pickaxe tier + break time).
+# Left-click (nearby) opens the standalone smelting menu; Shift + left-click,
+# or a plain click with a suitable pickaxe, mines this interactable off the
+# wall (respecting pickaxe tier + break time).
 func _input(event: InputEvent) -> void:
 	if Global.is_mouse_event_over_ui(event):
 		return
@@ -213,7 +217,7 @@ func _input(event: InputEvent) -> void:
 		return
 	if not _cursor_over(Global.mouse_event_world(self, event)):
 		return
-	if Global.is_shift_held():
+	if Global.is_shift_held() or Global.held_item_can_mine(item_data):
 		if event.pressed:
 			_try_start_breaking()
 			if _breaking:
@@ -229,7 +233,7 @@ func _input(event: InputEvent) -> void:
 # Begin the mining process. No-op when no pickaxe is selected, the held
 # pickaxe is below min_pickaxe_level, or it's already breaking.
 func _try_start_breaking() -> void:
-	if _breaking:
+	if _breaking or Global.is_tutorial_protected(self):
 		return
 	var pick_lvl := _held_pickaxe_level()
 	if pick_lvl < 0:
@@ -238,7 +242,7 @@ func _try_start_breaking() -> void:
 	if pick_lvl < min_lvl:
 		return  # pickaxe tier too low
 	var block_lvl: int = item_data.block_level if item_data != null else 0
-	_break_duration = maxf(0.1, float(block_lvl - pick_lvl))
+	_break_duration = Global.mining_break_seconds(float(block_lvl), pick_lvl)
 	# The swing animation plays for any item used to break — route through the
 	# player so it fires even though this object consumed the click input.
 	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
@@ -265,6 +269,9 @@ func _held_pickaxe_level() -> int:
 
 # Break on completion: unregister from the world and drop the block item.
 func _do_break() -> void:
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	_cancel_breaking()
 	var world: Node = _world_ref if _world_ref != null else Global.world_node
 	if world != null and world.has_method("unregister_block"):

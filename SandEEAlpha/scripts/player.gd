@@ -31,6 +31,15 @@ signal swing_performed
 var _fishing: Node2D = null   # FishingController child (created in _ready)
 var _sprinting:          bool  = false
 var _stamina_exhausted:  bool  = false
+# Footstep cadence: accumulate actual distance travelled, not time, so walking
+# and sprinting keep a consistent step spacing regardless of speed.
+var _footstep_accum:     float = 0.0
+const FOOTSTEP_DISTANCE: float = 34.0
+const FOOTSTEP_SPRINT_DISTANCE: float = 26.0
+const FOOTSTEP_PITCH: Dictionary = {
+	"grass": 1.0, "dirt": 0.94, "stone": 0.82,
+	"snow": 1.14, "wood": 0.88, "sand": 0.90, "water": 1.18,
+}
 var _move_mission_done:      bool  = false
 var _inventory_mission_done: bool  = false
 const STAMINA_RECOVER_THRESHOLD: float = 15.0
@@ -165,6 +174,7 @@ func _exit_tree() -> void:
 	Global.clear_touch_mouse()
 	Global.mobile_move  = Vector2.ZERO
 	Global.mobile_shift = false
+	Global.set_mobile_sprint(false)
 
 func _on_camera_zoom_changed(zoom: float) -> void:
 	$mainCam.zoom = Vector2(zoom, zoom)
@@ -304,6 +314,7 @@ func cancel_pending_input() -> void:
 	_pnc_cancel()
 	Global.mobile_move  = Vector2.ZERO
 	Global.mobile_shift = false
+	Global.set_mobile_sprint(false)
 	_attack_held = false
 	_apply_movement_direction(Vector2.ZERO, false)
 
@@ -329,9 +340,10 @@ func get_input(delta: float = 0.0) -> void:
 		direction = input_direction
 		pnc_driving = direction != Vector2.ZERO
 	# Optional point-and-click auto-sprint. It only applies while the order is
-	# actually driving movement; direct keyboard/joystick input still needs Shift,
-	# and _apply_movement_direction enforces stamina/exhaustion for both paths.
-	var sprint_held: bool = Global.is_shift_held() \
+	# actually driving movement; keyboard input still needs Shift, while the
+	# Android SPRINT toggle contributes independently. _apply_movement_direction
+	# enforces stamina/exhaustion for every path.
+	var sprint_held: bool = Global.is_shift_held() or Global.mobile_sprint \
 		or (pnc_driving and Global.point_and_click_auto_sprint)
 	_apply_movement_direction(direction, sprint_held)
 
@@ -342,7 +354,10 @@ func get_input(delta: float = 0.0) -> void:
 func _apply_movement_direction(direction: Vector2, sprint_held: bool) -> void:
 	input_direction = direction
 	var want_sprint: bool = sprint_held and input_direction != Vector2.ZERO
+	var was_sprinting: bool = _sprinting
 	_sprinting = want_sprint and not _stamina_exhausted
+	if _sprinting and not was_sprinting:
+		SFX.play("sfx_player_sprint", global_position, -4.0, 1.0, 0)
 	var storm_mult: float = SNOWSTORM_SPEED_MULT if Global.snowstorm_active else 1.0
 	velocity = input_direction * movement_speed \
 		* (SPRINT_MULTIPLIER if _sprinting else 1.0) * storm_mult
@@ -368,7 +383,10 @@ const PNC_SELF_TAP_RADIUS: float    = 44.0
 const PNC_CHOP_STOP: float          = 46.0
 const PNC_CHOP_INTERVAL_MS: int     = 420
 const PNC_CHOP_AMOUNT: float        = 0.45
-const PNC_INTERACT_STOP: float      = 36.0
+# One adjacent tile is 32px away orthogonally and ~45px diagonally. 48 keeps
+# mining/opening immediate at the edge of a station's 40px proximity area
+# instead of pathing into the object.
+const PNC_INTERACT_STOP: float      = 48.0
 # Clickable objects are resolved directly; a plain block is not in this list
 # and keeps its walk-then-hold-to-mine behaviour.
 const PNC_INTERACT_GROUPS: Array[String] = [
@@ -408,6 +426,10 @@ var _pnc_path_ms:          int     = 0
 var _pnc_path_dynamic:     bool    = false
 var _pnc_path_retries:     int     = 0
 var _pnc_path_attempted:   bool    = false
+# True when A* bailed out because the search area was too large / physics was
+# unavailable, rather than because the target is genuinely unreachable. That
+# distinction prevents a long-distance tap from being mistaken for a wall.
+var _pnc_path_search_limited: bool = false
 # Spatial buckets keep PNC tree tap tests from scanning every tree in the
 # overworld (1,300+ on a normal save). Rebuilt when the active world changes;
 # chopped trees are skipped via their queued/freed state.
@@ -458,6 +480,7 @@ func _pnc_cancel() -> void:
 	_pnc_path_dynamic = false
 	_pnc_path_retries = 0
 	_pnc_path_attempted = false
+	_pnc_path_search_limited = false
 	# Stopping a tap order stops movement on the very next physics tick; do not
 	# leave the last steering vector behind when the scheme is toggled off.
 	input_direction = Vector2.ZERO
@@ -516,6 +539,26 @@ func _pnc_cell(pos: Vector2) -> Vector2i:
 func _pnc_cell_center(cell: Vector2i) -> Vector2:
 	return Vector2((cell.x + 0.5) * PNC_PATH_CELL, (cell.y + 0.5) * PNC_PATH_CELL)
 
+# True when at least one walkable cell exists within interaction reach of the
+# clicked solid point. A wall cell itself is not walkable, so this finds the
+# standing tile beside it. If even that is impossible (a thick wall or an
+# isolated block), a PnC order must not start walking at the wall.
+func _pnc_has_walkable_approach(world_pos: Vector2, radius: float) -> bool:
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return true
+	var centre := _pnc_cell(world_pos)
+	var reach := int(ceil(radius / PNC_PATH_CELL)) + 1
+	var cache: Dictionary = {}
+	for dx in range(-reach, reach + 1):
+		for dy in range(-reach, reach + 1):
+			var cell := centre + Vector2i(dx, dy)
+			if _pnc_cell_center(cell).distance_to(world_pos) > radius + PNC_PATH_CELL * 0.5:
+				continue
+			if _pnc_cell_walkable(cell, cache, space):
+				return true
+	return false
+
 func _pnc_cell_walkable(cell: Vector2i, cache: Dictionary,
 		space: PhysicsDirectSpaceState2D = null) -> bool:
 	if cache.has(cell):
@@ -545,7 +588,9 @@ func _pnc_cell_walkable(cell: Vector2i, cache: Dictionary,
 # _pnc_next_waypoint only when the direct line is obstructed.
 # Eight directions are used so a diagonal tap produces diagonal movement. A
 # diagonal step needs BOTH cardinal cells open, preventing corner cutting.
-func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float) -> PackedVector2Array:
+func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float,
+		max_visits: int = PNC_PATH_MAX_VISITS) -> PackedVector2Array:
+	_pnc_path_search_limited = false
 	var start := _pnc_cell(from_pos)
 	var target_cell := _pnc_cell(target)
 	var min_x: int = mini(start.x, target_cell.x) - PNC_PATH_RADIUS
@@ -553,9 +598,11 @@ func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float) -> PackedVe
 	var min_y: int = mini(start.y, target_cell.y) - PNC_PATH_RADIUS
 	var max_y: int = maxi(start.y, target_cell.y) + PNC_PATH_RADIUS
 	if (max_x - min_x + 1) * (max_y - min_y + 1) > 3200:
+		_pnc_path_search_limited = true
 		return PackedVector2Array()
 	var space := get_world_2d().direct_space_state
 	if space == null:
+		_pnc_path_search_limited = true
 		return PackedVector2Array()
 	var cache: Dictionary = {start: true}
 	var goal_radius: float = maxf(stop, 40.0)
@@ -567,7 +614,7 @@ func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float) -> PackedVe
 	var found := Vector2i(999999, 999999)
 	var steps: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 		Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
-	while not open.is_empty() and closed.size() < PNC_PATH_MAX_VISITS:
+	while not open.is_empty() and closed.size() < max_visits:
 		var best_i := 0
 		var best_f := float(f.get(open[0], INF))
 		for i in range(1, open.size()):
@@ -605,6 +652,8 @@ func _pnc_find_path(from_pos: Vector2, target: Vector2, stop: float) -> PackedVe
 			if not open.has(nxt):
 				open.append(nxt)
 	if found.x == 999999:
+		if closed.size() >= max_visits:
+			_pnc_path_search_limited = true
 		return PackedVector2Array()
 	var cells: Array = []
 	var c := found
@@ -632,7 +681,12 @@ func _pnc_repath(target: Vector2, stop: float, force: bool = false) -> void:
 	_pnc_path_target = target
 	_pnc_path_ms = now
 	_pnc_path_attempted = true
-	_pnc_path = _pnc_find_path(global_position, target, stop)
+	_pnc_path_search_limited = false
+	# Interaction taps may target a solid block/wall: search the full allowed
+	# area so a genuinely disconnected target is identified instead of falling
+	# back to walking straight at it.
+	var max_visits: int = 3200 if _pnc_pending == "interact" else PNC_PATH_MAX_VISITS
+	_pnc_path = _pnc_find_path(global_position, target, stop, max_visits)
 	_pnc_path_index = 0
 
 func _pnc_next_waypoint(target: Vector2, stop: float) -> Vector2:
@@ -774,6 +828,17 @@ func _pnc_handle_click(world_pos: Vector2) -> bool:
 	# stop outside the object's actual interact radius.
 	var interact_target := _pnc_interact_target_at(world_pos)
 	if interact_target != null:
+		# With a suitable pickaxe/axe equipped, a tap on a mineable interactable
+		# is a destroy order, not an open-panel order. Walk to its anchor and
+		# replay the synthetic hold, which now starts its mining path. This is
+		# what makes demolition possible on touch screens without Shift.
+		var target_data: Variant = interact_target.get("item_data")
+		if target_data is ItemData and Global.held_item_can_mine(target_data as ItemData):
+			if _pnc_target_near(interact_target, world_pos):
+				_pnc_begin_hold(world_pos)
+			else:
+				_pnc_begin(world_pos, null, "interact", "act")
+			return true
 		_pnc_start_interact(interact_target, world_pos)
 		return true
 	# Held-item actions that target a tile (rod/hoe/bucket/water) act when valid;
@@ -787,6 +852,14 @@ func _pnc_handle_click(world_pos: Vector2) -> bool:
 	if _pnc_point_has_target(world_pos):
 		if global_position.distance_to(world_pos) <= PNC_INTERACT_STOP:
 			_pnc_begin_hold(world_pos)
+			return true
+		# A solid point with no walkable standing tile beside it can never be
+		# reached. Reject the order now instead of walking into the wall until
+		# the stuck timeout.
+		if not _pnc_has_walkable_approach(world_pos, PNC_INTERACT_STOP):
+			CrashLogger.event("PNC", "no walkable approach at=(%.1f, %.1f)" % [
+				world_pos.x, world_pos.y])
+			Global.notify("Can't reach that target.")
 			return true
 		_pnc_begin(world_pos, null, "interact", "act")
 		return true
@@ -886,8 +959,24 @@ func _pnc_steer(_delta: float) -> void:
 		if global_position.distance_to(_pnc_dest) <= arrive_stop:
 			_pnc_arrive()
 			return
-	var to: Vector2 = _pnc_next_waypoint(_pnc_dest,
-		PNC_ATTACK_STOP if _pnc_chase != null else _pnc_stop_for_pending(_pnc_pending)) - global_position
+	var stop: float = PNC_ATTACK_STOP if _pnc_chase != null \
+		else _pnc_stop_for_pending(_pnc_pending)
+	var waypoint: Vector2 = _pnc_next_waypoint(_pnc_dest, stop)
+	# A genuine no-route result means the clicked tile is isolated from the
+	# player (for example a wall across a chasm). Do not fall back to walking
+	# straight at it until the stuck timeout: cancel the order immediately.
+	if _pnc_chase == null and _pnc_path_attempted and _pnc_path.is_empty() \
+			and not _pnc_path_search_limited \
+			and global_position.distance_to(_pnc_dest) > stop \
+			and not _pnc_has_line_of_sight(_pnc_dest):
+		CrashLogger.event("PNC", "no walkable route dest=(%.1f, %.1f)" % [
+			_pnc_dest.x, _pnc_dest.y])
+		if _pnc_pending == "interact" or _pnc_chop != null \
+				or _pnc_pending_tree != null:
+			Global.notify("Can't reach that target.")
+		_pnc_cancel()
+		return
+	var to: Vector2 = waypoint - global_position
 	if to.length_squared() < 0.0001:
 		_pnc_arrive()
 		return
@@ -1283,6 +1372,20 @@ func _pnc_mob_click_rect(m: Node2D) -> Rect2:
 		m.global_position - Vector2(PNC_MOB_FALLBACK_RADIUS, PNC_MOB_FALLBACK_RADIUS),
 		Vector2(PNC_MOB_FALLBACK_RADIUS, PNC_MOB_FALLBACK_RADIUS) * 2.0)
 
+# True for any collider that belongs to a combat Automatica — the floating
+# robot body itself, or its (usually hidden) station ClickArea. PNC ignores
+# these when deciding whether a tap landed on solid/mineable ground; explicit
+# LuaNPC interaction is resolved separately by _pnc_interact_target_at.
+func _pnc_combat_lua_part(value: Variant) -> bool:
+	if not (value is Node):
+		return false
+	var n := value as Node
+	if n.is_in_group("LuaNPC") and bool(n.get("_combat")):
+		return true
+	var parent := n.get_parent()
+	return parent != null and parent.is_in_group("LuaNPC") \
+		and bool(parent.get("_combat"))
+
 # True when something solid/interactive sits under the point (block, tree,
 # station, chest, furnace, portal…). Empty walkable ground returns false.
 func _pnc_point_has_target(world_pos: Vector2) -> bool:
@@ -1299,6 +1402,8 @@ func _pnc_point_has_target(world_pos: Vector2) -> bool:
 		if c == null or c == self:
 			continue
 		if c is Node and (c as Node).is_in_group("Player"):
+			continue
+		if _pnc_combat_lua_part(c):
 			continue
 		if c is Area2D:
 			# Lua/Automatica stations expose a click Area2D rather than a
@@ -1317,6 +1422,8 @@ func _pnc_point_has_target(world_pos: Vector2) -> bool:
 		var cell := Vector2i(floori(world_pos.x / PNC_PATH_CELL), floori(world_pos.y / PNC_PATH_CELL))
 		var placed: Variant = world.call("placed_node", cell)
 		if placed is Node and is_instance_valid(placed):
+			if _pnc_combat_lua_part(placed):
+				return false
 			var data: Variant = (placed as Node).get("item_data")
 			if data is ItemData and not (data as ItemData).is_floor:
 				return true
@@ -1338,10 +1445,32 @@ func _pnc_interact_target_at(world_pos: Vector2) -> Node2D:
 	if tree == null:
 		return null
 	for group_name in PNC_INTERACT_GROUPS:
+		# Group priority is preserved, but within a group the click belongs to
+		# the NEAREST matching object. Tree order used to win, so two adjacent
+		# Automatica stations (or other overlapping click boxes) could open the
+		# wrong one.
+		var best: Node2D = null
+		var best_d: float = INF
 		for value in tree.get_nodes_in_group(group_name):
-			if _pnc_interact_contains(value, world_pos):
-				return value as Node2D
+			if not _pnc_interact_contains(value, world_pos):
+				continue
+			var d := _pnc_interact_distance(value, world_pos)
+			if d < best_d:
+				best_d = d
+				best = value as Node2D
+		if best != null:
+			return best
 	return null
+
+func _pnc_interact_distance(value: Variant, world_pos: Vector2) -> float:
+	var node := value as Node2D
+	if node.is_in_group("LuaNPC"):
+		var d: float = node.global_position.distance_to(world_pos)
+		var robot: Variant = node.get("_robot")
+		if robot is Node2D and is_instance_valid(robot):
+			d = minf(d, (robot as Node2D).global_position.distance_to(world_pos))
+		return d
+	return node.global_position.distance_to(world_pos)
 
 func _pnc_interact_contains(value: Variant, world_pos: Vector2) -> bool:
 	if value == null or not is_instance_valid(value) or not (value is Node2D):
@@ -1365,6 +1494,9 @@ func _pnc_interact_contains(value: Variant, world_pos: Vector2) -> bool:
 	if node.is_in_group("KnowledgeAltar") or node.is_in_group("QuizAltar"):
 		return node.global_position.distance_to(world_pos) <= 32.0
 	if node.is_in_group("LuaNPC"):
+		# Combat Automaticas are followers, but they are still interactable:
+		# tapping the floating robot opens the editor where combat can be
+		# turned off. Accept either the station or the robot's current spot.
 		var robot: Variant = node.get("_robot")
 		var centre: Vector2 = (robot as Node2D).global_position \
 				if robot is Node2D else node.global_position
@@ -1410,7 +1542,7 @@ func _pnc_start_interact(target: Node2D, world_pos: Vector2) -> void:
 	var anchor: Vector2 = _pnc_interact_anchor(target)
 	_pnc_interact_target = target
 	_pnc_interact_point = world_pos
-	if global_position.distance_to(anchor) <= PNC_INTERACT_STOP:
+	if _pnc_target_near(target, world_pos):
 		_pnc_interact_target = null
 		_pnc_interact_point = Vector2.INF
 		_pnc_face(anchor)
@@ -1422,7 +1554,28 @@ func _pnc_start_interact(target: Node2D, world_pos: Vector2) -> void:
 	_pnc_interact_target = target
 	_pnc_interact_point = world_pos
 
+# True when the player is already close enough to use `target` without walking.
+# Prefer the object's own proximity Area2D (`_player_nearby`) over a fixed
+# origin distance: chests/stations/furnaces use a 40px area, and the old 36px
+# anchor check made PNC path INTO an object the player was already standing
+# beside, which looked like the order was stuck.
+func _pnc_target_near(target: Node2D, world_pos: Vector2) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	var near_flag: Variant = target.get("_player_nearby")
+	if near_flag != null and bool(near_flag):
+		return true
+	var anchor := _pnc_interact_anchor(target)
+	return global_position.distance_to(anchor) <= PNC_INTERACT_STOP \
+		or global_position.distance_to(world_pos) <= PNC_INTERACT_STOP
+
 func _pnc_interact_anchor(target: Node2D) -> Vector2:
+	# A combat Automatica floats with the player, so follow the robot rather
+	# than its old (possibly hidden) station position.
+	if target.is_in_group("LuaNPC") and bool(target.get("_combat")):
+		var robot: Variant = target.get("_robot")
+		if robot is Node2D:
+			return (robot as Node2D).global_position
 	# Large facades need a walkable approach point, not the collider centre.
 	if target.is_in_group("WorldWaypoint"):
 		return target.global_position + Vector2(0.0, 48.0)
@@ -1464,6 +1617,8 @@ func _pnc_interact_with(target: Node, at: Vector2) -> bool:
 		target.call("_start_quiz")
 		return true
 	if target.is_in_group("LuaNPC"):
+		# Works for both a normal station and a combat follower; the editor's
+		# combat button turns the follower back into a blue Automatica.
 		var lua_ui: Variant = target.get("_lua_ui")
 		if lua_ui != null and is_instance_valid(lua_ui) and (lua_ui as Node).has_method("open_editor"):
 			lua_ui.call("open_editor")
@@ -1588,18 +1743,63 @@ func _physics_process(delta: float) -> void:
 	_update_animation()
 	_tick_attack_hold()
 	_tick_stamina(delta)
+	_tick_footsteps(delta)
 	_tick_stuck(delta)
 
 func _tick_stamina(delta: float) -> void:
 	if _sprinting:
 		Global.stamina = maxf(0.0, Global.stamina - 10.0 * delta)
-		if Global.stamina <= 0.0:
+		if Global.stamina <= 0.0 and not _stamina_exhausted:
+			# Stamina ran dry mid-sprint: the exhausted breath cue, not another
+			# footstep. The recovery tick below silently clears the flag.
+			SFX.play("sfx_player_sprint", global_position, -4.0, 1.0, 1)
 			_stamina_exhausted = true
 	else:
 		Global.stamina = minf(Global.max_stamina, Global.stamina + 5.0 * delta)
 		if _stamina_exhausted and Global.stamina >= STAMINA_RECOVER_THRESHOLD:
 			_stamina_exhausted = false
 	Global.stamina_changed.emit(Global.stamina, Global.max_stamina)
+
+## Surface-aware footstep cadence. The 8-bit pack has one footstep family, so
+## the surface is conveyed by pitch + the occasional grass rustle; this keeps
+## the loop readable without pretending every biome has its own recording.
+func _tick_footsteps(delta: float) -> void:
+	if Global.player_is_dead or Global.block_mode or input_direction == Vector2.ZERO:
+		_footstep_accum = 0.0
+		return
+	var speed: float = velocity.length()
+	if speed < 10.0:
+		_footstep_accum = 0.0
+		return
+	_footstep_accum += speed * delta
+	var threshold: float = FOOTSTEP_SPRINT_DISTANCE if _sprinting else FOOTSTEP_DISTANCE
+	if _footstep_accum < threshold:
+		return
+	_footstep_accum = 0.0
+	var world: Node = _get_world_node()
+	var surface: String = _surface_kind(world)
+	var pitch: float = float(FOOTSTEP_PITCH.get(surface, 1.0))
+	var at: Vector2 = global_position + Vector2(0.0, 18.0)
+	SFX.play("sfx_player_footsteps", at, 0.0, pitch)
+	if surface == "grass" and randf() < 0.35:
+		SFX.play("sfx_grass_rustle", at, -4.0)
+
+func _surface_kind(world: Node) -> String:
+	if world == null or not is_instance_valid(world):
+		return "grass"
+	var ground := world.get_node_or_null("Ground") as TileMapLayer
+	if ground != null and world.has_method("_cell_biome_type"):
+		var cell: Vector2i = ground.local_to_map(ground.to_local(global_position))
+		var biome: int = int(world.call("_cell_biome_type", cell))
+		if biome == 1:
+			return "sand"
+		if biome == 2:
+			return "snow"
+		if biome == -1:
+			return "water"
+	if world.has_method("is_overworld") and not bool(world.call("is_overworld")):
+		return "stone"
+	return "grass"
 
 # ── Stuck / anti-corner handling ───────────────────────────────────
 func _tick_stuck(delta: float) -> void:
@@ -1956,6 +2156,7 @@ func _trigger_swing(icon: Texture2D, damage: float = 0.0, is_sword: bool = false
 	_active_swing = fx
 	add_child(fx)
 	_swing_lock_until_ms = Time.get_ticks_msec() + SWING_LOCK_MS
+	SFX.play("sfx_tool_swing", global_position + Vector2(0.0, 4.0), -4.0, 1.0, 0 if is_sword else 3)
 	swing_performed.emit()
 	return true
 
@@ -2142,7 +2343,7 @@ func _input(event: InputEvent) -> void:
 	# Optional point-and-click: a left click/tap first tries a move/chase order.
 	# Build mode, open panels and right-click are never intercepted; clicks that
 	# are already in interaction range fall through to the normal action below.
-	if Global.point_and_click and not Global.is_mobile() and not _pnc_dispatching \
+	if Global.point_and_click and not _pnc_dispatching \
 			and not event.has_meta("pnc_synthetic") \
 			and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
 			and event.pressed:
@@ -2253,6 +2454,7 @@ func _try_till_ground() -> bool:
 		return false
 	if not bool(world.call("till_grass_at_cursor")):
 		return false
+	SFX.play("sfx_farming", global_position, -2.0, 1.0, 0)
 	Global.notify("[color=#9be89b]Tilled the ground. Plant seeds on it.[/color]")
 	return true
 
@@ -2266,6 +2468,7 @@ func _try_plant_seeds() -> bool:
 	var held: Variant = Global.get_hotbar_item()
 	if held is Dictionary:
 		Global.remove_item((held as Dictionary)["data"] as ItemData)
+	SFX.play("sfx_farming", global_position, -2.0, 1.0, 1)
 	Global.notify("[color=#9be89b]Planted wheat. It ripens in 3 minutes.[/color]")
 	return true
 
@@ -2278,6 +2481,7 @@ func _try_fill_bucket() -> bool:
 		return false
 	Global.remove_item(BUCKET_ITEM)
 	Global.add_item({"data": WATER_BUCKET_ITEM, "quantity": 1})
+	SFX.play("sfx_water", global_position, -2.0, 1.0, 1)
 	Global.notify("[color=#9bd8f5]Filled the bucket with water.[/color]")
 	return true
 
@@ -2290,6 +2494,7 @@ func _try_place_water() -> bool:
 		return false
 	Global.remove_item(WATER_BUCKET_ITEM)
 	Global.add_item({"data": BUCKET_ITEM, "quantity": 1})
+	SFX.play("sfx_water", global_position, -2.0, 1.0, 2)
 	Global.notify("[color=#9bd8f5]Poured a water source.[/color]")
 	return true
 
@@ -2329,6 +2534,7 @@ func _try_eat_food(data: ItemData) -> bool:
 	if healed <= 0.0:
 		return true
 	Global.remove_item(data)
+	SFX.play("sfx_player_eat", global_position, -2.0)
 	Global.notify("[color=#9be89b]Ate a %s (+%d health).[/color]" % [data.item_name, int(healed)])
 	return true
 
@@ -2341,6 +2547,7 @@ func _try_use_stat_crystal(data: ItemData) -> bool:
 		Global.notify("[color=#ffaa66]%s is already at its maximum.[/color]" % data.item_name)
 		return true
 	Global.remove_item(data)
+	SFX.play("sfx_player_crystal", global_position, -2.0)
 	var parts: PackedStringArray = []
 	if hp_gain > 0.0:
 		parts.append("+%d max HP" % int(round(hp_gain)))

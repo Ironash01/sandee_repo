@@ -8,6 +8,10 @@ var _stat_labels: Array = []
 var _stat_bar_bgs: Array = []
 var _inventory_open: bool = false
 var _modal_hud_open: bool = false
+var _hotbar_modal_open: bool = false
+# Opening-tutorial reveal. The hotbar draws through its own nested CanvasLayer,
+# so hiding the root Control alone is not enough; this flag drives the canvas.
+var _tutorial_hidden: bool = false
 
 # The hotbar's own CanvasLayer sits above the world HUD. While the inventory is
 # open it is raised above the inventory's CanvasLayer (12) so its dim overlay
@@ -206,6 +210,7 @@ func _ready() -> void:
 	Global.hotbar_selection_changed.connect(_on_selection_changed)
 	Global.inventory_toggled.connect(_on_inventory_toggled)
 	Global.modal_hud_changed.connect(_on_modal_hud_changed)
+	Global.hotbar_modal_changed.connect(_on_hotbar_modal_changed)
 	Global.block_mode_changed.connect(_on_build_mode_changed)
 	Global.item_picked_up.connect(_on_item_picked_up)
 	Global.lua_stuck_notice.connect(_on_lua_stuck_notice)
@@ -309,22 +314,45 @@ func _on_modal_hud_changed(open: bool) -> void:
 	_modal_hud_open = open
 	_apply_hud_visibility()
 
+func _on_hotbar_modal_changed(open: bool) -> void:
+	# Crafting station / furnace / Color Crafter are item-driven modals: they
+	# still hide the background HUD, but keep the hotbar visible and usable so
+	# players can drag or load items while their panel is open.
+	_hotbar_modal_open = open
+	_apply_hud_visibility()
+
 func _apply_hud_visibility() -> void:
 	var canvas := get_node_or_null("CanvasLayer") as CanvasLayer
 	if canvas == null:
 		return
 	# Station/editor/documentation/map modals still hide the whole HUD. The
-	# inventory is the one screen that keeps the hotbar usable (Minecraft-style)
-	# so items can be dragged between the grid and quick slots.
-	canvas.visible = hotbar_canvas_should_show(_inventory_open, _modal_hud_open)
-	canvas.layer = hotbar_canvas_layer(_inventory_open, _modal_hud_open)
+	# inventory and the three item-driven modals keep the hotbar usable
+	# (Minecraft-style) so items can be dragged into their panels.
+	canvas.visible = not _tutorial_hidden and hotbar_canvas_should_show(
+		_inventory_open, _modal_hud_open, _hotbar_modal_open)
+	canvas.layer = hotbar_canvas_layer(
+		_inventory_open, _modal_hud_open, _hotbar_modal_open)
 
-# Pure visibility/layer rules so the inventory exception stays testable.
-# Station/editor/documentation/map modals always win over the inventory.
-static func hotbar_canvas_should_show(inventory_open: bool, modal_open: bool) -> bool:
-	return not modal_open
 
-static func hotbar_canvas_layer(inventory_open: bool, modal_open: bool) -> int:
+## Opening-tutorial reveal only. Combines with the existing inventory/modal
+## visibility rules instead of bypassing them, so closing a panel can never
+## reveal the hotbar before the tutorial lesson needs it.
+func set_tutorial_hidden(hidden: bool) -> void:
+	_tutorial_hidden = hidden
+	_apply_hud_visibility()
+
+
+func is_tutorial_hidden() -> bool:
+	return _tutorial_hidden
+
+# Pure visibility/layer rules so the inventory/item-modal exception stays
+# testable. Non-item modals always win over the inventory.
+static func hotbar_canvas_should_show(inventory_open: bool, modal_open: bool,
+		hotbar_modal_open: bool = false) -> bool:
+	return not modal_open or hotbar_modal_open
+
+static func hotbar_canvas_layer(inventory_open: bool, modal_open: bool,
+		_hotbar_modal_open: bool = false) -> int:
 	if inventory_open and not modal_open:
 		return CANVAS_LAYER_OVER_INVENTORY
 	return CANVAS_LAYER_NORMAL

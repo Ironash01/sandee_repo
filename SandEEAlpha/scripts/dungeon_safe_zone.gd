@@ -90,6 +90,7 @@ func activate() -> void:
 	if _state != State.IDLE:
 		return
 	_state = State.ACTIVE
+	SFX.play("sfx_parry_safezone", global_position, -3.0, 1.0, 1)
 	_timer = SAFE_SECONDS
 	_pulse = 0.0
 	Global.register_safe_zone(self, _room_rect_px)

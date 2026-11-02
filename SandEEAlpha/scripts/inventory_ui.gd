@@ -51,6 +51,29 @@ var _best_selected_id: String = ""
 var _best_list:    VBoxContainer = null
 var _best_detail:  VBoxContainer = null
 var _best_summary: Label = null
+var _best_left_scroll:  ScrollContainer = null
+var _best_right_scroll: ScrollContainer = null
+# Mobile drag-scroll state. Native ScrollContainer only handles the wheel, and
+# the left column is almost entirely Buttons, so a drag has to be tracked at
+# the panel level while a short tap still selects the row.
+var _best_touch_scroll: ScrollContainer = null
+var _best_touch_index: int = -1
+var _best_touch_accum: float = 0.0
+var _best_touch_moved: float = 0.0
+var _best_scroll_click_block: bool = false
+
+# Main inventory scroller and the fixed-height canvas that normally holds the
+# tab content. A docked chest can make the player grid + chest taller than that
+# canvas, so the canvas grows to the real content height and the existing outer
+# ScrollContainer scrolls it (especially on phones).
+var _main_scroll: ScrollContainer = null
+var _inv_stack: Control = null
+var _inv_stack_base_h: float = 0.0
+# Mobile finger-drag state for the main inventory scroll. Occupied item slots
+# and buttons are excluded so their tap/drag gestures keep working.
+var _inv_touch_index: int = -1
+var _inv_touch_accum: float = 0.0
+var _inv_touch_started: bool = false
 # Section id -> expanded, kept across refreshes/rebuilds so a knowledge update
 # or a UI-scale change never collapses what the player opened.
 var _enc_open:     Dictionary = {}
@@ -100,6 +123,10 @@ func _input(event: InputEvent) -> void:
 			and not Global.is_text_input_focused():
 		get_viewport().set_input_as_handled()
 		_close()
+		return
+	if get_parent().visible:
+		_handle_inventory_touch_scroll(event)
+		_handle_bestiary_touch_scroll(event)
 
 func _on_ui_scale(_s: float) -> void:
 	_rebuild()
@@ -132,6 +159,8 @@ func _rebuild() -> void:
 	_trash_row = null; _trash = null
 	_enc_list = null
 	_best_list = null; _best_detail = null; _best_summary = null
+	_main_scroll = null; _inv_stack = null; _inv_stack_base_h = 0.0
+	_inv_touch_index = -1; _inv_touch_accum = 0.0; _inv_touch_started = false
 	for child in get_children():
 		child.queue_free()
 	if not is_inside_tree():
@@ -167,6 +196,7 @@ func _build() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode   = ScrollContainer.SCROLL_MODE_AUTO
 	add_child(scroll)
+	_main_scroll = scroll
 
 	var center := CenterContainer.new()
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -204,11 +234,8 @@ func _build() -> void:
 	ts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tab_row.add_child(ts)
 
-	var close := Button.new()
-	close.text = "✕"; close.flat = true
-	close.add_theme_font_size_override("font_size", Global.ui_font_size(13))
-	close.add_theme_color_override("font_color", C_MUTED)
-	close.custom_minimum_size = Vector2(i(28,s), i(28,s))
+	var close := Global.make_close_button()
+	close.tooltip_text = "Close the inventory."
 	close.pressed.connect(_close)
 	tab_row.add_child(close)
 
@@ -244,6 +271,8 @@ func _build() -> void:
 	var stack_w: float = maxf(i(320, s), minf(i(620, s), content.x - i(50, s)))
 	stack.custom_minimum_size = Vector2(stack_w, stack_h)
 	panel_vbox.add_child(stack)
+	_inv_stack = stack
+	_inv_stack_base_h = stack_h
 
 	# ── Inventory tab content ─────────────────────────────────────
 	_inv_panel = _build_inv_content(s)
@@ -354,7 +383,7 @@ func _style_tab_btn(btn: Button, active: bool) -> void:
 # Four independently expandable sections, in this order:
 #   1. LUA Programming Language        3. Python Programming Language
 #   2. Automatica (LUA robot)          4. Algorithmica (Python automation)
-# Language sections reveal entries through dungeon discovery; the two function
+# Language sections reveal entries through dungeon discovery; the function
 # sections list their complete API immediately (see scripts/encyclopedia_data.gd).
 # This is a read-only reference: it grants no execution rights and bypasses no
 # tool requirements.
@@ -397,6 +426,7 @@ func _refresh_encyclopedia() -> void:
 	for section in APIReference.encyclopedia_sections():
 		var sec: Dictionary = section as Dictionary
 		var always: bool = EncyclopediaData.section_is_always_available(sec)
+		var start_open: bool = bool(sec.get("start_expanded", always))
 		var entries: Array = EncyclopediaData.entries_for_section(sec)
 		var acc := EncyclopediaSection.new()
 		acc.setup(sec, s)
@@ -409,7 +439,8 @@ func _refresh_encyclopedia() -> void:
 		_enc_list.add_child(acc)
 		# Function sections start open (their API is available from the start);
 		# language sections start collapsed until something has been discovered.
-		acc.set_expanded(bool(_enc_open.get(acc.section_id, always)), false)
+		# The long mineable-block list opts out via start_expanded = false.
+		acc.set_expanded(bool(_enc_open.get(acc.section_id, start_open)), false)
 		acc.expansion_changed.connect(_on_encyclopedia_section_expanded)
 
 func _on_encyclopedia_section_expanded(id: String, on: bool) -> void:
@@ -455,10 +486,13 @@ func _build_bestiary_content(s: float) -> Control:
 	left_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	left_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	left_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 	body.add_child(left_scroll)
+	_best_left_scroll = left_scroll
 	_best_list = VBoxContainer.new()
 	_best_list.add_theme_constant_override("separation", i(4, s))
 	_best_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_best_list.mouse_filter = Control.MOUSE_FILTER_PASS
 	left_scroll.add_child(_best_list)
 
 	var right_scroll := ScrollContainer.new()
@@ -466,10 +500,13 @@ func _build_bestiary_content(s: float) -> Control:
 	right_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	right_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 	body.add_child(right_scroll)
+	_best_right_scroll = right_scroll
 	_best_detail = VBoxContainer.new()
 	_best_detail.add_theme_constant_override("separation", i(7, s))
 	_best_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_best_detail.mouse_filter = Control.MOUSE_FILTER_PASS
 	right_scroll.add_child(_best_detail)
 
 	_refresh_bestiary()
@@ -538,10 +575,141 @@ func _style_bestiary_button(btn: Button, selected: bool) -> void:
 	btn.add_theme_color_override("font_color", C_TITLE if selected else C_MUTED)
 
 func _on_bestiary_entry_pressed(id: String) -> void:
+	# A finger that dragged the list must not also select whichever row
+	# happened to be under it. The next fresh touch clears the block.
+	if _best_scroll_click_block:
+		_best_scroll_click_block = false
+		return
 	_best_selected_id = id
 	# Rebuild the left column too, so the selected border follows the clicked
 	# entry instead of staying on whichever row was selected previously.
 	_refresh_bestiary()
+
+## Touch drag-scroll for both Bestiary columns. Native ScrollContainer only
+## reacts to the wheel; unlike Knowledge/Quiz altars, the left column is made of
+## Buttons, so starting on a row must still be able to drag the list. The tap
+## itself is not consumed; only a moved drag blocks the row's pressed signal.
+func _handle_bestiary_touch_scroll(event: InputEvent) -> void:
+	if _best_panel == null or not is_instance_valid(_best_panel) \
+			or not _best_panel.visible:
+		return
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			_best_touch_scroll = null
+			_best_touch_index = -1
+			_best_touch_accum = 0.0
+			_best_touch_moved = 0.0
+			_best_scroll_click_block = false
+			if _best_left_scroll != null and is_instance_valid(_best_left_scroll) \
+					and _best_left_scroll.get_global_rect().has_point(t.position):
+				_best_touch_scroll = _best_left_scroll
+			elif _best_right_scroll != null and is_instance_valid(_best_right_scroll) \
+					and _best_right_scroll.get_global_rect().has_point(t.position):
+				_best_touch_scroll = _best_right_scroll
+			if _best_touch_scroll != null:
+				_best_touch_index = t.index
+		else:
+			if t.index == _best_touch_index:
+				_best_touch_scroll = null
+				_best_touch_index = -1
+				_best_touch_accum = 0.0
+				_best_touch_moved = 0.0
+		return
+	if event is InputEventScreenDrag and _best_touch_scroll != null \
+			and is_instance_valid(_best_touch_scroll):
+		var d := event as InputEventScreenDrag
+		if d.index != _best_touch_index:
+			return
+		_best_touch_moved += absf(d.relative.y)
+		if _best_touch_moved > 6.0 * Global.ui_scale:
+			_best_scroll_click_block = true
+		_best_touch_accum -= d.relative.y
+		var step: int = int(_best_touch_accum)
+		if step != 0:
+			_best_touch_scroll.scroll_vertical += step
+			_best_touch_accum -= float(step)
+		if _best_scroll_click_block:
+			get_viewport().set_input_as_handled()
+
+## Mobile finger-drag scrolling for the main inventory/chest stack. The outer
+## ScrollContainer has no wheel on a phone, and the panel is mostly item slots,
+## so track the drag here. Occupied slots and buttons are excluded: dragging one
+## of those must keep its existing click/drag-and-drop behaviour. Empty slots and
+## the item-detail area remain available for scrolling.
+func _handle_inventory_touch_scroll(event: InputEvent) -> void:
+	if not Global.is_mobile() or _chest == null or not is_instance_valid(_chest):
+		return
+	if _inv_panel == null or not is_instance_valid(_inv_panel) or not _inv_panel.visible:
+		return
+	if _main_scroll == null or not is_instance_valid(_main_scroll):
+		return
+	var bar := _main_scroll.get_v_scroll_bar()
+	if bar == null or bar.max_value <= bar.page + 0.5:
+		return
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			_inv_touch_index = -1
+			_inv_touch_accum = 0.0
+			_inv_touch_started = false
+			if not _main_scroll.get_global_rect().has_point(t.position):
+				return
+			if _inventory_scroll_blocked_at(t.position):
+				return
+			_inv_touch_index = t.index
+		else:
+			if t.index != _inv_touch_index:
+				return
+			if _inv_touch_started:
+				get_viewport().set_input_as_handled()
+			_inv_touch_index = -1
+			_inv_touch_accum = 0.0
+			_inv_touch_started = false
+		return
+	if event is InputEventScreenDrag and event.index == _inv_touch_index:
+		var d := event as InputEventScreenDrag
+		_inv_touch_started = true
+		_inv_touch_accum -= d.relative.y
+		var step: int = int(_inv_touch_accum)
+		if step != 0:
+			_main_scroll.scroll_vertical += step
+			_inv_touch_accum -= float(step)
+		# Own the drag so a native ScrollContainer touch path cannot apply it
+		# a second time.
+		get_viewport().set_input_as_handled()
+
+func _inventory_scroll_blocked_at(pos: Vector2) -> bool:
+	if _main_scroll == null:
+		return true
+	var bar := _main_scroll.get_v_scroll_bar()
+	if bar != null and bar.visible and bar.get_global_rect().has_point(pos):
+		return true
+	for slot in _slots:
+		var s := slot as Control
+		if s != null and is_instance_valid(s) and s.is_visible_in_tree() \
+				and s.get_global_rect().has_point(pos) and s.get("item") != null:
+			return true
+	for slot in _chest_slots:
+		var s := slot as Control
+		if s != null and is_instance_valid(s) and s.is_visible_in_tree() \
+				and s.get_global_rect().has_point(pos) and s.get("item") != null:
+			return true
+	return _control_blocks_inventory_scroll(self, pos)
+
+func _control_blocks_inventory_scroll(node: Node, pos: Vector2) -> bool:
+	for child in node.get_children():
+		if child is BaseButton:
+			var b := child as Control
+			if b.is_visible_in_tree() and b.get_global_rect().has_point(pos):
+				return true
+		elif child is LineEdit or child is TextEdit:
+			var text := child as Control
+			if text.is_visible_in_tree() and text.get_global_rect().has_point(pos):
+				return true
+		if _control_blocks_inventory_scroll(child, pos):
+			return true
+	return false
 
 func _refresh_bestiary_detail() -> void:
 	if _best_detail == null or not is_instance_valid(_best_detail):
@@ -691,15 +859,20 @@ func attach_chest(chest: Node) -> void:
 	_rebuild_chest_slots()
 	# Storage is only visible on the inventory tab.
 	_switch_tab("inventory")
+	_update_inv_stack_height()
 	Global.register_ui_back(self, Callable(self, "dismiss_back"))
 
 func detach_chest() -> void:
 	_chest = null
+	_inv_touch_index = -1
+	_inv_touch_accum = 0.0
+	_inv_touch_started = false
 	for slot in _slots:
 		if is_instance_valid(slot):
 			slot.set("chest_link", null)
 	_clear_chest_slots()
 	_apply_chest_layout(false)
+	_update_inv_stack_height()
 
 
 func _bind_chest_to_player_slots() -> void:
@@ -720,6 +893,21 @@ func _apply_chest_layout(active: bool) -> void:
 		_inv_root.add_theme_constant_override("separation", i(6 if active else 10, s))
 	if _inv_grid != null:
 		_inv_grid.add_theme_constant_override("v_separation", i(6 if active else 10, s))
+
+# The tab canvas normally has a fixed height so the inventory is compact. With
+# a chest docked the player grid and chest drawer are one taller stack; grow
+# the canvas to that real minimum so the outer ScrollContainer can reach the
+# chest instead of clipping its bottom row (common on phones). Closing the
+# chest returns the canvas to its original height.
+func _update_inv_stack_height() -> void:
+	if _inv_stack == null or not is_instance_valid(_inv_stack):
+		return
+	var wanted_h: float = _inv_stack_base_h
+	if _inv_panel != null and is_instance_valid(_inv_panel) \
+			and _chest != null and is_instance_valid(_chest):
+		wanted_h = maxf(wanted_h, _inv_panel.get_combined_minimum_size().y)
+	if not is_equal_approx(_inv_stack.custom_minimum_size.y, wanted_h):
+		_inv_stack.custom_minimum_size.y = wanted_h
 
 func opened_chest() -> Node:
 	return _chest
@@ -822,6 +1010,10 @@ func _rebuild_chest_slots() -> void:
 		_chest_slots.append(slot)
 
 	refresh_chest_slots()
+	_update_inv_stack_height()
+	# Content minimum sizes settle one layout pass later (text wrapping and the
+	# slot grid); remeasure so the outer scroll accounts for the whole chest.
+	call_deferred("_update_inv_stack_height")
 
 func refresh_chest_slots() -> void:
 	if _chest == null or not is_instance_valid(_chest):
@@ -931,6 +1123,11 @@ func _show_tip_empty() -> void:
 	_tip_type.text   = ""
 	_tip_effect.text = ""
 	_tip_desc.text   = ""
+	_queue_chest_stack_remeasure()
+
+func _queue_chest_stack_remeasure() -> void:
+	if _chest != null and is_instance_valid(_chest):
+		call_deferred("_update_inv_stack_height")
 
 # ── Crafting content ──────────────────────────────────────────────
 func _build_craft_content(s: float) -> Control:
@@ -995,8 +1192,8 @@ func _build_craft_detail(s: float) -> Control:
 	_craft_name   = _lbl("", Global.ui_font_size(14), C_TITLE); vbox.add_child(_craft_name)
 	_div(vbox)
 	vbox.add_child(_lbl("INGREDIENTS", Global.ui_font_size(10), C_MUTED))
-	_craft_ing1   = _build_craft_icon_row(s); vbox.add_child(_craft_ing1)
-	_craft_ing2   = _build_craft_icon_row(s); vbox.add_child(_craft_ing2)
+	_craft_ing1   = _build_craft_icon_row(s, true); vbox.add_child(_craft_ing1)
+	_craft_ing2   = _build_craft_icon_row(s, true); vbox.add_child(_craft_ing2)
 	_div(vbox)
 	vbox.add_child(_lbl("RESULT", Global.ui_font_size(10), C_MUTED))
 	_craft_result = _build_craft_icon_row(s); vbox.add_child(_craft_result)
@@ -1012,9 +1209,10 @@ func _build_craft_detail(s: float) -> Control:
 
 	return root
 
-# A single icon row (ingredient/result): item icon + a count text. Ref meta
-# "icon"/"qty" hold the child nodes for _fill_craft_icon_row.
-func _build_craft_icon_row(s: float) -> HBoxContainer:
+# A single icon row (ingredient/result): item icon + a count text. Ingredient
+# rows also carry the item's NAME above the count, matching the crafting
+# station's right-hand ingredients list.
+func _build_craft_icon_row(s: float, show_name: bool = false) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", i(8, s))
 	row.add_theme_constant_override("alignment", BoxContainer.ALIGNMENT_CENTER)
@@ -1023,9 +1221,23 @@ func _build_craft_icon_row(s: float) -> HBoxContainer:
 	icon.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.expand_mode          = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	row.add_child(icon)
+	var text_col: VBoxContainer = null
+	if show_name:
+		text_col = VBoxContainer.new()
+		text_col.add_theme_constant_override("separation", i(1, s))
+		text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(text_col)
+		var name_lbl := _lbl("", Global.ui_font_size(11), C_TITLE)
+		name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text_col.add_child(name_lbl)
+		row.set_meta("name", name_lbl)
 	var qty := Label.new()
 	qty.add_theme_font_size_override("font_size", Global.ui_font_size(12))
-	row.add_child(qty)
+	if text_col != null:
+		text_col.add_child(qty)
+	else:
+		row.add_child(qty)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.set_meta("icon", icon)
 	row.set_meta("qty", qty)
@@ -1037,9 +1249,14 @@ func _build_craft_icon_row(s: float) -> HBoxContainer:
 func _fill_craft_icon_row(row: HBoxContainer, data: ItemData, needed: int, is_ingredient: bool) -> void:
 	var icon := row.get_meta("icon") as TextureRect
 	var qty  := row.get_meta("qty") as Label
+	var name_lbl: Label = null
+	if row.has_meta("name"):
+		name_lbl = row.get_meta("name") as Label
 	if icon == null or qty == null or data == null:
 		return
 	icon.texture = data.icon if data.icon != null else null
+	if name_lbl != null:
+		name_lbl.text = data.item_name
 	var have: int = _count_item(data) if is_ingredient else needed
 	icon.modulate = Color(0.35, 0.35, 0.35, 1.0) if (is_ingredient and have <= 0) else Color.WHITE
 	if is_ingredient:
@@ -1173,6 +1390,7 @@ func _on_craft() -> void:
 		for _n in range(r.ingredient_2_quantity):
 			Global.remove_item(r.ingredient_2)
 	var added: bool = Global.add_item({"quantity": r.result_quantity, "data": r.result_item})
+	SFX.play_ui("sfx_craft", 1 if added else 2)
 	if added:
 		Global.item_crafted.emit(r.result_item.item_name, r.result_quantity)
 	else:
@@ -1224,6 +1442,7 @@ func _show_inventory_item(idx: int, make_active: bool) -> void:
 	_tip_type.text   = data.item_type.capitalize()
 	_tip_effect.text = ("+ " + data.effect) if data.effect != "" else ""
 	_tip_desc.text   = data.description
+	_queue_chest_stack_remeasure()
 
 func _on_slot_clicked(idx: int) -> void:
 	_show_inventory_item(idx, true)

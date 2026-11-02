@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>SandEE | IT Expert Questionnaire</title>
+  <meta name="description" content="IT expert questionnaire for the SandEE software quality evaluation.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <p class="brand">SandEE</p>
+      <h1>IT Expert Questionnaire</h1>
+      <p class="subtitle">ISO/IEC 25010 Software Product Quality Evaluation</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <form name="sandee-it-expert-survey" method="POST" data-netlify="true" netlify-honeypot="bot-field" action="thanks.html">
+      <input type="hidden" name="form-name" value="sandee-it-expert-survey">
+      <p hidden><label>Do not fill this out: <input name="bot-field"></label></p>
+
+      <section class="card" aria-labelledby="part-1">
+        <h2 id="part-1">Part 1: Respondent's Profile</h2>
+        <div class="profile-grid">
+          <div class="field">
+            <label for="respondent_name">Name</label>
+            <input class="input" id="respondent_name" name="name" type="text" autocomplete="name" required>
+          </div>
+          <div class="field">
+            <label for="respondent_age">Age</label>
+            <input class="input" id="respondent_age" name="age" type="number" min="1" max="120" inputmode="numeric" required>
+          </div>
+          <div class="field">
+            <label for="institution">Affiliated Institution</label>
+            <input class="input" id="institution" name="affiliated_institution" type="text" autocomplete="organization" required>
+          </div>
+          <div class="field">
+            <label for="position">Position / Designation</label>
+            <input class="input" id="position" name="position_designation" type="text" autocomplete="organization-title" required>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="part-2">
+        <h2 id="part-2">Part 2: Software Quality Evaluation</h2>
+        <p class="directions">Please evaluate the software quality of &ldquo;SandEE&rdquo; based on the eight main characteristics of the ISO 25010 Software Product Quality Standard. Choose the appropriate box using the four-point scale, with 4 as the highest and 1 as the lowest.</p>
+        <p class="required-note">All ratings are required.</p>
+        <h3>Functional Suitability</h3>
+        <p class="definition">Represents the degree to which a product or system provides functions that meet stated and implied needs when used under specified conditions.</p>
+        <div class="item" role="group" aria-labelledby="q_functional_completeness">
+          <div class="item-text">
+            <span class="item-name" id="q_functional_completeness">Functional completeness</span>
+            <span class="item-desc">Degree to which the set of functions covers all the specified tasks and user objectives.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="functional_completeness" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_completeness" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_completeness" value="3"><span class="opt-num">3</span><span class="opt-label">Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_completeness" value="4"><span class="opt-num">4</span><span class="opt-label">Very Functional</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_functional_correctness">
+          <div class="item-text">
+            <span class="item-name" id="q_functional_correctness">Functional correctness</span>
+            <span class="item-desc">Degree to which a product or system provides the correct results with the needed degree of precision.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="functional_correctness" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_correctness" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_correctness" value="3"><span class="opt-num">3</span><span class="opt-label">Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_correctness" value="4"><span class="opt-num">4</span><span class="opt-label">Very Functional</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_functional_appropriateness">
+          <div class="item-text">
+            <span class="item-name" id="q_functional_appropriateness">Functional appropriateness</span>
+            <span class="item-desc">Degree to which the functions facilitate the accomplishment of specified tasks and objectives.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="functional_appropriateness" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_appropriateness" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_appropriateness" value="3"><span class="opt-num">3</span><span class="opt-label">Functional</span></label>
+            <label class="opt"><input type="radio" name="functional_appropriateness" value="4"><span class="opt-num">4</span><span class="opt-label">Very Functional</span></label>
+          </div>
+        </div>
+
+        <h3>Performance Efficiency</h3>
+        <p class="definition">Represents the performance relative to the amount of resources used under stated conditions.</p>
+        <div class="item" role="group" aria-labelledby="q_time_behaviour">
+          <div class="item-text">
+            <span class="item-name" id="q_time_behaviour">Time behaviour</span>
+            <span class="item-desc">Degree to which the response and processing times and throughput rates of a product or system, when performing its functions, meet requirements.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="time_behaviour" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Efficient</span></label>
+            <label class="opt"><input type="radio" name="time_behaviour" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Efficient</span></label>
+            <label class="opt"><input type="radio" name="time_behaviour" value="3"><span class="opt-num">3</span><span class="opt-label">Efficient</span></label>
+            <label class="opt"><input type="radio" name="time_behaviour" value="4"><span class="opt-num">4</span><span class="opt-label">Very Efficient</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_resource_utilization">
+          <div class="item-text">
+            <span class="item-name" id="q_resource_utilization">Resource utilization</span>
+            <span class="item-desc">Degree to which the amounts and types of resources used by the system, when performing its functions, meet requirements.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="resource_utilization" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Efficient</span></label>
+            <label class="opt"><input type="radio" name="resource_utilization" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Efficient</span></label>
+            <label class="opt"><input type="radio" name="resource_utilization" value="3"><span class="opt-num">3</span><span class="opt-label">Efficient</span></label>
+            <label class="opt"><input type="radio" name="resource_utilization" value="4"><span class="opt-num">4</span><span class="opt-label">Very Efficient</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_capacity">
+          <div class="item-text">
+            <span class="item-name" id="q_capacity">Capacity</span>
+            <span class="item-desc">Degree to which the maximum limits of the system parameter meet requirements.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="capacity" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Efficient</span></label>
+            <label class="opt"><input type="radio" name="capacity" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Efficient</span></label>
+            <label class="opt"><input type="radio" name="capacity" value="3"><span class="opt-num">3</span><span class="opt-label">Efficient</span></label>
+            <label class="opt"><input type="radio" name="capacity" value="4"><span class="opt-num">4</span><span class="opt-label">Very Efficient</span></label>
+          </div>
+        </div>
+
+        <h3>Compatibility</h3>
+        <p class="definition">Degree to which the system or component can exchange information with other products, systems or components, and/or perform its required functions while sharing the same hardware or software environment.</p>
+        <div class="item" role="group" aria-labelledby="q_co_existence">
+          <div class="item-text">
+            <span class="item-name" id="q_co_existence">Co-existence</span>
+            <span class="item-desc">Degree to which a system can perform its required functions efficiently while sharing a common environment and resources with other products, without detrimental impact on any other product.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="co_existence" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Compatible</span></label>
+            <label class="opt"><input type="radio" name="co_existence" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Compatible</span></label>
+            <label class="opt"><input type="radio" name="co_existence" value="3"><span class="opt-num">3</span><span class="opt-label">Compatible</span></label>
+            <label class="opt"><input type="radio" name="co_existence" value="4"><span class="opt-num">4</span><span class="opt-label">Very Compatible</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_interoperability">
+          <div class="item-text">
+            <span class="item-name" id="q_interoperability">Interoperability</span>
+            <span class="item-desc">Degree to which two or more systems, products or components can exchange information and use the information that has been exchanged.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="interoperability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Compatible</span></label>
+            <label class="opt"><input type="radio" name="interoperability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Compatible</span></label>
+            <label class="opt"><input type="radio" name="interoperability" value="3"><span class="opt-num">3</span><span class="opt-label">Compatible</span></label>
+            <label class="opt"><input type="radio" name="interoperability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Compatible</span></label>
+          </div>
+        </div>
+
+        <h3>Usability</h3>
+        <p class="definition">Degree to which a product or system can be used by specified users to achieve specified goals with effectiveness, efficiency and satisfaction in a specified context of use.</p>
+        <div class="item" role="group" aria-labelledby="q_appropriateness_recognizability">
+          <div class="item-text">
+            <span class="item-name" id="q_appropriateness_recognizability">Appropriateness recognizability</span>
+            <span class="item-desc">Degree to which users can recognize whether a system is appropriate for their needs.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="appropriateness_recognizability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Usable</span></label>
+            <label class="opt"><input type="radio" name="appropriateness_recognizability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Usable</span></label>
+            <label class="opt"><input type="radio" name="appropriateness_recognizability" value="3"><span class="opt-num">3</span><span class="opt-label">Usable</span></label>
+            <label class="opt"><input type="radio" name="appropriateness_recognizability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Usable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_learnability">
+          <div class="item-text">
+            <span class="item-name" id="q_learnability">Learnability</span>
+            <span class="item-desc">Degree to which a system can be used by specified users to achieve specified goals of learning to use the system with effectiveness, efficiency, freedom from risk and satisfaction in a specified context of use.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="learnability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Usable</span></label>
+            <label class="opt"><input type="radio" name="learnability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Usable</span></label>
+            <label class="opt"><input type="radio" name="learnability" value="3"><span class="opt-num">3</span><span class="opt-label">Usable</span></label>
+            <label class="opt"><input type="radio" name="learnability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Usable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_operability">
+          <div class="item-text">
+            <span class="item-name" id="q_operability">Operability</span>
+            <span class="item-desc">Degree to which a system has attributes that make it easy to operate and control.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="operability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Usable</span></label>
+            <label class="opt"><input type="radio" name="operability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Usable</span></label>
+            <label class="opt"><input type="radio" name="operability" value="3"><span class="opt-num">3</span><span class="opt-label">Usable</span></label>
+            <label class="opt"><input type="radio" name="operability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Usable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_user_error_protection">
+          <div class="item-text">
+            <span class="item-name" id="q_user_error_protection">User error protection</span>
+            <span class="item-desc">Degree to which a system protects users against making errors.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="user_error_protection" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Usable</span></label>
+            <label class="opt"><input type="radio" name="user_error_protection" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Usable</span></label>
+            <label class="opt"><input type="radio" name="user_error_protection" value="3"><span class="opt-num">3</span><span class="opt-label">Usable</span></label>
+            <label class="opt"><input type="radio" name="user_error_protection" value="4"><span class="opt-num">4</span><span class="opt-label">Very Usable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_user_interface_aesthetics">
+          <div class="item-text">
+            <span class="item-name" id="q_user_interface_aesthetics">User interface aesthetics</span>
+            <span class="item-desc">Degree to which a user interface enables pleasing and satisfying interaction for the user.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="user_interface_aesthetics" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Usable</span></label>
+            <label class="opt"><input type="radio" name="user_interface_aesthetics" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Usable</span></label>
+            <label class="opt"><input type="radio" name="user_interface_aesthetics" value="3"><span class="opt-num">3</span><span class="opt-label">Usable</span></label>
+            <label class="opt"><input type="radio" name="user_interface_aesthetics" value="4"><span class="opt-num">4</span><span class="opt-label">Very Usable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_accessibility">
+          <div class="item-text">
+            <span class="item-name" id="q_accessibility">Accessibility</span>
+            <span class="item-desc">Degree to which a system can be used by people with the widest range of characteristics and capabilities to achieve a specified goal in a specified context of use.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="accessibility" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Usable</span></label>
+            <label class="opt"><input type="radio" name="accessibility" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Usable</span></label>
+            <label class="opt"><input type="radio" name="accessibility" value="3"><span class="opt-num">3</span><span class="opt-label">Usable</span></label>
+            <label class="opt"><input type="radio" name="accessibility" value="4"><span class="opt-num">4</span><span class="opt-label">Very Usable</span></label>
+          </div>
+        </div>
+
+        <h3>Reliability</h3>
+        <p class="definition">Degree to which a system, product or component performs specified functions under specified conditions for a specified period of time.</p>
+        <div class="item" role="group" aria-labelledby="q_maturity">
+          <div class="item-text">
+            <span class="item-name" id="q_maturity">Maturity</span>
+            <span class="item-desc">Degree to which a system or component meets needs for reliability under normal operation.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="maturity" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Reliable</span></label>
+            <label class="opt"><input type="radio" name="maturity" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Reliable</span></label>
+            <label class="opt"><input type="radio" name="maturity" value="3"><span class="opt-num">3</span><span class="opt-label">Reliable</span></label>
+            <label class="opt"><input type="radio" name="maturity" value="4"><span class="opt-num">4</span><span class="opt-label">Very Reliable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_availability">
+          <div class="item-text">
+            <span class="item-name" id="q_availability">Availability</span>
+            <span class="item-desc">Degree to which a system or component is operational and accessible when required for use.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="availability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Reliable</span></label>
+            <label class="opt"><input type="radio" name="availability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Reliable</span></label>
+            <label class="opt"><input type="radio" name="availability" value="3"><span class="opt-num">3</span><span class="opt-label">Reliable</span></label>
+            <label class="opt"><input type="radio" name="availability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Reliable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_fault_tolerance">
+          <div class="item-text">
+            <span class="item-name" id="q_fault_tolerance">Fault tolerance</span>
+            <span class="item-desc">Degree to which a system or component operates as intended despite the presence of hardware or software faults.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="fault_tolerance" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Reliable</span></label>
+            <label class="opt"><input type="radio" name="fault_tolerance" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Reliable</span></label>
+            <label class="opt"><input type="radio" name="fault_tolerance" value="3"><span class="opt-num">3</span><span class="opt-label">Reliable</span></label>
+            <label class="opt"><input type="radio" name="fault_tolerance" value="4"><span class="opt-num">4</span><span class="opt-label">Very Reliable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_recoverability">
+          <div class="item-text">
+            <span class="item-name" id="q_recoverability">Recoverability</span>
+            <span class="item-desc">Degree to which, in the event of an interruption or a failure, a system can recover the data directly affected and re-establish the desired state of the system.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="recoverability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Reliable</span></label>
+            <label class="opt"><input type="radio" name="recoverability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Reliable</span></label>
+            <label class="opt"><input type="radio" name="recoverability" value="3"><span class="opt-num">3</span><span class="opt-label">Reliable</span></label>
+            <label class="opt"><input type="radio" name="recoverability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Reliable</span></label>
+          </div>
+        </div>
+
+        <h3>Security</h3>
+        <p class="definition">Degree to which a product or system protects information and data so that persons or other products or systems have the degree of data access appropriate to their types and levels of authorization.</p>
+        <div class="item" role="group" aria-labelledby="q_confidentiality">
+          <div class="item-text">
+            <span class="item-name" id="q_confidentiality">Confidentiality</span>
+            <span class="item-desc">Degree to which a system ensures that data are accessible only to those authorized to have access.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="confidentiality" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Secure</span></label>
+            <label class="opt"><input type="radio" name="confidentiality" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Secure</span></label>
+            <label class="opt"><input type="radio" name="confidentiality" value="3"><span class="opt-num">3</span><span class="opt-label">Secure</span></label>
+            <label class="opt"><input type="radio" name="confidentiality" value="4"><span class="opt-num">4</span><span class="opt-label">Very Secure</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_integrity">
+          <div class="item-text">
+            <span class="item-name" id="q_integrity">Integrity</span>
+            <span class="item-desc">Degree to which a system component prevents unauthorized access to, or modification of, computer programs or data.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="integrity" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Secure</span></label>
+            <label class="opt"><input type="radio" name="integrity" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Secure</span></label>
+            <label class="opt"><input type="radio" name="integrity" value="3"><span class="opt-num">3</span><span class="opt-label">Secure</span></label>
+            <label class="opt"><input type="radio" name="integrity" value="4"><span class="opt-num">4</span><span class="opt-label">Very Secure</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_non_repudiation">
+          <div class="item-text">
+            <span class="item-name" id="q_non_repudiation">Non-repudiation</span>
+            <span class="item-desc">Degree to which actions or events can be proven to have taken place so that the events or actions cannot be repudiated later.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="non_repudiation" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Secure</span></label>
+            <label class="opt"><input type="radio" name="non_repudiation" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Secure</span></label>
+            <label class="opt"><input type="radio" name="non_repudiation" value="3"><span class="opt-num">3</span><span class="opt-label">Secure</span></label>
+            <label class="opt"><input type="radio" name="non_repudiation" value="4"><span class="opt-num">4</span><span class="opt-label">Very Secure</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_accountability">
+          <div class="item-text">
+            <span class="item-name" id="q_accountability">Accountability</span>
+            <span class="item-desc">Degree to which the actions of an entity can be traced uniquely to the entity.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="accountability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Secure</span></label>
+            <label class="opt"><input type="radio" name="accountability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Secure</span></label>
+            <label class="opt"><input type="radio" name="accountability" value="3"><span class="opt-num">3</span><span class="opt-label">Secure</span></label>
+            <label class="opt"><input type="radio" name="accountability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Secure</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_authenticity">
+          <div class="item-text">
+            <span class="item-name" id="q_authenticity">Authenticity</span>
+            <span class="item-desc">Degree to which the identity of a subject or resource can be proved to be the one claimed.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="authenticity" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Secure</span></label>
+            <label class="opt"><input type="radio" name="authenticity" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Secure</span></label>
+            <label class="opt"><input type="radio" name="authenticity" value="3"><span class="opt-num">3</span><span class="opt-label">Secure</span></label>
+            <label class="opt"><input type="radio" name="authenticity" value="4"><span class="opt-num">4</span><span class="opt-label">Very Secure</span></label>
+          </div>
+        </div>
+
+        <h3>Maintainability</h3>
+        <p class="definition">Degree of effectiveness and efficiency with which a product or system can be modified to improve it, correct it or adapt it to changes in environment, and in requirements.</p>
+        <div class="item" role="group" aria-labelledby="q_modularity">
+          <div class="item-text">
+            <span class="item-name" id="q_modularity">Modularity</span>
+            <span class="item-desc">Degree to which a system or computer program is composed of discrete components such that a change to one component has minimal impact on other components.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="modularity" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Maintainable</span></label>
+            <label class="opt"><input type="radio" name="modularity" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Maintainable</span></label>
+            <label class="opt"><input type="radio" name="modularity" value="3"><span class="opt-num">3</span><span class="opt-label">Maintainable</span></label>
+            <label class="opt"><input type="radio" name="modularity" value="4"><span class="opt-num">4</span><span class="opt-label">Very Maintainable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_reusability">
+          <div class="item-text">
+            <span class="item-name" id="q_reusability">Reusability</span>
+            <span class="item-desc">Degree to which an asset can be used in more than one system, or in building other assets.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="reusability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Maintainable</span></label>
+            <label class="opt"><input type="radio" name="reusability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Maintainable</span></label>
+            <label class="opt"><input type="radio" name="reusability" value="3"><span class="opt-num">3</span><span class="opt-label">Maintainable</span></label>
+            <label class="opt"><input type="radio" name="reusability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Maintainable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_analysability">
+          <div class="item-text">
+            <span class="item-name" id="q_analysability">Analysability</span>
+            <span class="item-desc">Degree of effectiveness and efficiency with which it is possible to assess the impact on a product or system of an intended change to one or more of its parts, or to diagnose a product for deficiencies or causes of failures, or to identify parts to be modified.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="analysability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Maintainable</span></label>
+            <label class="opt"><input type="radio" name="analysability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Maintainable</span></label>
+            <label class="opt"><input type="radio" name="analysability" value="3"><span class="opt-num">3</span><span class="opt-label">Maintainable</span></label>
+            <label class="opt"><input type="radio" name="analysability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Maintainable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_modifiability">
+          <div class="item-text">
+            <span class="item-name" id="q_modifiability">Modifiability</span>
+            <span class="item-desc">Degree to which a product or system can be effectively and efficiently modified without introducing defects or degrading existing product quality.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="modifiability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Maintainable</span></label>
+            <label class="opt"><input type="radio" name="modifiability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Maintainable</span></label>
+            <label class="opt"><input type="radio" name="modifiability" value="3"><span class="opt-num">3</span><span class="opt-label">Maintainable</span></label>
+            <label class="opt"><input type="radio" name="modifiability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Maintainable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_testability">
+          <div class="item-text">
+            <span class="item-name" id="q_testability">Testability</span>
+            <span class="item-desc">Degree of effectiveness and efficiency with which test criteria can be established for a system, product or component and tests can be performed to determine whether those criteria have been met.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="testability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Maintainable</span></label>
+            <label class="opt"><input type="radio" name="testability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Maintainable</span></label>
+            <label class="opt"><input type="radio" name="testability" value="3"><span class="opt-num">3</span><span class="opt-label">Maintainable</span></label>
+            <label class="opt"><input type="radio" name="testability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Maintainable</span></label>
+          </div>
+        </div>
+
+        <h3>Portability</h3>
+        <p class="definition">Degree of effectiveness and efficiency with which a system, product or component can be transferred from one hardware, software or other operational or usage environment to another.</p>
+        <div class="item" role="group" aria-labelledby="q_adaptability">
+          <div class="item-text">
+            <span class="item-name" id="q_adaptability">Adaptability</span>
+            <span class="item-desc">Degree to which a product or system can effectively and efficiently be adapted for different or evolving hardware, software or other operational or usage environments.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="adaptability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Portable</span></label>
+            <label class="opt"><input type="radio" name="adaptability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Portable</span></label>
+            <label class="opt"><input type="radio" name="adaptability" value="3"><span class="opt-num">3</span><span class="opt-label">Portable</span></label>
+            <label class="opt"><input type="radio" name="adaptability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Portable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_installability">
+          <div class="item-text">
+            <span class="item-name" id="q_installability">Installability</span>
+            <span class="item-desc">Degree of effectiveness and efficiency with which a product or system can be successfully installed and/or uninstalled in a specified environment.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="installability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Portable</span></label>
+            <label class="opt"><input type="radio" name="installability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Portable</span></label>
+            <label class="opt"><input type="radio" name="installability" value="3"><span class="opt-num">3</span><span class="opt-label">Portable</span></label>
+            <label class="opt"><input type="radio" name="installability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Portable</span></label>
+          </div>
+        </div>
+        <div class="item" role="group" aria-labelledby="q_replaceability">
+          <div class="item-text">
+            <span class="item-name" id="q_replaceability">Replaceability</span>
+            <span class="item-desc">Degree to which a product can replace another specified software product for the same purpose in the same environment.</span>
+          </div>
+          <div class="options">
+            <label class="opt"><input type="radio" name="replaceability" value="1" required><span class="opt-num">1</span><span class="opt-label">Poorly Portable</span></label>
+            <label class="opt"><input type="radio" name="replaceability" value="2"><span class="opt-num">2</span><span class="opt-label">Moderately Portable</span></label>
+            <label class="opt"><input type="radio" name="replaceability" value="3"><span class="opt-num">3</span><span class="opt-label">Portable</span></label>
+            <label class="opt"><input type="radio" name="replaceability" value="4"><span class="opt-num">4</span><span class="opt-label">Very Portable</span></label>
+          </div>
+        </div>
+
+      </section>
+
+      <section class="card" aria-labelledby="part-4">
+        <h2 id="part-4">Part 4: Feedback and Suggestions</h2>
+        <div class="field">
+          <label for="feedback_experience">Please provide further comments about your experience in using SandEE. Kindly identify its strong point/s to be enhanced and its weak points that need to be addressed for improvements.</label>
+          <textarea class="input" id="feedback_experience" name="feedback_experience" rows="5"></textarea>
+        </div>
+        <div class="field" style="margin-top: 1rem;">
+          <label for="feedback_features">Do you have any thoughts on other features or functions that can be added to SandEE? Kindly share any suggestions with us so we can better improve it.</label>
+          <textarea class="input" id="feedback_features" name="feedback_features" rows="5"></textarea>
+        </div>
+        <div class="profile-grid" style="margin-top: 1rem;">
+          <div class="field">
+            <label for="signature">Respondent's Signature</label>
+            <input class="input" id="signature" name="signature" type="text" autocomplete="name" placeholder="Type your full name" required>
+          </div>
+          <div class="field">
+            <label for="evaluation_date">Date of Evaluation</label>
+            <input class="input" id="evaluation_date" name="evaluation_date" type="date" required>
+          </div>
+        </div>
+      </section>
+
+      <div class="submit-row">
+        <button class="submit-btn" type="submit">Submit Evaluation</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>

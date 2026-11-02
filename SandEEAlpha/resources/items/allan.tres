@@ -1,7 +1,7 @@
-[gd_resource type="Resource" script_class="ItemData" format=3]
+[gd_resource type="Resource" script_class="ItemData" format=3 uid="uid://dnqpi1g14507q"]
 
-[ext_resource type="Script" path="res://resources/items/item_data.gd" id="1_item"]
-[ext_resource type="Texture2D" path="res://sprites/smiling_fishes.png" id="2_tex"]
+[ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_item"]
+[ext_resource type="Texture2D" uid="uid://d246d76a5od03" path="res://sprites/smiling_fishes.png" id="2_tex"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_fish"]
 atlas = ExtResource("2_tex")
@@ -9,7 +9,7 @@ region = Rect2(0, 32, 32, 32)
 
 [resource]
 script = ExtResource("1_item")
-item_name = "Allan"
-description = "A red fish with impeccable manners. Yes sir. Cook it in a furnace."
-item_type = "material"
+item_name = "Scuttlefish"
+description = "Related to shrimps, somehow. Cook it in a furnace."
+scripting_id = "allan"
 icon = SubResource("AtlasTexture_fish")

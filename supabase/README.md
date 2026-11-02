@@ -49,6 +49,7 @@ Applied migrations (remote and local are in sync):
 20261022167000_star_ledger.sql                        auditable star ledger
 20261022168000_cloud_save_limit.sql                   5-cloud-save hard limit
 20261022169000_cleanup_online_test_account.sql        test-data cleanup (one-off)
+20261029120000_cloud_save_deletions.sql              cross-platform delete tombstones
 ```
 
 | Object | Purpose | Client access |
@@ -56,6 +57,7 @@ Applied migrations (remote and local are in sync):
 | `profiles` | `id`, internal login identifier in `email`, `username`, `blue_stars`, `yellow_stars`, `is_test`, timestamps | read public columns, update own `username`; `email`, stars and `is_test` are not client-readable |
 | `saves` | legacy JSON save blob, one row per user | owner-only (RLS) |
 | `cloud_saves` | metadata for Storage saves: `slot` 1..10, `object_path`, `world_name`, `world_uid`, `revision`, `size_bytes`, `checksum`, `updated_at` | owner-only (RLS) |
+| `cloud_save_deletions` | permanent tombstone per `(user_id, world_uid)` so a world deleted on one platform is removed from the others instead of re-uploaded | owner-only (RLS) |
 | `reward_claims` | one row per `(user_id, reward_id)`, protects rewards from double-claiming | read own only; written exclusively by `claim_missions()` |
 | `mission_rewards` | server whitelist: valid mission/clear reward ids → fixed star kind and amount | none (RPC only) |
 | `leaderboard` (view) | `username`, `blue_stars`, `yellow_stars`, `total_stars` | public read, **excludes `is_test` profiles** |
@@ -190,6 +192,10 @@ Policy:
   local world as a `.bak` file; a checksum mismatch aborts before writing.
 * A save that lands while an upload is in flight is marked dirty and synced
   again when the first upload finishes.
+* Deleting a world records a permanent `(world_uid)` tombstone before removing
+  its cloud copy. Other platforms apply that tombstone during sync by deleting
+  their matching local world; they never re-upload a tombstoned UID. Offline
+  deletions are queued under the account and flushed on the next online sync.
 * Everything is a no-op outside Online Mode or without a signed-in session.
 
 ## Mission stars (local ↔ cloud)

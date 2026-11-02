@@ -9,6 +9,9 @@ var scene_path: String = "res://scenes/ui/InventoryItem.tscn"
 
 var player_in_range: bool = false
 var npc_in_range:    Node  = null   # LuaNPC that is close enough to collect
+# True after one failed pickup because the inventory was full. Keeps _process
+# from re-calling add_item() (and replaying sfx_inventory_full) every frame.
+var _full_notified:  bool  = false
 
 var quantity: int = 1
 var _qty_label: Label
@@ -96,13 +99,30 @@ func _process(delta: float) -> void:
 			player_in_range = false
 
 	if player_in_range:
-		pickup_item()
+		_try_player_pickup()
+	else:
+		# Leaving range re-arms the one-time full-inventory warning.
+		_full_notified = false
 
 # ── Player pickup ─────────────────────────────────────────────────
+# A full inventory used to call add_item() every frame, retriggering the
+# inventory-full sound continuously. Warn once per approach, then retry
+# silently and pick the drop up automatically when enough space opens.
+func _try_player_pickup() -> void:
+	if item_data == null:
+		return
+	if Global.space_for_item(item_data) >= quantity:
+		_full_notified = false
+		pickup_item()
+	elif not _full_notified:
+		_full_notified = true
+		pickup_item()
+
 func pickup_item() -> void:
 	if item_data == null:
 		return
 	if Global.add_item({"quantity": quantity, "data": item_data}):
+		SFX.play("sfx_item_pickup", global_position, -2.0)
 		queue_free()
 
 # ── NPC pickup — called directly by LuaNPC after interact ─────────
@@ -115,6 +135,7 @@ func npc_pickup(npc: Node) -> bool:
 		return false
 	lua_state.set("held_item", item_data.item_name)
 	lua_state.set("held_item_quantity", 1)
+	SFX.play("sfx_item_pickup", global_position, -4.0)
 	queue_free()
 	return true
 
@@ -138,6 +159,7 @@ func _on_area_2d_body_entered(body: Node2D) -> void:
 func _on_area_2d_body_exited(body: Node2D) -> void:
 	if body.is_in_group("Player"):
 		player_in_range = false
+		_full_notified  = false
 
 # ── Block repulsion ───────────────────────────────────────────────
 # Dropped items are pushed out of anything solid so they can't rest on

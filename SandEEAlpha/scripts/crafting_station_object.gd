@@ -13,6 +13,7 @@ var item_data:      ItemData = null
 signal station_state_changed
 
 const STATION_PYTHON_HOST_SCRIPT: GDScript = preload("res://scripts/station_python_host.gd")
+const CODE_SAFETY: GDScript = preload("res://scripts/code_safety.gd")
 const STATION_RECIPE_DIR: String = "res://resources/recipes/"
 # Algorithmica craft_color() cost/limits. This is the same 1-Cactus-per-block
 # economy as the manual Color Crafter, with the station's single output stack
@@ -43,7 +44,7 @@ static var _station_recipe_cache: Array = []
 
 # ── Shift-click breaking (respects the mining mechanic) ───────────
 # Shift + left-click doesn't INSTANTLY destroy anymore — it runs the same
-# hold-to-break mechanic as placed blocks: duration = block_level -
+# hold-to-break mechanic as placed blocks: duration = Global.mining_break_seconds(
 # pickaxe_level (min 0.1s) and gated by min_pickaxe_level. Mirrors
 # placeable_block.gd's breaking so the station breaks off the wall at the
 # same speed/tier rules a mined block does. Break progress also accepts
@@ -137,7 +138,7 @@ func _process(delta: float) -> void:
 	if not _breaking:
 		return
 	if not _player_nearby \
-			or not Global.is_shift_held() \
+			or (not Global.is_shift_held() and not Global.held_item_can_mine(item_data)) \
 			or not Global.is_left_action_held():
 		_cancel_breaking()
 		return
@@ -156,6 +157,9 @@ func _draw() -> void:
 # Adds damage (in seconds of break work) from a held frame's delta or a
 # fresh shift-click's flat CLICK_BREAK_SECONDS, then breaks when full.
 func _add_break_progress(seconds: float) -> void:
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	_break_elapsed  = minf(_break_elapsed + seconds, _break_duration)
 	_break_progress = _break_elapsed / _break_duration if _break_duration > 0.0 else 1.0
 	_last_hit_ms    = Time.get_ticks_msec()
@@ -217,9 +221,9 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton \
 			and event.button_index == MOUSE_BUTTON_LEFT:
-		# Shift + left-click: start mining this station off the wall (respects
-		# pickaxe tier + break time). Without shift it opens the crafting UI.
-		if Global.is_shift_held():
+		# A pickaxe/axe makes destruction take priority over opening the panel,
+		# so tap-to-control on mobile (which has no Shift) can still demolish it.
+		if Global.is_shift_held() or Global.held_item_can_mine(item_data):
 			if event.pressed:
 				_try_start_breaking()
 				if _breaking:
@@ -230,11 +234,14 @@ func _input(event: InputEvent) -> void:
 			return
 		if event.pressed:
 			_ui.open_as_station()
+			# Consume the plain click so the same tap cannot also reach the
+			# player/world mining path (notably on Android with a tool held).
+			get_viewport().set_input_as_handled()
 
 # Begin the mining process. No-op when no pickaxe is selected, the held
 # pickaxe is below min_pickaxe_level, or it's already breaking.
 func _try_start_breaking() -> void:
-	if _breaking:
+	if _breaking or Global.is_tutorial_protected(self):
 		return
 	var held: Variant = Global.get_hotbar_item()
 	var held_data: ItemData = null
@@ -260,7 +267,8 @@ func _try_start_breaking() -> void:
 		var hardness: float = float(block_lvl)
 		if is_wooden:
 			hardness /= (1.0 - 0.75)
-		_break_duration = maxf(0.1, hardness - float(Global.held_mining_level()))
+		_break_duration = Global.mining_break_seconds(hardness,
+			Global.held_mining_level())
 	# The swing animation plays for any item used to break — route through the
 	# player so it fires even though this station consumed the click input.
 	if Global.player_node != null and Global.player_node.has_method("swing_held_item"):
@@ -287,6 +295,9 @@ func _held_pickaxe_level() -> int:
 
 # Break on completion: unregister from the world and drop the block item.
 func _do_break() -> void:
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	_cancel_breaking()
 	var world: Node = _world_ref if _world_ref != null else Global.world_node
 	if world != null and world.has_method("unregister_block"):
@@ -433,6 +444,7 @@ func put_input(data: ItemData, quantity: int) -> int:
 		return 0
 	input_item      = data
 	input_quantity += add
+	SFX.play("sfx_station_io", global_position, -3.0, 1.0, 0)
 	_notify_state_changed()
 	return add
 
@@ -478,6 +490,7 @@ func craft_request(amount: int) -> int:
 		_consume_ingredient(automation_recipe.ingredient_2, automation_recipe.ingredient_2_quantity * amount)
 	output_item     = result
 	output_quantity += produced
+	SFX.play("sfx_craft", global_position, -3.0, 1.0, 1)
 	CrashLogger.event("CRAFT", "ok %s x%d" % [result.item_name, produced])
 	_notify_state_changed()
 	return amount
@@ -513,6 +526,7 @@ func craft_color_request(r, g, b, amount) -> int:
 	_consume_ingredient(CACTUS_DATA, amount)
 	output_item = block
 	output_quantity += amount
+	SFX.play("sfx_algorithmica_color", global_position, -3.0, 1.0, 0)
 	_notify_state_changed()
 	return amount
 
@@ -553,6 +567,8 @@ func take_output() -> int:
 			break
 		taken += 1
 	output_quantity -= taken
+	if taken > 0:
+		SFX.play("sfx_station_io", global_position, -3.0, 1.0, 1)
 	if output_quantity <= 0:
 		output_quantity = 0
 		output_item     = null
@@ -604,7 +620,11 @@ func is_lua_available() -> bool:
 
 func get_lua_host() -> Node:
 	if _lua_host == null or not is_instance_valid(_lua_host):
-		_lua_host = LuaState.new()
+		if not ClassDB.class_exists("LuaState"):
+			return null
+		_lua_host = ClassDB.instantiate("LuaState") as Node
+		if _lua_host == null:
+			return null
 		add_child(_lua_host)
 		_lua_host.connect("signal_craft", _on_lua_craft)
 		_lua_host.connect("signal_set_recipe", _on_lua_set_recipe)
@@ -619,10 +639,18 @@ func get_lua_host() -> Node:
 # are routed through the same validated methods the Python API uses.
 func run_lua_program(source: String) -> void:
 	program_code = source
+	var unsafe: String = CODE_SAFETY.lua_issue(source)
+	if not unsafe.is_empty():
+		CrashLogger.code("lua", "BLOCKED", "station: " + unsafe)
+		_on_station_lua_fail(unsafe)
+		return
 	CrashLogger.code("lua", "RUN", "station=%s chars=%d\n%s" % [
 		item_data.item_name if item_data != null else "Crafting Station",
 		source.length(), source])
 	var host: Node = get_lua_host()
+	if host == null:
+		_on_station_lua_fail("Lua execution is unavailable in this build.")
+		return
 	host.set("station_recipe", get_automation_recipe_name())
 	host.set("station_output_item", output_item.item_name if output_item != null else "")
 	host.set("station_output_count", output_quantity)
@@ -687,6 +715,7 @@ func _notify_state_changed() -> void:
 # Reports a rejected request both to the program console (when a host exists)
 # and the Godot log, so failures are never silent.
 func _craft_fail(reason: String) -> int:
+	SFX.play_ui("sfx_ui_result", 1, -4.0)
 	CrashLogger.event("CRAFT", "fail: " + reason)
 	var msg: String = "[craft] " + reason
 	if _program_host != null and is_instance_valid(_program_host):
@@ -696,6 +725,7 @@ func _craft_fail(reason: String) -> int:
 	return 0
 
 func _craft_color_fail(reason: String) -> int:
+	SFX.play("sfx_algorithmica_color", global_position, -4.0, 1.0, 1)
 	var msg: String = "[craft_color] " + reason
 	if _program_host != null and is_instance_valid(_program_host):
 		_program_host.emit_signal("signal_print", msg)

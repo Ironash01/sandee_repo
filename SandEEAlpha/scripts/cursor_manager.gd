@@ -104,8 +104,16 @@ func _kind_at(world_pos: Vector2) -> String:
 		return "generic"
 	if _group_near("TutorialNPC", world_pos, 56.0):
 		return "generic"
-	if _group_near("LuaNPC", world_pos, 56.0):
-		return "generic"
+	for node in get_tree().get_nodes_in_group("LuaNPC"):
+		if node == null or not is_instance_valid(node) or not (node is Node2D):
+			continue
+		# Floating combat Automáticas are followers, not clickable stations.
+		if bool(node.get("_combat")):
+			continue
+		var n := node as Node2D
+		if n.is_visible_in_tree() and _nearby_ok(n) \
+				and n.global_position.distance_to(world_pos) <= 56.0:
+			return "generic"
 
 	for node in get_tree().get_nodes_in_group("CavePortal"):
 		if _nearby_ok(node) and node.has_method("_click_is_on_entrance") \

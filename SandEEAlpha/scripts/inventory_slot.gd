@@ -264,6 +264,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	if is_chest_slot or source == "chest":
 		if _has_chest():
 			chest_link.call("accept_drop", to_idx, is_chest_slot, data)
+			SFX.play_ui("sfx_item_move", 0, -3.0)
 		return
 
 	if source == "hotbar":
@@ -273,6 +274,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		_update_visual()
 		Global.Hotbar_updated.emit()
 		Global.Inventory_updated.emit()
+		SFX.play_ui("sfx_item_move", 0, -3.0)
 	else:
 		if from_idx == to_idx:
 			return
@@ -281,6 +283,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		Global.Inventory[from_idx] = tmp
 		_update_visual()
 		Global.Inventory_updated.emit()
+		SFX.play_ui("sfx_item_move", 0, -3.0)
 
 func _update_visual() -> void:
 	if is_chest_slot:
@@ -325,3 +328,4 @@ func _drop_to_world() -> void:
 	Global.drop_item({"data": slot["data"], "quantity": slot["quantity"]}, pos)
 	Global.Inventory[slot_index] = null
 	Global.Inventory_updated.emit()
+	SFX.play("sfx_item_drop", pos, -2.0)

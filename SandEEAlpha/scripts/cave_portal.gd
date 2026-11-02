@@ -72,6 +72,7 @@ var _label_text: String  = "CAVE"
 var _triggered:  bool    = false
 var _player_nearby: bool = false
 var _confirm_ui: Control = null
+var _confirm_title: Label = null
 # Beckoning animation played on approach; the Enter prompt waits until it ends.
 var _beaconing:  bool    = false
 const BEACON_DURATION: float = 0.6
@@ -454,7 +455,8 @@ func _build_confirm_ui() -> void:
 	icon_lbl.add_theme_font_size_override("font_size", Global.ui_font_size(20))
 	header.add_child(icon_lbl)
 	var title := Label.new()
-	title.text = "Large Cave Entrance"
+	_confirm_title = title
+	title.text = _entrance_prompt_title()
 	title.add_theme_font_size_override("font_size", Global.ui_font_size(14))
 	title.add_theme_color_override("font_color", C_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -504,9 +506,18 @@ func _build_confirm_ui() -> void:
 	cancel_btn.pressed.connect(_cancel)
 	btn_row.add_child(cancel_btn)
 
+func _entrance_prompt_title() -> String:
+	return "Pixie Cave Entrance" if cave_type == "pixie" else "Large Cave Entrance"
+
 func _show_confirm() -> void:
+	SFX.play("sfx_cave_portal", global_position, -4.0, 1.0, 0)
 	_prompt_shown = true
 	if _confirm_ui != null:
+		# cave_type is set by world.gd before the portal enters the tree, but
+		# refresh here too so a reused/retargeted portal can never show the
+		# wrong cave name.
+		if _confirm_title != null and is_instance_valid(_confirm_title):
+			_confirm_title.text = _entrance_prompt_title()
 		_confirm_ui.visible = true
 		Global.open_ui()
 		Global.register_ui_back(_confirm_ui, Callable(self, "_cancel"))
@@ -519,6 +530,7 @@ func _cancel() -> void:
 		Global.close_ui()
 
 func _enter_cave() -> void:
+	SFX.play("sfx_cave_portal", global_position, -3.0, 1.0, 1)
 	# Lock out any further prompting while the cave loads — a second prompt
 	# during the scene swap crashed the game.
 	_prompt_shown = true

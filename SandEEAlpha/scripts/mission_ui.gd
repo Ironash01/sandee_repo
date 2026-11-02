@@ -14,6 +14,7 @@ const C_DONE    := Color(0.40, 0.85, 0.50, 1.00)
 const C_STAR    := Color(1.00, 0.85, 0.20, 1.00)
 const C_ACTIVE  := Color(0.95, 0.95, 0.80, 1.00)
 const C_SECTION := Color(0.65, 0.75, 0.95, 1.00)
+const MISSION_LOG_SCRIPT: GDScript = preload("res://scripts/mission_log_ui.gd")
 
 const RIGHT_MARGIN  := 12.0
 const TOP_OFFSET    := 30.0
@@ -23,8 +24,12 @@ const FADE_DURATION := 0.4
 # Which gameplay missions are currently "active" (shown to the player).
 const GAMEPLAY_POOL_SIZE := 3
 
+# The live tracker stays compact: the full Mission Log shows the rest.
+const SIDE_TRACKER_LIMIT := 2
+
 var _panel:        PanelContainer
 var _rows_vbox:    VBoxContainer
+var _view_all_btn: Button
 var _row_data:     Array = []    # [{label, m, row_node}]
 var _fade_tween:   Tween = null
 var _active_pool:  Array = []    # currently shown gameplay mission ids
@@ -81,18 +86,48 @@ func _build_panel() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", int(6 * s))
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(vbox)
 
 	var title := Label.new()
 	title.text = "MISSIONS"
 	title.add_theme_font_size_override("font_size", Global.ui_font_size(13))
 	title.add_theme_color_override("font_color", C_TITLE)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(title)
-	vbox.add_child(HSeparator.new())
+	var sep := HSeparator.new()
+	sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(sep)
 
 	_rows_vbox = VBoxContainer.new()
 	_rows_vbox.add_theme_constant_override("separation", int(8 * s))
+	_rows_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(_rows_vbox)
+
+	# The compact list is a shortcut into the full log. The whole panel is
+	# clickable too, so tapping any mission row opens the same screen.
+	var open_btn := Button.new()
+	open_btn.text = "VIEW ALL MISSIONS"
+	open_btn.tooltip_text = "Open the full Mission Log."
+	open_btn.focus_mode = Control.FOCUS_NONE
+	open_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	open_btn.add_theme_font_size_override("font_size", Global.ui_font_size(10))
+	var btn_sb := _make_sb(Color(0.12, 0.18, 0.32, 0.92),
+			C_BORDER if opaque else Color(0.30, 0.42, 0.68, 0.70),
+			1, 4, int(8 * s), int(8 * s), int(4 * s), int(4 * s))
+	var btn_hover := btn_sb.duplicate() as StyleBoxFlat
+	btn_hover.bg_color = Color(0.18, 0.27, 0.48, 0.98)
+	open_btn.add_theme_stylebox_override("normal", btn_sb)
+	open_btn.add_theme_stylebox_override("hover", btn_hover)
+	open_btn.add_theme_stylebox_override("pressed", btn_hover)
+	open_btn.pressed.connect(_open_mission_log)
+	vbox.add_child(open_btn)
+	_view_all_btn = open_btn
+
+	_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	_panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	if not _panel.gui_input.is_connected(_on_panel_gui_input):
+		_panel.gui_input.connect(_on_panel_gui_input)
 
 	_rebuild_rows()
 
@@ -104,6 +139,7 @@ func _add_section(text: String) -> void:
 	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(11))
 	lbl.add_theme_color_override("font_color", C_SECTION)
 	lbl.add_theme_constant_override("line_spacing", int(1 * s))
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_rows_vbox.add_child(lbl)
 
 # ── Rebuild rows ──────────────────────────────────────────────────
@@ -130,7 +166,7 @@ func _rebuild_rows() -> void:
 
 	# --- Side missions (unlocked after the complete dungeon progression) ---
 	if Global.side_missions_unlocked():
-		var sides := Global.active_side_missions()
+		var sides := Global.active_side_missions(SIDE_TRACKER_LIMIT)
 		if not sides.is_empty():
 			_add_section("SIDE MISSIONS")
 			for m in sides:
@@ -140,13 +176,13 @@ func _rebuild_rows() -> void:
 
 # ── Get up to GAMEPLAY_POOL_SIZE active gameplay missions ──────────
 func _active_gameplay() -> Array:
-	# Missions the player has already STARTED (progress > 0) come FIRST, then
-	# the next not-yet-started ones fill the remaining slots. Without this the
-	# pool was just the first N incomplete in list order, so a count mission far
-	# down the list ("Mine 10 stone blocks", 8th) never appeared while you mined
-	# it — it looked untriggered and never updated.
-	var started: Array = []
-	var unstarted: Array = []
+	# Missions the player has already STARTED (progress > 0) come FIRST within
+	# each track. Automatica and Algorithmica are then interleaved so the three
+	# visible slots always represent both automation systems instead of hiding
+	# all 12 Algorithmica missions until every Automatica one is done.
+	var lanes: Dictionary = {}
+	for category in ["Automatica", "Algorithmica"]:
+		lanes[category] = {"started": [], "unstarted": []}
 	for m in Global.missions:
 		if m["completed"]:
 			continue
@@ -154,19 +190,44 @@ func _active_gameplay() -> Array:
 			continue  # dungeon missions handled separately
 		if bool(m.get("side", false)):
 			continue  # side missions have their own section
+		if bool(m.get("hidden", false)):
+			continue  # retired legacy objectives
+		var category := str(m.get("category", ""))
+		if not lanes.has(category):
+			lanes[category] = {"started": [], "unstarted": []}
 		if int(m.get("progress", 0)) > 0:
-			started.append(m)
+			(lanes[category]["started"] as Array).append(m)
 		else:
-			unstarted.append(m)
+			(lanes[category]["unstarted"] as Array).append(m)
+	var ordered: Array = []
+	for category in ["Automatica", "Algorithmica"]:
+		if lanes.has(category):
+			var lane: Dictionary = lanes[category]
+			ordered.append((lane["started"] as Array) + (lane["unstarted"] as Array))
+	for category in lanes:
+		if category == "Automatica" or category == "Algorithmica":
+			continue
+		var lane: Dictionary = lanes[category]
+		ordered.append((lane["started"] as Array) + (lane["unstarted"] as Array))
+
 	var result: Array = []
-	for m in started:
-		if result.size() >= GAMEPLAY_POOL_SIZE:
+	var indexes: Array = []
+	for _lane in ordered:
+		indexes.append(0)
+	while result.size() < GAMEPLAY_POOL_SIZE:
+		var added: bool = false
+		for li in range(ordered.size()):
+			if result.size() >= GAMEPLAY_POOL_SIZE:
+				break
+			var lane: Array = ordered[li]
+			var idx: int = int(indexes[li])
+			if idx >= lane.size():
+				continue
+			result.append(lane[idx])
+			indexes[li] = idx + 1
+			added = true
+		if not added:
 			break
-		result.append(m)
-	for m in unstarted:
-		if result.size() >= GAMEPLAY_POOL_SIZE:
-			break
-		result.append(m)
 	return result
 
 # ── Add a dungeon mission row ──────────────────────────────────────
@@ -179,6 +240,7 @@ func _add_dungeon_row(m: Dictionary) -> void:
 	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", int(8 * s))
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_rows_vbox.add_child(row)
 
 	var d_idx: int = int(m.get("dungeon_index", 0))
@@ -192,6 +254,7 @@ func _add_dungeon_row(m: Dictionary) -> void:
 	star.add_theme_color_override("font_color",
 			C_STAR if earned > 0 else C_MUTED)
 	star.custom_minimum_size = Vector2(int(48 * s), 0)
+	star.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(star)
 
 	var lbl := Label.new()
@@ -202,6 +265,7 @@ func _add_dungeon_row(m: Dictionary) -> void:
 	lbl.add_theme_font_size_override("font_size", Global.ui_font_size(12))
 	lbl.add_theme_color_override("font_color", C_ACTIVE)
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(lbl)
 
 	_row_data.append({"label": lbl, "m": m, "row": row})
@@ -211,6 +275,7 @@ func _add_gameplay_row(m: Dictionary) -> void:
 	var s: float = Global.ui_scale
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", int(8 * s))
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_rows_vbox.add_child(row)
 
 	var star := Label.new()
@@ -219,6 +284,7 @@ func _add_gameplay_row(m: Dictionary) -> void:
 	star.add_theme_color_override("font_color",
 			C_STAR if m["completed"] else C_MUTED)
 	star.custom_minimum_size = Vector2(int(24 * s), 0)
+	star.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(star)
 
 	var lbl := Label.new()
@@ -231,11 +297,45 @@ func _add_gameplay_row(m: Dictionary) -> void:
 	lbl.add_theme_color_override("font_color",
 			C_DONE if m["completed"] else C_ACTIVE)
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(lbl)
 
 	_row_data.append({"label": lbl, "m": m, "row": row})
 
 # ── Signal handlers ───────────────────────────────────────────────
+# ── Full mission log ──────────────────────────────────────────────────
+# The tracker only has room for the most relevant rows. Clicking it opens a
+# separate modal CanvasLayer listing every mission, so hiding the HUD for that
+# modal does not hide the log itself.
+func _open_mission_log() -> void:
+	if Global.any_ui_open() or Global.pause_menu_open:
+		return
+	var log_ui: Node = MISSION_LOG_SCRIPT.new()
+	var host: Node = Global.game_node
+	if host == null or not is_instance_valid(host):
+		host = get_tree().current_scene
+	if host == null:
+		log_ui.free()
+		return
+	host.add_child(log_ui)
+
+## Tutorial hook: the Automatica mission lesson highlights this button.
+func tutorial_view_all_button() -> Control:
+	if _view_all_btn != null and is_instance_valid(_view_all_btn):
+		return _view_all_btn
+	return null
+
+
+func _on_panel_gui_input(event: InputEvent) -> void:
+	var pressed := false
+	if event is InputEventMouseButton:
+		pressed = event.button_index == MOUSE_BUTTON_LEFT and event.pressed
+	elif event is InputEventScreenTouch:
+		pressed = event.pressed
+	if pressed:
+		_open_mission_log()
+
+
 func _on_mission_updated() -> void:
 	if _completing:
 		return   # the send-off animation rebuilds the list when it finishes
@@ -293,6 +393,8 @@ func _refill_pool() -> void:
 		if m.has("dungeon_index"):
 			continue
 		if bool(m.get("side", false)):
+			continue
+		if bool(m.get("hidden", false)):
 			continue
 		_active_pool.append(m["id"])
 		if _active_pool.size() >= GAMEPLAY_POOL_SIZE:

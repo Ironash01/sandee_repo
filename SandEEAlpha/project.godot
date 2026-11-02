@@ -11,11 +11,11 @@ config_version=5
 [application]
 
 config/name="SandEE Alpha"
-config/version="0.9.4.6"
+config/version="0.9.5.3"
 run/main_scene="res://scenes/ui/startup_mode.tscn"
 config/quit_on_go_back=false
 config/features=PackedStringArray("4.6", "Mobile")
-config/icon="res://icon.svg"
+config/icon="res://icons/app_icon_1024.png"
 
 [autoload]
 
@@ -23,6 +23,10 @@ CrashLogger="*res://scripts/crash_logger.gd"
 Global="*uid://cr2p53jv5gtkd"
 Supabase="*res://scripts/supabase_client.gd"
 CloudSync="*res://scripts/cloud_sync.gd"
+SFX="*res://scripts/sfx_manager.gd"
+Music="*res://scripts/music_manager.gd"
+AutosaveUI="*res://scripts/autosave_indicator.gd"
+MissionToastUI="*res://scripts/mission_completion_indicator.gd"
 
 [display]
 

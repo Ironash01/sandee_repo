@@ -8,8 +8,8 @@ extends CanvasLayer
 ## Hover is a purely visual poll of the mouse position.
 ##
 ## Presentation is deliberately minimal: no panels, no scrim, no backgrounds
-## behind the clusters. Bottom-left = WASD/Shift. Bottom-right = contextual
-## mouse actions. The bottom-centre hotbar and bars stay untouched.
+## behind the clusters. Bottom-right = contextual mouse actions + WASD/Shift.
+## The bottom-centre hotbar and bars stay untouched.
 
 const LAYER: int = 11
 const KEY_SIZE_BASE: float = 30.0
@@ -22,6 +22,7 @@ const C_LABEL_HOVER := Color(0.80, 0.93, 1.00, 1.00)
 var _s: float = 1.0
 var _open: bool = true
 var _hud_suppressed: bool = false
+var _tutorial_hidden: bool = false
 var _was_blocked: bool = false
 var _focus_lost: bool = false
 var _mouse_active_until: int = 0
@@ -217,10 +218,22 @@ func set_hud_suppressed(suppressed: bool) -> void:
 	_refresh_visibility()
 
 
+## Opening-tutorial reveal: hidden until the placement/tools lesson needs the
+## keycaps. This is separate from modal HUD suppression so closing a menu cannot
+## un-hide the guide during the opening tutorial.
+func set_tutorial_hidden(hidden: bool) -> void:
+	_tutorial_hidden = hidden
+	_refresh_visibility()
+
+
+func is_tutorial_hidden() -> bool:
+	return _tutorial_hidden
+
+
 func _blocked() -> bool:
 	return Global.any_ui_open() or Global.pause_menu_open \
 		or Global.is_text_input_focused() or Global.player_is_dead \
-		or _hud_suppressed
+		or _hud_suppressed or _tutorial_hidden
 
 
 func _refresh_visibility() -> void:
@@ -365,8 +378,8 @@ func _apply_context(label: String, destroy: bool) -> void:
 	if _lmb_sep != null and is_instance_valid(_lmb_sep):
 		_lmb_sep.visible = destroy
 	# Keep exactly one Shift visible for the destroy combo. In manual mode the
-	# left cluster keeps WASD but its sprint Shift/SPRINT label step aside; in
-	# point-and-click mode the whole left cluster is only Shift, so hide it.
+	# movement cluster keeps WASD but its sprint Shift/SPRINT label step aside;
+	# in point-and-click mode the whole movement cluster is only Shift, so hide it.
 	if Global.point_and_click:
 		if _movement_cluster != null and is_instance_valid(_movement_cluster):
 			_movement_cluster.visible = not destroy
@@ -461,14 +474,25 @@ func _layout_clusters() -> void:
 	var safe: Vector4 = Global.ui_safe_insets
 	var margin: int = maxi(12, int(MARGIN_BASE * _s))
 	var bottom: int = int(vp.y - safe.w) - margin
-	# On very narrow windows the two clusters are lifted above the centred
-	# hotbar rather than covering it.
+	var right: int = int(vp.x - safe.z) - margin
+	# Both PC guide clusters live on the RIGHT side now. On very narrow windows
+	# they are lifted above the centred hotbar rather than covering it.
 	var lift: int = int(140.0 * _s) if vp.x < 780.0 else 0
-	_movement_cluster.position = Vector2(
-		int(safe.x) + margin, bottom - int(_movement_cluster.size.y) - lift)
-	_action_cluster.position = Vector2(
-		int(vp.x - safe.z) - margin - int(_action_cluster.size.x),
-		bottom - int(_action_cluster.size.y) - lift)
+	var gap_between: int = maxi(8, int(16 * _s))
+	var action_x: int = right - int(_action_cluster.size.x)
+	var action_y: int = bottom - int(_action_cluster.size.y) - lift
+	var movement_x: int = action_x - gap_between - int(_movement_cluster.size.x)
+	var movement_y: int = bottom - int(_movement_cluster.size.y) - lift
+
+	# If side-by-side would cross the centre line, stack the compact movement
+	# guide above the action guide while keeping both right-aligned.
+	if movement_x < int(vp.x * 0.5):
+		movement_x = right - int(_movement_cluster.size.x)
+		movement_y = action_y - gap_between - int(_movement_cluster.size.y)
+		movement_y = maxi(int(safe.y) + margin, movement_y)
+
+	_movement_cluster.position = Vector2(movement_x, movement_y)
+	_action_cluster.position = Vector2(action_x, action_y)
 
 
 func _key_px() -> int:
@@ -532,7 +556,7 @@ func _build_movement_cluster() -> Control:
 
 
 ## Point-and-click hides WASD (movement is click-driven), but Shift still
-## sprints. Keep it as a single floating key in the bottom-left corner.
+## sprints. Keep it as a single floating key in the bottom-right cluster.
 func _build_standalone_shift() -> Control:
 	var key: int = _key_px()
 	var shift_h: int = maxi(16, int(key * 0.68))

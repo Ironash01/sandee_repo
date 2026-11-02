@@ -130,6 +130,9 @@ func _spawn_bird(kind: String, center: Vector2, view: Vector2,
 		"age": 0.0,
 		"kind": kind,
 	})
+	# The generated chirp family is pitched per bird so a flock reads as
+	# several animals rather than one repeated sample.
+	SFX.play("sfx_ambient_birds", start, -10.0, randf_range(0.9, 1.25))
 
 
 func _update_birds(delta: float) -> void:

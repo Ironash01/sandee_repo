@@ -139,6 +139,9 @@ func _ready() -> void:
 	Global.player_died.connect(_on_player_died)
 	Global.player_spawned.connect(_on_player_spawned)
 
+func _sfx_cue() -> String:
+	return "sfx_mob_" + str(COMBAT_DATA.bestiary_id)
+
 func _sort_index() -> int:
 	var feet: float = collision_offset.y + collision_size.y * 0.5
 	return int((global_position.y + feet * visual_scale + 16.0) / 32.0)
@@ -222,6 +225,7 @@ func _try_attack_player(delta: float) -> void:
 	if global_position.distance_to(p.global_position) > reach:
 		return
 	_attack_cooldown = ATTACK_COOLDOWN
+	SFX.play(_sfx_cue(), global_position, -3.0, 1.0, 0)
 	Global.damage_player(COMBAT_DATA.damage, global_position, facing_vector())
 	_show_name_label()
 
@@ -232,6 +236,7 @@ func take_hit(damage: float, source_pos: Vector2, apply_knockback: bool = true) 
 	damage = COMBAT_DATA.damage_taken(damage)
 	_mob_health = maxf(0.0, _mob_health - damage)
 	_last_damage_ms = Time.get_ticks_msec()
+	SFX.play(_sfx_cue(), global_position, -3.0, 1.0, 1)
 	var away: Vector2 = global_position - source_pos
 	if away.length_squared() > 0.001:
 		away = away.normalized()
@@ -288,9 +293,22 @@ func _add_name_label() -> void:
 	if _name_label == null:
 		return
 	_name_label.set("mob_name", COMBAT_DATA.mob_name)
-	_name_label.set("vertical_offset",
-		-sprite_frame_size.y * visual_scale * 0.5 - 10.0)
+	# Tall Bestiary actors (64px frames with an upward sprite offset) push the
+	# visible silhouette well above the frame centre. The old name/bar offsets
+	# placed both INSIDE that silhouette, where the child AnimatedSprite2D drew
+	# over the parent's health bar. Keep the caption above the real top edge.
+	var name_y := minf(-sprite_frame_size.y * visual_scale * 0.5 - 10.0,
+		_sprite_top() - 14.0)
+	_name_label.set("vertical_offset", name_y)
 	add_child(_name_label)
+
+func _sprite_top() -> float:
+	return sprite_offset.y * visual_scale \
+		- sprite_frame_size.y * visual_scale * 0.5
+
+func _hp_bar_y() -> float:
+	return minf(-sprite_frame_size.y * visual_scale * 0.5 - 7.0,
+		_sprite_top() - 7.0)
 
 func _show_name_label() -> void:
 	if _name_label != null:
@@ -306,7 +324,7 @@ func _draw() -> void:
 	var frac: float = clampf(_mob_health / maxf(1.0, _max_health), 0.0, 1.0)
 	var w: float = HP_BAR_W * visual_scale
 	var h: float = HP_BAR_H * visual_scale
-	var y: float = -sprite_frame_size.y * visual_scale * 0.5 - 7.0
+	var y: float = _hp_bar_y()
 	draw_rect(Rect2(-w * 0.5, y, w, h), Color(0.05, 0.05, 0.08, 0.85))
 	draw_rect(Rect2(-w * 0.5, y, w * frac, h), Color(0.85, 0.25, 0.25, 1.0))
 
@@ -315,6 +333,7 @@ func _die() -> void:
 	if _dead:
 		return
 	_dead = true
+	SFX.play(_sfx_cue(), global_position, -2.0, 1.0, 2)
 	if not COMBAT_DATA.bestiary_id.is_empty():
 		Global.bestiary_record_kill(COMBAT_DATA.bestiary_id)
 	_drop_loot()

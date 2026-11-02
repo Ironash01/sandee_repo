@@ -143,6 +143,10 @@ func _toggle_door() -> void:
 	_door_open = not _door_open
 	_apply_sprite()
 	_set_door_collision(not _door_open)
+	# The pack only ships door-open recordings; closing reuses the same cue at a
+	# lower pitch. A short thud would be better, but this keeps the interaction
+	# audible without adding an unused extra source file.
+	SFX.play("sfx_door", global_position, -2.0, 1.0 if _door_open else 0.82)
 
 # ── Plain-click dispatch ──────────────────────────────────────────
 # Blocks that react to a PLAIN left-click instead of mining (a door toggles
@@ -354,6 +358,19 @@ func _process(delta: float) -> void:
 	# mining order or hiding the ring. Manual mining still requires hover.
 	if not Global.pnc_hold_active:
 		_update_hover()
+	# Chain mining: the mine button is already held, so a block that comes
+	# under the cursor after the previous one breaks may start without a new
+	# click. No directional guessing — only the block actually under the
+	# cursor participates, including the pinned PNC touch cursor.
+	if not _mouse_held and Global.is_left_action_held() \
+			and not Global.any_ui_open() and not Global.pause_menu_open \
+			and _player_within_radius():
+		var cursor_pos: Vector2 = Global.mouse_override_pos() \
+			if Global.pnc_hold_active and Global.mouse_override_active() \
+			else Global.mouse_world(self)
+		_update_hover_at(cursor_pos)
+		if _hovered:
+			_mouse_held = true
 	_tick_progress_expiry()
 	_tick_wobble()
 	if not _mouse_held or (not _hovered and not Global.pnc_hold_active) \
@@ -385,6 +402,10 @@ func _process(delta: float) -> void:
 # Adds damage (in seconds of break work) from one source — a held frame's
 # delta or a click's flat CLICK_BREAK_SECONDS — then breaks when full.
 func _add_break_progress(seconds: float) -> void:
+	# Tutorial camp structures are protected for the whole onboarding.
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	# Choke point: never advance a break that a valid tool did not start, no
 	# matter which caller got here (this is what let bare hands break blocks).
 	if not _breaking:
@@ -488,12 +509,13 @@ func _input(event: InputEvent) -> void:
 	if item_data != null and item_data.is_floor and not _is_top_block():
 		return
 	# A block that reacts to a PLAIN left-click (doors toggle open/closed;
-	# bonfires toggle the respawn point) consumes it. SHIFT+click mines instead
-	# (falls through to the mining path below, which supports click-spam/hold).
+	# bonfires toggle the respawn point) normally consumes it. SHIFT+click
+	# mines instead — and so does a suitable pickaxe/axe, so destruction is
+	# reachable on mobile and takes priority over the toggle.
 	if has_plain_click():
 		var shift_held: bool = event is InputEventMouseButton \
 			and (event as InputEventMouseButton).shift_pressed
-		if not shift_held:
+		if not shift_held and not Global.held_item_can_mine(item_data):
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 				if not get_viewport().is_input_handled():
 					get_viewport().set_input_as_handled()
@@ -530,7 +552,7 @@ func _player_within_radius() -> bool:
 	return (Global.player_node as Node2D).global_position.distance_to(global_position) <= INTERACT_RADIUS_PX
 
 func _try_start_breaking() -> void:
-	if _breaking:
+	if _breaking or Global.is_tutorial_protected(self):
 		return
 	var slot: Variant = Global.get_hotbar_item()
 	# An empty hand is fine now: bare-handed mining is allowed (slow, no drop).
@@ -567,7 +589,8 @@ func _try_start_breaking() -> void:
 		var hardness: float = float(block_lvl)
 		if is_wood_block:
 			hardness /= (1.0 - PICKAXE_WOOD_PENALTY)
-		_break_duration = maxf(0.1, hardness - float(Global.held_mining_level()))
+		_break_duration = Global.mining_break_seconds(hardness,
+			Global.held_mining_level())
 	else:
 		# BARE HANDS (or an unrelated item). The block can still be broken, but
 		# it takes BAREHAND_TIME_MULT as long and yields nothing — the pickaxe
@@ -593,6 +616,7 @@ func _try_start_breaking() -> void:
 		_break_elapsed  = 0.0
 		_break_progress = 0.0
 	_breaking = true
+	SFX.play("sfx_tool_impact", global_position, -3.0)
 
 # Stops active mining only — accumulated damage stays until it expires
 # (see _tick_progress_expiry), so releasing the button doesn't reset it.
@@ -606,8 +630,14 @@ func _cancel_breaking() -> void:
 	_sprite.rotation = 0.0
 
 func _break() -> void:
+	if Global.is_tutorial_protected(self):
+		_cancel_breaking()
+		return
 	_breaking = false
 	Global.clear_break_progress(self)
+	SFX.play("sfx_block_break", global_position, -2.0)
+	if item_data != null and item_data.is_torch:
+		SFX.play("sfx_torch", global_position, -4.0, 1.0, 1)
 	var world: Node = _world()
 	if world != null and world.has_method("unregister_block"):
 		world.call("unregister_block", _world_cell)

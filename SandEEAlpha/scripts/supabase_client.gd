@@ -558,7 +558,59 @@ func list_saves() -> Dictionary:
 	return result
 
 
-func delete_save(slot: int) -> Dictionary:
+## Lists cloud-side deletion tombstones for this account. Tombstones are how a
+## world deleted on one platform is removed from the other platform's local
+## copies instead of being re-uploaded there.
+func list_save_deletions() -> Dictionary:
+	if not is_signed_in():
+		return _error_result("not signed in")
+	var account_id := user_id()
+	if account_id.is_empty():
+		return _error_result("not signed in")
+	var result := await select(
+		"cloud_save_deletions",
+		"select=*&user_id=eq." + account_id + "&order=deleted_at.asc"
+	)
+	if user_id() != account_id or not is_signed_in():
+		return _error_result("account changed")
+	if result.ok and result.data is Array:
+		var owned_rows: Array = []
+		for row in (result.data as Array):
+			if typeof(row) == TYPE_DICTIONARY \
+					and str((row as Dictionary).get("user_id", "")) == account_id:
+				owned_rows.append(row)
+		result["data"] = owned_rows
+	return result
+
+
+## Records a permanent tombstone for a world UID. Idempotent: re-deleting the
+## same world just refreshes its slot reference.
+func record_save_deletion(world_uid: String, slot: int) -> Dictionary:
+	if not is_signed_in():
+		return _error_result("not signed in")
+	var account_id := user_id()
+	if account_id.is_empty():
+		return _error_result("not signed in")
+	var uid := world_uid.strip_edges()
+	if uid.is_empty():
+		return _error_result("missing world identity")
+	if slot < 1 or slot > 10:
+		return _error_result("slot out of range")
+	var result := await _request("POST", "/rest/v1/cloud_save_deletions", {
+		"user_id": account_id,
+		"world_uid": uid.substr(0, 64),
+		"slot": slot,
+	}, true, {"Prefer": "resolution=merge-duplicates,return=minimal"})
+	if user_id() != account_id or not is_signed_in():
+		return _error_result("account changed")
+	return result
+
+
+## Deletes a cloud save. When `expected_world_uid` and/or `expected_checksum`
+## are supplied, the metadata row must match before anything is removed, so a
+## stale local deletion can never erase a DIFFERENT world that reused the slot.
+func delete_save(slot: int, expected_world_uid: String = "",
+		expected_checksum: String = "") -> Dictionary:
 	if not is_signed_in():
 		return _error_result("not signed in")
 	var account_id := user_id()
@@ -566,6 +618,33 @@ func delete_save(slot: int) -> Dictionary:
 		return _error_result("not signed in")
 	if slot < 1 or slot > 10:
 		return _error_result("slot out of range")
+	if not expected_world_uid.is_empty() or not expected_checksum.is_empty():
+		var listed := await list_saves()
+		if user_id() != account_id or not is_signed_in():
+			return _error_result("account changed")
+		if not listed.ok:
+			return listed
+		var row: Dictionary = {}
+		if listed.data is Array:
+			for row_value in (listed.data as Array):
+				if typeof(row_value) == TYPE_DICTIONARY \
+						and int((row_value as Dictionary).get("slot", -1)) == slot:
+					row = row_value
+					break
+		if row.is_empty():
+			# Already gone: the desired end state is satisfied.
+			return {"ok": true, "status": 204, "data": null, "error": "",
+				"skipped": true}
+		var row_uid := str(row.get("world_uid", "")).strip_edges()
+		var row_checksum := str(row.get("checksum", ""))
+		if not expected_world_uid.is_empty() and not row_uid.is_empty() \
+				and row_uid != expected_world_uid:
+			return {"ok": true, "status": 204, "data": null, "error": "",
+				"skipped": true}
+		if row_uid.is_empty() and not expected_checksum.is_empty() \
+				and row_checksum != expected_checksum:
+			return {"ok": true, "status": 204, "data": null, "error": "",
+				"skipped": true}
 	var object_path := "%s/%d.json" % [account_id, slot]
 	var removed := await _send(
 		"DELETE",
@@ -584,7 +663,9 @@ func delete_save(slot: int) -> Dictionary:
 		true,
 		{"Prefer": "return=minimal"}
 	)
-	if not removed.ok:
+	# A missing storage object is already the desired state; still remove the
+	# metadata row so a stale cloud slot cannot block the 5-save limit.
+	if not removed.ok and int(removed.status) != 404:
 		return _result_from_send(removed, "/storage delete")
 	return meta
 

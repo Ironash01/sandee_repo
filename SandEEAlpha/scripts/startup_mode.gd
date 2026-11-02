@@ -18,6 +18,7 @@ const C_WARN    := Color(0.98, 0.72, 0.35, 1.00)
 const C_BTN_H   := Color(0.12, 0.18, 0.36, 1.00)
 
 const MENU_SCENE := "res://scenes/ui/main_menu_ver.tscn"
+const TITLE_LOGO_SCRIPT: Script = preload("res://scripts/title_logo.gd")
 
 var _ui_root: Control = null
 var _mode_panel: PanelContainer = null
@@ -42,6 +43,7 @@ var _auto_prompted := false
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	Global.reset_pause_state()
+	Music.play_context("menu")
 	# Nothing online is true until the player actually gets through the flow.
 	Global.set_online_mode(false)
 	Global.set_cloud_status(Global.CloudStatus.OFFLINE)
@@ -131,20 +133,9 @@ func _build_ui() -> void:
 	vbox.custom_minimum_size = Vector2(int(380 * s), 0)
 	center.add_child(vbox)
 
-	var title := Label.new()
-	title.text = "SandEE"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", int(minf(float(Global.ui_font_size(64)),
-		maxf(48.0, get_viewport_rect().size.y * 0.12))))
-	title.add_theme_color_override("font_color", C_TITLE)
-	vbox.add_child(title)
-
-	var sub := Label.new()
-	sub.text = "Alpha  ·  v%s" % Global.game_version()
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", Global.ui_font_size(14))
-	sub.add_theme_color_override("font_color", C_MUTED)
-	vbox.add_child(sub)
+	var logo: Control = TITLE_LOGO_SCRIPT.new() as Control
+	logo.call("setup", 64.0)
+	vbox.add_child(logo)
 
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, int(14 * s))

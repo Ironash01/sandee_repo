@@ -93,16 +93,15 @@ func _build_settings(panel: ColorRect) -> void:
 	# ── Camera Zoom ───────────────────────────────────────────────
 	_cam_zoom_lbl = _lbl("Camera Zoom:  %.1f×" % Global.camera_zoom, s)
 	vbox.add_child(_cam_zoom_lbl)
-	var cam_slider := _make_slider(1.0, 4.0, 0.1, Global.camera_zoom, s)
+	var cam_slider := _make_slider(0.5, 3.0, 0.1, Global.camera_zoom, s)
 	cam_slider.value_changed.connect(_on_cam_zoom_changed)
 	vbox.add_child(cam_slider)
 
 # ── Handlers ──────────────────────────────────────────────────────
 func _on_cam_zoom_changed(v: float) -> void:
-	Global.camera_zoom = v
-	Global.camera_zoom_changed.emit(v)
+	Global.set_camera_zoom(v)
 	if _cam_zoom_lbl != null and is_instance_valid(_cam_zoom_lbl):
-		_cam_zoom_lbl.text = "Camera Zoom:  %.1fx" % v
+		_cam_zoom_lbl.text = "Camera Zoom:  %.1f×" % Global.camera_zoom
 
 # Kept so the scene file's existing connection doesn't error on load.
 func _on_cam_slider_value_changed(value: float) -> void:

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="SandEE logo">
+  <!-- cartridge-style plate -->
+  <rect x="2" y="2" width="60" height="60" rx="8" fill="#141a33" stroke="#2f3f6e" stroke-width="4"/>
+  <!-- grass + dirt ground -->
+  <rect x="6" y="46" width="52" height="12" fill="#7a5a34"/>
+  <rect x="6" y="46" width="52" height="4" fill="#8ce69a"/>
+  <rect x="10" y="50" width="6" height="4" fill="#c9a86a"/>
+  <rect x="44" y="52" width="6" height="4" fill="#c9a86a"/>
+  <!-- tree trunk -->
+  <rect x="29" y="30" width="6" height="16" fill="#8a5a2b"/>
+  <!-- blocky canopy -->
+  <rect x="21" y="12" width="22" height="8" fill="#4fae5e"/>
+  <rect x="17" y="18" width="30" height="10" fill="#4fae5e"/>
+  <rect x="21" y="26" width="22" height="6" fill="#4fae5e"/>
+  <rect x="23" y="14" width="7" height="6" fill="#8ce69a"/>
+  <!-- code pixels (a little "</>" nod) -->
+  <rect x="46" y="10" width="4" height="4" fill="#63c8f0"/>
+  <rect x="50" y="14" width="4" height="4" fill="#63c8f0"/>
+  <rect x="46" y="18" width="4" height="4" fill="#63c8f0"/>
+  <rect x="14" y="8" width="4" height="4" fill="#e6c98a"/>
+</svg>

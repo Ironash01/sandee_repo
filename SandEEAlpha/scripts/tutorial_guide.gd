@@ -48,6 +48,12 @@ const AUTOMATICA_LINE_BLOCKS := 32
 const AUTOMATICA_LINE_MIN_PLACED := 8
 const MOVE_ARRIVE_PX := 40.0
 const MAX_TARGET_DISTANCE := 1800.0
+# Cave ore lesson: keep the target in the entrance area instead of picking a
+# vein on the far side of the cave. If no natural ore is close, one nearby wall
+# is converted into a mineable ore.
+const CAVE_TILE_PX: float = 32.0
+const CAVE_ORE_NEAR_ENTRANCE_PX: float = 8.0 * CAVE_TILE_PX
+const CAVE_ORE_MIN_EXIT_DIST_PX: float = 120.0
 
 var _world: Node2D = null
 var _spawn: Vector2 = Vector2.ZERO
@@ -60,6 +66,7 @@ var _objective_panel: PanelContainer = null
 var _objective_label: Label = null
 var _objective_hint: Label = null
 var _objective_skip: Button = null
+var _objective_wanted: bool = true
 var _ui_focus_layer: CanvasLayer = null
 var _ui_focus: TutorialUiTarget = null
 var _marker: Node2D = null
@@ -79,6 +86,10 @@ var _automatica_station: Node = null
 var _automatica_combat_station: Node = null
 var _automatica_build_seen: bool = false
 var _automatica_run_seen_ms: int = 0
+# Second half of the Automatica lesson: Py-San explains the mission tracker and
+# verifies the player opened the full Mission Log before the step completes.
+var _automatica_missions_phase: bool = false
+var _automatica_missions_log_start: int = 0
 var _camp_return_tried: bool = false
 
 var _move_targets: Dictionary = {}
@@ -102,6 +113,7 @@ var _waypoint_map_target_id: String = ""
 var _waypoint_saw_map: bool = false
 var _route_last_cell: Vector2i = Vector2i(-99999, -99999)
 var _route_last_ms: int = -100000
+var _route_goal: Vector2 = Vector2.INF
 
 # Cached target identity so the 0.2s verifier does not rebuild markers/focus
 # every tick (which would restart their pulse animations).
@@ -122,6 +134,7 @@ func setup(spawn_pos: Vector2, world: Node2D) -> void:
 	if Global.tutorial_completed:
 		queue_free()
 		return
+	add_to_group("TutorialGuide")
 	if Global.tutorial_stage >= STEPS.size():
 		_finish_tutorial(true)
 		return
@@ -135,6 +148,7 @@ func setup(spawn_pos: Vector2, world: Node2D) -> void:
 	_ensure_starter_kit()
 	_ensure_automatica()
 	_recover_stage_after_load()
+	_apply_ui_reveal()
 	call_deferred("_start_step")
 
 func _connect_signals() -> void:
@@ -231,8 +245,11 @@ func _build_ui() -> void:
 func _spawn_npcs() -> void:
 	if _world == null or not is_instance_valid(_world):
 		return
-	_add_npc("Py-San", PY_SAN_TEX, _spawn + Vector2(-170.0, 34.0))
-	_add_npc("LUA", LUA_TEX, _spawn + Vector2(170.0, 34.0))
+	# Keep both guides ABOVE the two camp stations (furnace at +4,+2 and
+	# Automatica at -4,+2). At the old +34px they stood beside the station
+	# sprites, so their names and click boxes overlapped the Automatica labels.
+	_add_npc("Py-San", PY_SAN_TEX, _spawn + Vector2(-170.0, -64.0))
+	_add_npc("LUA", LUA_TEX, _spawn + Vector2(170.0, -64.0))
 
 func _add_npc(npc_name: String, texture_path: String, at: Vector2) -> void:
 	var npc := NPC_SCRIPT.new() as Node2D
@@ -254,11 +271,19 @@ func _layout_ui() -> void:
 		return
 	var s := Global.ui_scale
 	var content := Global.ui_content_rect()
-	var width := minf(content.size.x - 24.0 * s, 500.0 * s)
-	width = maxf(260.0, width)
-	_objective_panel.position = Vector2(
-		content.position.x + (content.size.x - width) * 0.5,
-		content.position.y + 118.0 * s)
+	# Centre the GUIDED START card horizontally on screen. The top-right column
+	# still belongs to the star summary, PAUSE and the mission tracker, so when
+	# the screen is narrow enough for a full-width card to collide with them,
+	# shrink the card around the same screen centre instead of pushing it back
+	# to the left edge.
+	var margin := 8.0 * s
+	var centre_x := content.position.x + content.size.x * 0.5
+	var left_limit := content.position.x + margin
+	var right_limit := content.position.x + content.size.x - 300.0 * s - margin
+	var half_room := minf(centre_x - left_limit, right_limit - centre_x)
+	var width := minf(500.0 * s, maxf(180.0, half_room * 2.0))
+	var x := centre_x - width * 0.5
+	_objective_panel.position = Vector2(x, content.position.y + 6.0 * s)
 	var inner_w: float = maxf(140.0, width - 32.0 * s)
 	_objective_label.custom_minimum_size.x = inner_w
 	_objective_hint.custom_minimum_size.x = inner_w
@@ -279,32 +304,45 @@ func _on_ui_scale_changed(_s: float) -> void:
 func _set_objective(text: String, optional: bool = false, hint: String = "") -> void:
 	if _objective_label == null:
 		return
-	if _obj_text == text and _obj_hint == hint and _obj_optional == optional \
+	_obj_optional = optional
+	if _obj_text == text and _obj_hint == hint \
 			and _objective_panel.visible:
+		_objective_wanted = true
+		_apply_objective_visibility()
 		return
 	_obj_text = text
 	_obj_hint = hint
-	_obj_optional = optional
 	_objective_label.text = text
 	_objective_hint.text = hint
 	_objective_hint.visible = not hint.is_empty()
-	_objective_panel.visible = true
-	_objective_skip.visible = optional
-	_layout_ui()
+	_objective_wanted = true
+	_apply_objective_visibility()
 
 func _set_objective_visible(on: bool) -> void:
-	if _objective_panel != null:
-		_objective_panel.visible = on
-		if on:
-			_layout_ui()
+	_objective_wanted = on
+	_apply_objective_visibility()
 
-func _on_inventory_toggled(open: bool) -> void:
-	if _objective_panel != null and not _finished:
-		_objective_panel.visible = not open
 
-func _on_modal_hud_changed(open: bool) -> void:
-	if _objective_panel != null and not _finished:
-		_objective_panel.visible = not open and not (_dialogue != null and _dialogue.is_active())
+# The objective card floats over the world HUD, so it must never sit on top of
+# an open inventory/station/editor or the tutorial dialogue. Keep the desired
+# visibility separately, then re-evaluate it on every state change and every
+# verifier tick (the craft lesson calls _set_objective repeatedly).
+func _apply_objective_visibility() -> void:
+	if _objective_panel == null:
+		return
+	var visible_now: bool = _objective_wanted and not _finished \
+		and not Global.any_ui_open() and not Global.pause_menu_open \
+		and not (_dialogue != null and _dialogue.is_active())
+	_objective_panel.visible = visible_now
+	_objective_skip.visible = visible_now and _obj_optional
+	if visible_now:
+		_layout_ui()
+
+func _on_inventory_toggled(_open: bool) -> void:
+	_apply_objective_visibility()
+
+func _on_modal_hud_changed(_open: bool) -> void:
+	_apply_objective_visibility()
 
 func _on_item_crafted(item_name: String, _quantity: int) -> void:
 	if _finished:
@@ -383,13 +421,31 @@ func _clear_targets() -> void:
 func _step_id() -> String:
 	return str(STEPS[clampi(_current_step, 0, STEPS.size() - 1)])
 
+## True while the scripted dungeon lesson owns the circle route. The persistent
+## DungeonGuide checks this so both systems never draw duplicate trails.
+func owns_dungeon_route() -> bool:
+	return not _finished and _step_id().begins_with("dungeon_")
+
 func _step_index(id: String) -> int:
 	return STEPS.find(id)
 
 func _save_progress() -> void:
 	Global.tutorial_stage = _current_step
+	Global.tutorial_flags[TutorialUiReveal.OPENING_STEP_FLAG] = _step_id()
 	if Global.active_save_slot > 0 and Global.game_node != null:
 		Global.save_game(Global.active_save_slot)
+
+
+func _apply_ui_reveal() -> void:
+	var step := _step_id()
+	Global.tutorial_flags[TutorialUiReveal.OPENING_STEP_FLAG] = step
+	if TutorialUiReveal.tier_for_step(step) == TutorialUiReveal.Tier.ALL:
+		Global.tutorial_flags[TutorialUiReveal.COMPLETE_FLAG] = true
+	var game := Global.game_node
+	if game != null and is_instance_valid(game) \
+			and game.has_method("apply_opening_tutorial_ui"):
+		game.call("apply_opening_tutorial_ui", step)
+
 
 func _start_step() -> void:
 	if _finished:
@@ -398,6 +454,7 @@ func _start_step() -> void:
 		_finish_tutorial(true)
 		return
 	Global.tutorial_stage = _current_step
+	_apply_ui_reveal()
 	_step_complete = false
 	_step_dialogue_done = false
 	_dialogue_pending = false
@@ -475,8 +532,12 @@ func _complete_step() -> void:
 		return
 	_step_complete = true
 	_clear_targets()
+	if _automatica_missions_phase:
+		_automatica_missions_phase = false
+		_set_game_mission_focus(false)
 	_current_step += 1
 	Global.tutorial_stage = _current_step
+	_apply_ui_reveal()
 	_save_progress()
 	if _current_step >= STEPS.size():
 		_finish_tutorial()
@@ -496,6 +557,7 @@ func _skip_current_step() -> void:
 		# persistent camp lesson instead of looping back to travel.
 		_current_step = _step_index("automatica")
 		Global.tutorial_stage = _current_step
+		_apply_ui_reveal()
 		_step_complete = true
 		_save_progress()
 		call_deferred("_start_step")
@@ -528,10 +590,23 @@ func _prepare_step() -> void:
 		"dungeon_knowledge", "dungeon_quiz", "dungeon_exit":
 			_dungeon_index = int(Global.tutorial_flags.get("dungeon_index", 0))
 			_dungeon_lang = Global.dungeon_language(_dungeon_index) if _dungeon_index > 0 else ""
+			_bind_knowledge_altar_reads()
 		"automatica":
 			_camp_return_tried = false
 			_automatica_run_seen_ms = 0
-			_give_automatica_line_blocks()
+			if bool(Global.tutorial_flags.get("automatica_lesson_done", false)) \
+					and not bool(Global.tutorial_flags.get("automatica_missions_done", false)):
+				# Saved/reloaded during the mission half of the lesson.
+				_automatica_missions_phase = true
+				_automatica_missions_log_start = Global.mission_log_open_count
+				_set_game_mission_focus(true)
+			elif bool(Global.tutorial_flags.get("automatica_build_done", false)):
+				# The line is already built; do not hand out a second 32-Wood
+				# stack while the post-build explanation / mission handoff resumes.
+				_automatica_missions_phase = false
+			else:
+				_automatica_missions_phase = false
+				_give_automatica_line_blocks()
 		"automatica_combat":
 			_camp_return_tried = false
 			_automatica_combat_station = null
@@ -542,9 +617,11 @@ func _prepare_step() -> void:
 			# of the normal commented example.
 			Global.tutorial_flags["algorithmica_template_ready"] = true
 		"cave_regular", "cave_pixie":
+			# Travel happens after this step's dialogue is dismissed (see
+			# _tick_cave), so Py-San can explain the destination first.
 			_cave_ore = {}
 			_cave_ore_mined = false
-			_begin_cave_travel(id == "cave_pixie")
+			_cave_ore_start_count = 0
 		"waypoint":
 			_waypoint_target_id = ""
 			_waypoint_target_node = null
@@ -555,20 +632,80 @@ func _step_lines() -> Array:
 	match _step_id():
 		"welcome":
 			return [
-				_line("Py-San", "Welcome to SandEE. Let's learn by doing."),
+				_line("Py-San", "Welcome to SandEE, this is a game where you can learn to code in Lua and Python. You can tackle lessons inside dungeons and explore the whole world as you want."),
 				_line("LUA", "Follow the arrow. Short steps, one action at a time."),
 			]
 		"finish":
 			return [_line("Py-San", "Onboarding complete. The world and mission tracker are yours.")]
-		"automatica":
+		"dungeon_travel":
+			if Global.is_in_dungeon or _travel_lang.is_empty():
+				return []
+			var language := _travel_lang.capitalize()
 			return [
+				_line("Py-San", "Next we're heading to the %s dungeon entrance. If you're far away, I'll move you close to it first." % language),
+				_line("LUA", "Inside, you'll learn a coding idea at the Knowledge Altar, then prove it at the Quiz Altar to clear the dungeon."),
+			]
+		"dungeon_knowledge":
+			var mission: DungeonMissionData = Global.get_dungeon_mission_for_index(_dungeon_index)
+			var entry: KnowledgeEntry = mission.entry() if mission != null else null
+			var lesson: String = entry.entry_name if entry != null \
+				else "the coding idea this dungeon teaches"
+			var language := _dungeon_lang.capitalize() if not _dungeon_lang.is_empty() \
+				else "programming"
+			return [
+				_line("Py-San", "We're inside the %s dungeon. This first room holds the Knowledge Altar — the open book resting on the floor ahead." % language),
+				_line("LUA", "Read it to learn %s. The altar is the lesson, and the idea is saved to your Programming Encyclopedia." % lesson),
+				_line("Py-San", "The Quiz Altar waits in the final room beyond this one. Answer its challenge with what you just read to clear the dungeon and open the exit."),
+			]
+		"dungeon_quiz":
+			return [
+				_line("Py-San", "This is the final room. The Quiz Altar stands here — the glowing orb on its pedestal."),
+				_line("LUA", "The quiz tests the idea the Knowledge Altar taught. Pick the answer that matches that lesson."),
+				_line("Py-San", "A correct answer clears the dungeon and opens the exit. If you need a reminder, the lesson is still in your Programming Encyclopedia."),
+			]
+		"cave_regular":
+			if _current_cave_kind() != "":
+				return []
+			return [
+				_line("Py-San", "Next I'll take you to a cave entrance if you're far from one. Caves hold copper, iron, silicon and diamond ore for tools and crafting."),
+				_line("LUA", "Mine one ore with your pickaxe, then find the exit marker to return to the overworld."),
+			]
+		"cave_pixie":
+			if _current_cave_kind() != "":
+				return []
+			return [
+				_line("Py-San", "This is a Pixie Cave. I'll bring you to a safe entrance if needed. Its crystal ores regrow, but pixies guard them."),
+				_line("LUA", "The first Pixie Cave is kept safe so you can learn the layout before facing its guardians."),
+			]
+		"automatica":
+			if bool(Global.tutorial_flags.get("automatica_lesson_done", false)) \
+					or bool(Global.tutorial_flags.get("automatica_build_done", false)):
+				# A save/reload after the build must not replay the build briefing;
+				# the explanation/verifier resumes from the persisted flags.
+				return []
+			return [
+				_line("Py-San", "If you wandered away, I'll bring you back to the starter camp first. Your Automatica and workbench are waiting there."),
 				_line("LUA", "Automatica can do tasks for you: mine, chop, craft, build and more."),
 				_line("Py-San", "I put 32 Wood in its BUILD SLOT 1. Open its editor and run the build-line example."),
+				_line("Py-San", "When the line is built, I'll show you how the mission tracker works and which Automatica missions to do next."),
 			]
 		"automatica_combat":
 			return [
+				_line("Py-San", "If you're away from camp, I'll bring you back to your station before we equip the combat robot."),
 				_line("LUA", "Automatica can do more than build. It can fight beside you."),
 				_line("Py-San", "Take this second Automatica and Wooden Sword. Place it, equip the sword in its TOOL slot, then run combat_mode(true)."),
+			]
+		"algorithmica":
+			if bool(Global.tutorial_flags.get("algorithmica_run_done", false)):
+				return []
+			return [
+				_line("Py-San", "Algorithmica runs from the furnace at the starter camp. If you're far away, I'll bring you back there first."),
+				_line("LUA", "Open the furnace's ALGORITHMICA tab and run the ready-to-run print example."),
+			]
+		"waypoint":
+			return [
+				_line("Py-San", "Skyglass Waypoints are the world's travel network. If you're far from one, I'll bring you near it so you can try the map."),
+				_line("LUA", "Open the waypoint map, choose another tower, and it will recall you across the world."),
 			]
 	return []
 
@@ -578,6 +715,41 @@ func _line(speaker: String, text: String) -> Dictionary:
 		"portrait": PY_SAN_TEX if speaker == "Py-San" else LUA_TEX,
 		"text": text,
 	}
+
+# Post-lesson explanations are two dialogue boxes each: what the system is,
+# then what the player can program inside it. They appear only after the real
+# build/run has succeeded, and once per world.
+func _automatica_explanation_lines() -> Array:
+	return [
+		_line("Py-San", "Automaticas are automated robots for you to experiment on."),
+		_line("LUA", "You can program them using custom functions and run Lua code inside them."),
+	]
+
+func _algorithmica_explanation_lines() -> Array:
+	return [
+		_line("Py-San", "Algorithmica is the automated crafting and smelting panel for you to experiment with."),
+		_line("LUA", "You can program it using custom functions and run Python code inside it."),
+	]
+
+## Returns true once the flag is set or the explanation conversation has
+## started. While another panel owns the screen it keeps the current step
+## active and asks the player to close that panel.
+func _show_post_lesson_dialogue(flag: String, lines: Array) -> bool:
+	if bool(Global.tutorial_flags.get(flag, false)):
+		return true
+	if _dialogue == null:
+		Global.tutorial_flags[flag] = true
+		_save_progress()
+		return true
+	if _dialogue.is_active():
+		return false
+	if not _dialogue.show_conversation(lines):
+		_set_objective("Close the panel to continue.", false)
+		_clear_targets()
+		return false
+	Global.tutorial_flags[flag] = true
+	_save_progress()
+	return true
 
 func _click_verb() -> String:
 	return "Tap" if Global.is_mobile() else "Click"
@@ -766,18 +938,33 @@ func _tick_dungeon_knowledge() -> bool:
 			return false
 		_set_current_step("dungeon_travel")
 		return false
-	var mission := Global.get_dungeon_mission_for_index(_dungeon_index)
-	var entry: KnowledgeEntry = mission.entry() if mission != null else null
-	if entry != null and Global.has_learned_entry(entry.id()):
-		return true
 	var altar := _nearest_group_node("KnowledgeAltar")
 	if altar == null:
 		# Extra/boss dungeons intentionally have no Knowledge Altar.
 		return true
+	_bind_knowledge_altar_reads()
+	# A learned entry alone must not skip the first-dungeon read step: the
+	# player has to open this altar and press Continue in this run.
+	if bool(Global.tutorial_flags.get(
+			"dungeon_altar_read_%d" % _dungeon_index, false)):
+		return true
 	_focus_world((altar as Node2D).global_position, "Knowledge Altar")
 	_set_objective("%s here to learn." % _click_verb(), false,
 		"Read the lesson, then close it. Your Encyclopedia records it.")
+	_ensure_dungeon_route(altar)
 	return false
+
+func _bind_knowledge_altar_reads() -> void:
+	for node in get_tree().get_nodes_in_group("KnowledgeAltar"):
+		if node is Node2D and node.has_signal("entry_read") \
+				and not node.is_connected("entry_read", _on_knowledge_altar_read):
+			node.connect("entry_read", _on_knowledge_altar_read)
+
+func _on_knowledge_altar_read(_entry: KnowledgeEntry) -> void:
+	if _dungeon_index <= 0:
+		return
+	Global.tutorial_flags["dungeon_altar_read_%d" % _dungeon_index] = true
+	_save_progress()
 
 func _tick_dungeon_quiz() -> bool:
 	if _dungeon_cleared():
@@ -792,13 +979,13 @@ func _tick_dungeon_quiz() -> bool:
 	if not bool(altar.call("tutorial_is_open")):
 		_focus_world((altar as Node2D).global_position, "Quiz Altar")
 		_set_objective("%s here to open quiz." % _click_verb(), false)
-		_ensure_dungeon_route()
+		_ensure_dungeon_route(altar)
 		return false
 	_clear_world_target()
 	if bool(altar.call("tutorial_reward_visible")):
 		_set_current_step("dungeon_exit")
 		return false
-	_ensure_dungeon_route()
+	_ensure_dungeon_route(altar)
 	var hint_btn := altar.call("tutorial_hint_button") as Control
 	var hint_open := bool(altar.call("tutorial_hint_open"))
 	var hint_failed := bool(altar.call("tutorial_hint_run_failed"))
@@ -807,19 +994,21 @@ func _tick_dungeon_quiz() -> bool:
 	if hint_open:
 		if hint_failed:
 			# The hinted run was attempted and failed. Now NEXT dismisses the
-			# hint panel; the filled code is kept for the retry.
+			# hint panel; the player's typed code is kept for the retry.
 			_focus_ui(hint_btn, "Tap Next to close the hint.")
 			_set_objective("Tap NEXT to hide the hint.", false,
 				"Then fix the answer and try again.")
 			return false
 		if run_btn != null and run_btn.visible:
 			if str(altar.call("tutorial_code_text")).is_empty():
-				_focus_ui(hint_btn, "Tap here for hint.")
-				_set_objective("Tap HINT to prepare the code.", false)
+				var code_editor := altar.call("tutorial_code_editor") as Control
+				_focus_ui(code_editor, "Type the ghost answer.")
+				_set_objective("Type the ghost answer shown in the code box.", false,
+					"Then press RUN yourself.")
 			else:
 				_focus_ui(run_btn, "Tap here to run.")
-				_set_objective("Tap RUN to check the hinted code.", false,
-					"You still press RUN yourself.")
+				_set_objective("Tap RUN to check your typed answer.", false,
+					"HINT only showed the ghost text.")
 			return false
 		var answers_hint := altar.call("tutorial_answers_control") as Control
 		_focus_ui(answers_hint, "")
@@ -839,11 +1028,11 @@ func _tick_dungeon_quiz() -> bool:
 			return false
 	if run_btn != null and run_btn.visible:
 		if str(altar.call("tutorial_code_text")).is_empty():
-			# Never tell the player to RUN an empty editor. HINT prepares the
-			# code; they still press RUN themselves afterwards.
+			# Never tell the player to RUN an empty editor. HINT shows a ghost
+			# answer; the player still has to type it and press RUN.
 			_focus_ui(hint_btn, "Tap here for hint.")
-			_set_objective("Tap HINT to prepare the code.", false,
-				"Then press RUN yourself.")
+			_set_objective("Tap HINT to see the ghost answer.", false,
+				"Then type it yourself and press RUN.")
 			return false
 		_focus_ui(run_btn, "Tap here to run.")
 		_set_objective("Tap RUN to submit your code.", false,
@@ -873,7 +1062,17 @@ func _tick_dungeon_exit() -> bool:
 
 func _tick_automatica() -> bool:
 	if bool(Global.tutorial_flags.get("automatica_lesson_done", false)):
-		return true
+		return _tick_automatica_missions()
+	if bool(Global.tutorial_flags.get("automatica_build_done", false)):
+		if not _show_post_lesson_dialogue("automatica_explanation_done",
+				_automatica_explanation_lines()):
+			return false
+		Global.tutorial_flags["automatica_lesson_done"] = true
+		_automatica_missions_phase = true
+		_automatica_missions_log_start = Global.mission_log_open_count
+		_set_game_mission_focus(true)
+		_save_progress()
+		return false
 	if not _ensure_camp_return():
 		return false
 	_ensure_automatica()
@@ -893,9 +1092,11 @@ func _tick_automatica() -> bool:
 	if _automatica_build_seen and not busy \
 			and AUTOMATICA_LINE_BLOCKS - wood_left >= AUTOMATICA_LINE_MIN_PLACED \
 			and run_code.contains("build_line"):
-		Global.tutorial_flags["automatica_lesson_done"] = true
+		Global.tutorial_flags["automatica_build_done"] = true
 		_save_progress()
-		return true
+		# The next tick opens the post-build explanation. This also gives the
+		# player a moment to close the editor before the dialogue takes over.
+		return false
 	if busy:
 		_clear_targets()
 		_set_objective("Watch Automatica build your line.", false,
@@ -955,6 +1156,139 @@ func _tick_automatica() -> bool:
 	_set_objective("Tap RUN and watch Automatica build.", false,
 		"Automatica can do tasks for you. It places all 32 Wood one block at a time.")
 	return false
+
+
+## Second half of the Automatica lesson. The build-line run has already shown
+## how to execute code; this part teaches what the mission tracker is for, lists
+## the first active Automatica missions, and verifies the player opens the full
+## Mission Log before returning to the normal HUD.
+func _tick_automatica_missions() -> bool:
+	# Migration guard for saves made mid-lesson before this explanation existed:
+	# the mission half must still deliver the two-box robot explanation once.
+	if not bool(Global.tutorial_flags.get("automatica_explanation_done", false)):
+		if not _show_post_lesson_dialogue("automatica_explanation_done",
+				_automatica_explanation_lines()):
+			return false
+	if bool(Global.tutorial_flags.get("automatica_missions_done", false)):
+		_set_game_mission_focus(false)
+		return true
+	if not _automatica_missions_phase:
+		_automatica_missions_phase = true
+		_automatica_missions_log_start = Global.mission_log_open_count
+		_set_game_mission_focus(true)
+	if not bool(Global.tutorial_flags.get("automatica_missions_intro", false)):
+		if _dialogue != null and not _dialogue.is_active():
+			if _dialogue.show_conversation(_automatica_mission_lines()):
+				Global.tutorial_flags["automatica_missions_intro"] = true
+				_save_progress()
+			else:
+				_set_objective("Close the open panel to continue.", false)
+		elif _dialogue == null:
+			Global.tutorial_flags["automatica_missions_intro"] = true
+			_save_progress()
+		return false
+	# The modal pauses the rest of the world but this guide is PROCESS_ALWAYS.
+	# While the log is open, point the player at reading it instead of completing.
+	if get_tree().get_first_node_in_group("MissionLogUI") != null:
+		_clear_targets()
+		_set_objective("Read the Automatica missions, then close the log.", false,
+			"The log shows each mission's task, purpose, lesson and reward.")
+		return false
+	if Global.mission_log_open_count > _automatica_missions_log_start:
+		Global.tutorial_flags["automatica_missions_done"] = true
+		_automatica_missions_phase = false
+		_set_game_mission_focus(false)
+		_save_progress()
+		return true
+	var view_all := _mission_view_all_button()
+	if view_all != null:
+		_focus_ui(view_all, "Open the mission log.")
+	else:
+		_clear_ui_target()
+	_set_objective("Open VIEW ALL MISSIONS to read your first Automatica missions.", false,
+		"The tracker shows three active missions. The log explains each task, why it matters, what you'll learn and the reward.")
+	return false
+
+
+func _automatica_mission_lines() -> Array:
+	var lines: Array = [
+		_line("Py-San", "Now let's use the mission tracker. It shows up to three active Automatica missions at a time."),
+		_line("LUA", "VIEW ALL MISSIONS opens the full log: each mission's task, why it matters, what you'll learn and its reward."),
+	]
+	var listed := 0
+	for m_value in Global.missions:
+		if listed >= 3:
+			break
+		var m := m_value as Dictionary
+		if m.has("dungeon_index") or bool(m.get("side", false)) \
+				or bool(m.get("hidden", false)) or bool(m.get("completed", false)):
+			continue
+		if str(m.get("category", "")) != "Automatica":
+			continue
+		lines.append(_line("Py-San", "%s — %s" % [
+			str(m.get("title", "Mission")), str(m.get("objective", ""))]))
+		var hint := _automatica_mission_hint(str(m.get("id", "")))
+		if not hint.is_empty():
+			lines.append(_line("LUA", hint))
+		listed += 1
+	if listed == 0:
+		lines.append(_line("Py-San", "You've already cleared the visible Automatica missions. The log still keeps their full details."))
+	else:
+		lines.append(_line("Py-San", "Complete one by running the matching code on your Automatica. The tracker ticks it off, awards a yellow star, and the next mission takes its slot."))
+	lines.append(_line("LUA", "Open VIEW ALL MISSIONS now. Read the first Automatica missions, then close the log to continue."))
+	return lines
+
+
+# Concrete first-step guidance for the Automatica missions the player is most
+# likely to see after the build-line lesson. The full mission log carries the
+# longer why/learn/reward text; this keeps the spoken lesson actionable.
+func _automatica_mission_hint(id: String) -> String:
+	match id:
+		"auto_boot":
+			return "Open the editor and press RUN on any Lua program."
+		"auto_nameplate":
+			return "Run rename(\"My Robot\") in the editor."
+		"auto_timber":
+			return "Run chop_trees(20) with trees inside the robot's work radius."
+		"auto_work_cycle":
+			return "Run auto_work() and let the full work cycle finish."
+		"auto_chest_logistics":
+			return "Withdraw 16 Wood from a chest, then print the chest contents."
+		"auto_line":
+			return "Use build_line(...) like the line you just built."
+		"auto_frame":
+			return "Use build_rect(...) to build a hollow 6x6 frame."
+		"auto_ring":
+			return "Use build_ring(...) to place a 20-block ring."
+		"auto_pattern":
+			return "Run the wave and staircase pattern examples."
+		"auto_spiral":
+			return "Use build_spiral(...) for a 30-block spiral."
+		"auto_miner":
+			return "Run mine(\"stone_block\") to mine 10 Stone blocks."
+		"auto_combat":
+			return "Run combat_mode(true), equip a sword and defeat 3 mobs."
+	return ""
+
+
+func _mission_view_all_button() -> Control:
+	var game := Global.game_node
+	if game == null or not is_instance_valid(game):
+		return null
+	var ui_ref: Variant = game.get("_mission_ui")
+	if ui_ref == null or not is_instance_valid(ui_ref) or not (ui_ref is Node):
+		return null
+	var ui := ui_ref as Node
+	if not ui.has_method("tutorial_view_all_button"):
+		return null
+	return ui.call("tutorial_view_all_button") as Control
+
+
+func _set_game_mission_focus(on: bool) -> void:
+	var game := Global.game_node
+	if game != null and is_instance_valid(game) \
+			and game.has_method("apply_tutorial_mission_focus"):
+		game.call("apply_tutorial_mission_focus", on)
 
 func _tick_automatica_combat() -> bool:
 	if bool(Global.tutorial_flags.get("automatica_combat_done", false)):
@@ -1020,11 +1354,19 @@ func _tick_automatica_combat() -> bool:
 	editor.call("tutorial_show_code_tab")
 	_focus_ui(editor.call("tutorial_run_button") as Control, "Tap here to run.")
 	_set_objective("Tap RUN to enter combat mode.", false,
-		"This is permanent. The robot will follow and fight beside you.")
+		"The robot will follow and fight beside you. Click it and use EXIT COMBAT, or run combat_mode(false), to send it back to its station.")
 	return false
 
 func _tick_algorithmica() -> bool:
 	if bool(Global.tutorial_flags.get("algorithmica_lesson_done", false)):
+		return true
+	if bool(Global.tutorial_flags.get("algorithmica_run_done", false)):
+		if not _show_post_lesson_dialogue("algorithmica_explanation_done",
+				_algorithmica_explanation_lines()):
+			return false
+		Global.tutorial_flags["algorithmica_lesson_done"] = true
+		Global.tutorial_flags.erase("algorithmica_template_ready")
+		_save_progress()
 		return true
 	if not _ensure_camp_return():
 		return false
@@ -1040,7 +1382,7 @@ func _tick_algorithmica() -> bool:
 		return false
 	var menu := furnace.get("_ui") as Control
 	if menu != null and not menu.visible and Global.any_ui_open():
-		_set_objective("Close Automatica to continue.", false)
+		_set_objective("Close the open panel to continue.", false)
 		_clear_targets()
 		return false
 	if menu == null or not menu.visible:
@@ -1056,10 +1398,13 @@ func _tick_algorithmica() -> bool:
 	if bool(panel.call("tutorial_run_succeeded")):
 		var output := str(panel.call("tutorial_output_text"))
 		if output.contains("Algorithmica ready"):
-			Global.tutorial_flags["algorithmica_lesson_done"] = true
-			Global.tutorial_flags.erase("algorithmica_template_ready")
+			Global.tutorial_flags["algorithmica_run_done"] = true
 			_save_progress()
-			return true
+			# Let the player close the furnace panel first; the next tick opens
+			# the post-run explanation as a normal dialogue.
+			_set_objective("Close the panel to continue.", false)
+			_clear_targets()
+			return false
 		_set_objective("Print the exact text \"Algorithmica ready\".", false,
 			"The program ran, but the expected text was not shown.")
 		_focus_ui(panel.call("tutorial_code_editor") as Control, "Fix the printed text.")
@@ -1515,12 +1860,31 @@ func _find_camp_cell(preferred: Vector2i, used: Dictionary) -> Vector2i:
 				if maxi(absi(dx), absi(dy)) != radius:
 					continue
 				var cell := preferred + Vector2i(dx, dy)
-				if cell == player_cell or used.has(cell) or cell.distance_to(base) < 2:
+				if maxi(absi(cell.x - player_cell.x), absi(cell.y - player_cell.y)) <= 1:
+					continue
+				if used.has(cell) or cell.distance_to(base) < 2:
+					continue
+				if _camp_cell_near_npc(cell):
 					continue
 				if not bool(_world.call("can_place_at", cell)):
 					continue
 				return cell
 	return Vector2i(-9999, -9999)
+
+# Camp stations must never land in the guides' footprint. NPCs are non-solid,
+# so World.can_place_at() cannot see them; without this the fallback placement
+# could drop the furnace or Automatica on top of Py-San/LUA.
+func _camp_cell_near_npc(cell: Vector2i) -> bool:
+	if _world == null or not is_instance_valid(_world):
+		return false
+	for npc in _npc_nodes:
+		if npc == null or not is_instance_valid(npc) or not npc is Node2D:
+			continue
+		var npc_cell: Vector2i = _world.call("world_to_cell",
+			(npc as Node2D).global_position) as Vector2i
+		if maxi(absi(cell.x - npc_cell.x), absi(cell.y - npc_cell.y)) <= 1:
+			return true
+	return false
 
 func _base_tile() -> Vector2i:
 	if _world != null:
@@ -1785,6 +2149,7 @@ func _on_dungeon_entered(index: int) -> void:
 	Global.tutorial_flags["quiz_hint_demo"] = false
 	_clear_targets()
 	_set_current_step("dungeon_knowledge")
+	_bind_knowledge_altar_reads()
 	_save_progress()
 
 func _on_dungeon_exited(index: int) -> void:
@@ -1802,7 +2167,7 @@ func _dungeon_cleared() -> bool:
 func _is_first_dungeon() -> bool:
 	return _dungeon_index > 0 and Global.is_first_dungeon_hint_free(_dungeon_index)
 
-func _ensure_dungeon_route() -> void:
+func _ensure_dungeon_route(goal: Node2D = null) -> void:
 	if not Global.is_in_dungeon:
 		_clear_route()
 		return
@@ -1811,7 +2176,9 @@ func _ensure_dungeon_route() -> void:
 		_clear_route()
 		_route_guide = ROUTE_SCRIPT.new() as TutorialRouteGuide
 		Global.world_node.add_child(_route_guide)
-	var altar := _nearest_group_node("QuizAltar") as Node2D
+	var altar := goal
+	if altar == null or not is_instance_valid(altar):
+		altar = _nearest_group_node("QuizAltar") as Node2D
 	if altar == null:
 		_clear_route()
 		return
@@ -1820,85 +2187,28 @@ func _ensure_dungeon_route() -> void:
 	if dw == null or p == null or not dw.has_method("world_to_grid"):
 		return
 	var cell: Vector2i = dw.call("world_to_grid", p.global_position) as Vector2i
-	if cell == _route_last_cell and _route_guide.visible:
+	var goal_pos: Vector2 = altar.global_position
+	var goal_changed: bool = _route_goal.distance_to(goal_pos) > 1.0
+	if cell == _route_last_cell and not goal_changed and _route_guide.visible:
 		return
 	var now := Time.get_ticks_msec()
-	if _route_guide.visible and now - _route_last_ms < 1500:
+	if _route_guide.visible and not goal_changed and now - _route_last_ms < 1500:
 		return
 	_route_last_cell = cell
 	_route_last_ms = now
-	_route_guide.call("set_route", _build_route_points(altar.global_position))
+	_route_goal = goal_pos
+	_route_guide.call("set_route", _build_route_points(goal_pos))
 
 func _build_route_points(goal_world: Vector2) -> Array:
-	var dw := Global.world_node
 	var p := Global.player_node as Node2D
-	if dw == null or p == null or not dw.has_method("world_to_grid") or not dw.has_method("grid_to_world"):
+	if p == null:
 		return [goal_world]
-	var start: Vector2i = dw.call("world_to_grid", p.global_position) as Vector2i
-	var goal: Vector2i = dw.call("world_to_grid", goal_world) as Vector2i
-	var gen = dw.get("generator")
-	if gen == null or start.x < 0 or start.y < 0 or goal.x < 0 or goal.y < 0:
-		return [goal_world]
-	var blocked: Dictionary = {}
-	for cell_value in (gen.trap_positions as Array):
-		blocked[cell_value as Vector2i] = true
-	for cell_value in (gen.quiz_trap_positions as Array):
-		blocked[cell_value as Vector2i] = true
-	var queue: Array = [start]
-	var came: Dictionary = {start: start}
-	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	var found := false
-	while not queue.is_empty():
-		var cur: Vector2i = queue.pop_front() as Vector2i
-		if cur == goal:
-			found = true
-			break
-		for d_value in dirs:
-			var n := cur + (d_value as Vector2i)
-			if came.has(n) or blocked.has(n):
-				continue
-			if not bool(dw.call("grid_cell_is_floor", n)):
-				continue
-			came[n] = cur
-			queue.append(n)
-	if not found:
-		return [goal_world]
-	var path: Array = []
-	var c := goal
-	while c != start:
-		path.push_front(c)
-		c = came[c] as Vector2i
-	# Keep turns plus every fourth tile; cap the number of discs so they never
-	# obscure the room. Always end at the actual Quiz Altar.
-	var out_cells: Array = []
-	var prev_dir := Vector2i.ZERO
-	for i in range(path.size()):
-		var cell: Vector2i = path[i] as Vector2i
-		var dir := Vector2i.ZERO
-		if i > 0:
-			dir = cell - (path[i - 1] as Vector2i)
-		var turn := dir != prev_dir
-		if turn or i % 4 == 0 or i == path.size() - 1:
-			out_cells.append(cell)
-		prev_dir = dir
-	if out_cells.size() > 16:
-		var reduced: Array = []
-		var step := maxi(1, int(ceil(float(out_cells.size()) / 16.0)))
-		for i in range(0, out_cells.size(), step):
-			reduced.append(out_cells[i])
-		if reduced.is_empty() or reduced[reduced.size() - 1] != goal:
-			reduced.append(goal)
-		out_cells = reduced
-	var out: Array = []
-	for cell_value in out_cells:
-		out.append(dw.call("grid_to_world", cell_value as Vector2i) as Vector2)
-	if out.is_empty():
-		out.append(goal_world)
-	return out
+	return TutorialRouteGuide.build_points(Global.world_node, p.global_position, goal_world)
 
 func _clear_route() -> void:
 	_route_last_cell = Vector2i(-99999, -99999)
 	_route_last_ms = -100000
+	_route_goal = Vector2.INF
 	if _route_guide != null and is_instance_valid(_route_guide):
 		_route_guide.queue_free()
 	_route_guide = null
@@ -2005,22 +2315,36 @@ func _nearest_cave_ore(kind: String) -> Dictionary:
 			{"tile": CaveGenerator.Tile.DIAMOND, "item": "res://resources/items/diamond_ore.tres", "label": "diamond ore"},
 		]
 	var tile_to_info: Dictionary = {}
+	var min_level_by_tile: Dictionary = {}
 	for c_value in choices:
-		tile_to_info[int((c_value as Dictionary)["tile"])] = c_value
+		var choice := c_value as Dictionary
+		var tile_type := int(choice["tile"])
+		tile_to_info[tile_type] = choice
+		var choice_data := load(str(choice.get("item", ""))) as ItemData
+		min_level_by_tile[tile_type] = choice_data.min_pickaxe_level if choice_data != null else 999
 	var exit_portal := _find_cave_exit()
 	var exit_pos: Vector2 = exit_portal.global_position if exit_portal != null else Vector2.INF
+	var anchor_pos: Vector2 = exit_pos if exit_pos != Vector2.INF else p.global_position
+	var pick_level: int = maxi(Global.held_mining_level(), 1)
 	var best: Dictionary = {}
 	var best_d := INF
 	for x in range(width):
 		for y in range(height):
-			var info: Variant = tile_to_info.get(int(gen.grid[x][y]))
+			var tile_type := int(gen.grid[x][y])
+			var info: Variant = tile_to_info.get(tile_type)
 			if not (info is Dictionary):
+				continue
+			if int(min_level_by_tile.get(tile_type, 999)) > pick_level:
 				continue
 			var cell := Vector2i(x, y) - half
 			var pos := tm.to_global(tm.map_to_local(cell))
 			# Never teach on an ore overlapping the exit marker: walking onto it
 			# could leave the cave before the pickup is registered.
-			if exit_pos != Vector2.INF and pos.distance_to(exit_pos) < 120.0:
+			if exit_pos != Vector2.INF and pos.distance_to(exit_pos) < CAVE_ORE_MIN_EXIT_DIST_PX:
+				continue
+			# Keep the lesson in the entrance area. A far-away vein is not a
+			# useful tutorial target even if it is technically reachable.
+			if pos.distance_to(anchor_pos) > CAVE_ORE_NEAR_ENTRANCE_PX:
 				continue
 			var d := p.global_position.distance_to(pos)
 			if d < best_d:
@@ -2028,7 +2352,79 @@ func _nearest_cave_ore(kind: String) -> Dictionary:
 				best = (info as Dictionary).duplicate()
 				best["cell"] = Vector2i(x, y)
 				best["pos"] = pos
-	return best
+	if not best.is_empty():
+		return best
+	# No natural ore near the entrance: convert a nearby wall into one so the
+	# lesson never sends the player across the cave.
+	return _create_cave_ore_near_entrance(kind, gen, tm, w, choices, exit_pos, pick_level)
+
+
+# Carve a tutorial ore out of an existing wall tile in the entrance area. The
+# tile stays solid (ores are wall tiles), is repainted immediately, and is
+# persisted by the cave's normal grid diff/save path.
+func _create_cave_ore_near_entrance(kind: String, gen, tm: TileMapLayer,
+		w: Node, choices: Array, exit_pos: Vector2, pick_level: int) -> Dictionary:
+	var width := int(gen.get("width")) if kind == "pixie" else int(gen.get("size"))
+	var height := int(gen.get("height")) if kind == "pixie" else int(gen.get("size"))
+	var half := Vector2i(width / 2, height / 2)
+	var entrance: Vector2i = gen.get("entrance_tile") as Vector2i
+	var stone_tile: int = PixieCaveGenerator.Tile.WALL if kind == "pixie" \
+		else CaveGenerator.Tile.STONE
+	var floor_tile: int = PixieCaveGenerator.Tile.FLOOR if kind == "pixie" \
+		else CaveGenerator.Tile.FLOOR
+	var chosen: Dictionary = {}
+	for c_value in choices:
+		var choice := c_value as Dictionary
+		var data := load(str(choice.get("item", ""))) as ItemData
+		if data != null and data.min_pickaxe_level <= pick_level:
+			chosen = choice.duplicate()
+			break
+	if chosen.is_empty():
+		return {}
+	var best_cell := Vector2i(-9999, -9999)
+	var best_pos := Vector2.ZERO
+	var best_score := INF
+	var dirs: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for dy in range(-8, 9):
+		for dx in range(-8, 9):
+			var dist := Vector2(dx, dy).length()
+			if dist < 3.0 or dist > 8.0:
+				continue
+			var x := entrance.x + dx
+			var y := entrance.y + dy
+			if x < 1 or y < 1 or x >= width - 1 or y >= height - 1:
+				continue
+			if int(gen.grid[x][y]) != stone_tile:
+				continue
+			var touches_floor := false
+			for d in dirs:
+				var nx := x + (d as Vector2i).x
+				var ny := y + (d as Vector2i).y
+				if nx >= 0 and ny >= 0 and nx < width and ny < height \
+						and int(gen.grid[nx][ny]) == floor_tile:
+					touches_floor = true
+					break
+			if not touches_floor:
+				continue
+			var cell := Vector2i(x, y) - half
+			var pos := tm.to_global(tm.map_to_local(cell))
+			if exit_pos != Vector2.INF and pos.distance_to(exit_pos) < CAVE_ORE_MIN_EXIT_DIST_PX:
+				continue
+			# Prefer a spot a short walk from the entrance, not the wall directly
+			# beside the exit marker.
+			var score := absf(dist - 5.0)
+			if score < best_score:
+				best_score = score
+				best_cell = Vector2i(x, y)
+				best_pos = pos
+	if best_cell.x == -9999:
+		return {}
+	gen.grid[best_cell.x][best_cell.y] = int(chosen["tile"])
+	var map_cell := best_cell - half
+	w.call("_paint_cell", map_cell, int(chosen["tile"]), best_cell)
+	chosen["cell"] = best_cell
+	chosen["pos"] = best_pos
+	return chosen
 
 # ── Waypoint helpers ────────────────────────────────────────────────
 func _nearest_waypoint() -> Node2D:
@@ -2091,10 +2487,13 @@ func _recover_stage_after_load() -> void:
 				_current_step = _step_index("dungeon_travel")
 			Global.tutorial_stage = _current_step
 	elif id == "automatica" and bool(Global.tutorial_flags.get("automatica_lesson_done", false)):
-		_current_step = _step_index("automatica_combat"
-			if not bool(Global.tutorial_flags.get("automatica_combat_done", false))
-			else "algorithmica")
-		Global.tutorial_stage = _current_step
+		# If the build is done but the mission lesson is not, stay in this step;
+		# _prepare_step() re-enters the mission phase with the mission-only HUD.
+		if bool(Global.tutorial_flags.get("automatica_missions_done", false)):
+			_current_step = _step_index("automatica_combat"
+				if not bool(Global.tutorial_flags.get("automatica_combat_done", false))
+				else "algorithmica")
+			Global.tutorial_stage = _current_step
 	elif id == "automatica_combat" and bool(Global.tutorial_flags.get("automatica_combat_done", false)):
 		_current_step = _step_index("algorithmica")
 		Global.tutorial_stage = _current_step
@@ -2116,6 +2515,7 @@ func _set_current_step(id: String) -> void:
 		return
 	_current_step = idx
 	Global.tutorial_stage = idx
+	_apply_ui_reveal()
 	_step_complete = false
 	_step_dialogue_done = false
 	_clear_targets()
@@ -2129,9 +2529,13 @@ func _finish_tutorial(silent: bool = false) -> void:
 	_finished = true
 	Global.tutorial_completed = true
 	Global.tutorial_flags.erase("algorithmica_template_ready")
+	if _automatica_missions_phase:
+		_automatica_missions_phase = false
+		_set_game_mission_focus(false)
 	_current_step = STEPS.size()
 	Global.tutorial_stage = _current_step
 	Global.tutorial_version = 3
+	_apply_ui_reveal()
 	_save_progress()
 	_clear_targets()
 	if _guide_arrow != null and is_instance_valid(_guide_arrow):

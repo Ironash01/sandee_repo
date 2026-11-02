@@ -2,7 +2,7 @@
 
 [ext_resource type="Texture2D" uid="uid://cnuwc1wae3ld3" path="res://sprites/items/item_atlas.png" id="1_37mqi"]
 [ext_resource type="Script" uid="uid://c7o1xpai5dw0l" path="res://resources/items/item_data.gd" id="1_script"]
-[ext_resource type="Texture2D" path="res://sprites/items/SandEE_Crafting.png" id="2_sheet"]
+[ext_resource type="Texture2D" uid="uid://dv2ovj0lvnfn" path="res://sprites/items/SandEE_Crafting.png" id="2_sheet"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_cs"]
 atlas = ExtResource("1_37mqi")
@@ -19,13 +19,13 @@ description = "A station for crafting items"
 item_type = "block"
 icon = SubResource("AtlasTexture_cs")
 is_placeable = true
+placeable_sprite = SubResource("AtlasTexture_cs_frame0")
+has_place_animation = true
+place_animation_name = "idle_crafting"
+place_animation_sheet = ExtResource("2_sheet")
+place_animation_frame_count = 6
 is_craftable = true
 block_level = 7
 wooden_block = true
 place_scene_path = "res://scenes/objects/CraftingStation.tscn"
-placeable_sprite = SubResource("AtlasTexture_cs_frame0")
-place_animation_sheet = ExtResource("2_sheet")
-place_animation_frame_count = 6
-has_place_animation = true
-place_animation_name = "idle_crafting"
 metadata/_custom_type_script = "uid://c7o1xpai5dw0l"

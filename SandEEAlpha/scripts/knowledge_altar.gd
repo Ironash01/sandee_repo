@@ -14,6 +14,11 @@ class_name KnowledgeAltar
 
 const TILE_SIZE: int = 32
 
+# Emitted only after the player presses Continue. The tutorial uses this
+# instead of "entry is already known" so a pre-learned entry cannot skip the
+# first-dungeon read step by itself.
+signal entry_read(entry: KnowledgeEntry)
+
 const C_PANEL   := Color(0.08, 0.10, 0.20, 0.97)
 const C_BORDER  := Color(0.35, 0.50, 0.90, 1.00)
 const C_TITLE   := Color(0.80, 0.90, 1.00, 1.00)
@@ -21,6 +26,9 @@ const C_MUTED   := Color(0.60, 0.70, 0.90, 1.00)
 const C_OK      := Color(0.20, 0.45, 0.20, 1.00)
 const C_OVERLAY := Color(0.00, 0.00, 0.00, 0.55)
 const SPRITE_TEXTURE: Texture2D = preload("res://sprites/dungeon/SandEE_alpha_dungeontilesets.png")
+# The open-book altar art from the dungeon atlas. Keep this shared with the
+# minimap so the world object and its map icon never drift apart.
+const SPRITE_REGION: Rect2 = Rect2(288, 96, 32, 32)
 
 # ── Altar glow ─────────────────────────────────────────────────────
 # A small PointLight2D hugging the altar body, slowly pulsing so it reads as a
@@ -70,7 +78,7 @@ func _ready() -> void:
 	var tex := AtlasTexture.new()
 	tex.atlas = SPRITE_TEXTURE
 	# y=96 is the altar-art row in the dungeon atlas; y=128 is the floor row.
-	tex.region = Rect2(288, 96, 32, 32)
+	tex.region = SPRITE_REGION
 	var sprite := Sprite2D.new()
 	sprite.texture = tex
 	add_child(sprite)
@@ -207,7 +215,18 @@ func _input(event: InputEvent) -> void:
 			or Global.any_ui_open() or Global.pause_menu_open:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# Only the altar under the cursor opens. Opening on any click while the
+		# player is merely nearby let a move/attack click pop the panel, and the
+		# same unconsumed event could then click Continue and learn the entry
+		# without the player ever reading it.
+		var at: Vector2 = Global.mouse_world(self)
+		if event is InputEventMouse:
+			at = get_viewport().get_canvas_transform().affine_inverse() \
+				* (event as InputEventMouse).position
+		if global_position.distance_to(at) > 32.0:
+			return
 		_show()
+		get_viewport().set_input_as_handled()
 
 ## Native ScrollContainer only reacts to the mouse wheel; on a phone a finger
 ## drag over the body must scroll it. _input runs before GUI, so this works over
@@ -247,6 +266,7 @@ func _on_knowledge_updated() -> void:
 
 
 func _show() -> void:
+	SFX.play_ui("sfx_knowledge_altar", 0)
 	if _entry == null:
 		_entry = Global.get_knowledge_entry_file(entry_file)
 	# Emphasis fires only the FIRST time this entry is offered — i.e. it isn't
@@ -350,6 +370,7 @@ func _change_archive_page(delta: int) -> void:
 	var pages: int = _archive_page_count()
 	if pages <= 0:
 		return
+	SFX.play_ui("sfx_knowledge_altar", 1, -3.0)
 	var next: int = clampi(_archive_page + delta, 0, pages - 1)
 	if next == _archive_page:
 		return
@@ -370,7 +391,9 @@ func _finish() -> void:
 	if _panel != null and _panel.visible:
 		_panel.visible = false
 		_release_pause()
-	Global.learn_entry(_entry)
+	if _entry != null:
+		Global.learn_entry(_entry)
+		entry_read.emit(_entry)
 
 func _build_panel() -> Control:
 	var s: float = Global.ui_scale

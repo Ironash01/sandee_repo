@@ -702,6 +702,7 @@ func _try_attack_player(delta: float) -> void:
 	if global_position.distance_to(p.global_position) > ATTACK_RANGE:
 		return
 	_attack_cooldown = ATTACK_COOLDOWN
+	SFX.play("sfx_mob_worm", global_position, -4.0, 1.0, 0)
 	Global.damage_player(COMBAT_DATA.damage, global_position, Vector2.ZERO)
 	_show_name_label()
 
@@ -874,6 +875,7 @@ func take_hit(damage: float, source_pos: Vector2, apply_knockback: bool = true) 
 		return
 	damage = COMBAT_DATA.damage_taken(damage)
 	_mob_health = maxf(0.0, _mob_health - damage)
+	SFX.play("sfx_mob_worm", global_position, -4.0, 1.0, 1)
 	var away: Vector2 = global_position - source_pos
 	if away.length_squared() > 0.001:
 		away = away.normalized()
@@ -921,6 +923,7 @@ func _die(allow_loot: bool = true) -> void:
 	if _death_processed:
 		return
 	_death_processed = true
+	SFX.play("sfx_mob_worm", global_position, -3.0, 1.0, 2)
 	if _sand_particles != null and _sand_particles.has_method("set_buried"):
 		_sand_particles.set_buried()
 	var world: Node = Global.world_node

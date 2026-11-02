@@ -28,7 +28,7 @@ const CATEGORIES: Array = [
 SandEE is a 2D sandbox about gathering, building, survival, automation and learning to program. Your world is generated from a seed and saves its terrain changes, containers, missions, dungeon progress and Bestiary records.
 
 [b]Your first session[/b]
-• You begin in a guided camp. Each lesson shows one short action, an arrow and a highlight on the exact target.
+• You begin in a guided camp. Each lesson shows one short action, an arrow and a highlight on the exact target. The camp's own structures (such as the furnace) cannot be mined or dismantled until onboarding ends.
 • Your starter kit contains the Wooden Axe, Wooden Pickaxe, Wooden Sword and exactly 10 Bread. It is granted once per new world.
 • Follow the objective card: move twice, select the axe, chop a tree, pick up the Wood and craft the Crafting Station. The first dungeon lesson begins right after: follow the marker to the nearest entrance and confirm it.
 • The dungeon teaches the Knowledge Altar and route markers, then the Quiz Altar. Afterwards the camp teaches Automatica, Algorithmica, regular caves, Pixie Caves and Skyglass Waypoints. The first Pixie Cave is a safe introduction with no pixies; later Pixie Caves are guarded.
@@ -40,7 +40,7 @@ SandEE is a 2D sandbox about gathering, building, survival, automation and learn
 [b]HUD at a glance[/b]
 • Top-right: PAUSE button.
 • Bottom-centre: health, stamina and the 9-slot hotbar (8 item slots + INV on Android).
-• Right side: stars and the mission tracker.
+• Right side: stars and the mission tracker. Both stay hidden during onboarding and appear when the tutorial ends; the Automatica mission lesson shows them temporarily.
 • Bottom-left: minimap. Click it or press M to open the full map.
 • Left-middle: active Automatica status.
 • Top-centre: short notifications for pickups, fishing, deaths and discoveries.
@@ -66,12 +66,12 @@ SandEE is a 2D sandbox about gathering, building, survival, automation and learn
 • [b]M[/b] — open/close the full map.
 • [b]Esc[/b] — pause, close the innermost panel, or cancel a tap-to-move order.
 • [b]Enter / Space[/b] — advance dialogue.
-• [b]Shift + click[/b] — mine/destroy a placed block, chest, station or furnace instead of using it.
-• [b]F1[/b] — show/hide the bottom on-screen control hints (on by default). Their keycaps light up while pressed.
+• [b]Shift + click[/b] — mine/destroy a placed block, chest, station or furnace instead of using it. With a suitable pickaxe (or an axe on wooden objects), a plain click/tap destroys it instead — this is the mobile-friendly path.
+• [b]F1[/b] — show/hide the bottom-right on-screen control hints (on by default). Their keycaps light up while pressed.
 • The LMB hint follows the hovered target (use/mine/attack, move/interact/chase); [b]Shift + LMB[/b] becomes DESTROY on removable targets.
 
 [b]Point-and-click (optional)[/b]
-Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the ground walks there; clicking an interactable walks to one-block range and opens/interacts without swinging your held item; clicking a hostile creature chases and attacks it. Moving with WASD cancels the order. [b]Automatic Sprint[/b] uses stamina exactly like Shift. Build mode, UI panels and right-clicks are never intercepted. On Android the movement joystick is hidden while point-and-click is enabled; joystick mode keeps it visible. On desktop, while a usable item is selected (food, Life/Stamina Crystal, fishing rod, hoe or bucket), a click uses that item instead of issuing a move/interact order.
+Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the ground walks there; clicking an interactable walks to one-block range and opens/interacts without swinging your held item; clicking a hostile creature chases and attacks it. Moving with WASD cancels the order. [b]Automatic Sprint[/b] uses stamina exactly like Shift. Build mode, UI panels and right-clicks are never intercepted. A solid wall or object with no walkable route is rejected immediately instead of walking the player into it. On Android the movement joystick is hidden while point-and-click is enabled; joystick mode keeps it visible. On desktop, while a usable item is selected (food, Life/Stamina Crystal, fishing rod, hoe or bucket), a click uses that item instead of issuing a move/interact order.
 
 [b][color=#8fd8ff]ANDROID / TOUCH[/color][/b]
 • Left joystick — move in joystick mode. A second finger can use buttons and the hotbar while moving. The joystick is hidden in point-and-click mode.
@@ -117,6 +117,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 
 [b]Tools & mining[/b]
 • Blocks have a minimum pickaxe tier. The Wooden Pickaxe is tier 1 and mines stone, iron and copper; the Iron Pickaxe is tier 5; the Diamond Pickaxe is tier 10 and reaches diamond ore.
+• Keep the mine button held: after a placed block or cave wall/ore breaks, the next one under the cursor starts breaking automatically. Releasing the button stops the chain.
 • Hold left-click on a block to break it. A break ring shows progress; progress on the same tile is remembered for a short time between clicks.
 • Axes speed up wood and wooden blocks. Swords cut grass and harvest mature wheat.
 • Torches light the area at night and inside caves and dungeons. A placed torch beside a wall uses the connected-wall visual.""",
@@ -128,14 +129,14 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 • Press [b]Ctrl[/b] on desktop or [b]BUILD[/b] on Android. A translucent block ghost and a tile grid appear.
 • You may place within 6 blocks of the player. Red ghost = occupied, in water, too far away, or blocked by the player.
 • Place blocks, floors, doors, stations and furniture from the selected hotbar slot.
-• [b]Shift + click[/b] a placed block to mine/destroy it. Chests, stations and furnaces also use Shift + click to be removed.
+• [b]Shift + click[/b] a placed block to mine/destroy it. Chests, stations and furnaces also use Shift + click. If you are holding a pickaxe (or an axe on wooden objects), a plain click/tap destroys them directly, which is how touch players dismantle them.
 • Floors are walkable and render beneath the player. Walls block movement. Doors can be opened/closed with a plain click.
-• Build a sealed room with a door and a 3×3 interior to make a house. Houses block ambient hostile spawns and darken the world outside while you are indoors. The mission tracker's "Build a shelter" objective uses the same rule.
+• Build a sealed room with a door and a 3×3 interior to make a house. Houses block ambient hostile spawns and darken the world outside while you are indoors. The same room rule drives the shelter tracker.
 • Build mode is disabled inside dungeons, and you cannot place on dungeon/portal footprints or unopened cave entrances.
 
 [b]Containers & stations[/b]
 • Chests hold 8 stacks and open in the inventory panel. Rare dungeon chests contain automation materials and food.
-• Crafting Station, Furnace and Color Crafter are placeable machines. Plain-click one to open it; Shift-click to mine it. Their state is saved, including station/furnace programs and container contents.
+• Crafting Station, Furnace and Color Crafter are placeable machines. Plain-click one with a non-tool item to open it; click/tap it with a suitable pickaxe/axe (or Shift-click) to mine it. Their state is saved, including station/furnace programs and container contents.
 • Bonfires are placeable respawn points. Plain-click a Bonfire to set it active, click again to clear it. Only one Bonfire can be active at a time, and only in the overworld. Breaking the active Bonfire resets respawn to world spawn.
 • Torches and bonfires are visual light sources. The game does not simulate a torch fuel timer.
 
@@ -153,7 +154,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 [b][color=#8fd8ff]FISHING[/color][/b]
 • Select the Fishing Rod and click/tap water within 8 blocks.
 • The cast takes 5 seconds and has a 70–90% catch chance. Moving more than about two tiles, unequipping the rod, or leaving the scene cancels it.
-• Catches are Charlie, Allan, Glep and Pim. Cook them in a Furnace to restore 50 health each.
+• Catches are Yellow Carp, Anglefish, Eelfish and Scuttlefish. Cook them in a Furnace to restore 50 health each.
 
 [b]Cactus[/b]
 • Cacti grow in the desert over time. Harvest them for Cactus, used by the Color Crafter and as high-level furnace fuel.""",
@@ -201,12 +202,12 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 
 [b][color=#8fd8ff]AUTOMATICA (LUA)[/color][/b]
 1. Craft/obtain an Automatica item, select it, and place it like a block.
-2. Plain-click the station to open its console. The editor has code, RUN/STOP, output, inventory, a tool slot and three build slots.
-3. Write Lua and press RUN. The robot executes the script against the real world; progress and messages appear in the output panel.
+2. Plain-click the station to open its console. Like Algorithmica, the editor has [b]CODE[/b], [b]INVENTORY[/b] and [b]ENCYCLOPEDIA[/b] tabs; the CODE tab holds templates, the editor, RUN/STOP and the inline output log.
+3. Write Lua and press RUN. The robot executes the script against the real world; progress and messages appear under the code editor.
 4. Right-click the station to toggle its blue work-radius ring. The default radius is 20 blocks (1–64 supported by radius calls).
 5. Drag items into its inventory/build slots, or use withdraw("name", n) to pull from a nearby chest. The tool slot is required for mine() and attack().
-6. Common calls: auto_work(), chop_trees(radius), deposit_chest(), return_to_spawn(), mine("Stone", radius), place_item(), build_line(), build_rect(), build_circle(), set_recipe(), craft(n), put_input(), take_output().
-7. [b]combat_mode(true)[/b] turns the robot into a permanent combat follower. It gains 250 HP, follows through caves/dungeons, and attacks with its tool. Combat mode cannot run code. A combat Automatica can be permanently terminated from [b]Pause → Automatica Management[/b].
+6. Common calls: auto_work(), chop_trees(radius), deposit_chest(), return_to_spawn(), mine("stone_block"), place_item(), build_line(), build_rect(), build_circle(), set_recipe(), craft(n), put_input(), take_output(). mine() uses the station's current work radius; the Programming Encyclopedia's Mineable Block Names section lists every reference.
+7. [b]combat_mode(true)[/b] turns the robot into a combat follower. It gains 250 HP, follows through caves/dungeons, attacks with its tool, and automatically parries nearby flare or Hitman projectiles that are heading for itself or the player. Combat mode cannot run code. Click the follower (or its station) and press [b]EXIT COMBAT[/b], or run [b]combat_mode(false)[/b], to return it to its blue station form. A combat Automatica can also be permanently terminated from [b]Pause → Automatica Management[/b].
 8. You can place up to 31 Automatica stations per world. Each has independent code, inventory and build slots.
 
 [b][color=#8fd8ff]ALGORITHMICA (PYTHON)[/color][/b]
@@ -214,7 +215,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 • Crafting Station calls: set_recipe("Planks"), craft(n), get_recipe(), output_item(), output_count(), take_output(), craft_color(r, g, b, n).
 • Furnace calls: feed("Iron Ore", n), fuel("Charcoal", n), smelt(n), take_output(), input_name()/input_count(), fuel_name()/fuel_count(), output_name()/output_count().
 • Programs run against the machine's real slots. Load input/fuel first (or use feed/fuel); smelt consumes one fuel per item. Output stays in the machine until take_output().
-• Use the [b]TEMPLATE[/b] button to load a complete station or furnace example, then change the recipe, item ids and amounts.
+• Use the [b]TEMPLATE[/b] button to load a complete station or furnace example, and [b]COLOR[/b] in the station editor to load a craft_color example. The Programming Encyclopedia also lists all three templates.
 • The guided Algorithmica lesson opens the furnace with ready-to-run print("Algorithmica ready") code — just press RUN.
 • The editor prevents adding new Python functions, but recipe discovery is built in: use the RECIPES button to print every recipe and its scripting item ids.
 • Python and Lua are separate interpreters. A station's Python code is not run by Automatica, and Automatica cannot run a station's Python panel.
@@ -229,7 +230,7 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 		"id": "dungeons",
 		"title": "Dungeons & Bestiary",
 		"body": """[b][color=#8fd8ff]DUNGEON PROGRESSION[/color][/b]
-• The overworld always holds the current entrance for each active language track: one Lua and one Python dungeon during the main phase.
+• The overworld always holds the current entrance for each active language track: one Lua and one Python dungeon during the main phase. A persistent trail, target marker and compass point to the recommended next track, alternating from the dungeon you cleared last (Python → Lua → Python).
 • Walk onto an entrance and confirm Enter, or click its door. A temporary one-way waypoint appears near the player or camp; step on it to travel to the current dungeon entrance. It is consumed on use and is saved.
 • The mission tracker shows the current Lua and Python dungeon rows, then the Hitman finale (and any active extra dungeon).
 • Clearing a dungeon removes its overworld entrance, awards its mission star and spawns the next mission in that language's track.
@@ -237,8 +238,8 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 
 [b]Inside a dungeon[/b]
 • Dungeons are combat gauntlets with traps, flame vents, hostile spawns and treasure chests.
-• The first safe room contains a [b]Knowledge Altar[/b]. Read and close its entry to learn a programming concept permanently for that world. The altar also keeps a pageable archive of every entry you have learned.
-• Guided first-dungeon runs show numbered floor markers along a safe route to the final Quiz Altar. The route follows real floor cells and avoids trap tiles.
+• The first safe room contains a [b]Knowledge Altar[/b]. Open it and press Continue to learn a programming concept permanently for that world; merely opening or walking away does not count. The altar also keeps a pageable archive of every entry you have learned. The Quiz Altar stays sealed behind a gold padlock until that entry is learned.
+• Every dungeon run shows a dotted-circle floor route to its current objective: the Knowledge Altar first, then the Quiz Altar (the Hitman Miniboss and its exit in the finale). The route follows real floor cells and avoids trap tiles.
 • The final room contains a [b]Quiz Altar[/b]. Answer every multiple-choice or compiler question correctly to clear the dungeon. Wrong answers can be retried; compiler questions run your code and check its output. [b]HINT[/b] prepares the current answer: it fills compiler code with the expected print program or highlights the correct multiple-choice button. It becomes [b]NEXT[/b], which only dismisses the hint. You still press [b]RUN[/b] or tap the answer yourself. Each hint costs one blue star except during the first dungeon, and each wrong code run also costs one. Review the results and press [b]Done[/b] to return to the overworld.
 • Green safe-zone markers in Knowledge altar rooms grant 30 seconds of invulnerability, healing and hostile disintegration. Safe-zone kills give no loot or Bestiary credit.
 • The dungeon map is fog-of-war and has no legend. The overworld and cave maps do.
@@ -255,15 +256,17 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 		"id": "maps",
 		"title": "Maps, Missions & Saving",
 		"body": """[b][color=#8fd8ff]MISSIONS & STARS[/color][/b]
-• The right-side mission tracker shows up to three active gameplay missions at a time. Started missions are prioritised so progress is never hidden.
+• The right-side mission tracker shows up to three active gameplay missions at a time. Automatica and Algorithmica objectives are interleaved, and started missions are prioritised so progress is never hidden.
+• The main mission flow is 12 Automatica objectives (programming, chopping, building, mining and combat) followed by 12 Algorithmica objectives (crafting, colors and furnace work).
 • Dungeon rows start at three blue stars. Each hint (except in the first dungeon) or wrong code run costs one; the score stops at zero but never blocks completion. Other missions award a star when completed.
 • Side missions unlock after the main tracks, Hitman finale and any extra dungeons are complete.
-• Mission, star, side-mission and dungeon-clear progress is stored in the world save. Automatica status appears in the left HUD and is managed from Pause > Automatica Management.
+• Completing a Lua, Python, Automatica, Algorithmica or side mission shows a short top-centre notification with its name.
+• Mission, star, side-mission and dungeon-clear progress is stored in the world save. Automatica status appears in the left HUD and is managed from Pause > Automatica Management, where each robot is labelled NORMAL or COMBAT.
 • Online accounts also record cloud star totals and leaderboard entries.
 
 [b][color=#8fd8ff]MAPS & WAYPOINTS[/color][/b]
-• The bottom-left minimap follows you. Click it or press M to open the full map.
-• On the full map: drag to pan, mouse wheel or +/− to zoom, X or Esc/M to close. The map fills the safe content area and hides the gameplay HUD.
+• The bottom-left minimap follows you. Click it or press M to open the full map. Dungeon entrances get a pulsing halo, the route guide's recommended next dungeon is highlighted in teal, and a dungeon map pulses its current objective.
+• On the full map: drag to pan, mouse wheel or +/− to zoom, CLOSE or Esc/M to close. The map fills the safe content area and hides the gameplay HUD.
 • Fog of war is tracked per world; the map reveals terrain as you explore. The legend identifies you, enemies, friendly creatures, Bonfires, Automatica, dungeon entrances and Skyglass waypoints; cave maps mark their entrance/exit.
 • [b]Skyglass Waypoints[/b] are tall ruined towers scattered across the overworld. Walk near one and click it to open the world waypoint map, then select another tower to teleport.
 • Teleporting plays a recall/white-fade effect. You cannot teleport while another waypoint transition is running, and a safe landing spot must exist near the tower.
@@ -287,8 +290,8 @@ Enable [b]Settings → Controls → Point-and-Click Movement[/b]. Clicking the g
 		"id": "settings",
 		"title": "Settings & Troubleshooting",
 		"body": """[b][color=#8fd8ff]SETTINGS[/color][/b]
-The pause menu and main menu share the same settings panel:
-• [b]Audio[/b] — master, music and SFX volume.
+The pause menu and main menu share the same settings panel and save the same values:
+• [b]Audio[/b] — master, music and SFX volume. Fresh installs default to 90% / 70% / 80%.
 • [b]Display[/b] — camera zoom (0.5×–3.0×), fullscreen (desktop) and VSync (desktop). Frame rate is fixed at 60 FPS.
 • [b]Gameplay[/b] — pause while the inventory is open and an opaque quest-tracker background.
 • [b]Controls[/b] — point-and-click movement, automatic sprint, and rebinding for movement, inventory and all nine hotbar slots. Click a binding, press a key, or press Esc to cancel.

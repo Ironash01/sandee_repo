@@ -2,6 +2,7 @@ extends Control
 
 # One settings implementation shared with the pause menu.
 const SETTINGS_PANEL_SCRIPT: Script = preload("res://scripts/settings_panel.gd")
+const TITLE_LOGO_SCRIPT: Script = preload("res://scripts/title_logo.gd")
 
 const C_BG      := Color(0.04, 0.06, 0.12, 1.00)
 const C_PANEL   := Color(0.08, 0.10, 0.20, 0.97)
@@ -85,6 +86,7 @@ func _ready() -> void:
 	# Returning to the title must not inherit the gameplay scene's pause/UI state
 	# (e.g. quitting to menu while a UI was open), or the menu would be frozen.
 	Global.reset_pause_state()
+	Music.play_context("menu")
 	# Panorama helper: its own node so generating the preview world can run on a
 	# LATER frame and never delay the menu appearing.
 	_panorama = load("res://scripts/title_panorama.gd").new()
@@ -491,23 +493,9 @@ func _build_main_ui() -> void:
 	vbox.custom_minimum_size = Vector2(int(320 * s), 0)
 	_menu_center.add_child(vbox)
 
-	var title := Label.new()
-	title.text = "SandEE"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	# Cap the masthead on short windows so its ascenders never clip and the
-	# primary buttons stay on-screen; full desktop still gets the 72*s identity.
-	var title_px: int = int(minf(float(Global.ui_font_size(72)),
-		maxf(52.0, get_viewport_rect().size.y * 0.105)))
-	title.add_theme_font_size_override("font_size", title_px)
-	title.add_theme_color_override("font_color", C_TITLE)
-	vbox.add_child(title)
-
-	var sub := Label.new()
-	sub.text = "Alpha"
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", Global.ui_font_size(16))
-	sub.add_theme_color_override("font_color", C_MUTED)
-	vbox.add_child(sub)
+	var logo: Control = TITLE_LOGO_SCRIPT.new() as Control
+	logo.call("setup", 72.0)
+	vbox.add_child(logo)
 
 	# Random flavor text (one line, re-rolled each time the menu opens) — loaded
 	# from its own .tres so adding lines never touches this script.
@@ -1114,6 +1102,7 @@ func _set_leaderboard_kind(kind: String) -> void:
 
 
 func _on_leaderboards() -> void:
+	SFX.play_ui("sfx_leaderboard", 0)
 	if not _ensure_online("Leaderboards need an online session. Sign in to see the live rankings."):
 		return
 	if _leaderboard_overlay != null:
@@ -1345,7 +1334,17 @@ func _refresh_cloud(silent: bool = false) -> void:
 		_cloud_busy = false
 		return
 	if result.ok and result.data is Array:
-		_build_remote_rows(result.data)
+		# Hide stale rows for worlds tombstoned on any platform. They are
+		# queued for deletion; showing them would make the cloud count disagree
+		# with the local world count.
+		var visible_rows: Array = []
+		for row_value in (result.data as Array):
+			if typeof(row_value) == TYPE_DICTIONARY:
+				var uid := str((row_value as Dictionary).get("world_uid", "")).strip_edges()
+				if not uid.is_empty() and CloudSync.is_world_deleted(uid):
+					continue
+			visible_rows.append(row_value)
+		_build_remote_rows(visible_rows)
 		if not silent:
 			_cloud_set_message("Cloud saves are up to date.", C_MUTED)
 	else:

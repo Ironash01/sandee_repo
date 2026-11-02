@@ -59,6 +59,7 @@ func _on_body_entered(body: Node) -> void:
 	_detonate()
 
 func _detonate() -> void:
+	SFX.play("sfx_dungeon_hazards", global_position, -2.0, 1.0, 2)
 	var ex: Node2D = EXPLOSION_SCRIPT.new() as Node2D
 	if ex == null:
 		return

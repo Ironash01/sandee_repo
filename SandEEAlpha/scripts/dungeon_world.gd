@@ -108,6 +108,7 @@ const THEME_DUNGEON_ENEMIES: Dictionary = {
 }
 const RARE_CHEST_DATA: ItemData = preload("res://resources/items/rare_dungeon_chest.tres")
 const CHEST_BLOCK_SCENE: PackedScene = preload("res://scenes/objects/ChestBlock.tscn")
+const DUNGEON_GUIDE_SCRIPT: GDScript = preload("res://scripts/dungeon_guide.gd")
 
 # Safe-zone markers use the dev item resources/items/dungeon_safe_zone_marker.tres
 # (a 3x 32x32 sheet: idle / active / warning). The zones themselves are built in
@@ -340,6 +341,14 @@ func setup(dungeon_index: int, mission: DungeonMissionData, seed_value: int,
 	if _mission != null and _mission.is_boss():
 		_spawn_exit_marker()
 	_setup_lighting()
+	# World-owned floor guide: unlike the tutorial director it exists in every
+	# dungeon and every run, so the circle route to the next objective is always
+	# available (knowledge -> quiz for main dungeons, boss -> exit for the
+	# finale). It hides itself during the scripted tutorial, which already
+	# draws the same route with its own objective card.
+	var guide: Node2D = DUNGEON_GUIDE_SCRIPT.new() as Node2D
+	guide.name = "DungeonGuide"
+	add_child(guide)
 
 # ?? Themed interior architecture ??????????????????????????????????????
 static func _get_theme_arch_textures(theme: String) -> Dictionary:
@@ -1064,6 +1073,50 @@ func _spawn_quiz_altar_at(grid_pos: Vector2i) -> void:
 	quiz.cleared.connect(_on_dungeon_cleared)
 	add_child(quiz)
 	quiz.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(grid_pos)))
+
+## Current objective for the persistent floor guide. Main dungeons must read
+## their Knowledge Altar before the Quiz Altar unlocks; extra dungeons have no
+## knowledge altar, and the boss finale points at the miniboss then its exit.
+func guide_target() -> Dictionary:
+	if _mission == null or _cleared:
+		return {}
+	if _mission.is_boss():
+		if not _boss_defeated and _boss != null and is_instance_valid(_boss):
+			return {"position": _boss.global_position, "label": "Hitman Miniboss"}
+		if _exit_marker != null and is_instance_valid(_exit_marker):
+			return {"position": _exit_marker.global_position, "label": "Exit"}
+		return {}
+	if not _mission.is_extra():
+		var entry := _mission.entry()
+		if entry != null and not Global.has_learned_entry(entry.id()):
+			var knowledge := _nearest_guide_altar("KnowledgeAltar")
+			# Do not guide to a locked Quiz Altar when the teaching altar is
+			# missing; an empty target simply hides the route.
+			if knowledge == null:
+				return {}
+			return {"position": knowledge.global_position, "label": "Knowledge Altar"}
+	var quiz := _nearest_guide_altar("QuizAltar")
+	if quiz != null:
+		return {"position": quiz.global_position, "label": "Quiz Altar"}
+	return {}
+
+func _nearest_guide_altar(group: String) -> Node2D:
+	var p := Global.player_node as Node2D
+	if p == null:
+		return null
+	var best: Node2D = null
+	var best_d := INF
+	for node in get_tree().get_nodes_in_group(group):
+		if node == null or not is_instance_valid(node) or not node is Node2D:
+			continue
+		if not is_ancestor_of(node):
+			continue
+		var n := node as Node2D
+		var d := p.global_position.distance_to(n.global_position)
+		if d < best_d:
+			best_d = d
+			best = n
+	return best
 
 # The exit stays dormant until the quiz is cleared ("the exit opens"); it
 # then teleports the player back out of the dungeon.
