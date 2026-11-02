@@ -190,7 +190,7 @@ The following table summarises the Python syntax accepted by Algorithmica.
 | Nested loops | Supported | All pairs printed |
 | Truthy `if`, `if True` | Supported | `if total:` executed |
 | `while` with truthy condition | Supported | `while x:` executed; safety guard applies |
-| Comparison operators (`<`, `>`, `==`) | **Not supported** | Parse error |
+| Comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`) | Supported | Chained comparisons are not supported. `is`/`is not` use identity. |
 | `else`, `elif` | **Not supported** | Parse error |
 | `def` | **Not supported** | Parse error |
 | `import` | **Not supported** | Unresolved name error |
@@ -201,7 +201,7 @@ The following table summarises the Python syntax accepted by Algorithmica.
 | String method on an indexed list element | Not supported | Unresolved `Any` type |
 | `print` with multiple arguments | Supported | Space-separated output |
 
-**Practical consequence:** comparisons and `else` are unavailable. Write linear recipe scripts, loops over known ranges and simple state reads. The in-game templates follow this style.
+**Practical consequence:** chained comparisons and `else` are unavailable. Write single comparisons, linear recipe scripts, loops over known ranges and simple state reads. The in-game templates follow this style.
 
 ## 11. Safety
 
@@ -288,7 +288,7 @@ The program completes with `Finished running`. The output read after collection 
 | 17.6 | In-game Automatica encyclopedia (34 entries). |
 | 18.1 | Algorithmica station editor. |
 | 18.2 | Python language features executed. |
-| 18.3 | Unsupported comparison parse error. |
+| 18.3 | Chained comparison parse error. |
 | 18.4 | Station program producing Planks. |
 | 18.5 | Station syntax error. |
 | 18.6 | Furnace editor. |

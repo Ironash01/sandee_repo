@@ -517,7 +517,12 @@ impl Transpiler {
                     let right = self.transpile_expression(&comp.operands[1])?;
                     let op = &comp.ops[0];
                     match op {
-                        CmpOp::IsNot => Ok(format!("not ({} is {})", left, right)),
+                        // Python `is` compares object identity, while GDScript
+                        // `is` is a type test. `is_same` is the closest Godot
+                        // equivalent: object identity, plus identity for NIL,
+                        // booleans and value types.
+                        CmpOp::Is => Ok(format!("is_same({}, {})", left, right)),
+                        CmpOp::IsNot => Ok(format!("not (is_same({}, {}))", left, right)),
                         CmpOp::NotIn => Ok(format!("not ({} in {})", left, right)),
                         _ => Ok(format!("{} {} {}", left, op, right)),
                     }
@@ -836,6 +841,53 @@ mod test {
         println!(
             "\nOriginal:\n{}\nTranspiled:\n{}\nGlobals: {:?}",
             code, transpiled, transpiler.symbols
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_comparison_operators() -> Result<()> {
+        let mut transpiler = Transpiler::default();
+        let code = indoc::indoc! {"
+            def main():
+                a = 1
+                b = 2
+                same = a is b
+                different = a is not b
+                equal = a == b
+                not_equal = a != b
+                less = a < b
+                less_equal = a <= b
+                greater = a > b
+                greater_equal = a >= b
+                contained = a in [1, 2]
+                not_contained = a not in [1, 2]
+            "};
+        let transpiled = transpiler.transpile(code)?;
+        assert!(
+            transpiled.contains("same = is_same(a, b)"),
+            "{transpiled}"
+        );
+        assert!(
+            transpiled.contains("different = not (is_same(a, b))"),
+            "{transpiled}"
+        );
+        assert!(transpiled.contains("equal = a == b"), "{transpiled}");
+        assert!(transpiled.contains("not_equal = a != b"), "{transpiled}");
+        assert!(transpiled.contains("less = a < b"), "{transpiled}");
+        assert!(transpiled.contains("less_equal = a <= b"), "{transpiled}");
+        assert!(transpiled.contains("greater = a > b"), "{transpiled}");
+        assert!(
+            transpiled.contains("greater_equal = a >= b"),
+            "{transpiled}"
+        );
+        assert!(
+            transpiled.contains("contained = a in [1, 2]"),
+            "{transpiled}"
+        );
+        assert!(
+            transpiled.contains("not_contained = not (a in [1, 2])"),
+            "{transpiled}"
         );
         Ok(())
     }

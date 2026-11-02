@@ -53,7 +53,7 @@ The documentation should continue to state these limitations clearly:
 
 - SandEE uses username-and-password authentication. Email registration, Google sign-in and password recovery are not available.
 - Cloud saves, leaderboards and account switching require an online session. New worlds must be created online.
-- Algorithmica accepts a restricted Python subset. Comparisons, `else`, `elif`, `def`, imports, f-strings and list comprehensions are not supported. `str`, `round` and `sum` are not available.
+- Algorithmica accepts a restricted Python subset. Chained comparisons, `else`, `elif`, `def`, imports, f-strings and list comprehensions are not supported. `str`, `round` and `sum` are not available.
 - Audio volumes and camera zoom are applied at runtime but are not stored in the settings files; they return to defaults on the next launch.
 - The inventory does not provide right-click stack splitting.
 - Later missions reuse the shared altar, quiz and results components. Individual walkthroughs for every mission are not included.

@@ -36,7 +36,7 @@ SandEE supports Windows desktop and Android touch devices. The Windows edition u
 
 Some account features depend on the online service. SandEE uses username-and-password authentication. Email registration, Google sign-in and password recovery are not available. Cloud saves, leaderboards and account switching require an active online session. A previously verified offline world can be played without a live session, but new worlds must be created online.
 
-Algorithmica accepts a restricted subset of Python syntax. Imports, f-strings, list comprehensions, function definitions, comparison operators and `else` branches are not supported. The programming chapter explains the supported syntax and the recommended way to write station and furnace programs.
+Algorithmica accepts a restricted subset of Python syntax. Imports, f-strings, list comprehensions, function definitions, chained comparisons and `else` branches are not supported. The programming chapter explains the supported syntax and the recommended way to write station and furnace programs.
 
 The Android screenshots in this manual show the mobile interface in the game's mobile mode. Physical-device cutouts, gesture navigation and on-screen keyboard placement can vary by device.
 
@@ -651,7 +651,7 @@ Table: Automatica station helpers and read-only variables (5 functions + 4 varia
 
 Algorithmica is the Python interface built into a Crafting Station and a Furnace. Open the machine and press **ALGORITHMICA**. The editor has a code area, **RUN**, **CLEAR** and **RECIPES**; **CLOSE** returns to the machine. Programs can select a recipe, craft or smelt items and move the output into your inventory.
 
-Algorithmica accepts simple Python statements: variables, `print`, loops over `range`, lists and calls to the functions below. Comparisons, `else`, `def` and imports are not supported.
+Algorithmica accepts simple Python statements: variables, `print`, loops over `range`, lists and calls to the functions below. Chained comparisons, `else`, `def` and imports are not supported.
 
 {{fig:py-editor}} shows the station editor.
 
