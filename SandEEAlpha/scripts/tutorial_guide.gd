@@ -429,6 +429,20 @@ func _step_id() -> String:
 func owns_dungeon_route() -> bool:
 	return not _finished and _step_id().begins_with("dungeon_")
 
+
+## The first dungeon must teach at the Knowledge Altar before the Quiz Altar,
+## even when the entry was already learned in an earlier run. DungeonWorld's
+## shared guide_target() consults this so the minimap and persistent guide
+## agree with the tutorial's own floor route.
+func requires_dungeon_knowledge_read(index: int) -> bool:
+	if _finished or _dungeon_index != index:
+		return false
+	var id := _step_id()
+	if id != "dungeon_knowledge" and id != "dungeon_quiz":
+		return false
+	return not bool(Global.tutorial_flags.get(
+		"dungeon_altar_read_%d" % index, false))
+
 func _step_index(id: String) -> int:
 	return STEPS.find(id)
 
@@ -974,6 +988,14 @@ func _tick_dungeon_quiz() -> bool:
 		return true
 	if not Global.is_in_dungeon:
 		_set_current_step("dungeon_travel")
+		return false
+	# A save/load or a legacy pre-learned entry must not leave the lesson on
+	# the Quiz Altar before this run has actually read the Knowledge Altar.
+	if _dungeon_index > 0 \
+			and not bool(Global.tutorial_flags.get(
+				"dungeon_altar_read_%d" % _dungeon_index, false)) \
+			and _nearest_group_node("KnowledgeAltar") != null:
+		_set_current_step("dungeon_knowledge")
 		return false
 	var altar := _nearest_group_node("QuizAltar")
 	if altar == null:
@@ -2180,6 +2202,8 @@ func _ensure_dungeon_route(goal: Node2D = null) -> void:
 		_route_guide = ROUTE_SCRIPT.new() as TutorialRouteGuide
 		Global.world_node.add_child(_route_guide)
 	var altar := goal
+	if altar == null or not is_instance_valid(altar):
+		altar = _nearest_group_node("KnowledgeAltar") as Node2D
 	if altar == null or not is_instance_valid(altar):
 		altar = _nearest_group_node("QuizAltar") as Node2D
 	if altar == null:

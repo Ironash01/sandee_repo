@@ -7,7 +7,8 @@ extends Node2D
 # objective and a labelled target marker.
 #
 # Target priority comes from DungeonWorld.guide_target():
-#   main  -> Knowledge Altar until its entry is learned, then Quiz Altar
+#   main  -> Knowledge Altar until its entry is learned (and until the tutorial
+#            records this run's altar read), then Quiz Altar
 #   extra -> nearest Quiz Altar
 #   boss  -> Hitman Miniboss, then the opened exit
 #

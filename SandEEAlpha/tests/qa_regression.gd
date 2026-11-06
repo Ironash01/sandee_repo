@@ -323,6 +323,7 @@ func _run() -> void:
 	await _test_automatica_fixes()
 	await _test_automatica_projectile_parry()
 	await _test_code_safety()
+	_test_python_whitespace_and_declarations()
 	await _test_algorithmica_templates()
 	await _test_automation_missions()
 	await _test_quiz_reward_ui()
@@ -2267,6 +2268,29 @@ func _test_quiz_knowledge_lock_and_guide() -> void:
 	target = dun.call("guide_target") as Dictionary
 	check(str(target.get("label", "")) == "Quiz Altar",
 		"dungeon guide moves to the Quiz Altar after learning")
+
+	# A pre-learned entry must not move the tutorial's shared guide to the Quiz
+	# Altar before this run has read the Knowledge Altar.
+	var old_tutorial_flags: Dictionary = Global.tutorial_flags.duplicate(true)
+	var tutorial_script: Script = load("res://scripts/tutorial_guide.gd")
+	var tutorial: Node = tutorial_script.new()
+	tutorial.add_to_group("TutorialGuide")
+	add_child(tutorial)
+	tutorial.set("_finished", false)
+	tutorial.set("_dungeon_index", mission.dungeon_index)
+	var steps: Array = tutorial_script.get_script_constant_map().get("STEPS", []) as Array
+	tutorial.set("_current_step", steps.find("dungeon_knowledge"))
+	Global.tutorial_flags["dungeon_altar_read_%d" % mission.dungeon_index] = false
+	target = dun.call("guide_target") as Dictionary
+	check(str(target.get("label", "")) == "Knowledge Altar",
+		"tutorial dungeon guide still points to the Knowledge Altar after a pre-learned entry")
+	Global.tutorial_flags["dungeon_altar_read_%d" % mission.dungeon_index] = true
+	target = dun.call("guide_target") as Dictionary
+	check(str(target.get("label", "")) == "Quiz Altar",
+		"tutorial dungeon guide moves to the Quiz Altar after this run's altar read")
+	tutorial.queue_free()
+	Global.tutorial_flags = old_tutorial_flags
+	await get_tree().process_frame
 	if guide != null:
 		guide.call("_refresh")
 		var route: Node = guide.get("_route") as Node
@@ -8179,6 +8203,79 @@ func _test_automatica_projectile_parry() -> void:
 	player.queue_free()
 	Global.player_node = old_player
 	await get_tree().process_frame
+
+
+func _test_python_whitespace_and_declarations() -> void:
+	var guide: Node = load("res://scripts/python_state.gd").new() as Node
+	var transpiler: PythonTranspiler = PythonTranspiler.new()
+	var cases: Array = [
+		{
+			"name": "tabs and trailing whitespace",
+			"source": "\tdef main():\n\t\tprint(\"Hi\")\t\n",
+			"requires_main": true,
+			"no_tabs": true,
+		},
+		{
+			"name": "common leading indent",
+			"source": "    def main():\n        print(\"Hi\")\n",
+			"requires_main": true,
+			"no_tabs": true,
+		},
+		{
+			"name": "class only",
+			"source": "class Foo:\n    pass\n",
+			"requires_main": true,
+			"class_outside": true,
+		},
+		{
+			"name": "class plus top-level use",
+			"source": "class Foo:\n\tdef value(self):\n\t\treturn 7\n\nfoo = Foo()\nprint(foo.value())\n",
+			"requires_main": true,
+			"class_outside": true,
+		},
+		{
+			"name": "helper plus top-level use",
+			"source": "def helper():\n\treturn 4\n\nprint(helper())\n",
+			"requires_main": true,
+			"helper_outside": true,
+		},
+		{
+			"name": "comment mentioning main",
+			"source": "# def main is mentioned here\nprint(\"Hi\")\n",
+			"requires_main": true,
+		},
+	]
+	var all_ok := true
+	for entry in cases:
+		var source := str((entry as Dictionary)["source"])
+		var wrapped: String = guide.call("_ensure_main", source)
+		var result: Array = transpiler.call("transpile", wrapped)
+		var ok := bool(result[0])
+		var reload_ok := false
+		if ok:
+			var script := GDScript.new()
+			script.source_code = "extends \"res://resources/godot_transpile_base.gd\"\n\n" + str(result[1])
+			reload_ok = script.reload(false) == OK
+		var shape_ok := true
+		if bool((entry as Dictionary).get("requires_main", false)):
+			shape_ok = wrapped.contains("def main():\n")
+		if bool((entry as Dictionary).get("no_tabs", false)):
+			shape_ok = shape_ok and not wrapped.contains("\t")
+		if bool((entry as Dictionary).get("class_outside", false)):
+			shape_ok = shape_ok and wrapped.contains("class Foo:\n") \
+				and not wrapped.contains("    class Foo:")
+		if bool((entry as Dictionary).get("helper_outside", false)):
+			shape_ok = shape_ok and wrapped.begins_with("def helper():\n")
+		if not ok or not reload_ok or not shape_ok:
+			all_ok = false
+			print("PY_WHITESPACE_FAIL ", (entry as Dictionary)["name"],
+				" transpile=", ok, " reload=", reload_ok, " shape=", shape_ok)
+			print("WRAPPED:\n", wrapped)
+			print("OUT:\n", str(result[1]))
+	check(all_ok,
+		"Python source whitespace is normalized and top-level declarations stay outside main")
+	guide.free()
+	transpiler.free()
 
 
 func _test_code_safety() -> void:

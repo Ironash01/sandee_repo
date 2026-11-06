@@ -163,9 +163,11 @@ cargo build --release --target x86_64-pc-windows-gnu
 
 For Windows, copy `target/x86_64-pc-windows-gnu/release/interpreter.dll` into
 `SandEEAlpha/ext_bin/release/`, keeping the MinGW runtime DLLs beside it. For Android, use
-`build_android.sh` with the configured Android NDK, then place the resulting library in the
-matching `SandEEAlpha/ext_bin/` folder. See `SandEEAlpha/extension.gdextension` for the
-exact expected paths and runtime DLLs.
+`build_android.sh` with the Android NDK version matching the Godot export template
+(currently `29.0.14206865`), then place the resulting library in the matching
+`SandEEAlpha/ext_bin/` folder. A newer NDK can reference libc++ symbols that the template's
+`libc++_shared.so` does not export, preventing the extension from loading. See
+`SandEEAlpha/extension.gdextension` for the exact expected paths and runtime DLLs.
 
 ### Run the QA suite
 

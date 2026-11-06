@@ -65,21 +65,117 @@ func _load_godot_base(path: String) -> String:
 	push_error("PythonState: cannot open base script: " + path)
 	return "extends Node\n\n"
 
+# Normalize editor/paste whitespace before the Python parser sees it:
+#  * normalize CRLF/CR to LF
+#  * remove trailing spaces/tabs
+#  * expand leading tabs to four spaces (the game's Python indentation unit)
+#  * remove a common leading indent so a whole pasted block can be dedented
+#    without touching genuinely nested lines
+# This prevents stray indentation from leaking into the generated GDScript.
+func _normalize_python_source(source: String) -> String:
+	var normalized := source.replace("\r\n", "\n").replace("\r", "\n")
+	var lines: Array = normalized.split("\n")
+	for i in range(lines.size()):
+		var line: String = str(lines[i])
+		while line.ends_with(" ") or line.ends_with("\t"):
+			line = line.substr(0, line.length() - 1)
+		var prefix := ""
+		var j := 0
+		while j < line.length():
+			var c := line.substr(j, 1)
+			if c == "\t":
+				prefix += "    "
+				j += 1
+			elif c == " ":
+				prefix += " "
+				j += 1
+			else:
+				break
+		lines[i] = prefix + line.substr(j)
+
+	var common := -1
+	for line_value in lines:
+		var line: String = str(line_value)
+		var stripped := line.strip_edges()
+		if stripped.is_empty() or stripped.begins_with("#"):
+			continue
+		var indent := 0
+		while indent < line.length() and line.substr(indent, 1) == " ":
+			indent += 1
+		if common < 0 or indent < common:
+			common = indent
+	if common > 0:
+		for i in range(lines.size()):
+			var line: String = str(lines[i])
+			if line.strip_edges().is_empty():
+				lines[i] = ""
+			elif not line.strip_edges().begins_with("#") or line.length() >= common:
+				lines[i] = line.substr(mini(common, line.length()))
+
+	var out := ""
+	for i in range(lines.size()):
+		if i > 0:
+			out += "\n"
+		out += str(lines[i])
+	return out
+
+
+func _is_main_def(stripped: String) -> bool:
+	return stripped.begins_with("def main(") or stripped.begins_with("def main (")
+
+
+func _has_top_level_main(lines: Array) -> bool:
+	for line_value in lines:
+		var line: String = str(line_value)
+		if line.begins_with(" ") or line.begins_with("\t"):
+			continue
+		if _is_main_def(line.strip_edges()):
+			return true
+	return false
+
+
 # The transpiler requires a main() function. Dungeon questions are written as
 # bare statements (e.g. print("Hi")), so wrap top-level code in a main() when
-# the player didn't define one. 4-space indent keeps it valid alongside the
-# starter code, which also uses 4 spaces.
+# the player didn't define one. Top-level classes/functions stay at GDScript
+# class scope instead of being wrapped inside main (GDScript cannot nest a
+# class or func inside another func). 4-space indent matches the starter code.
 func _ensure_main(source: String) -> String:
-	if source.find("def main") != -1:
-		return source
-	var out := "def main():\n"
+	var normalized := _normalize_python_source(source)
+	var lines: Array = normalized.split("\n")
+	if _has_top_level_main(lines):
+		return normalized
+
+	var declarations := ""
+	var body := ""
 	var wrote := false
-	for raw in source.split("\n"):
-		if raw.strip_edges().is_empty():
-			out += "\n"
+	var i := 0
+	while i < lines.size():
+		var line: String = str(lines[i])
+		var stripped := line.strip_edges()
+		var top_level := not line.begins_with(" ") and not line.begins_with("\t")
+		if top_level and (stripped.begins_with("class ") or stripped.begins_with("def ")) \
+				and not _is_main_def(stripped):
+			# Keep the whole declaration block (its indented body and blank
+			# separator lines) outside the generated main function.
+			declarations += line + "\n"
+			i += 1
+			while i < lines.size():
+				var next_line: String = str(lines[i])
+				if next_line.strip_edges().is_empty() \
+						or next_line.begins_with(" ") or next_line.begins_with("\t"):
+					declarations += next_line + "\n"
+					i += 1
+				else:
+					break
+			continue
+		if stripped.is_empty():
+			body += "\n"
 		else:
-			out += "    " + raw + "\n"
+			body += "    " + line + "\n"
 			wrote = true
+		i += 1
+
+	var out := declarations + "def main():\n" + body
 	if not wrote:
 		out += "    pass\n"
 	return out

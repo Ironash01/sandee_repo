@@ -1075,8 +1075,10 @@ func _spawn_quiz_altar_at(grid_pos: Vector2i) -> void:
 	quiz.global_position = _tilemap.to_global(_tilemap.map_to_local(_grid_to_cell(grid_pos)))
 
 ## Current objective for the persistent floor guide. Main dungeons must read
-## their Knowledge Altar before the Quiz Altar unlocks; extra dungeons have no
-## knowledge altar, and the boss finale points at the miniboss then its exit.
+## their Knowledge Altar before the Quiz Altar unlocks; during the tutorial the
+## per-run read flag wins even when the entry was learned earlier. Extra
+## dungeons have no knowledge altar, and the boss finale points at the miniboss
+## then its exit.
 func guide_target() -> Dictionary:
 	if _mission == null or _cleared:
 		return {}
@@ -1088,13 +1090,22 @@ func guide_target() -> Dictionary:
 		return {}
 	if not _mission.is_extra():
 		var entry := _mission.entry()
-		if entry != null and not Global.has_learned_entry(entry.id()):
+		var tutorial_requires_knowledge := false
+		if is_inside_tree():
+			var tutorial := get_tree().get_first_node_in_group("TutorialGuide")
+			if tutorial != null and is_instance_valid(tutorial) \
+					and tutorial.has_method("requires_dungeon_knowledge_read"):
+				tutorial_requires_knowledge = bool(tutorial.call(
+					"requires_dungeon_knowledge_read", _dungeon_index))
+		if tutorial_requires_knowledge \
+				or (entry != null and not Global.has_learned_entry(entry.id())):
 			var knowledge := _nearest_guide_altar("KnowledgeAltar")
+			if knowledge != null:
+				return {"position": knowledge.global_position, "label": "Knowledge Altar"}
 			# Do not guide to a locked Quiz Altar when the teaching altar is
-			# missing; an empty target simply hides the route.
-			if knowledge == null:
+			# missing in normal play; the tutorial's own guard will move on.
+			if not tutorial_requires_knowledge:
 				return {}
-			return {"position": knowledge.global_position, "label": "Knowledge Altar"}
 	var quiz := _nearest_guide_altar("QuizAltar")
 	if quiz != null:
 		return {"position": quiz.global_position, "label": "Quiz Altar"}
